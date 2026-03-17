@@ -20,6 +20,8 @@ USER_NAME="$(whoami 2>/dev/null || echo user)"
 # corrupted manifest -> backup + warning + conservative route
 # out-of-repo path -> explicit failure
 # same repo slug, different branches/worktrees -> independent manifests
+# bounded refresh -> prefer newest bounded candidate set
+# single retry -> one retry on write conflict, then conservative route
 
 require_helper() {
   if [[ ! -x "$STATUS_BIN" ]]; then
@@ -55,6 +57,23 @@ run_status_refresh() {
   printf '%s\n' "$output"
 }
 
+run_status_refresh_with_env() {
+  local repo_dir="$1"
+  local label="$2"
+  local expected_skill="$3"
+  local output
+  local status=0
+  shift 3
+  output="$(cd "$repo_dir" && env "$@" "$STATUS_BIN" status --refresh 2>&1)" || status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "Expected status refresh to succeed for: $label"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+  assert_contains "$output" "$expected_skill" "$label"
+  printf '%s\n' "$output"
+}
+
 run_command_fails() {
   local repo_dir="$1"
   local label="$2"
@@ -79,6 +98,7 @@ init_repo() {
   local repo_dir="$1"
   local remote_url="${2:-}"
 
+  mkdir -p "$repo_dir"
   git -C "$repo_dir" init >/dev/null 2>&1
   git -C "$repo_dir" config user.name "Superpowers Test"
   git -C "$repo_dir" config user.email "superpowers-tests@example.com"
@@ -209,6 +229,40 @@ EOF
   run_status_refresh "$repo" "stale approved plan" "superpowers:writing-plans"
 }
 
+run_bounded_refresh() {
+  local repo="$REPO_DIR/bounded-refresh"
+  local old_spec="$repo/docs/superpowers/specs/2026-03-16-approved-design.md"
+  local newest_spec="$repo/docs/superpowers/specs/2026-03-17-newest-draft-design.md"
+  init_repo "$repo"
+
+  write_file "$old_spec" <<'EOF'
+# Older Approved Spec
+
+**Workflow State:** CEO Approved
+**Spec Revision:** 1
+**Last Reviewed By:** plan-ceo-review
+EOF
+  sleep 1
+  write_file "$newest_spec" <<'EOF'
+# Newest Draft Spec
+
+**Workflow State:** Draft
+**Spec Revision:** 2
+**Last Reviewed By:** brainstorming
+EOF
+
+  # Seed a stale expected path so refresh is forced to use fallback discovery.
+  (cd "$repo" && "$STATUS_BIN" expect --artifact spec --path "docs/superpowers/specs/missing.md" >/dev/null)
+
+  local output
+  output="$(run_status_refresh_with_env \
+    "$repo" \
+    "bounded refresh" \
+    "superpowers:plan-ceo-review" \
+    "SUPERPOWERS_WORKFLOW_STATUS_FALLBACK_LIMIT=1")"
+  assert_contains "$output" "2026-03-17-newest-draft-design.md" "bounded refresh candidate selection"
+}
+
 run_corrupted_manifest() {
   local repo="$REPO_DIR/corrupted-manifest"
   local manifest_path
@@ -252,6 +306,41 @@ run_corrupted_manifest() {
   fi
 }
 
+run_single_retry_conflict() {
+  local repo="$REPO_DIR/single-retry-conflict"
+  local manifest_path
+  local manifest_dir
+  local output
+  local status=0
+  local retry_count
+
+  init_repo "$repo"
+  run_status_refresh "$repo" "single retry bootstrap" "superpowers:brainstorming" >/dev/null
+
+  manifest_path="$(manifest_path_for_branch "$repo")"
+  manifest_dir="$(dirname "$manifest_path")"
+  chmod u-w "$manifest_dir"
+  output="$(cd "$repo" && "$STATUS_BIN" status --refresh 2>&1)" || status=$?
+  chmod u+w "$manifest_dir"
+
+  if [[ $status -ne 0 ]]; then
+    echo "Expected write conflict fallback to keep status command successful"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+
+  assert_contains "$output" "retrying once" "single retry warning"
+  assert_contains "$output" "manifest_write_conflict" "single retry conservative note"
+  assert_contains "$output" "superpowers:brainstorming" "single retry conservative route"
+
+  retry_count="$(printf '%s\n' "$output" | grep -o "retrying once" | wc -l | tr -d ' ')"
+  if (( retry_count != 1 )); then
+    echo "Expected exactly one retry attempt"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+}
+
 run_out_of_repo_expect() {
   local repo="$REPO_DIR/out-of-repo-path"
   local outside_path="$REPO_DIR/../../outside.md"
@@ -259,6 +348,7 @@ run_out_of_repo_expect() {
 
   init_repo "$repo"
   run_command_fails "$repo" "out-of-repo artifact" "Invalid" expect --artifact spec --path "$outside_path"
+  run_command_fails "$repo" "out-of-repo sync artifact" "Invalid" sync --artifact plan --path "$outside_path"
 }
 
 run_branch_isolated_manifests() {
@@ -303,7 +393,9 @@ run_draft_spec
 run_approved_spec_no_plan
 run_draft_plan
 run_stale_approved_plan
+run_bounded_refresh
 run_corrupted_manifest
+run_single_retry_conflict
 run_out_of_repo_expect
 run_branch_isolated_manifests
 

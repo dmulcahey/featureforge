@@ -1,0 +1,523 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE_DIR="${SUPERPOWERS_STATE_DIR:-$HOME/.superpowers}"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+REMOTE_URL="$(git remote get-url origin 2>/dev/null || true)"
+SLUG="$(printf '%s\n' "$REMOTE_URL" | sed 's|.*[:/]\([^/]*/[^/]*\)\.git$|\1|;s|.*[:/]\([^/]*/[^/]*\)$|\1|' | tr '/' '-')"
+[ -n "$SLUG" ] || SLUG="$(basename "$REPO_ROOT")"
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo current)"
+[ -n "$BRANCH" ] || BRANCH="current"
+[ "$BRANCH" != "HEAD" ] || BRANCH="current"
+SAFE_BRANCH="$(printf '%s\n' "$BRANCH" | sed 's/[^[:alnum:]._-]/-/g')"
+USER_NAME="$(whoami 2>/dev/null || echo user)"
+MANIFEST_PATH="$STATE_DIR/projects/$SLUG/${USER_NAME}-${SAFE_BRANCH}-workflow-state.json"
+FALLBACK_LIMIT="${SUPERPOWERS_WORKFLOW_STATUS_FALLBACK_LIMIT:-6}"
+
+MANIFEST_SPEC_PATH=""
+MANIFEST_PLAN_PATH=""
+MANIFEST_VALID=0
+MANIFEST_CORRUPT=0
+
+RESOLVED_SPEC_PATH=""
+RESOLVED_PLAN_PATH=""
+STATUS_CODE="needs_brainstorming"
+NEXT_SKILL="superpowers:brainstorming"
+STATUS_NOTE=""
+
+usage() {
+  echo "Usage: superpowers-workflow-status {status|expect|sync} ..."
+}
+
+ensure_manifest_dir() {
+  mkdir -p "$(dirname "$MANIFEST_PATH")"
+}
+
+json_escape() {
+  local value="${1:-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  printf '%s' "$value"
+}
+
+emit_json() {
+  local status_code="$1"
+  local next_skill="$2"
+  local spec_path="$3"
+  local plan_path="$4"
+  local note="${5:-}"
+  printf '{'
+  printf '"status":"%s",' "$(json_escape "$status_code")"
+  printf '"next_skill":"%s",' "$(json_escape "$next_skill")"
+  printf '"spec_path":"%s",' "$(json_escape "$spec_path")"
+  printf '"plan_path":"%s",' "$(json_escape "$plan_path")"
+  printf '"manifest_path":"%s",' "$(json_escape "$MANIFEST_PATH")"
+  printf '"root":"%s"' "$(json_escape "$REPO_ROOT")"
+  if [ -n "$note" ]; then
+    printf ',"note":"%s"' "$(json_escape "$note")"
+  fi
+  printf '}\n'
+}
+
+normalize_repo_relative_path() {
+  local input="$1" part normalized=""
+  case "$input" in
+    ''|/*) return 1 ;;
+  esac
+  input="${input//\\//}"
+  while IFS= read -r part; do
+    case "$part" in
+      ''|'.') continue ;;
+      '..') return 1 ;;
+      *) normalized="${normalized:+$normalized/}$part" ;;
+    esac
+  done < <(printf '%s\n' "$input" | tr '/' '\n')
+  [ -n "$normalized" ] || return 1
+  printf '%s\n' "$normalized"
+}
+
+repo_path_exists() {
+  local rel="$1"
+  [ -n "$rel" ] || return 1
+  [ -f "$REPO_ROOT/$rel" ]
+}
+
+manifest_get_string() {
+  local json="$1"
+  local key="$2"
+  local value
+  value="$(printf '%s\n' "$json" | sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p" | head -n1)"
+  printf '%s' "$value"
+}
+
+read_manifest() {
+  MANIFEST_SPEC_PATH=""
+  MANIFEST_PLAN_PATH=""
+  MANIFEST_VALID=0
+  MANIFEST_CORRUPT=0
+
+  if [ ! -f "$MANIFEST_PATH" ]; then
+    return 1
+  fi
+
+  local json
+  json="$(cat "$MANIFEST_PATH" 2>/dev/null || true)"
+  if [ -z "$json" ] || ! printf '%s\n' "$json" | grep -qE '^[[:space:]]*\{.*\}[[:space:]]*$'; then
+    MANIFEST_CORRUPT=1
+    return 2
+  fi
+  if ! printf '%s\n' "$json" | grep -q '"version"[[:space:]]*:[[:space:]]*1'; then
+    MANIFEST_CORRUPT=1
+    return 2
+  fi
+
+  MANIFEST_SPEC_PATH="$(manifest_get_string "$json" "expected_spec_path")"
+  MANIFEST_PLAN_PATH="$(manifest_get_string "$json" "expected_plan_path")"
+  MANIFEST_VALID=1
+  return 0
+}
+
+write_manifest() {
+  local payload="$1"
+  local tmp
+  tmp="$(mktemp "$MANIFEST_PATH.tmp.XXXXXX")"
+  printf '%s\n' "$payload" > "$tmp"
+  mv "$tmp" "$MANIFEST_PATH"
+}
+
+write_manifest_with_retry() {
+  local payload="$1"
+  local attempt
+  for attempt in 1 2; do
+    if write_manifest "$payload"; then
+      return 0
+    fi
+    if [ "$attempt" -eq 1 ]; then
+      printf 'warning: manifest write conflict, retrying once\n' >&2
+    fi
+  done
+  return 1
+}
+
+backup_corrupt_manifest() {
+  local stamp backup
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  backup="$MANIFEST_PATH.corrupt-$stamp"
+  mv "$MANIFEST_PATH" "$backup"
+  printf 'warning: corrupted workflow manifest moved to %s\n' "$backup" >&2
+}
+
+manifest_payload() {
+  local spec_path="$1"
+  local plan_path="$2"
+  local status_code="$3"
+  local next_skill="$4"
+  local now
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{'
+  printf '"version":1,'
+  printf '"repo_root":"%s",' "$(json_escape "$REPO_ROOT")"
+  printf '"branch":"%s",' "$(json_escape "$BRANCH")"
+  printf '"expected_spec_path":"%s",' "$(json_escape "$spec_path")"
+  printf '"expected_plan_path":"%s",' "$(json_escape "$plan_path")"
+  printf '"status":"%s",' "$(json_escape "$status_code")"
+  printf '"next_skill":"%s",' "$(json_escape "$next_skill")"
+  printf '"updated_at":"%s"' "$(json_escape "$now")"
+  printf '}'
+}
+
+spec_state=""
+spec_revision=""
+spec_reviewer=""
+
+parse_spec_headers() {
+  local path="$1"
+  spec_state=""
+  spec_revision=""
+  spec_reviewer=""
+  [ -f "$path" ] || return 1
+
+  spec_state="$(sed -nE 's/^\*\*Workflow State:\*\* (Draft|CEO Approved)$/\1/p' "$path" | head -n1)"
+  spec_revision="$(sed -nE 's/^\*\*Spec Revision:\*\* ([0-9]+)$/\1/p' "$path" | head -n1)"
+  spec_reviewer="$(sed -nE 's/^\*\*Last Reviewed By:\*\* (brainstorming|plan-ceo-review)$/\1/p' "$path" | head -n1)"
+
+  [ -n "$spec_state" ] && [ -n "$spec_revision" ] && [ -n "$spec_reviewer" ]
+}
+
+plan_state=""
+plan_source_spec=""
+plan_source_revision=""
+plan_reviewer=""
+
+parse_plan_headers() {
+  local path="$1"
+  plan_state=""
+  plan_source_spec=""
+  plan_source_revision=""
+  plan_reviewer=""
+  [ -f "$path" ] || return 1
+
+  plan_state="$(sed -nE 's/^\*\*Workflow State:\*\* (Draft|Engineering Approved)$/\1/p' "$path" | head -n1)"
+  plan_source_spec="$(sed -nE 's/^\*\*Source Spec:\*\* (.+)$/\1/p' "$path" | head -n1)"
+  plan_source_spec="${plan_source_spec#\`}"
+  plan_source_spec="${plan_source_spec%\`}"
+  plan_source_revision="$(sed -nE 's/^\*\*Source Spec Revision:\*\* ([0-9]+)$/\1/p' "$path" | head -n1)"
+  plan_reviewer="$(sed -nE 's/^\*\*Last Reviewed By:\*\* (writing-plans|plan-eng-review)$/\1/p' "$path" | head -n1)"
+
+  [ -n "$plan_state" ] && [ -n "$plan_source_spec" ] && [ -n "$plan_source_revision" ] && [ -n "$plan_reviewer" ]
+}
+
+list_newest_candidates() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  # shellcheck disable=SC2012
+  ls -1t "$dir"/*.md 2>/dev/null | head -n "$FALLBACK_LIMIT" || true
+}
+
+rel_from_root() {
+  local abs="$1"
+  case "$abs" in
+    "$REPO_ROOT"/*) printf '%s\n' "${abs#"$REPO_ROOT"/}" ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_preferred_spec() {
+  local normalized abs
+
+  if [ -n "$MANIFEST_SPEC_PATH" ]; then
+    normalized="$(normalize_repo_relative_path "$MANIFEST_SPEC_PATH" 2>/dev/null || true)"
+    if [ -n "$normalized" ]; then
+      abs="$REPO_ROOT/$normalized"
+      if parse_spec_headers "$abs"; then
+        RESOLVED_SPEC_PATH="$normalized"
+        return 0
+      fi
+    fi
+  fi
+
+  RESOLVED_SPEC_PATH=""
+  while IFS= read -r abs; do
+    [ -n "$abs" ] || continue
+    if rel_from_root "$abs" >/dev/null 2>&1; then
+      RESOLVED_SPEC_PATH="$(rel_from_root "$abs")"
+      return 0
+    fi
+  done < <(list_newest_candidates "$REPO_ROOT/docs/superpowers/specs")
+  return 1
+}
+
+resolve_preferred_plan() {
+  local normalized abs
+
+  if [ -n "$MANIFEST_PLAN_PATH" ]; then
+    normalized="$(normalize_repo_relative_path "$MANIFEST_PLAN_PATH" 2>/dev/null || true)"
+    if [ -n "$normalized" ]; then
+      abs="$REPO_ROOT/$normalized"
+      if parse_plan_headers "$abs"; then
+        RESOLVED_PLAN_PATH="$normalized"
+        return 0
+      fi
+    fi
+  fi
+
+  RESOLVED_PLAN_PATH=""
+  while IFS= read -r abs; do
+    [ -n "$abs" ] || continue
+    if rel_from_root "$abs" >/dev/null 2>&1; then
+      RESOLVED_PLAN_PATH="$(rel_from_root "$abs")"
+      return 0
+    fi
+  done < <(list_newest_candidates "$REPO_ROOT/docs/superpowers/plans")
+  return 1
+}
+
+derive_status() {
+  local spec_abs="" plan_abs="" normalized_source=""
+  STATUS_CODE="needs_brainstorming"
+  NEXT_SKILL="superpowers:brainstorming"
+  STATUS_NOTE=""
+
+  resolve_preferred_spec || true
+  resolve_preferred_plan || true
+
+  if [ -n "$RESOLVED_SPEC_PATH" ]; then
+    spec_abs="$REPO_ROOT/$RESOLVED_SPEC_PATH"
+  fi
+  if [ -n "$RESOLVED_PLAN_PATH" ]; then
+    plan_abs="$REPO_ROOT/$RESOLVED_PLAN_PATH"
+  fi
+
+  if [ -z "$spec_abs" ] || [ ! -f "$spec_abs" ]; then
+    STATUS_CODE="needs_brainstorming"
+    NEXT_SKILL="superpowers:brainstorming"
+    return 0
+  fi
+
+  if ! parse_spec_headers "$spec_abs"; then
+    STATUS_CODE="spec_draft"
+    NEXT_SKILL="superpowers:plan-ceo-review"
+    return 0
+  fi
+
+  if [ "$spec_state" = "Draft" ]; then
+    STATUS_CODE="spec_draft"
+    NEXT_SKILL="superpowers:plan-ceo-review"
+    return 0
+  fi
+
+  if [ -z "$plan_abs" ] || [ ! -f "$plan_abs" ]; then
+    STATUS_CODE="spec_approved_needs_plan"
+    NEXT_SKILL="superpowers:writing-plans"
+    return 0
+  fi
+
+  if ! parse_plan_headers "$plan_abs"; then
+    STATUS_CODE="plan_draft"
+    NEXT_SKILL="superpowers:plan-eng-review"
+    return 0
+  fi
+
+  if [ "$plan_state" = "Draft" ]; then
+    STATUS_CODE="plan_draft"
+    NEXT_SKILL="superpowers:plan-eng-review"
+    return 0
+  fi
+
+  normalized_source="$(normalize_repo_relative_path "$plan_source_spec" 2>/dev/null || true)"
+  if [ -z "$normalized_source" ] || [ "$normalized_source" != "$RESOLVED_SPEC_PATH" ] || [ "$plan_source_revision" != "$spec_revision" ]; then
+    STATUS_CODE="stale_plan"
+    NEXT_SKILL="superpowers:writing-plans"
+    return 0
+  fi
+
+  STATUS_CODE="implementation_ready"
+  NEXT_SKILL="superpowers:subagent-driven-development (or superpowers:executing-plans handoff)"
+  return 0
+}
+
+set_expected_artifact_path() {
+  local artifact="$1"
+  local path="$2"
+  local normalized payload rc=0
+
+  normalized="$(normalize_repo_relative_path "$path" 2>/dev/null || true)"
+  if [ -z "$normalized" ]; then
+    printf 'Invalid artifact path: %s\n' "$path" >&2
+    return 1
+  fi
+
+  case "$REPO_ROOT/$normalized" in
+    "$REPO_ROOT"/*) ;;
+    *)
+      printf 'Invalid artifact path: %s\n' "$path" >&2
+      return 1
+      ;;
+  esac
+
+  read_manifest >/dev/null 2>&1 || rc=$?
+  if [ "${rc:-0}" -eq 2 ] || [ "$MANIFEST_CORRUPT" -eq 1 ]; then
+    backup_corrupt_manifest
+    MANIFEST_SPEC_PATH=""
+    MANIFEST_PLAN_PATH=""
+  fi
+
+  if [ "$artifact" = "spec" ]; then
+    MANIFEST_SPEC_PATH="$normalized"
+  else
+    MANIFEST_PLAN_PATH="$normalized"
+  fi
+
+  derive_status
+  ensure_manifest_dir
+  payload="$(manifest_payload "$MANIFEST_SPEC_PATH" "$MANIFEST_PLAN_PATH" "$STATUS_CODE" "$NEXT_SKILL")"
+  if ! write_manifest_with_retry "$payload"; then
+    printf 'Failed to write workflow manifest at %s\n' "$MANIFEST_PATH" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+cmd_status() {
+  local refresh=0 arg payload corrupted=0
+
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --refresh) refresh=1 ;;
+      *)
+        printf 'Unknown status option: %s\n' "$arg" >&2
+        usage
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  ensure_manifest_dir
+
+  if read_manifest; then
+    :
+  else
+    if [ "$MANIFEST_CORRUPT" -eq 1 ]; then
+      backup_corrupt_manifest
+      MANIFEST_SPEC_PATH=""
+      MANIFEST_PLAN_PATH=""
+      corrupted=1
+    fi
+  fi
+
+  if [ "$refresh" -eq 1 ] || [ "$MANIFEST_VALID" -eq 0 ]; then
+    derive_status
+  else
+    derive_status
+  fi
+
+  if [ "$corrupted" -eq 1 ]; then
+    STATUS_CODE="needs_brainstorming"
+    NEXT_SKILL="superpowers:brainstorming"
+    STATUS_NOTE="corrupt_manifest_recovered"
+  fi
+
+  payload="$(manifest_payload "$RESOLVED_SPEC_PATH" "$RESOLVED_PLAN_PATH" "$STATUS_CODE" "$NEXT_SKILL")"
+  if ! write_manifest_with_retry "$payload"; then
+    STATUS_CODE="needs_brainstorming"
+    NEXT_SKILL="superpowers:brainstorming"
+    STATUS_NOTE="manifest_write_conflict"
+    emit_json "$STATUS_CODE" "$NEXT_SKILL" "$RESOLVED_SPEC_PATH" "$RESOLVED_PLAN_PATH" "$STATUS_NOTE"
+    return 0
+  fi
+
+  emit_json "$STATUS_CODE" "$NEXT_SKILL" "$RESOLVED_SPEC_PATH" "$RESOLVED_PLAN_PATH" "$STATUS_NOTE"
+}
+
+cmd_expect() {
+  local artifact="" path="" arg
+
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --artifact)
+        artifact="${2:-}"
+        shift
+        ;;
+      --path)
+        path="${2:-}"
+        shift
+        ;;
+      *)
+        printf 'Unknown expect option: %s\n' "$arg" >&2
+        usage
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  case "$artifact" in
+    spec|plan) ;;
+    *)
+      printf 'expect requires --artifact {spec|plan}\n' >&2
+      return 1
+      ;;
+  esac
+
+  if [ -z "$path" ]; then
+    printf 'expect requires --path <repo-relative-path>\n' >&2
+    return 1
+  fi
+
+  set_expected_artifact_path "$artifact" "$path" || return 1
+  emit_json "$STATUS_CODE" "$NEXT_SKILL" "$MANIFEST_SPEC_PATH" "$MANIFEST_PLAN_PATH" "expect_set"
+}
+
+cmd_sync() {
+  local artifact="" path="" arg
+
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --artifact)
+        artifact="${2:-}"
+        shift
+        ;;
+      --path)
+        path="${2:-}"
+        shift
+        ;;
+      *)
+        printf 'Unknown sync option: %s\n' "$arg" >&2
+        usage
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  if [ -n "$path" ] || [ -n "$artifact" ]; then
+    case "$artifact" in
+      spec|plan) ;;
+      *)
+        printf 'sync --path requires --artifact {spec|plan}\n' >&2
+        return 1
+        ;;
+    esac
+    if [ -z "$path" ]; then
+      printf 'sync --artifact requires --path <repo-relative-path>\n' >&2
+      return 1
+    fi
+    set_expected_artifact_path "$artifact" "$path" || return 1
+  fi
+
+  cmd_status --refresh
+}
+
+case "${1:-}" in
+  status) shift; cmd_status "$@" ;;
+  expect) shift; cmd_expect "$@" ;;
+  sync) shift; cmd_sync "$@" ;;
+  *) usage; exit 1 ;;
+esac
