@@ -478,6 +478,43 @@ run_sync_preserves_manifest_missing_expectation() {
   assert_contains "$manifest_json" "$missing_path" "manifest-backed sync manifest preserves missing path"
 }
 
+run_sync_missing_plan_preserves_stage() {
+  local repo_no_spec="$REPO_DIR/sync-missing-plan-no-spec"
+  local repo_draft_spec="$REPO_DIR/sync-missing-plan-draft-spec"
+  local repo_approved_spec="$REPO_DIR/sync-missing-plan-approved-spec"
+  local missing_plan_path="docs/superpowers/plans/2026-03-17-missing-sync-plan.md"
+  local output
+
+  init_repo "$repo_no_spec"
+  output="$(run_command_succeeds "$repo_no_spec" "sync missing plan without spec" sync --artifact plan --path "$missing_plan_path")"
+  assert_contains "$output" "missing_artifact" "sync missing plan without spec note"
+  assert_contains "$output" "superpowers:brainstorming" "sync missing plan without spec route"
+
+  init_repo "$repo_draft_spec"
+  write_file "$repo_draft_spec/docs/superpowers/specs/2026-03-17-sync-draft-spec.md" <<'EOF'
+# Draft Spec For Missing Plan Sync
+
+**Workflow State:** Draft
+**Spec Revision:** 1
+**Last Reviewed By:** brainstorming
+EOF
+  output="$(run_command_succeeds "$repo_draft_spec" "sync missing plan with draft spec" sync --artifact plan --path "$missing_plan_path")"
+  assert_contains "$output" "missing_artifact" "sync missing plan with draft spec note"
+  assert_contains "$output" "superpowers:plan-ceo-review" "sync missing plan with draft spec route"
+
+  init_repo "$repo_approved_spec"
+  write_file "$repo_approved_spec/docs/superpowers/specs/2026-03-17-sync-approved-spec.md" <<'EOF'
+# Approved Spec For Missing Plan Sync
+
+**Workflow State:** CEO Approved
+**Spec Revision:** 1
+**Last Reviewed By:** plan-ceo-review
+EOF
+  output="$(run_command_succeeds "$repo_approved_spec" "sync missing plan with approved spec" sync --artifact plan --path "$missing_plan_path")"
+  assert_contains "$output" "missing_artifact" "sync missing plan with approved spec note"
+  assert_contains "$output" "superpowers:writing-plans" "sync missing plan with approved spec route"
+}
+
 run_out_of_repo_expect() {
   local repo="$REPO_DIR/out-of-repo-path"
   local outside_path="$REPO_DIR/../../outside.md"
@@ -538,6 +575,7 @@ run_single_retry_conflict
 run_expect_sync_retry_conflict
 run_sync_missing_artifact_behavior
 run_sync_preserves_manifest_missing_expectation
+run_sync_missing_plan_preserves_stage
 run_out_of_repo_expect
 run_branch_isolated_manifests
 

@@ -698,9 +698,6 @@ cmd_sync() {
     if [ "$artifact" = "spec" ]; then
       STATUS_CODE="needs_brainstorming"
       NEXT_SKILL="superpowers:brainstorming"
-    else
-      STATUS_CODE="spec_approved_needs_plan"
-      NEXT_SKILL="superpowers:writing-plans"
     fi
   fi
 
