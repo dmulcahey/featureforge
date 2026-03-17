@@ -339,9 +339,10 @@ Clarification for the shipped contract:
 - [ ] **Step 1: Update `using-superpowers` to call the helper before manual artifact inspection**
 
 ```markdown
-- First, call `bin/superpowers-workflow-status status --refresh` when available.
-- If it returns a valid `next_skill`, use that result.
-- Only fall back to manual artifact inspection if the helper itself fails.
+- First, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh` when available.
+- If it returns a non-empty `next_skill`, use that route.
+- If it returns `status` `implementation_ready`, present the normal execution handoff.
+- Only fall back to manual artifact inspection if the helper itself is unavailable or fails.
 ```
 
 - [ ] **Step 2: Update `brainstorming`, `plan-ceo-review`, `writing-plans`, and `plan-eng-review` to use `expect` / `sync`**
@@ -362,7 +363,9 @@ Expected: regenerated `skills/*/SKILL.md` files with helper guidance included.
 
 ```bash
 # Add required patterns such as:
-# - "call `superpowers-workflow-status status --refresh`"
+# - "call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`"
+# - "If the helper returns a non-empty `next_skill`, use that route."
+# - "If the helper returns `status` `implementation_ready`, present the normal execution handoff."
 # - "record the intended spec path with `expect`"
 # - "runs `sync --artifact spec`"
 # - "runs `sync --artifact plan`"

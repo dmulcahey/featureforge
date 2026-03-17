@@ -117,53 +117,28 @@ Manifest location:
 
 - `~/.superpowers/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 
-Suggested shape:
+Shipped v1 persisted shape:
+
+The helper's internal manifest schema is intentionally flat and shell-friendly in v1. It is an internal runtime contract, not a supported public workflow-CLI schema.
 
 ```json
 {
   "version": 1,
-  "repo": {
-    "slug": "owner-repo",
-    "root": "/abs/path/to/repo"
-  },
-  "branch": {
-    "name": "dm/enhancements",
-    "safe_name": "dm-enhancements"
-  },
-  "workflow": {
-    "kind": "product-change",
-    "status": "needs_brainstorming",
-    "next_skill": "superpowers:brainstorming",
-    "reason": "No relevant spec artifact exists yet"
-  },
-  "artifacts": {
-    "spec": {
-      "path": "docs/superpowers/specs/2026-03-17-workflow-state-runtime-design.md",
-      "exists": true,
-      "workflow_state": "Draft",
-      "spec_revision": 1,
-      "last_reviewed_by": "brainstorming"
-    },
-    "plan": {
-      "path": "docs/superpowers/plans/2026-03-17-workflow-state-runtime.md",
-      "exists": false,
-      "workflow_state": null,
-      "source_spec": null,
-      "source_spec_revision": null,
-      "last_reviewed_by": null
-    }
-  },
-  "timestamps": {
-    "updated_at": "2026-03-17T12:34:56Z"
-  }
+  "repo_root": "/abs/path/to/repo",
+  "branch": "dm-enhancements",
+  "expected_spec_path": "docs/superpowers/specs/2026-03-17-workflow-state-runtime-design.md",
+  "expected_plan_path": "docs/superpowers/plans/2026-03-17-workflow-state-runtime.md",
+  "status": "needs_brainstorming",
+  "next_skill": "superpowers:brainstorming",
+  "updated_at": "2026-03-17T12:34:56Z"
 }
 ```
 
 Rules:
 
-- `workflow.status` is derived and may be rewritten whenever the helper refreshes from docs.
-- `artifacts.spec.path` and `artifacts.plan.path` may be recorded before the corresponding file exists.
-- Artifact paths should be repo-relative for portability; `repo.root` is stored only to identify the current checkout context.
+- `status` is derived and may be rewritten whenever the helper refreshes from docs.
+- `expected_spec_path` and `expected_plan_path` may be recorded before the corresponding file exists.
+- Artifact paths should be repo-relative for portability; `repo_root` is stored only to identify the current checkout context.
 - The manifest is branch-scoped so concurrent branches or worktrees in the same repo slug do not overwrite each other's workflow state.
 - Manifest writes must be atomic: write to a temp file in the same directory and rename into place.
 - The manifest must remain reconstructable from repo context plus artifact discovery.
@@ -200,7 +175,7 @@ Behavior:
 - `expect` and `sync`
   - Reject absolute paths, `..` traversal, and any normalized path that resolves outside the repo root.
 - `reason`
-  - `reason` is the canonical diagnostic field in helper JSON output and persisted manifest state.
+  - `reason` is the canonical diagnostic field in helper JSON output and persisted manifest state when a diagnostic is present.
   - `note` may remain as a compatibility alias, but it must mirror `reason` exactly.
 
 Exit codes:
