@@ -2,13 +2,16 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan.
 
+**Workflow State:** Engineering Approved
+**Source Spec:** `docs/superpowers/specs/2026-01-22-document-review-system-design.md`
+**Source Spec Revision:** 1
+**Last Reviewed By:** plan-eng-review
+
 **Goal:** Add spec and plan document review loops to the brainstorming and writing-plans skills.
 
 **Architecture:** Create reviewer prompt templates in each skill directory. Modify skill files to add review loops after document creation. Use Task tool with general-purpose subagent for reviewer dispatch.
 
 **Tech Stack:** Markdown skill files, subagent dispatch via Task tool
-
-**Spec:** docs/superpowers/specs/2026-01-22-document-review-system-design.md
 
 ---
 

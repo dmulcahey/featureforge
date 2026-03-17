@@ -1,5 +1,9 @@
 # Document Review System Design
 
+**Workflow State:** CEO Approved
+**Spec Revision:** 1
+**Last Reviewed By:** plan-ceo-review
+
 ## Overview
 
 Add two new review stages to the superpowers workflow:

@@ -1,5 +1,8 @@
 # Visual Brainstorming Refactor: Browser Displays, Terminal Commands
 
+**Workflow State:** CEO Approved
+**Spec Revision:** 1
+**Last Reviewed By:** plan-ceo-review
 **Date:** 2026-02-19
 **Status:** Approved
 **Scope:** `lib/brainstorm-server/`, `skills/brainstorming/visual-companion.md`, `tests/brainstorm-server/`

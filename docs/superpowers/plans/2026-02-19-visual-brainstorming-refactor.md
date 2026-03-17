@@ -2,13 +2,16 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Workflow State:** Engineering Approved
+**Source Spec:** `docs/superpowers/specs/2026-02-19-visual-brainstorming-refactor-design.md`
+**Source Spec Revision:** 1
+**Last Reviewed By:** plan-eng-review
+
 **Goal:** Refactor visual brainstorming from blocking TUI feedback model to non-blocking "Browser Displays, Terminal Commands" architecture.
 
 **Architecture:** Browser becomes an interactive display; terminal stays the conversation channel. Server writes user events to a per-screen `.events` file that Claude reads on its next turn. Eliminates `wait-for-feedback.sh` and all `TaskOutput` blocking.
 
 **Tech Stack:** Node.js (Express, ws, chokidar), vanilla HTML/CSS/JS
-
-**Spec:** `docs/superpowers/specs/2026-02-19-visual-brainstorming-refactor-design.md`
 
 ---
 

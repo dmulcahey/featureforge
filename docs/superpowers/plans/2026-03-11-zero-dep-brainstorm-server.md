@@ -2,13 +2,16 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Workflow State:** Engineering Approved
+**Source Spec:** `docs/superpowers/specs/2026-03-11-zero-dep-brainstorm-server-design.md`
+**Source Spec Revision:** 1
+**Last Reviewed By:** plan-eng-review
+
 **Goal:** Replace the brainstorm server's vendored node_modules with a single zero-dependency `server.js` using Node built-ins.
 
 **Architecture:** Single file with WebSocket protocol (RFC 6455 text frames), HTTP server (`http` module), and file watching (`fs.watch`). Exports protocol functions for unit testing when required as a module.
 
 **Tech Stack:** Node.js built-ins only: `http`, `crypto`, `fs`, `path`
-
-**Spec:** `docs/superpowers/specs/2026-03-11-zero-dep-brainstorm-server-design.md`
 
 **Existing tests:** `tests/brainstorm-server/ws-protocol.test.js` (unit), `tests/brainstorm-server/server.test.js` (integration)
 
