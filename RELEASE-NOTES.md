@@ -28,6 +28,12 @@ For release history before `v5.1.0 (2026-03-16)`, see the upstream README: https
 - README, platform READMEs, and install docs now document the 18-skill runtime and the `~/.superpowers/projects/` artifact convention
 - Added `docs/test-suite-enhancement-plan.md` and updated `docs/testing.md` to document the new deterministic Node tests, workflow fixtures, and opt-in eval tier
 
+### Runtime Workflow State
+
+- Added internal workflow-status helper coverage in runtime docs for `bin/superpowers-workflow-status` and `bin/superpowers-workflow-status.ps1`
+- Documented branch-scoped workflow manifests at `~/.superpowers/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
+- Clarified that workflow-status manifests are local rebuildable indexes while repo docs remain authoritative for approval state
+
 ## v5.1.0 (2026-03-16)
 
 ### Generated Skill Runtime Preambles

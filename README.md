@@ -111,8 +111,11 @@ Runtime state lives in `~/.superpowers/`.
 - Preferences live in `~/.superpowers/config.yaml`
 - Session-awareness markers live in `~/.superpowers/sessions/`
 - Contributor field reports live in `~/.superpowers/contributor-logs/`
-- Project-scoped QA handoff artifacts live in `~/.superpowers/projects/`
+- Project-scoped artifacts live in `~/.superpowers/projects/`
+- Branch-scoped workflow manifests live at `~/.superpowers/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 - Update-check cache, snooze, and just-upgraded markers live under the same state root
+
+Generated workflow skills call `bin/superpowers-workflow-status` (and `bin/superpowers-workflow-status.ps1` on Windows) as an internal runtime helper to resolve the next workflow stage, including bootstrap states before docs exist. The helper's local manifest is rebuildable; repo docs remain authoritative for spec/plan approval state.
 
 All 18 checked-in `skills/*/SKILL.md` files are generated from adjacent `SKILL.md.tmpl` sources. Regenerate them with `node scripts/gen-skill-docs.mjs` and validate freshness with `node scripts/gen-skill-docs.mjs --check`.
 
@@ -134,6 +137,7 @@ Windows (PowerShell): `& "$env:USERPROFILE\.superpowers\install\bin\superpowers-
 - `scripts/gen-skill-docs.mjs` renders every checked-in `SKILL.md` from its template and injects the shared runtime preamble used across the skill library.
 - `bin/superpowers-migrate-install` consolidates legacy platform-specific installs into the single shared checkout and recreates compatibility links when needed.
 - `bin/superpowers-config` and `bin/superpowers-update-check` manage local runtime state, contributor mode, and per-session upgrade notices under `~/.superpowers/`.
+- `bin/superpowers-workflow-status` and `bin/superpowers-workflow-status.ps1` maintain branch-scoped local workflow state and route skills conservatively when docs are missing or stale.
 - `superpowers-upgrade/SKILL.md` is the inline upgrade workflow the generated preambles hand off to when a newer runtime version is available.
 - `review/TODOS-format.md` and `review/checklist.md` are the shared review references used by the planning and code-review workflows.
 - `qa/references/issue-taxonomy.md` and `qa/templates/qa-report-template.md` are the shared QA references used by `qa-only`.

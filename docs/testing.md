@@ -18,6 +18,7 @@ bash tests/codex-runtime/test-runtime-instructions.sh
 bash tests/codex-runtime/test-workflow-enhancements.sh
 bash tests/codex-runtime/test-workflow-sequencing.sh
 bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
+bash tests/codex-runtime/test-superpowers-workflow-status.sh
 bash tests/codex-runtime/test-superpowers-config.sh
 bash tests/codex-runtime/test-superpowers-migrate-install.sh
 bash tests/codex-runtime/test-superpowers-update-check.sh
@@ -40,6 +41,7 @@ npm --prefix tests/brainstorm-server test
 - Generated `skills/*/SKILL.md` freshness plus runtime-facing install and workflow contract checks
 - Generated reviewer-agent artifact freshness for Codex and GitHub Copilot
 - Runtime helper contracts for config, update checks, migration, and upgrade flow
+- Workflow-status helper contracts for branch-scoped workflow manifests and conservative stage routing
 - PowerShell wrapper behavior, including Git Bash selection and Windows path handling
 - Install documentation and supported runtime references
 - Required support files such as `VERSION`, `review/TODOS-format.md`, `review/checklist.md`, the shared QA assets, and `superpowers-upgrade/SKILL.md`
@@ -69,6 +71,7 @@ npm --prefix tests/brainstorm-server test
 - `test-workflow-sequencing.sh` covers artifact-state routing, stage gates, and the optional worktree policy using checked-in workflow fixtures in `tests/codex-runtime/fixtures/workflow-artifacts/`
 - `tests/codex-runtime/*.test.mjs` covers the deterministic generated-skill and fixture assertions that do not need shell execution
 - `test-powershell-wrapper-bash-resolution.sh` covers shared PowerShell wrapper bash selection and override behavior
+- `test-superpowers-workflow-status.sh` covers workflow-state bootstrap, branch isolation, fallback refresh behavior, and conservative write-conflict handling
 - `test-superpowers-update-check.sh` covers semver comparison, snooze handling, and just-upgraded markers
 - `test-superpowers-upgrade-skill.sh` covers install-root resolution and direct upgrade-flow version resolution
 - `test-launch-wrappers.sh` covers the brainstorm launcher wrappers for Bash and PowerShell, including documented `C:\...` project paths
