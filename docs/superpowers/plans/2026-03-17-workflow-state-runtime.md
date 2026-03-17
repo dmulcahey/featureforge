@@ -2,10 +2,10 @@
 
 > **For Codex and GitHub Copilot workers:** REQUIRED: Use `superpowers:subagent-driven-development` when isolated-agent workflows are available in the current platform/session; otherwise use `superpowers:executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Workflow State:** Draft
+**Workflow State:** Engineering Approved
 **Source Spec:** `docs/superpowers/specs/2026-03-17-workflow-state-runtime-design.md`
 **Source Spec Revision:** 1
-**Last Reviewed By:** writing-plans
+**Last Reviewed By:** plan-eng-review
 
 **Goal:** Add a branch-scoped workflow-status runtime helper that bootstraps missing workflow artifacts, keeps repo docs authoritative, and routes the product-workflow pipeline consistently on Unix-like and Windows installs.
 
@@ -14,6 +14,60 @@
 **Tech Stack:** POSIX shell, PowerShell wrappers, generated `SKILL.md` docs from `SKILL.md.tmpl`, shell regression tests, existing Node freshness/contract tests
 
 ---
+
+## What Already Exists
+
+- `bin/superpowers-config`, `bin/superpowers-update-check`, and `bin/superpowers-migrate-install` already define the runtime-helper surface this work should match.
+- `bin/superpowers-pwsh-common.ps1` already provides the Git Bash discovery and path-conversion primitives needed for PowerShell wrapper parity.
+- `skills/using-superpowers/SKILL.md` already defines the product-workflow routing contract; this change replaces ad hoc routing logic with a helper-backed mechanism, not a new workflow.
+- `tests/codex-runtime/fixtures/workflow-artifacts/` already provides approved spec/plan fixtures for status-resolution regression coverage.
+- `skills/plan-eng-review/SKILL.md` and `skills/qa-only/SKILL.md` already use branch-aware artifacts under `~/.superpowers/projects/<repo-slug>/`.
+
+## Not In Scope
+
+- A supported user-facing workflow CLI: deferred until the internal helper contract is proven stable.
+- Manifest-authoritative approvals: repo docs stay authoritative for workflow state transitions.
+- Expanding helper-driven state to debugging, review feedback, QA-only, or branch-finishing flows in v1.
+- New non-shell runtime dependencies for the helper.
+
+## Diagrams
+
+### Helper Data Flow
+
+```text
+skill invocation
+   |
+   v
+workflow-status status --refresh
+   |
+   +--> branch-scoped manifest path
+   |       ~/.superpowers/projects/<slug>/<user>-<safe-branch>-workflow-state.json
+   |
+   +--> expected spec/plan paths from manifest
+   |       |
+   |       +--> valid and current -> derive next skill
+   |       |
+   |       +--> missing/invalid -> bounded fallback discovery
+   |
+   +--> repo docs remain authoritative
+```
+
+### Files That Should Get Inline ASCII Diagram Comments
+
+- `bin/superpowers-workflow-status` for the reconciliation flow and status-state transitions.
+
+## Failure Modes
+
+```text
+CODEPATH                      | FAILURE MODE                        | TEST? | ERROR HANDLING? | USER SEES?
+------------------------------|-------------------------------------|-------|-----------------|-------------------------------
+status --refresh              | corrupted manifest                  | Y     | Y               | warning + earlier safe stage
+status --refresh              | ambiguous artifacts after fallback  | Y     | Y               | ambiguity message
+status --refresh              | stale approved plan                 | Y     | Y               | routed back to writing-plans
+expect / sync                 | out-of-repo path input              | Y     | Y               | invalid-path error
+manifest write                | concurrent write conflict           | Y     | Y               | warning if retry fails
+branch-scoped state           | same repo, different branches       | Y     | Y               | independent manifests
+```
 
 ### Task 1: Add Failing Workflow-Status Regression Coverage
 
@@ -44,6 +98,7 @@ export SUPERPOWERS_STATE_DIR="$STATE_DIR"
 # stale approved plan -> writing-plans
 # corrupted manifest -> backup + warning + conservative route
 # out-of-repo path -> explicit failure
+# same repo slug, different branches/worktrees -> independent manifests
 ```
 
 - [ ] **Step 2: Run the new test to verify it fails because the helper does not exist yet**
@@ -64,6 +119,15 @@ Expected: FAIL with `No such file or directory`, `command not found`, or missing
 
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: FAIL with missing-file errors for the new helper surfaces.
+
+- [ ] **Step 4.5: Extend the failing regression scaffold with a same-repo multi-branch isolation case**
+
+```bash
+# Create two branches in the same temp repo and assert:
+# - branch A writes .../user-branch-a-workflow-state.json
+# - branch B writes .../user-branch-b-workflow-state.json
+# - no status result on one branch reuses the other branch's manifest
+```
 
 - [ ] **Step 5: Commit the red test scaffold**
 
@@ -128,12 +192,12 @@ backup_corrupt_manifest() {
 }
 ```
 
-- [ ] **Step 4: Implement status derivation from docs first, manifest second**
+- [ ] **Step 4: Implement bounded status derivation from expected paths first, fallback discovery second**
 
 ```bash
-# Parse authoritative headers from:
-# docs/superpowers/specs/*.md
-# docs/superpowers/plans/*.md
+# First read manifest-declared spec/plan paths when present.
+# Only if they are missing, malformed, or stale, perform bounded fallback discovery
+# against docs/superpowers/specs/*.md and docs/superpowers/plans/*.md.
 #
 # Derive:
 # needs_brainstorming -> superpowers:brainstorming
@@ -144,34 +208,47 @@ backup_corrupt_manifest() {
 # implementation_ready -> superpowers:subagent-driven-development or executing-plans handoff
 ```
 
-- [ ] **Step 5: Implement `expect` and `sync` with repo-root path validation**
+- [ ] **Step 5: Implement `expect` and `sync` with shell-native repo-root path validation**
 
 ```bash
 normalize_repo_relative_path() {
-  case "$1" in
-    /*) return 1 ;;
-    *'..'*) return 1 ;;
+  local input="$1" part normalized=""
+  case "$input" in
+    ''|/*) return 1 ;;
   esac
-  local normalized
-  normalized="$(python - <<'PY' "$REPO_ROOT" "$1"
-import os, sys
-root = os.path.realpath(sys.argv[1])
-candidate = os.path.realpath(os.path.join(root, sys.argv[2]))
-if os.path.commonpath([root, candidate]) != root:
-    raise SystemExit(1)
-print(os.path.relpath(candidate, root))
-PY
-)"
+  input="${input//\\//}"
+  while IFS= read -r part; do
+    case "$part" in
+      ''|'.') continue ;;
+      '..') return 1 ;;
+      *) normalized="${normalized:+$normalized/}$part" ;;
+    esac
+  done < <(printf '%s\n' "$input" | tr '/' '\n')
+  [ -n "$normalized" ] || return 1
   printf '%s\n' "$normalized"
 }
 ```
 
-- [ ] **Step 6: Run the helper regression suite until it passes**
+- [ ] **Step 6: Cap refresh and write-conflict behavior explicitly**
+
+```bash
+# Refresh rules:
+# - check manifest-declared paths first
+# - if fallback discovery is needed, inspect only the newest bounded candidate set
+#   (for example the newest few matching spec/plan docs, not an unbounded scan)
+#
+# Write-conflict rules:
+# - atomic same-directory write + rename
+# - single retry on conflict
+# - conservative route if the retry still fails
+```
+
+- [ ] **Step 7: Run the helper regression suite until it passes**
 
 Run: `bash tests/codex-runtime/test-superpowers-workflow-status.sh`
-Expected: PASS with bootstrap, approval-state, corruption-recovery, and path-rejection assertions green.
+Expected: PASS with bootstrap, approval-state, corruption-recovery, branch-isolation, bounded-refresh, single-retry, and path-rejection assertions green.
 
-- [ ] **Step 7: Commit the helper implementation**
+- [ ] **Step 8: Commit the helper implementation**
 
 ```bash
 git add bin/superpowers-workflow-status tests/codex-runtime/test-superpowers-workflow-status.sh
