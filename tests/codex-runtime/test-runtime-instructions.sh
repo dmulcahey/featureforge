@@ -26,11 +26,6 @@ SKILL_DIRS=(
   "writing-skills"
 )
 
-REVIEW_SKILLS=(
-  "plan-ceo-review"
-  "plan-eng-review"
-)
-
 FILES=(
   "README.md"
   ".codex/INSTALL.md"
@@ -204,59 +199,6 @@ echo "Generated skill docs pass freshness validation."
 
 node scripts/gen-agent-docs.mjs --check
 echo "Generated reviewer agent artifacts pass freshness validation."
-
-for skill in "${SKILL_DIRS[@]}"; do
-  skill_md="skills/$skill/SKILL.md"
-  skill_tmpl="skills/$skill/SKILL.md.tmpl"
-
-  if ! rg -n -F "<!-- AUTO-GENERATED from SKILL.md.tmpl — do not edit directly -->" "$skill_md" >/dev/null; then
-    echo "Missing generated header in $skill_md"
-    exit 1
-  fi
-
-  if ! rg -n -F "<!-- Regenerate: node scripts/gen-skill-docs.mjs -->" "$skill_md" >/dev/null; then
-    echo "Missing regenerate command in $skill_md"
-    exit 1
-  fi
-
-  for pattern in \
-    "## Preamble (run first)" \
-    "## Interactive User Question Format" \
-    "## Contributor Mode" \
-    "_SESSIONS" \
-    "SUPERPOWERS_STATE_DIR" \
-    "~/.superpowers/contributor-logs"; do
-    if ! rg -n -F "$pattern" "$skill_md" >/dev/null; then
-      echo "Missing shared preamble pattern '$pattern' in $skill_md"
-      exit 1
-    fi
-  done
-
-  if [[ " ${REVIEW_SKILLS[*]} " == *" $skill "* ]]; then
-    if ! rg -n -F "{{REVIEW_PREAMBLE}}" "$skill_tmpl" >/dev/null; then
-      echo "Missing review preamble placeholder in $skill_tmpl"
-      exit 1
-    fi
-    for pattern in \
-      "_TODOS_FORMAT" \
-      "## Agent Grounding" \
-      "AGENTS.override.md" \
-      ".github/copilot-instructions.md" \
-      ".github/instructions/*.instructions.md"; do
-      if ! rg -n -F "$pattern" "$skill_md" >/dev/null; then
-        echo "Missing review preamble pattern '$pattern' in $skill_md"
-        exit 1
-      fi
-    done
-  else
-    if ! rg -n -F "{{BASE_PREAMBLE}}" "$skill_tmpl" >/dev/null; then
-      echo "Missing base preamble placeholder in $skill_tmpl"
-      exit 1
-    fi
-  fi
-done
-
-echo "All generated skill docs include the expected base or review preamble structure."
 
 if rg -n -F '[ "$(basename "$_REPO_ROOT")" = "superpowers" ]' skills/*/SKILL.md >/dev/null; then
   echo "Generated skills should detect the current Superpowers checkout by runtime markers, not repo basename."

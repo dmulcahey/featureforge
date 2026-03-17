@@ -50,19 +50,21 @@ require_pattern README.md 'Workspace preparation is the user'"'"'s responsibilit
 require_pattern docs/README.codex.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
 require_pattern docs/README.copilot.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
 
+WORKFLOW_FIXTURE_DIR="tests/codex-runtime/fixtures/workflow-artifacts"
+
 for file in \
-  docs/superpowers/specs/2026-01-22-document-review-system-design.md \
-  docs/superpowers/specs/2026-02-19-visual-brainstorming-refactor-design.md \
-  docs/superpowers/specs/2026-03-11-zero-dep-brainstorm-server-design.md; do
+  "$WORKFLOW_FIXTURE_DIR/specs/2026-01-22-document-review-system-design.md" \
+  "$WORKFLOW_FIXTURE_DIR/specs/2026-02-19-visual-brainstorming-refactor-design.md" \
+  "$WORKFLOW_FIXTURE_DIR/specs/2026-03-11-zero-dep-brainstorm-server-design.md"; do
   require_pattern "$file" "**Workflow State:** CEO Approved"
   require_pattern "$file" "**Spec Revision:** 1"
   require_pattern "$file" "**Last Reviewed By:** plan-ceo-review"
 done
 
 for file in \
-  docs/superpowers/plans/2026-01-22-document-review-system.md \
-  docs/superpowers/plans/2026-02-19-visual-brainstorming-refactor.md \
-  docs/superpowers/plans/2026-03-11-zero-dep-brainstorm-server.md; do
+  "$WORKFLOW_FIXTURE_DIR/plans/2026-01-22-document-review-system.md" \
+  "$WORKFLOW_FIXTURE_DIR/plans/2026-02-19-visual-brainstorming-refactor.md" \
+  "$WORKFLOW_FIXTURE_DIR/plans/2026-03-11-zero-dep-brainstorm-server.md"; do
   require_pattern "$file" "**Workflow State:** Engineering Approved"
   require_pattern "$file" "**Source Spec:**"
   require_pattern "$file" "**Source Spec Revision:** 1"
