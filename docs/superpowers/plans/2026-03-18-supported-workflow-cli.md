@@ -522,9 +522,7 @@ Expected: PASS
 Run: `node --test tests/codex-runtime/*.test.mjs`
 Expected: PASS
 
-- [ ] **Step 6: Commit docs and release-surface updates**
-
-  **Execution Note:** Active - Commit docs and release-surface updates
+- [x] **Step 6: Commit docs and release-surface updates**
 ```bash
 git add README.md docs/README.codex.md docs/README.copilot.md docs/testing.md RELEASE-NOTES.md tests/codex-runtime/test-runtime-instructions.sh
 git commit -m "docs: document supported workflow cli"

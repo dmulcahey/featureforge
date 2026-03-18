@@ -446,3 +446,22 @@
 - `bash tests/codex-runtime/test-runtime-instructions.sh && bash tests/codex-runtime/test-superpowers-workflow-status.sh && bash tests/codex-runtime/test-superpowers-workflow.sh && bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh && bash tests/codex-runtime/test-workflow-enhancements.sh && bash tests/codex-runtime/test-workflow-sequencing.sh && node --test tests/codex-runtime/*.test.mjs` -> PASS
 **Invalidation Reason:** N/A
 
+### Task 5 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:25:41Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Committed the supported workflow CLI documentation and release-surface updates.
+**Files:**
+- README.md
+- RELEASE-NOTES.md
+- docs/README.codex.md
+- docs/README.copilot.md
+- docs/superpowers/execution-evidence/2026-03-18-supported-workflow-cli-r1-evidence.md
+- docs/superpowers/plans/2026-03-18-supported-workflow-cli.md
+- docs/testing.md
+- tests/codex-runtime/test-runtime-instructions.sh
+**Verification:**
+- Manual inspection only: Committed Task 5 as 90799ad with the README/platform docs, testing docs, release notes, runtime contract checks, and execution tracking in sync.
+**Invalidation Reason:** N/A
+

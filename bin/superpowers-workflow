@@ -177,11 +177,12 @@ next_text() {
 artifact_line() {
   local label="$1"
   local path="$2"
+  local root="$3"
   if [ -z "$path" ]; then
     printf -- '- %s: none\n' "$label"
     return
   fi
-  if [ -f "$path" ]; then
+  if [ -n "$root" ] && [ -f "$root/$path" ]; then
     printf -- '- %s: %s (from repo docs)\n' "$label" "$path"
   else
     printf -- '- %s: %s (expected, missing)\n' "$label" "$path"
@@ -341,13 +342,14 @@ render_next() {
 render_artifacts() {
   local resolve_json="$1"
   local debug="$2"
-  local spec_path plan_path
+  local spec_path plan_path root
   spec_path="$(json_field "$resolve_json" "spec_path")"
   plan_path="$(json_field "$resolve_json" "plan_path")"
+  root="$(json_field "$resolve_json" "root")"
 
   printf 'Workflow artifacts\n'
-  artifact_line "Spec" "$spec_path"
-  artifact_line "Plan" "$plan_path"
+  artifact_line "Spec" "$spec_path" "$root"
+  artifact_line "Plan" "$plan_path" "$root"
   if [ "$debug" -eq 1 ]; then
     render_debug "$resolve_json"
   fi

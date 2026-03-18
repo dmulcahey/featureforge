@@ -327,6 +327,24 @@ EOF
   assert_contains "$output" "- Plan: ${missing_plan} (expected, missing)" "artifacts expected missing plan"
 }
 
+run_artifacts_from_subdir_uses_repo_root() {
+  local repo="$REPO_DIR/artifacts-from-subdir"
+  init_repo "$repo"
+  write_file "$repo/docs/superpowers/specs/2026-03-18-subdir-spec.md" <<'EOF'
+# Subdir Spec
+
+**Workflow State:** Draft
+**Spec Revision:** 1
+**Last Reviewed By:** brainstorming
+EOF
+  mkdir -p "$repo/subdir"
+
+  local output
+  output="$(cd "$repo/subdir" && "$WORKFLOW_BIN" artifacts 2>&1)"
+  assert_contains "$output" "- Spec: docs/superpowers/specs/2026-03-18-subdir-spec.md (from repo docs)" "artifacts from subdir"
+  assert_not_contains "$output" "(expected, missing)" "artifacts from subdir"
+}
+
 run_explain_ambiguity() {
   local repo="$REPO_DIR/explain-ambiguity"
   init_repo "$repo"
@@ -671,6 +689,7 @@ run_status_stale_plan
 run_next_implementation_ready
 run_artifacts_empty
 run_artifacts_expected_missing_plan
+run_artifacts_from_subdir_uses_repo_root
 run_explain_ambiguity
 run_explain_ambiguous_plan
 run_explain_malformed_spec
