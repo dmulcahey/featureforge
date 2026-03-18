@@ -248,9 +248,7 @@ Expected: FAIL because the internal read-only resolver contract does not exist y
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: FAIL with missing runtime file errors for the new CLI surfaces.
 
-- [ ] **Step 7: Commit the red test surface**
-
-  **Execution Note:** Active - Commit the red test surface
+- [x] **Step 7: Commit the red test surface**
 ```bash
 git add tests/codex-runtime/test-superpowers-workflow.sh tests/codex-runtime/test-superpowers-workflow-status.sh tests/codex-runtime/test-runtime-instructions.sh
 git commit -m "test: add workflow cli contract coverage"
@@ -263,7 +261,7 @@ git commit -m "test: add workflow cli contract coverage"
 - Modify: `tests/codex-runtime/test-superpowers-workflow-status.sh`
 - Test: `bash tests/codex-runtime/test-superpowers-workflow-status.sh`
 
-- [ ] **Step 1: Refactor the existing helper into explicit read-only and mutating phases**
+- [x] **Step 1: Refactor the existing helper into explicit read-only and mutating phases**
 ```bash
 # Inside bin/superpowers-workflow-status
 # - keep shared parsing/path helpers near the top
@@ -271,7 +269,7 @@ git commit -m "test: add workflow cli contract coverage"
 # - make the command entrypoints call those smaller functions
 ```
 
-- [ ] **Step 2: Implement a read-only resolver entrypoint in the existing helper**
+- [x] **Step 2: Implement a read-only resolver entrypoint in the existing helper**
 ```bash
 cmd_resolve() {
   # returns JSON with:
@@ -287,7 +285,7 @@ cmd_resolve() {
 }
 ```
 
-- [ ] **Step 3: Keep read-only resolution strictly non-mutating**
+- [x] **Step 3: Keep read-only resolution strictly non-mutating**
 ```bash
 # Required guards inside `cmd_resolve` and the functions it calls:
 # - never call write_manifest_with_retry
@@ -296,7 +294,7 @@ cmd_resolve() {
 # - read alternate manifests only as diagnostic candidates
 ```
 
-- [ ] **Step 4: Expose the internal resolver subcommand without changing the supported helper surfaces**
+- [x] **Step 4: Expose the internal resolver subcommand without changing the supported helper surfaces**
 ```bash
 case "${1:-}" in
   status) shift; cmd_status "$@" ;;
@@ -307,7 +305,7 @@ case "${1:-}" in
 esac
 ```
 
-- [ ] **Step 5: Preserve existing mutating helper semantics on the `status --refresh`, `expect`, and `sync` codepaths**
+- [x] **Step 5: Preserve existing mutating helper semantics on the `status --refresh`, `expect`, and `sync` codepaths**
 ```bash
 # Keep:
 # - branch-scoped manifest writes
@@ -316,7 +314,7 @@ esac
 # - canonical JSON fields used by skills
 ```
 
-- [ ] **Step 6: Add deterministic failure-class coverage to the helper suite**
+- [x] **Step 6: Add deterministic failure-class coverage to the helper suite**
 ```bash
 # Assert:
 # - outside repo read-only resolve -> RepoContextUnavailable
@@ -325,11 +323,13 @@ esac
 # - injected unexpected abort -> ResolverRuntimeFailure
 ```
 
-- [ ] **Step 7: Run the helper suite until the read-only resolver contract passes**
+- [x] **Step 7: Run the helper suite until the read-only resolver contract passes**
 Run: `bash tests/codex-runtime/test-superpowers-workflow-status.sh`
 Expected: PASS with existing helper behavior preserved and new read-only resolver assertions green.
 
 - [ ] **Step 8: Commit the shared resolver extraction**
+
+  **Execution Note:** Active - Commit the shared resolver extraction
 ```bash
 git add bin/superpowers-workflow-status tests/codex-runtime/test-superpowers-workflow-status.sh
 git commit -m "refactor: add read-only workflow resolver"

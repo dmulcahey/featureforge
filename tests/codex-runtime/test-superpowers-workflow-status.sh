@@ -147,6 +147,26 @@ run_resolve_succeeds() {
   printf '%s\n' "$output"
 }
 
+run_resolve_fails_with_env() {
+  local repo_dir="$1"
+  local label="$2"
+  local expected_output="$3"
+  local output
+  local status=0
+  shift 3
+  output="$(cd "$repo_dir" && env "$@" "$STATUS_BIN" resolve 2>&1)" || status=$?
+  if [[ $status -eq 0 ]]; then
+    echo "Expected read-only resolve to fail for: $label"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+  if [[ -n "$expected_output" && "$output" != *"$expected_output"* && "${output,,}" != *"${expected_output,,}"* ]]; then
+    echo "Expected read-only resolve failure for ${label} to mention '${expected_output}'"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+}
+
 assert_single_line() {
   local output="$1"
   local label="$2"
@@ -874,7 +894,30 @@ run_read_only_resolve_outside_repo() {
   local outside_repo="$REPO_DIR/read-only-resolve-outside"
   mkdir -p "$outside_repo"
 
-  run_command_fails "$outside_repo" "read-only resolve outside repo" "repo" resolve
+  run_command_fails "$outside_repo" "read-only resolve outside repo" "RepoContextUnavailable" resolve
+}
+
+run_read_only_resolve_invalid_command_input() {
+  local repo="$REPO_DIR/read-only-resolve-invalid-input"
+  init_repo "$repo"
+
+  run_command_fails "$repo" "read-only resolve invalid input" "InvalidCommandInput" resolve --bogus
+}
+
+run_read_only_resolve_contract_violation() {
+  local repo="$REPO_DIR/read-only-resolve-contract"
+  init_repo "$repo"
+
+  run_resolve_fails_with_env "$repo" "read-only resolve contract violation" "ResolverContractViolation" \
+    SUPERPOWERS_WORKFLOW_RESOLVE_TEST_FAILPOINT=invalid_contract
+}
+
+run_read_only_resolve_runtime_failure() {
+  local repo="$REPO_DIR/read-only-resolve-runtime-failure"
+  init_repo "$repo"
+
+  run_resolve_fails_with_env "$repo" "read-only resolve runtime failure" "ResolverRuntimeFailure" \
+    SUPERPOWERS_WORKFLOW_RESOLVE_TEST_FAILPOINT=runtime_failure
 }
 
 run_read_only_resolve_avoids_manifest_mutation() {
@@ -972,6 +1015,9 @@ run_malformed_spec_headers
 run_malformed_plan_headers
 run_read_only_resolve_parity
 run_read_only_resolve_outside_repo
+run_read_only_resolve_invalid_command_input
+run_read_only_resolve_contract_violation
+run_read_only_resolve_runtime_failure
 run_read_only_resolve_avoids_manifest_mutation
 run_implementation_ready
 
