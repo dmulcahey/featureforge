@@ -297,8 +297,8 @@
 
 ### Task 3 Step 8
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-18T13:14:17Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-18T13:49:08Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Committed the public bash workflow CLI implementation.
 **Files:**
@@ -310,6 +310,18 @@
 - tests/codex-runtime/test-superpowers-workflow.sh
 **Verification:**
 - Manual inspection only: Committed Task 3 as f098f34 with the bash CLI, shared resolver refinements, expanded public/runtime coverage, and execution tracking in sync.
+**Invalidation Reason:** Public CLI explain output changed after deeper review
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:49:56Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Tightened the public CLI explain rerun hint to use the stable supported command and added regression coverage.
+**Files:**
+- bin/superpowers-workflow
+- tests/codex-runtime/test-superpowers-workflow.sh
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-workflow.sh` -> PASS
 **Invalidation Reason:** N/A
 
 ### Task 4 Step 1
@@ -448,8 +460,8 @@
 
 ### Task 5 Step 6
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-18T13:25:41Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-18T13:50:28Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Committed the supported workflow CLI documentation and release-surface updates.
 **Files:**
@@ -463,5 +475,17 @@
 - tests/codex-runtime/test-runtime-instructions.sh
 **Verification:**
 - Manual inspection only: Committed Task 5 as 90799ad with the README/platform docs, testing docs, release notes, runtime contract checks, and execution tracking in sync.
+**Invalidation Reason:** Runtime TODO state was stale after the workflow CLI shipped
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:50:43Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Moved the shipped workflow CLI TODO to Completed and added a runtime contract check to keep the active docs in sync.
+**Files:**
+- TODOS.md
+- tests/codex-runtime/test-runtime-instructions.sh
+**Verification:**
+- `bash tests/codex-runtime/test-runtime-instructions.sh` -> PASS
 **Invalidation Reason:** N/A
 
