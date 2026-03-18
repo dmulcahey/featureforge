@@ -234,7 +234,13 @@ require_pattern skills/plan-ceo-review/accelerated-reviewer-prompt.md "Do not wr
 
 require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Respect BIG CHANGE vs SMALL CHANGE."
 require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "For SMALL CHANGE, return at most one primary issue per canonical ENG section."
+require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Return a structured section packet only."
 require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Do not write files or approve execution."
+require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Escalate any high-judgment issue individually."
+require_pattern docs/README.codex.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
+require_pattern docs/README.codex.md "Only the user can initiate accelerated review, and section approval plus final approval remain human-owned even when the review uses reviewer subagents and persisted section packets."
+require_pattern docs/README.copilot.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
+require_pattern docs/README.copilot.md "Only the user can initiate accelerated review, and section approval plus final approval remain human-owned even when the review uses reviewer subagents and persisted section packets."
 
 if rg -n -F '[ "$(basename "$_REPO_ROOT")" = "superpowers" ]' skills/*/SKILL.md >/dev/null; then
   echo "Generated skills should detect the current Superpowers checkout by runtime markers, not repo basename."
