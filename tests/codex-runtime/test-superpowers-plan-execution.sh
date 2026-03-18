@@ -595,6 +595,38 @@ EOF
   run_command_fails "$repo_dir" MalformedExecutionState status --plan "$PLAN_REL" >/dev/null
 }
 
+run_status_rejects_absolute_persisted_file_entry() {
+  local repo_dir="$REPO_DIR/absolute-persisted-file-entry"
+  local evidence_rel
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_plan "$repo_dir" "superpowers:executing-plans"
+  evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+  write_file "$repo_dir/$evidence_rel" <<EOF
+# Execution Evidence: 2026-03-17-example-execution-plan
+
+**Plan Path:** ${PLAN_REL}
+**Plan Revision:** 1
+
+## Step Evidence
+
+### Task 1 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-17T14:22:31Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Prepared the workspace for execution.
+**Files:**
+- /tmp/outside.md
+**Verification:**
+- \`bash tests/codex-runtime/test-superpowers-plan-execution.sh\` -> passed in fixture setup
+**Invalidation Reason:** N/A
+EOF
+
+  run_command_fails "$repo_dir" MalformedExecutionState status --plan "$PLAN_REL" >/dev/null
+}
+
 # Approved artifact header contract regressions.
 run_status_rejects_missing_last_reviewed_by_on_approved_plan() {
   local repo_dir="$REPO_DIR/missing-last-reviewed-by-approved-plan"
@@ -628,6 +660,22 @@ run_status_rejects_malformed_last_reviewed_by_on_approved_plan() {
   run_command_fails "$repo_dir" PlanNotExecutionReady status --plan "$PLAN_REL" >/dev/null
 }
 
+run_status_rejects_out_of_range_last_reviewed_by_on_approved_plan() {
+  local repo_dir="$REPO_DIR/out-of-range-last-reviewed-by-approved-plan"
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_plan "$repo_dir" "none"
+  node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    const text = fs.readFileSync(path, "utf8");
+    fs.writeFileSync(path, text.replace("**Last Reviewed By:** plan-eng-review\n", "**Last Reviewed By:** brainstorming\n"));
+  ' "$repo_dir/$PLAN_REL"
+
+  run_command_fails "$repo_dir" PlanNotExecutionReady status --plan "$PLAN_REL" >/dev/null
+}
+
 run_status_rejects_missing_last_reviewed_by_on_ceo_approved_spec() {
   local repo_dir="$REPO_DIR/missing-last-reviewed-by-ceo-approved-spec"
 
@@ -655,6 +703,22 @@ run_status_rejects_malformed_last_reviewed_by_on_ceo_approved_spec() {
     const path = process.argv[1];
     const text = fs.readFileSync(path, "utf8");
     fs.writeFileSync(path, text.replace("**Last Reviewed By:** plan-ceo-review\n", "**Last Reviewed By:**   \n"));
+  ' "$repo_dir/$SPEC_REL"
+
+  run_command_fails "$repo_dir" PlanNotExecutionReady status --plan "$PLAN_REL" >/dev/null
+}
+
+run_status_rejects_out_of_range_last_reviewed_by_on_ceo_approved_spec() {
+  local repo_dir="$REPO_DIR/out-of-range-last-reviewed-by-ceo-approved-spec"
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_plan "$repo_dir" "none"
+  node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    const text = fs.readFileSync(path, "utf8");
+    fs.writeFileSync(path, text.replace("**Last Reviewed By:** plan-ceo-review\n", "**Last Reviewed By:** writing-plans\n"));
   ' "$repo_dir/$SPEC_REL"
 
   run_command_fails "$repo_dir" PlanNotExecutionReady status --plan "$PLAN_REL" >/dev/null
@@ -1262,10 +1326,13 @@ run_status_rejects_whitespace_only_persisted_verification
 run_status_rejects_whitespace_only_persisted_invalidation_reason
 run_status_rejects_whitespace_only_persisted_file_entry
 run_status_rejects_traversal_persisted_file_entry
+run_status_rejects_absolute_persisted_file_entry
 run_status_rejects_missing_last_reviewed_by_on_approved_plan
 run_status_rejects_malformed_last_reviewed_by_on_approved_plan
+run_status_rejects_out_of_range_last_reviewed_by_on_approved_plan
 run_status_rejects_missing_last_reviewed_by_on_ceo_approved_spec
 run_status_rejects_malformed_last_reviewed_by_on_ceo_approved_spec
+run_status_rejects_out_of_range_last_reviewed_by_on_ceo_approved_spec
 run_status_rejects_noncontiguous_attempt_numbering
 run_recommend_returns_bounded_decision_flags
 run_recommend_rejects_post_start_calls
