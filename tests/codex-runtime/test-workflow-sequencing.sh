@@ -97,8 +97,15 @@ require_absent_pattern skills/subagent-driven-development/SKILL.md "Mark task co
 require_absent_pattern skills/executing-plans/SKILL.md "track the work in your platform's task checklist"
 require_pattern skills/requesting-code-review/SKILL.md 'rejects final review if the plan has invalid execution state or required unfinished work not truthfully represented'
 require_pattern skills/requesting-code-review/SKILL.md 'must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself'
+require_pattern skills/requesting-code-review/SKILL.md 'For plan-routed final review, require the exact approved plan path from the current execution handoff or session context.'
+require_pattern skills/requesting-code-review/SKILL.md 'Run `superpowers-plan-execution status --plan <approved-plan-path>` before dispatching the reviewer.'
+require_pattern skills/requesting-code-review/SKILL.md 'If helper status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state.'
+require_pattern skills/requesting-code-review/SKILL.md 'Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context.'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'rejects branch-completion handoff if the approved plan is execution-dirty or malformed'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'must not allow branch completion while any checked-off plan step still lacks semantic implementation evidence'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'If the current work was executed from an approved Superpowers plan, require the exact approved plan path from the current execution workflow context before presenting completion options.'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'Run `superpowers-plan-execution status --plan <approved-plan-path>` and read the returned `evidence_path` before presenting completion options.'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'If the exact approved plan path is unavailable or helper status fails, stop and return to the current execution flow instead of guessing.'
 require_pattern skills/plan-eng-review/SKILL.md '**The terminal state is presenting the execution handoff with the approved plan path.**'
 require_pattern skills/plan-eng-review/SKILL.md 'Do not start implementation inside `plan-eng-review`.'
 require_pattern skills/subagent-driven-development/SKILL.md "## Implementation Preflight"
@@ -120,6 +127,9 @@ require_pattern docs/superpowers/plans/2026-03-17-workflow-state-runtime.md 'If 
 require_pattern docs/superpowers/plans/2026-03-17-workflow-state-runtime.md 'If the helper returns `status` `implementation_ready`, present the normal execution handoff.'
 require_pattern docs/superpowers/plans/2026-03-17-workflow-state-runtime.md '`status --summary` is human-oriented'
 require_pattern docs/superpowers/plans/2026-03-17-workflow-state-runtime.md '`reason` is the canonical diagnostic field'
+require_pattern skills/requesting-code-review/code-reviewer.md '**Approved plan path:** {APPROVED_PLAN_PATH}'
+require_pattern skills/requesting-code-review/code-reviewer.md '**Execution evidence path:** {EXECUTION_EVIDENCE_PATH}'
+require_pattern skills/requesting-code-review/code-reviewer.md 'When approved plan and execution evidence paths are provided, read both artifacts and verify that checked-off plan steps are semantically satisfied by the implementation and explicitly evidenced.'
 
 WORKFLOW_FIXTURE_DIR="tests/codex-runtime/fixtures/workflow-artifacts"
 
