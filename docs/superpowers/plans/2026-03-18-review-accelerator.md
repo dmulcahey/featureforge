@@ -456,9 +456,7 @@ Expected: PASS when eval credentials are present and the judge confirms:
 
 Otherwise intentionally skip this step and record that the eval environment was unavailable.
 
-- [ ] **Step 11: Commit the docs and verification finish**
-
-  **Execution Note:** Active - Commit the docs and verification finish
+- [x] **Step 11: Commit the docs and verification finish**
 ```bash
 git add README.md tests/codex-runtime/test-workflow-sequencing.sh tests/codex-runtime/test-runtime-instructions.sh tests/evals/README.md tests/evals/review-accelerator-contract.eval.mjs
 git commit -m "docs: document accelerated review workflow"
