@@ -946,6 +946,36 @@ EOF
   fi
 }
 
+run_read_only_resolve_preserves_missing_expected_paths() {
+  local repo_spec="$REPO_DIR/read-only-resolve-missing-expected-spec"
+  local repo_plan="$REPO_DIR/read-only-resolve-missing-expected-plan"
+  local missing_spec="docs/superpowers/specs/2026-03-18-missing-expected-spec.md"
+  local missing_plan="docs/superpowers/plans/2026-03-18-missing-expected-plan.md"
+  local resolve_output
+
+  init_repo "$repo_spec"
+  run_command_succeeds "$repo_spec" "set expected missing spec for read-only resolve" \
+    expect --artifact spec --path "$missing_spec" >/dev/null
+  resolve_output="$(run_resolve_succeeds "$repo_spec" "read-only resolve preserves missing expected spec")"
+  assert_contains "$resolve_output" "\"spec_path\":\"$missing_spec\"" "read-only resolve missing expected spec path"
+  assert_contains "$resolve_output" '"reason":"missing_expected_spec"' "read-only resolve missing expected spec reason"
+
+  init_repo "$repo_plan"
+  write_file "$repo_plan/docs/superpowers/specs/2026-03-18-approved-spec.md" <<'EOF'
+# Approved Spec
+
+**Workflow State:** CEO Approved
+**Spec Revision:** 1
+**Last Reviewed By:** plan-ceo-review
+EOF
+
+  run_command_succeeds "$repo_plan" "set expected missing plan for read-only resolve" \
+    expect --artifact plan --path "$missing_plan" >/dev/null
+  resolve_output="$(run_resolve_succeeds "$repo_plan" "read-only resolve preserves missing expected plan")"
+  assert_contains "$resolve_output" "\"plan_path\":\"$missing_plan\"" "read-only resolve missing expected plan path"
+  assert_contains "$resolve_output" '"reason":"missing_expected_plan"' "read-only resolve missing expected plan reason"
+}
+
 run_implementation_ready() {
   local repo="$REPO_DIR/implementation-ready"
   local spec_path="$repo/docs/superpowers/specs/2026-03-17-implementation-ready-design.md"
@@ -1019,6 +1049,7 @@ run_read_only_resolve_invalid_command_input
 run_read_only_resolve_contract_violation
 run_read_only_resolve_runtime_failure
 run_read_only_resolve_avoids_manifest_mutation
+run_read_only_resolve_preserves_missing_expected_paths
 run_implementation_ready
 
 echo "superpowers-workflow-status regression scaffold passed."

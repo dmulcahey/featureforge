@@ -327,9 +327,7 @@ esac
 Run: `bash tests/codex-runtime/test-superpowers-workflow-status.sh`
 Expected: PASS with existing helper behavior preserved and new read-only resolver assertions green.
 
-- [ ] **Step 8: Commit the shared resolver extraction**
-
-  **Execution Note:** Active - Commit the shared resolver extraction
+- [x] **Step 8: Commit the shared resolver extraction**
 ```bash
 git add bin/superpowers-workflow-status tests/codex-runtime/test-superpowers-workflow-status.sh
 git commit -m "refactor: add read-only workflow resolver"
@@ -342,7 +340,7 @@ git commit -m "refactor: add read-only workflow resolver"
 - Modify: `tests/codex-runtime/test-superpowers-workflow.sh`
 - Test: `bash tests/codex-runtime/test-superpowers-workflow.sh`
 
-- [ ] **Step 1: Add the public command parser and shared option handling**
+- [x] **Step 1: Add the public command parser and shared option handling**
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -356,7 +354,7 @@ case "$command" in
 esac
 ```
 
-- [ ] **Step 2: Implement `help` as a repo-independent command**
+- [x] **Step 2: Implement `help` as a repo-independent command**
 ```text
 Supported commands:
   superpowers-workflow status
@@ -369,7 +367,7 @@ Diagnostics:
   --debug  Show resolver details without changing workflow state
 ```
 
-- [ ] **Step 3: Shell out to the internal read-only resolver and validate the returned contract**
+- [x] **Step 3: Shell out to the internal read-only resolver and validate the returned contract**
 ```bash
 resolver_json="$("$STATUS_BIN" resolve --debug="$debug")" || {
   render_runtime_failure "WrapperExecutionFailed" "Could not run the internal workflow resolver."
@@ -378,7 +376,7 @@ resolver_json="$("$STATUS_BIN" resolve --debug="$debug")" || {
 # Validate required keys before rendering.
 ```
 
-- [ ] **Step 4: Render the public `status`, `next`, `artifacts`, and `explain` outputs**
+- [x] **Step 4: Render the public `status`, `next`, `artifacts`, and `explain` outputs**
 ```text
 Workflow status: Plan writing needed
 Why: The spec is approved, but no current plan is available.
@@ -387,14 +385,14 @@ Spec: docs/superpowers/specs/2026-03-18-supported-workflow-cli-design.md
 Plan: none
 ```
 
-- [ ] **Step 5: Keep `implementation_ready` inside the product-workflow boundary**
+- [x] **Step 5: Keep `implementation_ready` inside the product-workflow boundary**
 ```text
 Next safe step: Use the approved plan for execution handoff.
 Plan: docs/superpowers/plans/2026-03-18-supported-workflow-cli.md
 Execution recommendation stays with superpowers-plan-execution.
 ```
 
-- [ ] **Step 6: Implement `--debug` without changing the default human contract**
+- [x] **Step 6: Implement `--debug` without changing the default human contract**
 ```text
 Debug:
 - resolver_outcome=resolved
@@ -403,11 +401,13 @@ Debug:
 - failure_class=RepoContextUnavailable
 ```
 
-- [ ] **Step 7: Run the public CLI suite until all supported states and failures pass**
+- [x] **Step 7: Run the public CLI suite until all supported states and failures pass**
 Run: `bash tests/codex-runtime/test-superpowers-workflow.sh`
 Expected: PASS with command-by-state, non-mutation, and debug/failure coverage green.
 
 - [ ] **Step 8: Commit the public bash CLI**
+
+  **Execution Note:** Active - Commit the public bash CLI
 ```bash
 git add bin/superpowers-workflow tests/codex-runtime/test-superpowers-workflow.sh
 git commit -m "feat: add public workflow cli"

@@ -410,6 +410,7 @@ resolve_preferred_spec() {
         fi
         RESOLVED_SPEC_PATH="$normalized"
       else
+        RESOLVED_SPEC_PATH="$normalized"
         SPEC_EXPECTED_MISSING=1
       fi
     else
@@ -480,6 +481,7 @@ resolve_preferred_plan() {
         fi
         RESOLVED_PLAN_PATH="$normalized"
       else
+        RESOLVED_PLAN_PATH="$normalized"
         PLAN_EXPECTED_MISSING=1
       fi
     else

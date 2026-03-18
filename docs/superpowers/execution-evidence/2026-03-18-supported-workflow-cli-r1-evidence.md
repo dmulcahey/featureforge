@@ -190,3 +190,108 @@
 - Manual inspection only: bash tests/codex-runtime/test-superpowers-workflow-status.sh passed after the resolve implementation.
 **Invalidation Reason:** N/A
 
+### Task 2 Step 8
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T12:54:38Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Committed the read-only workflow resolver extraction.
+**Files:**
+- bin/superpowers-workflow-status
+- docs/superpowers/execution-evidence/2026-03-18-supported-workflow-cli-r1-evidence.md
+- docs/superpowers/plans/2026-03-18-supported-workflow-cli.md
+- tests/codex-runtime/test-superpowers-workflow-status.sh
+**Verification:**
+- Manual inspection only: Committed Task 2 as 47667bf with helper code, resolver coverage, and execution tracking kept in sync.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:12:31Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Added the public workflow CLI parser and shared option handling.
+**Files:**
+- bin/superpowers-workflow
+**Verification:**
+- Manual inspection only: Manual inspection only: Added public command parsing, shared debug handling, and centralized resolver dispatch.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:12:40Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Implemented repo-independent help text for the supported public workflow CLI.
+**Files:**
+- bin/superpowers-workflow
+**Verification:**
+- Manual inspection only: Manual inspection only: Help now succeeds without repo context and clearly distinguishes the public CLI from the internal helper.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:12:49Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Validated the read-only resolver contract and failed closed on wrapper/runtime errors.
+**Files:**
+- bin/superpowers-workflow
+**Verification:**
+- Manual inspection only: Manual inspection only: The public CLI now validates resolver output, classifies wrapper failures, and avoids success-path fallthrough on runtime errors.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:13:00Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Rendered the supported human-facing status, next, artifacts, and explain commands.
+**Files:**
+- bin/superpowers-workflow
+- tests/codex-runtime/test-superpowers-workflow.sh
+**Verification:**
+- Manual inspection only: Manual inspection only: Added human vocabulary mapping plus renderer coverage for status, next, artifacts, explain, and debug diagnostics.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:13:11Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Kept implementation-ready output at the execution handoff boundary.
+**Files:**
+- bin/superpowers-workflow
+- tests/codex-runtime/test-superpowers-workflow.sh
+**Verification:**
+- Manual inspection only: Manual inspection only: The public next command stops at approved-plan handoff wording and does not invoke execution recommendation logic.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:13:22Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Implemented debug output without changing the default human contract.
+**Files:**
+- bin/superpowers-workflow
+- tests/codex-runtime/test-superpowers-workflow.sh
+**Verification:**
+- Manual inspection only: Manual inspection only: Debug mode now exposes resolver outcome, manifest source, and failure class details while the default output stays human-first.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 7
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:13:35Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Ran the public workflow CLI regression suite until all supported states and failures passed.
+**Files:**
+- bin/superpowers-workflow
+- bin/superpowers-workflow-status
+- tests/codex-runtime/test-superpowers-workflow-status.sh
+- tests/codex-runtime/test-superpowers-workflow.sh
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-workflow.sh && bash tests/codex-runtime/test-superpowers-workflow-status.sh` -> PASS
+**Invalidation Reason:** N/A
+
