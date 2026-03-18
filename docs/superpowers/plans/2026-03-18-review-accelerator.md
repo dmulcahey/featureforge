@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** superpowers:executing-plans
 **Source Spec:** `docs/superpowers/specs/2026-03-18-review-accelerator-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -150,16 +150,14 @@ No critical gap remains in this plan if the tests below are implemented exactly 
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
-- [ ] **Step 1: Add failing activation-marker assertions to `test-workflow-sequencing.sh`**
-
+- [x] **Step 1: Add failing activation-marker assertions to `test-workflow-sequencing.sh`**
 ```bash
 # Add require_pattern checks for:
 # - explicit `accelerated` / `accelerator` activation markers in both review skills
 # - invalid activation sources such as heuristic or agent-only activation
 ```
 
-- [ ] **Step 2: Add failing section-approval and write-authority assertions to `test-workflow-sequencing.sh`**
-
+- [x] **Step 2: Add failing section-approval and write-authority assertions to `test-workflow-sequencing.sh`**
 ```bash
 # Add require_pattern checks for:
 # - section-packet / per-section approval language in both review skills
@@ -173,8 +171,7 @@ No critical gap remains in this plan if the tests below are implemented exactly 
 # - README wording that acceleration is opt-in and not a separate workflow stage
 ```
 
-- [ ] **Step 3: Extend runtime asset validation to cover the new prompt/reference files and their key contract strings**
-
+- [x] **Step 3: Extend runtime asset validation to cover the new prompt/reference files and their key contract strings**
 ```bash
 # Add these files to FILES in tests/codex-runtime/test-runtime-instructions.sh:
 "review/review-accelerator-packet-contract.md"
@@ -199,8 +196,7 @@ No critical gap remains in this plan if the tests below are implemented exactly 
 # - "Do not write files or approve execution."
 ```
 
-- [ ] **Step 4: Add the new prompt-eval scaffold**
-
+- [x] **Step 4: Add the new prompt-eval scaffold**
 ```js
 // tests/evals/review-accelerator-contract.eval.mjs
 // Read the generated CEO/ENG skill docs plus README excerpts from this branch.
@@ -213,8 +209,7 @@ No critical gap remains in this plan if the tests below are implemented exactly 
 // - persisted-packet stale/regenerate language is present
 ```
 
-- [ ] **Step 5: Document the new eval in `tests/evals/README.md`**
-
+- [x] **Step 5: Document the new eval in `tests/evals/README.md`**
 ```md
 # Add a short entry that this eval covers:
 - explicit user-only activation
@@ -225,18 +220,15 @@ No critical gap remains in this plan if the tests below are implemented exactly 
 - persisted-packet stale/regenerate language
 ```
 
-- [ ] **Step 6: Run the red workflow-sequencing test and capture the expected failure**
-
+- [x] **Step 6: Run the red workflow-sequencing test and capture the expected failure**
 Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`  
 Expected: FAIL with missing accelerated-review contract patterns in the existing skill docs or README.
 
-- [ ] **Step 7: Run the red runtime-instructions test and capture the expected failure**
-
+- [x] **Step 7: Run the red runtime-instructions test and capture the expected failure**
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`  
 Expected: FAIL because the new prompt/reference files do not exist yet, so the existence and content assertions cannot pass.
 
-- [ ] **Step 8: Commit the red contract coverage**
-
+- [x] **Step 8: Commit the red contract coverage**
 ```bash
 git add tests/codex-runtime/test-workflow-sequencing.sh tests/codex-runtime/test-runtime-instructions.sh tests/evals/review-accelerator-contract.eval.mjs tests/evals/README.md
 git commit -m "test: add review accelerator contract coverage"
@@ -252,8 +244,7 @@ git commit -m "test: add review accelerator contract coverage"
 - Test: `node scripts/gen-skill-docs.mjs`
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 
-- [ ] **Step 1: Create `review/review-accelerator-packet-contract.md` with the packet schema**
-
+- [x] **Step 1: Create `review/review-accelerator-packet-contract.md` with the packet schema**
 ```md
 # Review Accelerator Packet Contract
 
@@ -267,8 +258,7 @@ git commit -m "test: add review accelerator contract coverage"
 - fallback classes that map to manual review
 ```
 
-- [ ] **Step 2: Create `skills/plan-ceo-review/accelerated-reviewer-prompt.md`**
-
+- [x] **Step 2: Create `skills/plan-ceo-review/accelerated-reviewer-prompt.md`**
 ```md
 # Accelerated CEO Reviewer Prompt
 
@@ -279,8 +269,7 @@ Do not write files.
 Escalate any high-judgment issue individually.
 ```
 
-- [ ] **Step 3: Add explicit activation-marker rules to `skills/plan-ceo-review/SKILL.md.tmpl`**
-
+- [x] **Step 3: Add explicit activation-marker rules to `skills/plan-ceo-review/SKILL.md.tmpl`**
 ```md
 # Add or update instructions covering:
 - explicit activation marker requirement
@@ -288,8 +277,7 @@ Escalate any high-judgment issue individually.
 - non-accelerated Step 0 mode selection
 ```
 
-- [ ] **Step 4: Add canonical section-boundary and packet-approval rules to `skills/plan-ceo-review/SKILL.md.tmpl`**
-
+- [x] **Step 4: Add canonical section-boundary and packet-approval rules to `skills/plan-ceo-review/SKILL.md.tmpl`**
 ```md
 # Add or update instructions covering:
 - canonical CEO section boundaries
@@ -301,8 +289,7 @@ Escalate any high-judgment issue individually.
 - final human approval gate remains unchanged
 ```
 
-- [ ] **Step 5: Add preserved-output and write-authority rules to `skills/plan-ceo-review/SKILL.md.tmpl`**
-
+- [x] **Step 5: Add preserved-output and write-authority rules to `skills/plan-ceo-review/SKILL.md.tmpl`**
 ```md
 # Add or update instructions covering:
 - required CEO review outputs still apply in accelerated mode
@@ -310,18 +297,15 @@ Escalate any high-judgment issue individually.
 - only the main review agent may write authoritative artifacts
 ```
 
-- [ ] **Step 6: Regenerate the checked-in CEO skill doc**
-
+- [x] **Step 6: Regenerate the checked-in CEO skill doc**
 Run: `node scripts/gen-skill-docs.mjs`  
 Expected: PASS and rewrite `skills/plan-ceo-review/SKILL.md` from the updated template without errors.
 
-- [ ] **Step 7: Run the targeted workflow contract test**
-
+- [x] **Step 7: Run the targeted workflow contract test**
 Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`  
 Expected: still FAIL, but only on ENG-path or README assertions that have not been implemented yet.
 
-- [ ] **Step 8: Commit the CEO accelerated-review wiring**
-
+- [x] **Step 8: Commit the CEO accelerated-review wiring**
 ```bash
 git add review/review-accelerator-packet-contract.md skills/plan-ceo-review/accelerated-reviewer-prompt.md skills/plan-ceo-review/SKILL.md.tmpl skills/plan-ceo-review/SKILL.md
 git commit -m "feat: add accelerated CEO review contract"
@@ -336,8 +320,7 @@ git commit -m "feat: add accelerated CEO review contract"
 - Test: `node scripts/gen-skill-docs.mjs`
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 
-- [ ] **Step 1: Create `skills/plan-eng-review/accelerated-reviewer-prompt.md`**
-
+- [x] **Step 1: Create `skills/plan-eng-review/accelerated-reviewer-prompt.md`**
 ```md
 # Accelerated ENG Reviewer Prompt
 
@@ -347,8 +330,7 @@ For SMALL CHANGE, return at most one primary issue per canonical ENG section.
 Do not write files or approve execution.
 ```
 
-- [ ] **Step 2: Add explicit activation and canonical section rules to `skills/plan-eng-review/SKILL.md.tmpl`**
-
+- [x] **Step 2: Add explicit activation and canonical section rules to `skills/plan-eng-review/SKILL.md.tmpl`**
 ```md
 # Add or update instructions covering:
 - explicit activation marker requirement
@@ -357,8 +339,7 @@ Do not write files or approve execution.
 - canonical ENG sections
 ```
 
-- [ ] **Step 3: Add `SMALL CHANGE` compression and packet-approval rules to `skills/plan-eng-review/SKILL.md.tmpl`**
-
+- [x] **Step 3: Add `SMALL CHANGE` compression and packet-approval rules to `skills/plan-eng-review/SKILL.md.tmpl`**
 ```md
 # Add or update instructions covering:
 - SMALL CHANGE one-primary-issue-per-section behavior
@@ -368,8 +349,7 @@ Do not write files or approve execution.
 - no bundled approval round for accelerated SMALL CHANGE
 ```
 
-- [ ] **Step 4: Add preserved-output and QA-handoff rules to `skills/plan-eng-review/SKILL.md.tmpl`**
-
+- [x] **Step 4: Add preserved-output and QA-handoff rules to `skills/plan-eng-review/SKILL.md.tmpl`**
 ```md
 # Add or update instructions covering:
 - preserved QA handoff artifact generation
@@ -377,18 +357,15 @@ Do not write files or approve execution.
 - only the main review agent may write authoritative artifacts
 ```
 
-- [ ] **Step 5: Regenerate the checked-in ENG skill doc**
-
+- [x] **Step 5: Regenerate the checked-in ENG skill doc**
 Run: `node scripts/gen-skill-docs.mjs`  
 Expected: PASS and rewrite `skills/plan-eng-review/SKILL.md` from the updated template without errors.
 
-- [ ] **Step 6: Re-run the workflow contract test**
-
+- [x] **Step 6: Re-run the workflow contract test**
 Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`  
 Expected: FAIL only on the README contract or any remaining doc/eval gaps, not on CEO/ENG skill assertions.
 
-- [ ] **Step 7: Commit the ENG accelerated-review wiring**
-
+- [x] **Step 7: Commit the ENG accelerated-review wiring**
 ```bash
 git add skills/plan-eng-review/accelerated-reviewer-prompt.md skills/plan-eng-review/SKILL.md.tmpl skills/plan-eng-review/SKILL.md
 git commit -m "feat: add accelerated ENG review contract"
@@ -406,8 +383,7 @@ git commit -m "feat: add accelerated ENG review contract"
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 - Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 
-- [ ] **Step 1: Update the README prose for accelerated review behavior**
-
+- [x] **Step 1: Update the README prose for accelerated review behavior**
 ```md
 # README.md prose changes:
 - describe accelerated review as an opt-in branch inside CEO/ENG review
@@ -415,15 +391,13 @@ git commit -m "feat: add accelerated ENG review contract"
 - say section and final approval remain human-owned
 ```
 
-- [ ] **Step 2: Update the README Mermaid diagrams for the accelerated branch**
-
+- [x] **Step 2: Update the README Mermaid diagrams for the accelerated branch**
 ```md
 # Update Mermaid diagrams so acceleration is shown inside
 # plan-ceo-review / plan-eng-review, not as a new workflow stage.
 ```
 
-- [ ] **Step 3: Finalize the deterministic test assertions**
-
+- [x] **Step 3: Finalize the deterministic test assertions**
 ```bash
 # Ensure the shell suites now assert:
 # - explicit activation marker requirement
@@ -433,8 +407,7 @@ git commit -m "feat: add accelerated ENG review contract"
 # - README workflow wording / Mermaid alignment
 ```
 
-- [ ] **Step 4: Update `tests/evals/README.md` with the finished accelerator-eval entry**
-
+- [x] **Step 4: Update `tests/evals/README.md` with the finished accelerator-eval entry**
 ```md
 # Add the new eval to:
 - "Current evals cover"
@@ -443,33 +416,27 @@ git commit -m "feat: add accelerated ENG review contract"
   generated CEO/ENG `SKILL.md` plus README excerpts from the current branch
 ```
 
-- [ ] **Step 5: Run the skill-doc contract tests**
-
+- [x] **Step 5: Run the skill-doc contract tests**
 Run: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs`  
 Expected: PASS with generated-skill contract and freshness coverage green.
 
-- [ ] **Step 6: Run the generated-skill freshness check**
-
+- [x] **Step 6: Run the generated-skill freshness check**
 Run: `node scripts/gen-skill-docs.mjs --check`  
 Expected: PASS with no stale generated `SKILL.md` files.
 
-- [ ] **Step 7: Run the runtime-instructions test**
-
+- [x] **Step 7: Run the runtime-instructions test**
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`  
 Expected: PASS with the new prompt/reference assets present, generated-doc freshness intact, and prompt/reference content assertions satisfied.
 
-- [ ] **Step 8: Run the workflow-sequencing test**
-
+- [x] **Step 8: Run the workflow-sequencing test**
 Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`  
 Expected: PASS with accelerated-review workflow assertions satisfied.
 
-- [ ] **Step 9: Run the workflow-enhancements test**
-
+- [x] **Step 9: Run the workflow-enhancements test**
 Run: `bash tests/codex-runtime/test-workflow-enhancements.sh`  
 Expected: PASS with README and workflow enhancement contracts still intact.
 
-- [ ] **Step 10: Run the opt-in prompt eval when eval credentials are available**
-
+- [x] **Step 10: Run the opt-in prompt eval when eval credentials are available**
 Run:
 
 ```bash
@@ -491,6 +458,7 @@ Otherwise intentionally skip this step and record that the eval environment was 
 
 - [ ] **Step 11: Commit the docs and verification finish**
 
+  **Execution Note:** Active - Commit the docs and verification finish
 ```bash
 git add README.md tests/codex-runtime/test-workflow-sequencing.sh tests/codex-runtime/test-runtime-instructions.sh tests/evals/README.md tests/evals/review-accelerator-contract.eval.mjs
 git commit -m "docs: document accelerated review workflow"

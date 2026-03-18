@@ -139,6 +139,9 @@ require_absent_pattern skills/subagent-driven-development/SKILL.md "[Dispatch fi
 
 require_pattern README.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
 require_pattern README.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
+require_pattern README.md 'User explicitly requests<br/>accelerated / accelerator mode?'
+require_pattern README.md 'Accelerated CEO review inside the skill:'
+require_pattern README.md 'Accelerated ENG review inside the skill:'
 require_pattern docs/README.codex.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
 require_pattern docs/README.copilot.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
 require_pattern docs/superpowers/specs/2026-03-17-workflow-state-runtime-design.md 'skills call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status`'
