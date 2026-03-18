@@ -39,6 +39,15 @@ require_pattern skills/plan-ceo-review/SKILL.md '**The terminal state is invokin
 require_pattern skills/plan-ceo-review/SKILL.md 'Do not draft a plan or offer implementation options from `plan-ceo-review`.'
 require_pattern skills/plan-ceo-review/SKILL.md "runs `sync --artifact spec`"
 require_pattern skills/plan-ceo-review/SKILL.md '"$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status" sync --artifact spec --path'
+require_pattern skills/plan-ceo-review/SKILL.md 'Accelerated review is available only when the user explicitly requests `accelerated` or `accelerator` mode for the current CEO review.'
+require_pattern skills/plan-ceo-review/SKILL.md 'Do not activate accelerated review from heuristics, vague wording like "make this fast", saved preferences, or agent-only judgment.'
+require_pattern skills/plan-ceo-review/SKILL.md 'Accelerated CEO review must process one canonical CEO section at a time through a section packet and explicit human section approval.'
+require_pattern skills/plan-ceo-review/SKILL.md 'Only the main review agent may write authoritative artifacts, apply approved patches, or change approval headers in accelerated CEO review.'
+require_pattern skills/plan-ceo-review/SKILL.md 'Persist accelerated CEO section packets under `~/.superpowers/projects/<slug>/...`.'
+require_pattern skills/plan-ceo-review/SKILL.md 'Resume accelerated CEO review only from the last approved-and-applied section boundary.'
+require_pattern skills/plan-ceo-review/SKILL.md 'If the source artifact fingerprint changes, treat saved accelerated CEO packets as stale and regenerate them before reuse.'
+require_pattern skills/plan-ceo-review/SKILL.md 'Accelerated CEO review must preserve required review outputs, including individual TODO and delight questions when they must remain human-owned.'
+require_pattern skills/plan-ceo-review/SKILL.md 'Accelerator artifacts must use bounded retention rather than accumulate indefinitely.'
 
 require_pattern skills/writing-plans/SKILL.md 'If the spec is missing these lines, or if `**Workflow State:**` is not `CEO Approved`, stop and direct the agent to `superpowers:plan-ceo-review`.'
 require_pattern skills/writing-plans/SKILL.md "**Workflow State:** Draft"
@@ -63,6 +72,15 @@ require_pattern skills/plan-eng-review/SKILL.md 'If isolated-agent workflows are
 require_pattern skills/plan-eng-review/SKILL.md 'if `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`'
 require_pattern skills/plan-eng-review/SKILL.md 'If the helper returns a non-empty `next_skill`, use that route instead of re-deriving state manually.'
 require_pattern skills/plan-eng-review/SKILL.md 'If the helper returns `status` `implementation_ready`, present the normal execution handoff below.'
+require_pattern skills/plan-eng-review/SKILL.md 'Accelerated review is available only when the user explicitly requests `accelerated` or `accelerator` mode for the current engineering review.'
+require_pattern skills/plan-eng-review/SKILL.md 'Do not activate accelerated review from heuristics, vague wording like "make this fast", saved preferences, or agent-only judgment.'
+require_pattern skills/plan-eng-review/SKILL.md 'Accelerated engineering review must process one canonical ENG section at a time through a section packet and explicit human section approval.'
+require_pattern skills/plan-eng-review/SKILL.md 'Accelerated ENG `SMALL CHANGE` review must still limit the reviewer to one primary issue per canonical section and may not collapse into one bundled approval round.'
+require_pattern skills/plan-eng-review/SKILL.md 'Accelerated engineering review must preserve QA handoff generation, TODO flow, failure-mode output, and the normal execution handoff.'
+require_pattern skills/plan-eng-review/SKILL.md 'Only the main review agent may write authoritative artifacts, apply approved patches, or change approval headers in accelerated engineering review.'
+require_pattern skills/plan-eng-review/SKILL.md 'Resume accelerated engineering review only from the last approved-and-applied section boundary.'
+require_pattern skills/plan-eng-review/SKILL.md 'If the source artifact fingerprint changes, treat saved accelerated ENG packets as stale and regenerate them before reuse.'
+require_pattern skills/plan-eng-review/SKILL.md 'Accelerator artifacts must use bounded retention rather than accumulate indefinitely.'
 
 require_pattern skills/using-superpowers/SKILL.md "## Superpowers Workflow Router"
 require_pattern skills/using-superpowers/SKILL.md 'First, if `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`.'
@@ -120,6 +138,7 @@ require_absent_pattern skills/subagent-driven-development/SKILL.md "Dispatch fin
 require_absent_pattern skills/subagent-driven-development/SKILL.md "[Dispatch final code-reviewer]"
 
 require_pattern README.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
+require_pattern README.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
 require_pattern docs/README.codex.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
 require_pattern docs/README.copilot.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
 require_pattern docs/superpowers/specs/2026-03-17-workflow-state-runtime-design.md 'skills call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status`'

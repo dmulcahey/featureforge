@@ -10,6 +10,7 @@ Current evals cover:
 
 - `using-superpowers` fail-closed routing behavior
 - the shared interactive-question format contract
+- `review-accelerator-contract`, which checks explicit user-only activation, ambiguous-wording rejection, per-section human approval, no automatic approval-state changes, main-agent-only write authority, and persisted-packet stale/regenerate language
 
 ## How To Run
 
