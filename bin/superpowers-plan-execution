@@ -62,6 +62,114 @@ normalize_repo_relative_path() {
   printf '%s\n' "$normalized"
 }
 
+strip_plan_file_reference_suffix() {
+  printf '%s' "$1" | sed -E 's/:[0-9]+([:-][0-9]+)*$//'
+}
+
+normalize_plan_scope_path() {
+  local raw_value="$1"
+  local stripped
+
+  stripped="$(strip_plan_file_reference_suffix "$raw_value")"
+  normalize_repo_relative_path "$stripped"
+}
+
+derive_tasks_independent_from_plan() {
+  local plan_abs="$1"
+  local line
+  local current_task_index=-1
+  local in_files_block=0
+  local normalized_path
+  local tasks_independent="unknown"
+  local -a task_scopes=()
+  local -a task_write_counts=()
+  local -a task_file_blocks=()
+  local -a task_scope_parseable=()
+  local task_count=0
+  local i j path compare
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if (( in_files_block )); then
+      if [[ "$line" =~ ^-\ (Create|Modify|Delete):\ \`(.+)\`$ ]]; then
+        task_file_blocks[$current_task_index]="yes"
+        normalized_path="$(normalize_plan_scope_path "${BASH_REMATCH[2]}")" || {
+          task_scope_parseable[$current_task_index]="no"
+          continue
+        }
+        task_write_counts[$current_task_index]=$(( ${task_write_counts[$current_task_index]:-0} + 1 ))
+        if [[ -n "${task_scopes[$current_task_index]:-}" ]]; then
+          task_scopes[$current_task_index]+=$'\n'"$normalized_path"
+        else
+          task_scopes[$current_task_index]="$normalized_path"
+        fi
+        continue
+      fi
+      if [[ "$line" =~ ^-\ Test:\ \`.+\`$ ]]; then
+        task_file_blocks[$current_task_index]="yes"
+        continue
+      fi
+      if [[ "$line" =~ ^-\ \[[[:space:]x]\]\  ]]; then
+        in_files_block=0
+      elif [[ "$line" =~ ^-\  ]]; then
+        task_file_blocks[$current_task_index]="yes"
+        task_scope_parseable[$current_task_index]="no"
+        continue
+      fi
+      if [[ -z "$line" || "$line" =~ ^[[:space:]]+$ ]]; then
+        continue
+      fi
+      in_files_block=0
+    fi
+
+    if [[ "$line" =~ ^##\ Task\ ([0-9]+): ]]; then
+      current_task_index=$task_count
+      task_scopes[$current_task_index]=""
+      task_write_counts[$current_task_index]=0
+      task_file_blocks[$current_task_index]="no"
+      task_scope_parseable[$current_task_index]="yes"
+      task_count=$((task_count + 1))
+      in_files_block=0
+      continue
+    fi
+
+    if (( current_task_index >= 0 )) && [[ "$line" == "**Files:**" ]]; then
+      task_file_blocks[$current_task_index]="yes"
+      in_files_block=1
+      continue
+    fi
+  done < "$plan_abs"
+
+  if (( task_count < 2 )); then
+    printf '%s\n' "$tasks_independent"
+    return 0
+  fi
+
+  for ((i=0; i<task_count; i++)); do
+    if [[ "${task_file_blocks[$i]}" != "yes" || "${task_scope_parseable[$i]}" != "yes" || "${task_write_counts[$i]}" == "0" ]]; then
+      printf '%s\n' "$tasks_independent"
+      return 0
+    fi
+  done
+
+  for ((i=0; i<task_count; i++)); do
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      for ((j=i+1; j<task_count; j++)); do
+        while IFS= read -r compare; do
+          [[ -n "$compare" ]] || continue
+          if [[ "$path" == "$compare" ]]; then
+            printf 'no\n'
+            return 0
+          fi
+        done <<< "${task_scopes[$j]}"
+      done
+    done <<< "${task_scopes[$i]}"
+  done
+
+  printf 'yes\n'
+  return 0
+}
+
 validate_persisted_normalized_text() {
   local raw_value="$1"
   local message="$2"
@@ -1253,6 +1361,7 @@ cmd_recommend() {
     emit_error "RecommendAfterExecutionStart" "recommend is only valid before execution has started for this plan revision."
     return 1
   fi
+  tasks_independent="$(derive_tasks_independent_from_plan "$PLAN_ABS_PATH")"
 
   if [[ "$session_intent" == "stay" && "$workspace_prepared" == "yes" ]]; then
     same_session_viable="yes"

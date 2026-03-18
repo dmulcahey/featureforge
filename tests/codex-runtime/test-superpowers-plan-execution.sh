@@ -231,6 +231,72 @@ write_plan() {
 EOF
 }
 
+write_independent_plan() {
+  local repo_dir="$1"
+  local execution_mode="$2"
+  write_file "$repo_dir/$PLAN_REL" <<EOF
+# Example Execution Plan
+
+**Workflow State:** Engineering Approved
+**Plan Revision:** 1
+**Execution Mode:** ${execution_mode}
+**Source Spec:** \`${SPEC_REL}\`
+**Source Spec Revision:** 1
+**Last Reviewed By:** plan-eng-review
+
+## Task 1: Build parser slice
+
+**Files:**
+- Modify: \`src/parser-slice.sh:10-40\`
+- Modify: \`tests/parser-slice.test.sh:1-25\`
+- Test: \`bash tests/parser-slice.test.sh\`
+
+- [ ] **Step 1: Build parser slice**
+
+## Task 2: Build formatter slice
+
+**Files:**
+- Modify: \`src/formatter-slice.sh:12-36\`
+- Modify: \`tests/formatter-slice.test.sh:1-18\`
+- Test: \`bash tests/formatter-slice.test.sh\`
+
+- [ ] **Step 1: Build formatter slice**
+EOF
+}
+
+write_coupled_plan() {
+  local repo_dir="$1"
+  local execution_mode="$2"
+  write_file "$repo_dir/$PLAN_REL" <<EOF
+# Example Execution Plan
+
+**Workflow State:** Engineering Approved
+**Plan Revision:** 1
+**Execution Mode:** ${execution_mode}
+**Source Spec:** \`${SPEC_REL}\`
+**Source Spec Revision:** 1
+**Last Reviewed By:** plan-eng-review
+
+## Task 1: Update parser
+
+**Files:**
+- Modify: \`src/shared-parser.sh:10-40\`
+- Modify: \`tests/shared-parser.test.sh:1-20\`
+- Test: \`bash tests/shared-parser.test.sh\`
+
+- [ ] **Step 1: Update parser**
+
+## Task 2: Repair parser follow-up
+
+**Files:**
+- Modify: \`src/shared-parser.sh:42-75\`
+- Modify: \`tests/shared-parser.test.sh:22-40\`
+- Test: \`bash tests/shared-parser.test.sh\`
+
+- [ ] **Step 1: Repair parser follow-up**
+EOF
+}
+
 write_empty_evidence_stub() {
   local repo_dir="$1"
   local evidence_rel
@@ -921,6 +987,33 @@ run_recommend_returns_bounded_decision_flags() {
   assert_json_equals "$output" "decision_flags.same_session_viable" "yes" "recommend output"
 }
 
+run_recommend_prefers_subagent_for_independent_plan() {
+  local repo_dir="$REPO_DIR/recommend-independent-plan"
+  local output
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_independent_plan "$repo_dir" "none"
+  output="$(run_json_command "$repo_dir" recommend --plan "$PLAN_REL" --isolated-agents available --session-intent stay --workspace-prepared yes)"
+
+  assert_json_equals "$output" "recommended_skill" "superpowers:subagent-driven-development" "recommend independent plan"
+  assert_json_equals "$output" "decision_flags.tasks_independent" "yes" "recommend independent plan"
+  assert_json_equals "$output" "decision_flags.same_session_viable" "yes" "recommend independent plan"
+}
+
+run_recommend_defaults_to_executing_plans_for_coupled_plan() {
+  local repo_dir="$REPO_DIR/recommend-coupled-plan"
+  local output
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_coupled_plan "$repo_dir" "none"
+  output="$(run_json_command "$repo_dir" recommend --plan "$PLAN_REL" --isolated-agents available --session-intent stay --workspace-prepared yes)"
+
+  assert_json_equals "$output" "recommended_skill" "superpowers:executing-plans" "recommend coupled plan"
+  assert_json_equals "$output" "decision_flags.tasks_independent" "no" "recommend coupled plan"
+}
+
 run_recommend_rejects_post_start_calls() {
   local repo_dir
   repo_dir="$(create_base_repo recommend-post-start)"
@@ -1489,6 +1582,8 @@ run_status_rejects_malformed_last_reviewed_by_on_ceo_approved_spec
 run_status_rejects_out_of_range_last_reviewed_by_on_ceo_approved_spec
 run_status_rejects_noncontiguous_attempt_numbering
 run_recommend_returns_bounded_decision_flags
+run_recommend_prefers_subagent_for_independent_plan
+run_recommend_defaults_to_executing_plans_for_coupled_plan
 run_recommend_rejects_post_start_calls
 run_begin_is_idempotent_for_same_step
 run_begin_rejects_bypass_of_interrupted_step
