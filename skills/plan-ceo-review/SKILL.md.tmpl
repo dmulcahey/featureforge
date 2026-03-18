@@ -37,6 +37,34 @@ description: Use when a Superpowers design spec has been written and needs CEO o
 
 # Spec Review Mode
 
+## Accelerated Review Activation
+
+Accelerated review is available only when the user explicitly requests `accelerated` or `accelerator` mode for the current CEO review.
+
+Do not activate accelerated review from heuristics, vague wording like "make this fast", saved preferences, or agent-only judgment.
+
+If the user does not explicitly request accelerated review, run the normal CEO review flow and keep the standard Step 0 mode selection unchanged.
+
+## Accelerated CEO Section Flow
+
+Accelerated CEO review must process one canonical CEO section at a time through a section packet and explicit human section approval.
+
+Use the existing CEO review sections defined in this skill as the canonical section boundaries. Accelerated review does not invent a separate section model or a separate workflow stage.
+
+Persist accelerated CEO section packets under `~/.superpowers/projects/<slug>/...`.
+
+Resume accelerated CEO review only from the last approved-and-applied section boundary.
+
+If the source artifact fingerprint changes, treat saved accelerated CEO packets as stale and regenerate them before reuse.
+
+Accelerator artifacts must use bounded retention rather than accumulate indefinitely.
+
+Final explicit human approval remains unchanged. Accelerated review may speed up section handling, but it may not bypass the final approval gate for the written spec.
+
+Accelerated CEO review must preserve required review outputs, including individual TODO and delight questions when they must remain human-owned.
+
+Only the main review agent may write authoritative artifacts, apply approved patches, or change approval headers in accelerated CEO review.
+
 ## Philosophy
 
 You are not here to rubber-stamp this spec. You are here to make it extraordinary, catch every landmine before it explodes, and ensure that when this moves into planning, it does so at the highest possible standard.
