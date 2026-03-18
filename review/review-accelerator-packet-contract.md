@@ -65,6 +65,10 @@ All of them fall back to normal manual review with the written artifact still au
 
 Each persisted section packet must record the source artifact fingerprint for the exact written spec or plan used to generate the packet.
 
+## persisted packet location
+
+Persist accelerator section packets under `~/.superpowers/projects/<slug>/...`.
+
 ## approved-and-applied section-boundary resume rule
 
 Resume is allowed only when the user explicitly asks and only from the last approved-and-applied section boundary. Unapproved packets are diagnostic only and may not be replayed as if they were approved.

@@ -89,7 +89,7 @@ flowchart TD
 
         PLAN_ENG_SKILL["superpowers:plan-eng-review"] --> ENG_ACCEL{"User explicitly requests<br/>accelerated / accelerator mode?"}
         ENG_ACCEL -->|No| PLAN_REVIEW["Keep plan in Draft until review resolves.<br/>Only the final successful review may approve execution."]
-        ENG_ACCEL -->|Yes| PLAN_ACCEL["Accelerated ENG review inside the skill:<br/>canonical sections stay the same<br/>SMALL CHANGE still stays one primary issue per section<br/>QA handoff and final approval still apply"]
+        ENG_ACCEL -->|Yes| PLAN_ACCEL["Accelerated ENG review inside the skill:<br/>reviewer subagent drafts per-section packets<br/>human approves each section<br/>QA handoff and final approval still apply"]
         PLAN_ACCEL --> PLAN_REVIEW
         PLAN_REVIEW --> PLAN_APPROVE["Approve by writing:<br/>Workflow State: Engineering Approved<br/>Last Reviewed By: plan-eng-review"]
         PLAN_APPROVE --> PLAN_REFRESH["superpowers-workflow-status status --refresh"]
