@@ -156,6 +156,10 @@ write_file() {
   cat > "$path"
 }
 
+three_spaces() {
+  printf '   '
+}
+
 init_repo() {
   local repo_dir="$1"
 
@@ -393,11 +397,14 @@ EOF
   run_command_fails "$repo_dir" MalformedExecutionState status --plan "$PLAN_REL" >/dev/null
 }
 
+# Parser-hardening regressions for repo-edited plan state.
 run_status_rejects_whitespace_only_execution_note_summary() {
   local repo_dir="$REPO_DIR/whitespace-only-execution-note-summary"
+  local whitespace
 
   init_repo "$repo_dir"
   write_approved_spec "$repo_dir"
+  whitespace="$(three_spaces)"
   write_file "$repo_dir/$PLAN_REL" <<EOF
 # Example Execution Plan
 
@@ -412,7 +419,7 @@ run_status_rejects_whitespace_only_execution_note_summary() {
 
 - [ ] **Step 1: Prepare workspace for execution**
 
-  **Execution Note:** Blocked -   
+  **Execution Note:** Blocked - ${whitespace}
 
 - [ ] **Step 2: Validate the generated output**
 EOF
@@ -423,11 +430,13 @@ EOF
 run_status_rejects_whitespace_only_persisted_claim() {
   local repo_dir="$REPO_DIR/whitespace-only-persisted-claim"
   local evidence_rel
+  local whitespace
 
   init_repo "$repo_dir"
   write_approved_spec "$repo_dir"
   write_plan "$repo_dir" "superpowers:executing-plans"
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+  whitespace="$(three_spaces)"
   write_file "$repo_dir/$evidence_rel" <<EOF
 # Execution Evidence: 2026-03-17-example-execution-plan
 
@@ -441,7 +450,7 @@ run_status_rejects_whitespace_only_persisted_claim() {
 **Status:** Completed
 **Recorded At:** 2026-03-17T14:22:31Z
 **Execution Source:** superpowers:executing-plans
-**Claim:**    
+**Claim:** ${whitespace}
 **Files:**
 - docs/example-output.md
 **Verification:**
@@ -455,11 +464,13 @@ EOF
 run_status_rejects_whitespace_only_persisted_verification() {
   local repo_dir="$REPO_DIR/whitespace-only-persisted-verification"
   local evidence_rel
+  local whitespace
 
   init_repo "$repo_dir"
   write_approved_spec "$repo_dir"
   write_plan "$repo_dir" "superpowers:executing-plans"
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+  whitespace="$(three_spaces)"
   write_file "$repo_dir/$evidence_rel" <<EOF
 # Execution Evidence: 2026-03-17-example-execution-plan
 
@@ -477,7 +488,7 @@ run_status_rejects_whitespace_only_persisted_verification() {
 **Files:**
 - docs/example-output.md
 **Verification:**
--    
+- ${whitespace}
 **Invalidation Reason:** N/A
 EOF
 
@@ -487,11 +498,13 @@ EOF
 run_status_rejects_whitespace_only_persisted_invalidation_reason() {
   local repo_dir="$REPO_DIR/whitespace-only-persisted-invalidation-reason"
   local evidence_rel
+  local whitespace
 
   init_repo "$repo_dir"
   write_approved_spec "$repo_dir"
   write_plan "$repo_dir" "superpowers:executing-plans"
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+  whitespace="$(three_spaces)"
   write_file "$repo_dir/$evidence_rel" <<EOF
 # Execution Evidence: 2026-03-17-example-execution-plan
 
@@ -510,7 +523,7 @@ run_status_rejects_whitespace_only_persisted_invalidation_reason() {
 - docs/example-output.md
 **Verification:**
 - \`bash tests/codex-runtime/test-superpowers-plan-execution.sh\` -> passed in fixture setup
-**Invalidation Reason:**    
+**Invalidation Reason:** ${whitespace}
 EOF
 
   run_command_fails "$repo_dir" MalformedExecutionState status --plan "$PLAN_REL" >/dev/null
@@ -519,11 +532,13 @@ EOF
 run_status_rejects_whitespace_only_persisted_file_entry() {
   local repo_dir="$REPO_DIR/whitespace-only-persisted-file-entry"
   local evidence_rel
+  local whitespace
 
   init_repo "$repo_dir"
   write_approved_spec "$repo_dir"
   write_plan "$repo_dir" "superpowers:executing-plans"
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+  whitespace="$(three_spaces)"
   write_file "$repo_dir/$evidence_rel" <<EOF
 # Execution Evidence: 2026-03-17-example-execution-plan
 
@@ -539,7 +554,7 @@ run_status_rejects_whitespace_only_persisted_file_entry() {
 **Execution Source:** superpowers:executing-plans
 **Claim:** Prepared the workspace for execution.
 **Files:**
--    
+- ${whitespace}
 **Verification:**
 - \`bash tests/codex-runtime/test-superpowers-plan-execution.sh\` -> passed in fixture setup
 **Invalidation Reason:** N/A
@@ -580,6 +595,7 @@ EOF
   run_command_fails "$repo_dir" MalformedExecutionState status --plan "$PLAN_REL" >/dev/null
 }
 
+# Approved artifact header contract regressions.
 run_status_rejects_missing_last_reviewed_by_on_approved_plan() {
   local repo_dir="$REPO_DIR/missing-last-reviewed-by-approved-plan"
 
