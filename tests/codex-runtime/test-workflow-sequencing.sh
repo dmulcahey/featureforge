@@ -113,6 +113,11 @@ require_pattern skills/subagent-driven-development/SKILL.md "Have engineering-ap
 require_pattern skills/subagent-driven-development/SKILL.md "Return to using-superpowers artifact-state routing"
 require_pattern skills/subagent-driven-development/SKILL.md 'Tasks mostly independent?" -> "executing-plans" [label="no - tightly coupled or better handled in one coordinator session"]'
 require_pattern skills/subagent-driven-development/SKILL.md "Do not auto-clean the workspace and do not auto-create a worktree."
+require_pattern skills/subagent-driven-development/SKILL.md '"More tasks remain?" -> "Use superpowers:requesting-code-review for final review gate" [label="no"];'
+require_pattern skills/subagent-driven-development/SKILL.md '[Announce: I'"'"'m using the requesting-code-review skill for the final review pass.]'
+require_pattern skills/subagent-driven-development/SKILL.md '[Invoke superpowers:requesting-code-review]'
+require_absent_pattern skills/subagent-driven-development/SKILL.md "Dispatch final code reviewer subagent for entire implementation"
+require_absent_pattern skills/subagent-driven-development/SKILL.md "[Dispatch final code-reviewer]"
 
 require_pattern README.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
 require_pattern docs/README.codex.md 'Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'

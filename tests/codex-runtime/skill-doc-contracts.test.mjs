@@ -222,6 +222,11 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.match(sdd, /"Return to using-superpowers artifact-state routing" \[shape=box\];/);
   assert.match(sdd, /"Have engineering-approved implementation plan\?" -> "Return to using-superpowers artifact-state routing" \[label="no"\];/);
   assert.match(sdd, /"Tasks mostly independent\?" -> "executing-plans" \[label="no - tightly coupled or better handled in one coordinator session"\];/);
+  assert.match(sdd, /"More tasks remain\?" -> "Use superpowers:requesting-code-review for final review gate" \[label="no"\];/);
+  assert.match(sdd, /\[Announce: I'm using the requesting-code-review skill for the final review pass\.\]/);
+  assert.match(sdd, /\[Invoke superpowers:requesting-code-review\]/);
+  assert.doesNotMatch(sdd, /Dispatch final code reviewer subagent for entire implementation/);
+  assert.doesNotMatch(sdd, /\[Dispatch final code-reviewer\]/);
 });
 
 test('approved workflow-state artifacts document the finalized helper contract', () => {
