@@ -37,6 +37,34 @@ description: Use when a Superpowers implementation plan from a CEO-approved spec
 
 Review this plan thoroughly before making any code changes. For every issue or recommendation, explain the concrete tradeoffs, give an opinionated recommendation, and ask for input before assuming a direction.
 
+## Accelerated Review Activation
+
+Accelerated review is available only when the user explicitly requests `accelerated` or `accelerator` mode for the current engineering review.
+
+Do not activate accelerated review from heuristics, vague wording like "make this fast", saved preferences, or agent-only judgment.
+
+If the user does not explicitly request accelerated review, run the normal engineering review flow and keep the standard Step 0 scope choice and approval gate unchanged.
+
+Use the existing ENG review sections defined in this skill as the canonical section boundaries. Accelerated review does not invent a separate section model or a separate workflow stage.
+
+## Accelerated ENG Section Flow
+
+Accelerated engineering review must process one canonical ENG section at a time through a section packet and explicit human section approval.
+
+Accelerated ENG `SMALL CHANGE` review must still limit the reviewer to one primary issue per canonical section and may not collapse into one bundled approval round.
+
+Resume accelerated engineering review only from the last approved-and-applied section boundary.
+
+If the source artifact fingerprint changes, treat saved accelerated ENG packets as stale and regenerate them before reuse.
+
+Accelerator artifacts must use bounded retention rather than accumulate indefinitely.
+
+Accelerated engineering review must preserve QA handoff generation, TODO flow, failure-mode output, and the normal execution handoff.
+
+Only the main review agent may write authoritative artifacts, apply approved patches, or change approval headers in accelerated engineering review.
+
+Final explicit human approval remains unchanged. Accelerated review may speed up section handling, but it may not bypass approval authority or the normal execution handoff boundary.
+
 ## Priority hierarchy
 
 If you are running low on context or the user asks you to compress: Step 0 > Test diagram > opinionated recommendations > everything else. Never skip Step 0 or the test diagram.
