@@ -285,7 +285,20 @@ required_patterns=(
   "docs/testing.md:tests/codex-runtime/"
   "docs/testing.md:tests/brainstorm-server/"
   "docs/testing.md:bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh"
+  "docs/testing.md:bash tests/codex-runtime/test-superpowers-workflow.sh"
   "docs/testing.md:bash tests/brainstorm-server/test-launch-wrappers.sh"
+  "README.md:bin/superpowers-workflow"
+  "README.md:bin/superpowers-workflow.ps1"
+  'README.md:Use `status`, `next`, `artifacts`, `explain`, or `help`'
+  "README.md:read-only workflow inspection surfaces"
+  "docs/README.codex.md:bin/superpowers-workflow"
+  "docs/README.codex.md:bin/superpowers-workflow.ps1"
+  "docs/README.codex.md:These commands stay read-only"
+  "docs/README.copilot.md:bin/superpowers-workflow"
+  "docs/README.copilot.md:bin/superpowers-workflow.ps1"
+  "docs/README.copilot.md:These commands stay read-only"
+  "RELEASE-NOTES.md:bin/superpowers-workflow"
+  "RELEASE-NOTES.md:read-only workflow inspection CLI"
   "docs/README.codex.md:brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review -> implementation"
   'docs/README.codex.md:Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
   "docs/README.codex.md:Current Codex releases enable subagent workflows by default"
@@ -631,7 +644,7 @@ for pattern in \
   'skills/subagent-driven-development/SKILL.md:**vs. Executing Plans (parallel session):**' \
   'skills/subagent-driven-development/SKILL.md:- **superpowers:executing-plans** - Use for parallel session instead of same-session execution' \
   'skills/subagent-driven-development/SKILL.md:[Invoke superpowers:finishing-a-development-branch]' \
-  'README.md:implementation starts from an engineering-approved current plan and the exact approved plan path. `plan-eng-review` presents that handoff, and `superpowers-plan-execution recommend --plan <approved-plan-path>` chooses between *subagent-driven-development* and *executing-plans*. In both cases, execution runs a workspace-readiness preflight, executes the plan task by task, reviews before completion, and hands off through the normal branch-finishing flow.' \
+  'README.md:Implementation starts from an engineering-approved current plan and the exact approved plan path. `plan-eng-review` presents that handoff, and `superpowers-plan-execution recommend --plan <approved-plan-path>` chooses between *subagent-driven-development* and *executing-plans*. In both cases, execution runs a workspace-readiness preflight, executes the plan task by task, reviews before completion, and hands off through the normal branch-finishing flow.' \
   'docs/README.codex.md:During implementation, either `subagent-driven-development` or `executing-plans` starts from an engineering-approved current plan, runs a workspace-readiness preflight, and then drives task execution.' \
   'docs/README.copilot.md:During implementation, either `subagent-driven-development` or `executing-plans` starts from an engineering-approved current plan, runs a workspace-readiness preflight, and then drives task execution.' \
   'README.md:- **requesting-code-review** - Code-review dispatch and triage'; do

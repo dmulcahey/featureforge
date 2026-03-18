@@ -361,3 +361,88 @@
 - `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh` -> PASS
 **Invalidation Reason:** N/A
 
+### Task 4 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:18:11Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Committed the workflow CLI PowerShell wrapper parity changes.
+**Files:**
+- bin/superpowers-workflow.ps1
+- docs/superpowers/execution-evidence/2026-03-18-supported-workflow-cli-r1-evidence.md
+- docs/superpowers/plans/2026-03-18-supported-workflow-cli.md
+- tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
+**Verification:**
+- Manual inspection only: Committed Task 4 as 7e83b8d with the public wrapper, wrapper-regression coverage, and execution tracking in sync.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:23:43Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Updated runtime docs to distinguish the public workflow CLI from the internal helper.
+**Files:**
+- README.md
+- docs/README.codex.md
+- docs/README.copilot.md
+**Verification:**
+- Manual inspection only: Manual inspection only: README and both platform READMEs now identify bin/superpowers-workflow as the supported public inspection CLI and keep workflow-status marked internal.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:23:58Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Documented the supported public commands and the execution handoff boundary.
+**Files:**
+- README.md
+- docs/README.codex.md
+- docs/README.copilot.md
+**Verification:**
+- Manual inspection only: Manual inspection only: The runtime docs now call out status, next, artifacts, explain, and help plus the rule that next stops before execution recommendation.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:24:15Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Updated testing docs and runtime validation inventory for the public CLI.
+**Files:**
+- docs/testing.md
+- tests/codex-runtime/test-runtime-instructions.sh
+**Verification:**
+- Manual inspection only: Manual inspection only: Added the public workflow CLI suite to the documented validation order and extended runtime-instructions required-pattern coverage for the new docs.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:24:32Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Recorded the supported workflow CLI feature in the release notes.
+**Files:**
+- RELEASE-NOTES.md
+**Verification:**
+- Manual inspection only: Manual inspection only: Added a Workflow Runtime section under the current release entry covering the public CLI, side-effect-free resolver, docs, and regression coverage.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-18T13:24:52Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Ran the full deterministic validation set for the supported workflow CLI release surface.
+**Files:**
+- README.md
+- RELEASE-NOTES.md
+- docs/README.codex.md
+- docs/README.copilot.md
+- docs/testing.md
+- tests/codex-runtime/test-runtime-instructions.sh
+**Verification:**
+- `bash tests/codex-runtime/test-runtime-instructions.sh && bash tests/codex-runtime/test-superpowers-workflow-status.sh && bash tests/codex-runtime/test-superpowers-workflow.sh && bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh && bash tests/codex-runtime/test-workflow-enhancements.sh && bash tests/codex-runtime/test-workflow-sequencing.sh && node --test tests/codex-runtime/*.test.mjs` -> PASS
+**Invalidation Reason:** N/A
+

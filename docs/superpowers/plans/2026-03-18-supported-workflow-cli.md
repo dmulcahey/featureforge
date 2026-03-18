@@ -450,9 +450,7 @@ if ($exitCode -eq 0 -and $outputText.TrimStart().StartsWith('{')) {
 Run: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 Expected: PASS or SKIP with the new `superpowers-workflow.ps1` assertions green on hosts with PowerShell.
 
-- [ ] **Step 5: Commit wrapper parity**
-
-  **Execution Note:** Active - Commit wrapper parity
+- [x] **Step 5: Commit wrapper parity**
 ```bash
 git add bin/superpowers-workflow.ps1 tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh tests/codex-runtime/test-superpowers-workflow.sh
 git commit -m "feat: add workflow cli powershell wrapper"
@@ -469,14 +467,14 @@ git commit -m "feat: add workflow cli powershell wrapper"
 - Modify: `tests/codex-runtime/test-runtime-instructions.sh`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
-- [ ] **Step 1: Update runtime docs to distinguish the public CLI from the internal helper**
+- [x] **Step 1: Update runtime docs to distinguish the public CLI from the internal helper**
 ```markdown
 - `bin/superpowers-workflow` is the supported public inspection CLI.
 - `bin/superpowers-workflow-status` remains an internal helper for workflow automation.
 - Public inspection commands are read-only and do not repair manifests.
 ```
 
-- [ ] **Step 2: Document the public commands and the execution-boundary rule**
+- [x] **Step 2: Document the public commands and the execution-boundary rule**
 ```markdown
 Supported commands:
 - `status`
@@ -488,13 +486,13 @@ Supported commands:
 At `implementation_ready`, `next` stops at execution handoff and does not run `superpowers-plan-execution recommend`.
 ```
 
-- [ ] **Step 3: Update testing docs and runtime validation inventory**
+- [x] **Step 3: Update testing docs and runtime validation inventory**
 ```markdown
 - Add `bash tests/codex-runtime/test-superpowers-workflow.sh`
 - Clarify that public CLI tests assert non-mutation and debug/failure behavior
 ```
 
-- [ ] **Step 4: Record the feature in release notes**
+- [x] **Step 4: Record the feature in release notes**
 ```markdown
 ### Workflow Runtime
 - Added supported public workflow inspection binaries: `bin/superpowers-workflow` and `bin/superpowers-workflow.ps1`
@@ -502,7 +500,7 @@ At `implementation_ready`, `next` stops at execution handoff and does not run `s
 - Added deterministic regression coverage for non-mutation, failure classes, and wrapper parity
 ```
 
-- [ ] **Step 5: Run the full deterministic validation set**
+- [x] **Step 5: Run the full deterministic validation set**
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: PASS
 
@@ -525,6 +523,8 @@ Run: `node --test tests/codex-runtime/*.test.mjs`
 Expected: PASS
 
 - [ ] **Step 6: Commit docs and release-surface updates**
+
+  **Execution Note:** Active - Commit docs and release-surface updates
 ```bash
 git add README.md docs/README.codex.md docs/README.copilot.md docs/testing.md RELEASE-NOTES.md tests/codex-runtime/test-runtime-instructions.sh
 git commit -m "docs: document supported workflow cli"
