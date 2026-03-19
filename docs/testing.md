@@ -64,7 +64,8 @@ node --test tests/brainstorm-server/server.test.js tests/brainstorm-server/ws-pr
 
 ## Optional Evals
 
-- `tests/evals/*.eval.mjs` is an opt-in quality tier for prompt-behavior checks
+- `tests/evals/*.eval.mjs` remains an opt-in quality tier for the Node-driven prompt-behavior checks that still use `.eval.mjs`
+- `tests/evals/using-superpowers-routing.orchestrator.md` is the authoritative Item 1 routing gate and drives the repo-versioned scenario, runner, and judge markdown artifacts plus local per-scenario evidence bundles under `~/.superpowers/projects/<slug>/...`
 - See `tests/evals/README.md` for required environment variables and logging behavior
 
 ## Notes

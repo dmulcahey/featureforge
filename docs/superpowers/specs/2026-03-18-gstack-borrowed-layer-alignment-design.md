@@ -1,6 +1,6 @@
 # Gstack Borrowed Layer Alignment
 **Workflow State:** CEO Approved
-**Spec Revision:** 2
+**Spec Revision:** 3
 **Last Reviewed By:** plan-ceo-review
 
 ## Summary
@@ -401,6 +401,7 @@ The intended implementation shape is:
 - targeted edits to `bin/superpowers-update-check`
 - targeted edits to the existing workflow/runtime consumers that currently re-derive repo or branch identity
 - targeted additions to existing deterministic tests and routing eval coverage
+- for Item 1, those eval additions must remain item-local: fixed repo-versioned scenario and rubric artifacts, synthetic git fixtures, runner/judge instruction artifacts, and bounded local evidence bundles; they must not grow into a reusable repo-wide eval framework or new runtime surface
 - at most one new internal helper: `bin/superpowers-slug`
 
 ### DRY Rules
@@ -427,6 +428,7 @@ In hold-scope mode, the implementation should be treated as suspect if it requir
   - runtime helpers
   - existing workflow consumers
   - tests/evals
+- for Item 1 evals, scenario/rubric instructions, synthetic git fixtures, and bounded local evidence bundles count only as item-local test assets inside `tests/evals`, not as a reusable eval subsystem or persistent product surface
 
 If the implementation appears to need materially more structure than that, the design should be challenged before coding continues.
 
@@ -456,6 +458,7 @@ This spec uses review-level named failure classes. Implementation may map them t
 | version comparison | version text cannot be normalized safely | `InvalidVersionString` | Y | preserve current semver-aware comparison guardrails and suppress misleading output | no false upgrade/downgrade claim |
 | generated preamble branch capture | `_BRANCH` is missing from generated skill docs | `PreambleContractViolation` | Y | generated-doc contract tests fail until the generator output is corrected | explicit generation/test failure |
 | regeneration discipline | template changes are not reflected in generated docs | `GeneratedDocDrift` | Y | regeneration checks fail closed | explicit stale-generated-doc failure |
+| Item 1 eval execution | runner bootstrap fails, judge times out or is ambiguous, outcome block is malformed, or evidence persistence fails | `Item1EvalExecutionFailure` | Y | fail the affected scenario and keep the overall eval gate closed | explicit eval failure with closed gate |
 
 ### Failure Modes Registry
 
@@ -468,6 +471,7 @@ This spec uses review-level named failure classes. Implementation may map them t
 | update freshness | corrupt cache state | Y | Y | no false freshness claim | Y |
 | update freshness | remote lookup fails | Y | Y | no misleading upgrade notice | Y |
 | branch grounding | `_BRANCH` omitted from generated docs | Y | Y | explicit contract-test failure | Y |
+| Item 1 routing eval | runner bootstrap, judge execution, outcome parsing, or evidence persistence fails | Y | Y | affected scenario fails and the overall eval gate remains closed | Y |
 
 No failure in this spec may ship as `RESCUED=N`, `TEST=N`, and `USER SEES=Silent`.
 
@@ -487,6 +491,7 @@ This change does not add a new server, auth system, secret store, or external us
 
 | Threat | Likelihood | Impact | Mitigation In Spec | Residual Risk |
 | --- | --- | --- | --- | --- |
+| per-run routing-eval evidence or synthetic fixture content is mistaken for authoritative workflow state, or leaks outside the bounded local evidence path | Low | Medium | keep Item 1 instruction artifacts repo-versioned, keep per-run evidence bundles non-authoritative and outside the repo, and retain only bounded local review/debug evidence | low after explicit contract tests and review tooling |
 | shell-sensitive branch or remote values influence helper behavior unexpectedly | Medium | Medium | centralize slug derivation, sanitize helper `BRANCH`, quote shell-sensitive values, and fail closed on helper errors | low after deterministic helper tests |
 | helper-derived values leak into unsafe path composition | Medium | Medium | keep helper output internal-first, preserve conservative repo-relative path handling, and avoid ad hoc re-derivation by callers | low to medium if callers ignore the contract |
 | malformed cache file causes false freshness confidence | Medium | Medium | ignore unreadable or invalid cache state and recompute when possible | low |
@@ -513,8 +518,9 @@ Required handling:
 
 - no new authorization model is introduced
 - no new secret or credential handling is introduced
-- no PII or user-content storage is introduced
-- the main persisted data affected by this spec remains local repo/runtime metadata: repo slug, branch context, cache state, and generated docs
+- no production PII or user-content storage is introduced
+- repo-versioned Item 1 scenario, runner, and judge instruction artifacts remain authoritative review inputs, while per-run routing-eval evidence bundles remain non-authoritative local debug assets outside the repo with bounded retention
+- the main persisted data affected by this spec remains local repo/runtime metadata plus bounded local eval evidence: repo slug, branch context, cache state, generated docs, and per-run routing-eval bundles
 
 ### Dependency And Injection Posture
 
@@ -524,7 +530,7 @@ Required handling:
 
 ### Auditability
 
-This spec does not require a new security audit log. It does require explicit diagnostics and deterministic test coverage for helper failures, contract drift, and malformed cache/version inputs so security-relevant failures are visible rather than silent.
+This spec does not require a new security audit log. It does require explicit diagnostics and deterministic test coverage for helper failures, contract drift, malformed cache/version inputs, and per-run eval evidence handling so security-relevant failures are visible rather than silent.
 
 ## Data Flow And Interaction Edge Cases
 
@@ -557,6 +563,7 @@ shadow paths:
 - remote missing -> deterministic fallback slug
 - detached HEAD -> deterministic fallback branch
 - branch contains path separators or shell-significant characters -> sanitized helper `BRANCH`
+- raw branch context stays separate from filesystem-safe `BRANCH`; `_BRANCH` remains the raw grounding token elsewhere in the spec
 - multiple worktrees on same repo -> branch-scoped artifact paths prevent collisions
 ```
 
@@ -589,6 +596,24 @@ shadow paths:
 - branch name unavailable -> fallback branch value is surfaced consistently
 ```
 
+#### Flow 5: Item 1 Agent-Executed Eval
+
+```text
+repo-versioned scenario/rubric artifacts
+  -> isolated runner subagent
+  -> synthetic git-backed fixture workspace
+  -> raw runner transcript/output + structured outcome block
+  -> isolated judge subagent
+  -> local evidence bundle under ~/.superpowers/projects/<slug>/...
+  -> pass/fail verdict
+
+shadow paths:
+- scenario artifact revision/fingerprint mismatch -> regenerate the run rather than reuse stale evidence
+- fixture bootstrap failure, runner/judge error, or timeout -> fail the affected scenario closed
+- missing or malformed structured outcome block -> judge cannot infer the intended route and fails the scenario
+- raw branch grounding and sanitized artifact pathing get mixed up -> branch ownership split fails closed
+```
+
 ### Interaction Edge Cases
 
 | Interaction | Edge Case | Handled? | How |
@@ -604,12 +629,16 @@ shadow paths:
 | update check | user forces a refresh while a stale cache exists | Y | `--force` bypasses cache reuse |
 | generated docs | template changes land without regeneration | Y | generated-doc checks fail closed |
 | generated docs | branch changes between sessions | Y | `_BRANCH` is recaptured from the current checkout during the next run |
+| eval routing | scenario/rubric artifact is stale versus the current spec revision or fingerprint | Y | the run is regenerated rather than reused |
+| eval routing | synthetic fixture workspace fails bootstrap | Y | the affected scenario fails closed |
+| eval routing | runner output lacks the required structured outcome block | Y | judge cannot infer the intended route and the scenario fails |
+| eval routing | raw `_BRANCH` grounding and sanitized `BRANCH` pathing are mixed up | Y | branch ownership stays explicit and contract-checked |
 
 The important rule is that edge cases in this spec should degrade toward explicit diagnostics, deterministic fallback values, or the earlier safe workflow stage. They should not degrade toward silent drift.
 
 ## Test And Verification Requirements
 
-This spec requires deterministic coverage, and Item 1 also benefits from eval coverage.
+This spec requires deterministic coverage, and Item 1 also requires agent-executed routing-eval coverage.
 
 ### Test Diagram
 
@@ -634,7 +663,8 @@ NEW CODEPATHS
 NEW INTEGRATIONS / EXTERNAL CALLS
 - git remote / branch inspection
 - remote release version lookup already owned by update-check
-- LLM/eval judgment path for routing-sensitive prompts
+- runner-subagent execution of routing-sensitive scenarios
+- judge-subagent review of captured routing behavior
 
 NEW ERROR/RESCUE PATHS
 - DescriptionContractViolation
@@ -658,7 +688,7 @@ NEW ERROR/RESCUE PATHS
 | generated `_BRANCH` preamble | generated skills include `_BRANCH` once from the shared preamble source | template changed but generated docs stale; branch field omitted from generated output | generator/contract test |
 | branch ownership contract | helper `BRANCH` stays artifact-only and `_BRANCH` stays grounding-only | swapped ownership or ad hoc transformation fails with `BranchRepresentationContractViolation` coverage | deterministic contract test |
 | description guardrails | broad-safe skills broaden safely and late-stage skills keep prerequisites | forbidden broadening phrases or missing prerequisite wording fail | deterministic contract test |
-| helper-first routing | earlier-safe stage still wins when wording sounds late-stage | helper disagreement, ambiguous candidate matches, no clean match | workflow sequencing test + routing eval |
+| helper-first routing | earlier-safe stage still wins when wording sounds late-stage | helper disagreement, ambiguous candidate matches, no clean match | workflow sequencing test + agent-executed routing eval |
 | update freshness | fresh remote check reports correct status and cache reuse works by policy | stale cache, corrupt cache, remote failure, invalid version text, local-ahead, `--force` | deterministic helper test |
 
 ### Required Test Posture
@@ -678,18 +708,37 @@ NEW ERROR/RESCUE PATHS
 ### Flakiness Risks
 
 - clock-sensitive TTL assertions in update-check tests
-- eval nondeterminism in routing-sensitive prompt tests
+- runner/judge nondeterminism in routing-sensitive prompt tests
 - git fixture setup for detached HEAD and missing remotes
 
 Mitigations:
 
 - freeze or inject timestamps in deterministic tests
-- keep eval coverage narrow, explicit, and compared against a fixed prompt set
+- keep agent-run eval coverage narrow, explicit, and compared against a fixed scenario set plus a fixed judge rubric
 - isolate git fixture setup inside dedicated test fixtures/scripts
 
 ### Eval Policy For Item 1
 
 Item 1 must not rely on deterministic description-contract tests alone. At least one focused routing eval suite is required before merge for any change that broadens late-stage skill discoverability, because candidate-skill drift is the failure mode most likely to escape purely deterministic checks.
+
+For this spec, that routing eval suite should be defined as agent workflow, not static prompt text:
+
+- this stays Item 1-local; it does not authorize or require a reusable repo-wide LLM-eval framework
+- this routing-eval gate is limited to single-turn initial-routing scenarios; multi-turn pushback or broader conversation-routing coverage belongs in a follow-up change if later needed
+- each eval uses a fresh isolated runner subagent and a fresh isolated judge subagent
+- each eval run chooses runner and judge models explicitly at execution time and records those chosen models in the evidence bundle, but this spec does not pin exact model identifiers
+- each runner scenario starts from the real `using-superpowers` entry contract and installed skill set rather than a custom shortcut prompt that bypasses the normal top-level routing surface
+- each scenario executes in a minimal synthetic temporary fixture workspace that is itself a real initialized git repo, with explicit branch, remote, artifact-state files, and runner context instead of borrowing the live branch state, copying the live repo, or relying on prose-only state descriptions
+- the runner is read-only: it may inspect the provided fixture/context and produce a routing result, but it may not write files, sync workflow artifacts, or mutate repo state
+- the controller captures the raw runner transcript/output for each scenario
+- the runner ends with a small structured outcome block for each scenario, naming the scenario identifier, chosen safe stage/skill, forbidden routes rejected, and a short rationale
+- the judge reads the raw runner evidence plus the scenario fixture and expected-safe-stage rubric
+- pass/fail is strict per scenario: the runner must clearly route to the expected safe stage and must not endorse any forbidden later-stage route; ambiguous or mixed outputs fail
+- fixture bootstrap failures, runner or judge errors or timeouts, malformed structured outcome blocks, missing evidence, and judge ambiguity all fail the affected scenario and the overall eval gate closed rather than degrading to advisory or deterministic-only coverage
+- each scenario evaluation persists one evidence bundle containing the scenario-set identifier, scenario identifier, chosen runner/judge models, raw runner transcript/output, raw judge transcript/output or structured judge rationale, scenario-artifact revision/fingerprint, judge verdict, and final pass/fail result
+- persisted eval evidence lives under `~/.superpowers/projects/<slug>/...` with bounded retention and is treated as non-authoritative review/debug evidence rather than a repo-authoritative artifact
+
+Thin orchestration code may exist later if the repo wants a helper entrypoint, but the substantive test definition should live in item-local scenario instructions and judge instructions, not in a JS-only prompt payload that bypasses actual agent workflow.
 
 ### Deterministic Tests
 
@@ -702,7 +751,11 @@ Item 1 must not rely on deterministic description-contract tests alone. At least
 
 ### Eval Coverage
 
-Expand routing evals so prompts that sound late-stage still route to the earlier safe stage when helper state requires it.
+Expand routing eval scenarios so prompts that sound late-stage still route to the earlier safe stage when helper state requires it, and evaluate those scenarios through the runner-subagent plus judge-subagent flow.
+
+The suite must also include a small positive-control subset where a later-stage route is actually correct for the fixture state, with at least one positive-control scenario per affected late-stage skill family, so Item 1 cannot pass by routing everything earlier than necessary.
+
+For this spec, the scenario artifact must define a fixed repo-versioned minimum scenario matrix for the affected late-stage skill families. Additive scenarios are allowed later, but the minimum floor stays stable and reviewable across revisions.
 
 Examples:
 
@@ -710,6 +763,18 @@ Examples:
 - "write the plan" while spec is still draft
 - "start implementing" while plan is still draft
 - "finish this branch" before completion prerequisites are satisfied
+
+The eval design for this spec should therefore include:
+
+- an Item 1-specific scenario artifact that defines each routing scenario, its explicit artifact-state fixture, the expected-safe-stage outcome, and the forbidden later-stage routes
+- a small positive-control subset in that scenario artifact, with at least one scenario per affected late-stage skill family, so the suite checks both "does not route too late" and "does not route too early"
+- a fixed repo-versioned minimum scenario matrix in that scenario artifact for this spec's affected late-stage skill families, with optional additive scenarios allowed above that floor
+- a minimal synthetic temporary fixture-workspace setup for each scenario so the runner operates against a real git repo plus actual artifact-state files rather than prose-only state, mocked repo metadata, or copied live-repo complexity
+- an Item 1-specific runner instruction artifact used by a fresh isolated runner subagent
+- an Item 1-specific judge instruction artifact used by a fresh isolated judge subagent
+- the authoritative Item 1 scenario, runner, and judge instruction artifacts are versioned in the repo for reviewability and reproducibility, and each evidence bundle records the scenario identifier plus the scenario/rubric artifact revision or fingerprint; temporary fixture workspaces and per-scenario evidence remain outside the repo under `~/.superpowers/projects/<slug>/...`
+- a required structured runner-outcome shape so the judge does not have to infer the intended route from freeform prose alone
+- a persisted evidence artifact for each run under `~/.superpowers/projects/<slug>/...` that keeps the raw runner evidence and judge result reviewable after the run completes
 
 ## Acceptance Criteria
 
@@ -737,6 +802,7 @@ This spec does not introduce a high-throughput runtime path. Its performance bar
 - the shared slug helper should reduce duplicated work overall, not add another layer that callers bypass
 - update-check freshness should use the cache policy to reduce unnecessary remote requests while still shortening stale `UP_TO_DATE` windows
 - generated-doc validation should stay focused on direct contract drift, not force unrelated regeneration work
+- bounded, purposeful eval coverage must keep Item 1 item-local: a fixed repo-versioned minimum scenario matrix, per-scenario evidence bundles, minimal synthetic git fixtures, fresh isolated runner/judge subagents, and bounded local evidence under `~/.superpowers/projects/<slug>/...`
 
 ### Stress Perspective
 
@@ -760,7 +826,7 @@ This spec does not justify a new telemetry system. Its observability bar is that
 ### Required Visibility Surfaces
 
 - deterministic helper tests must fail with named contract or failure-class context, not generic assertion noise
-- routing-sensitive regressions must be visible through focused eval output tied to the specific prompt set
+- routing-sensitive regressions must be visible through runner transcripts plus focused judge output tied to the specific scenario, and the persisted evidence bundle must carry the scenario identifier, scenario/rubric artifact fingerprint, chosen runner/judge models, and final verdict so a single run is traceable end to end
 - generated-doc drift must remain visible through generator/contract checks
 - update-check freshness failures must remain visible through helper tests and explicit helper diagnostics
 - workflow-safe fallback behavior must stay explainable through existing workflow inspection surfaces rather than hidden inside prompt wording
@@ -770,15 +836,16 @@ This spec does not justify a new telemetry system. Its observability bar is that
 - when shared slug derivation fails, callers should surface an explicit diagnostic instead of silently re-deriving values differently
 - when `_BRANCH` grounding is missing, the failure should be discoverable from generated-doc checks or rendered generated docs
 - when update freshness behaves unexpectedly, the relevant cache-policy branch should be inferable from deterministic tests and helper output
-- when Item 1 regresses, reviewers should be able to see both the deterministic contract failure and the focused routing-eval result
+- when Item 1 regresses, reviewers should be able to see both the deterministic contract failure and the persisted per-scenario routing-eval evidence bundle under `~/.superpowers/projects/<slug>/...`, with named diagnostics for fixture bootstrap failures, judge timeouts, malformed structured outcome blocks, and evidence-persistence failures so infra breaks stay distinct from model verdicts
 
 ### Out Of Scope For This Change
 
 - no new metrics or tracing pipeline
 - no new dashboard or alerting system
 - no new admin/debug UI beyond existing helper/test/review surfaces
+- no repo-authoritative eval artifact written into the working tree for normal runs
 
-The intent is not to under-invest in observability. It is to keep this change aligned with the repo's actual operating model: local helpers, generated docs, deterministic tests, focused evals, and review-time inspection tools.
+The intent is not to under-invest in observability. It is to keep this change aligned with the repo's actual operating model: local helpers, generated docs, deterministic tests, agent-run eval instructions, judge outputs, and review-time inspection tools.
 
 ## Deployment And Rollout
 
@@ -787,7 +854,7 @@ This change does not need a runtime feature flag. Its rollout safety comes from 
 ### Rollout Order
 
 1. land the shared slug/helper and `_BRANCH` grounding foundation
-2. land description broadening together with deterministic routing guardrails and the required focused routing eval suite
+2. land description broadening together with deterministic routing guardrails and the required focused agent-executed routing eval suite
 3. land update-check freshness changes with deterministic cache/version coverage
 4. regenerate docs, update release notes, and confirm contract checks pass on the final combined diff
 
@@ -796,7 +863,7 @@ This change does not need a runtime feature flag. Its rollout safety comes from 
 Before merge, the rollout must have:
 
 - passing deterministic helper, generator, and workflow tests for all touched paths
-- the required focused routing eval suite for Item 1
+- the required focused agent-executed routing eval suite for Item 1, executed against the repo-versioned minimum scenario matrix and the versioned scenario/runner/judge instruction artifacts for the current spec revision, with each evidence bundle recording the scenario identifier plus the scenario/rubric artifact revision or fingerprint
 - regenerated skill docs in sync with template/generator changes
 - `RELEASE-NOTES.md` coverage for the user-visible runtime behavior changes
 
@@ -807,6 +874,7 @@ If the combined change regresses:
 - revert description broadening first if routing confidence is affected
 - revert shared-helper adoption sites if artifact-path truth changes
 - revert update-check freshness independently if release signaling becomes misleading
+- if the Item 1 eval architecture itself regresses, restore the last known-good repo-versioned scenario/rubric/instruction artifacts and regenerate any stale evidence bundles rather than relying on an ad hoc local scenario set
 - keep workflow-helper authority untouched so fallback-to-earlier-safe-stage remains available throughout rollback
 
 ### Deploy-Time Risk Window
@@ -819,7 +887,7 @@ After merge or before release packaging:
 
 - run the helper and contract test suite on the merged branch
 - confirm generated docs are clean and up to date
-- verify the routing eval for Item 1 still passes against the merged prompt set
+- verify the agent-executed routing eval for Item 1 still passes against the merged repo-versioned minimum scenario matrix and that the persisted evidence bundles record the current artifact revision/fingerprint
 - verify release notes or equivalent documentation mention the new runtime behavior accurately
 
 ## Long-Term Trajectory
@@ -835,6 +903,7 @@ A year from now, success looks like:
 - repo and branch identity derivation still has one obvious source of truth
 - update-check freshness is more truthful without having expanded into a broader release-notification subsystem
 - no one mistakes this spec for a standing requirement to mirror `gstack` feature-for-feature
+- the Item 1 eval contract remains item-local, with a fixed repo-versioned minimum scenario matrix, scenario/rubric artifacts, and bounded local evidence, rather than turning into a reusable repo-wide eval framework
 
 ### Path Dependency And Reversibility
 
@@ -844,6 +913,7 @@ This change is intentionally reversible:
 - shared slug-helper adoption can be rolled back to prior inline derivation if the helper contract proves wrong
 - update freshness can be tuned or reverted independently without changing workflow authority
 - `_BRANCH` grounding can remain a shared preamble concern without becoming an approval-state dependency
+- the Item 1 eval artifacts can be regenerated or tightened without promoting their scenario fixtures or evidence bundles into a general-purpose product surface
 
 The main long-term risk is not technical lock-in; it is conceptual drift. If future changes start treating this narrow alignment as evidence that Superpowers should automatically absorb every upstream `gstack` refinement, the project will lose architectural clarity.
 
