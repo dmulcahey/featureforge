@@ -95,20 +95,27 @@ function resolveRuntimeRoot(entryPath, runtimeRootOverride) {
   }
   return import_node_path2.default.resolve(import_node_path2.default.dirname(entryPath), "../../..");
 }
-function resolveStateDir(env) {
+function resolveStateDir(env, platform = process.platform) {
+  const pathApi = platform === "win32" ? import_node_path2.default.win32 : import_node_path2.default;
   if (env.SUPERPOWERS_STATE_DIR && env.SUPERPOWERS_STATE_DIR.length > 0) {
     return env.SUPERPOWERS_STATE_DIR;
   }
+  if (platform === "win32") {
+    if (env.USERPROFILE && env.USERPROFILE.length > 0) {
+      return pathApi.join(env.USERPROFILE, ".superpowers");
+    }
+    if (env.HOMEDRIVE && env.HOMEPATH && env.HOMEDRIVE.length > 0 && env.HOMEPATH.length > 0) {
+      return pathApi.join(`${env.HOMEDRIVE}${env.HOMEPATH}`, ".superpowers");
+    }
+    if (env.HOME && env.HOME.length > 0) {
+      return pathApi.join(env.HOME, ".superpowers");
+    }
+    return pathApi.join(import_node_os.default.homedir(), ".superpowers");
+  }
   if (env.HOME && env.HOME.length > 0) {
-    return import_node_path2.default.join(env.HOME, ".superpowers");
+    return pathApi.join(env.HOME, ".superpowers");
   }
-  if (env.USERPROFILE && env.USERPROFILE.length > 0) {
-    return import_node_path2.default.join(env.USERPROFILE, ".superpowers");
-  }
-  if (env.HOMEDRIVE && env.HOMEPATH && env.HOMEDRIVE.length > 0 && env.HOMEPATH.length > 0) {
-    return import_node_path2.default.join(`${env.HOMEDRIVE}${env.HOMEPATH}`, ".superpowers");
-  }
-  return import_node_path2.default.join(import_node_os.default.homedir(), ".superpowers");
+  return pathApi.join(import_node_os.default.homedir(), ".superpowers");
 }
 function normalizeRelativePath(input) {
   if (input.length === 0 || import_node_path2.default.isAbsolute(input)) {

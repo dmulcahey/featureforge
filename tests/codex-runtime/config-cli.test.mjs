@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
@@ -13,10 +14,14 @@ const require = createRequire(path.join(repoRoot, 'runtime/core-helpers/package.
 const { build } = require('esbuild');
 
 async function bundleCli() {
+  return bundleEntry(path.join(repoRoot, 'runtime/core-helpers/src/cli/superpowers-config.ts'), 'superpowers-config.cjs');
+}
+
+async function bundleEntry(entryPath, outputName) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'superpowers-config-cli-'));
-  const bundledPath = path.join(tmpDir, 'superpowers-config.cjs');
+  const bundledPath = path.join(tmpDir, outputName);
   await build({
-    entryPoints: [path.join(repoRoot, 'runtime/core-helpers/src/cli/superpowers-config.ts')],
+    entryPoints: [entryPath],
     bundle: true,
     format: 'cjs',
     platform: 'node',
@@ -25,6 +30,16 @@ async function bundleCli() {
   });
 
   return { tmpDir, bundledPath };
+}
+
+async function withBundledModule(entryPath, outputName, fn) {
+  const { tmpDir, bundledPath } = await bundleEntry(entryPath, outputName);
+  try {
+    const module = await import(pathToFileURL(bundledPath).href);
+    await fn(module);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  }
 }
 
 async function withBundledCli(fn) {
@@ -93,21 +108,38 @@ test('CLI set/get/list roundtrip preserves current config semantics', async () =
   });
 });
 
-test('CLI falls back to USERPROFILE when HOME is unavailable', async () => {
-  await withBundledCli(async (bundledPath) => {
-    const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'superpowers-config-userprofile-'));
-    try {
-      const result = runCli(bundledPath, ['set', 'update_check', 'false'], {
-        HOME: '',
-        USERPROFILE: profileRoot,
-      });
-      assert.equal(result.status, 0);
+test('resolveStateDir uses USERPROFILE when HOME is unavailable on win32', async () => {
+  await withBundledModule(
+    path.join(repoRoot, 'runtime/core-helpers/src/platform/paths.ts'),
+    'paths.cjs',
+    async (module) => {
+      const stateDir = module.resolveStateDir(
+        {
+          HOME: '',
+          USERPROFILE: 'C:\\Users\\demo',
+        },
+        'win32',
+      );
 
-      const configPath = path.join(profileRoot, '.superpowers', 'config.yaml');
-      const writtenConfig = await fs.readFile(configPath, 'utf8');
-      assert.match(writtenConfig, /^update_check: false$/m);
-    } finally {
-      await fs.rm(profileRoot, { recursive: true, force: true });
-    }
-  });
+      assert.equal(stateDir, 'C:\\Users\\demo\\.superpowers');
+    },
+  );
+});
+
+test('resolveStateDir prefers USERPROFILE over HOME on win32', async () => {
+  await withBundledModule(
+    path.join(repoRoot, 'runtime/core-helpers/src/platform/paths.ts'),
+    'paths.cjs',
+    async (module) => {
+      const stateDir = module.resolveStateDir(
+        {
+          HOME: '/c/Users/demo',
+          USERPROFILE: 'C:\\Users\\demo',
+        },
+        'win32',
+      );
+
+      assert.equal(stateDir, 'C:\\Users\\demo\\.superpowers');
+    },
+  );
 });

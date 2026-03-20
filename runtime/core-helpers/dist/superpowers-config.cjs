@@ -98,20 +98,27 @@ function writeTextFileAtomic(filePath, contents) {
 // src/platform/paths.ts
 var import_node_os = __toESM(require("node:os"), 1);
 var import_node_path2 = __toESM(require("node:path"), 1);
-function resolveStateDir(env) {
+function resolveStateDir(env, platform = process.platform) {
+  const pathApi = platform === "win32" ? import_node_path2.default.win32 : import_node_path2.default;
   if (env.SUPERPOWERS_STATE_DIR && env.SUPERPOWERS_STATE_DIR.length > 0) {
     return env.SUPERPOWERS_STATE_DIR;
   }
+  if (platform === "win32") {
+    if (env.USERPROFILE && env.USERPROFILE.length > 0) {
+      return pathApi.join(env.USERPROFILE, ".superpowers");
+    }
+    if (env.HOMEDRIVE && env.HOMEPATH && env.HOMEDRIVE.length > 0 && env.HOMEPATH.length > 0) {
+      return pathApi.join(`${env.HOMEDRIVE}${env.HOMEPATH}`, ".superpowers");
+    }
+    if (env.HOME && env.HOME.length > 0) {
+      return pathApi.join(env.HOME, ".superpowers");
+    }
+    return pathApi.join(import_node_os.default.homedir(), ".superpowers");
+  }
   if (env.HOME && env.HOME.length > 0) {
-    return import_node_path2.default.join(env.HOME, ".superpowers");
+    return pathApi.join(env.HOME, ".superpowers");
   }
-  if (env.USERPROFILE && env.USERPROFILE.length > 0) {
-    return import_node_path2.default.join(env.USERPROFILE, ".superpowers");
-  }
-  if (env.HOMEDRIVE && env.HOMEPATH && env.HOMEDRIVE.length > 0 && env.HOMEPATH.length > 0) {
-    return import_node_path2.default.join(`${env.HOMEDRIVE}${env.HOMEPATH}`, ".superpowers");
-  }
-  return import_node_path2.default.join(import_node_os.default.homedir(), ".superpowers");
+  return pathApi.join(import_node_os.default.homedir(), ".superpowers");
 }
 
 // src/platform/process.ts
