@@ -15,3 +15,7 @@ export class RuntimeFailure extends Error {
     this.remediation = metadata.remediation;
   }
 }
+
+export function runtimeFailure(failureClass: string, message: string, remediation?: string): RuntimeFailure {
+  return new RuntimeFailure({ failureClass, message, remediation });
+}

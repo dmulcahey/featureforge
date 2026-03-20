@@ -371,7 +371,7 @@ Expected: PASS
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: PASS
 
-- [ ] **Step 6: Commit the staged install/update slice**
+- [x] **Step 6: Commit the staged install/update slice**
 ```bash
 git add bin/superpowers-install-runtime bin/superpowers-install-runtime.ps1 bin/superpowers-migrate-install bin/superpowers-migrate-install.ps1 superpowers-upgrade/SKILL.md .codex/INSTALL.md .copilot/INSTALL.md README.md docs/README.codex.md docs/README.copilot.md docs/testing.md tests/codex-runtime/test-superpowers-install-runtime.sh tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh tests/codex-runtime/test-superpowers-migrate-install.sh tests/codex-runtime/test-superpowers-upgrade-skill.sh tests/codex-runtime/test-runtime-instructions.sh
 git commit -m "feat: add staged runtime install flow"
@@ -400,7 +400,7 @@ git commit -m "feat: add staged runtime install flow"
 - Test: `bash tests/codex-runtime/test-superpowers-config.sh`
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
-- [ ] **Step 1: Add failing Node-native config tests and launch-contract coverage**
+- [x] **Step 1: Add failing Node-native config tests and launch-contract coverage**
 ```bash
 # Cover:
 # - core/config read, write, and list behavior directly under node --test
@@ -417,7 +417,7 @@ git commit -m "feat: add staged runtime install flow"
 # - config get preserves the current whitespace-trimmed read behavior
 ```
 
-- [ ] **Step 2: Run the red launch/config tests**
+- [x] **Step 2: Run the red launch/config tests**
 Run: `node --test tests/codex-runtime/config-core.test.mjs tests/codex-runtime/config-cli.test.mjs`
 Expected: FAIL because the config core and CLI adapter do not exist yet.
 
@@ -427,7 +427,7 @@ Expected: FAIL because the shared runtime launcher does not exist yet.
 Run: `bash tests/codex-runtime/test-superpowers-config.sh`
 Expected: FAIL once the test expects the Node-backed wrapper contract.
 
-- [ ] **Step 3: Add the shared shell and PowerShell launch helpers**
+- [x] **Step 3: Add the shared shell and PowerShell launch helpers**
 ```bash
 emit_runtime_failure() {
   printf '{"failure_class":"%s","message":"%s"}\n' "$1" "$2" >&2
@@ -453,7 +453,7 @@ function Get-SuperpowersNodePath {
 
 Keep this logic in the new `bin/superpowers-runtime-common.ps1` file so the existing `bin/superpowers-pwsh-common.ps1` remains Bash-focused for non-migrated wrappers.
 
-- [ ] **Step 4: Port the config core and CLI entrypoint**
+- [x] **Step 4: Port the config core and CLI entrypoint**
 ```ts
 export function getConfigValue(configText: string, key: string): string {
   // preserve current "last matching key wins" behavior
@@ -469,7 +469,7 @@ export function getConfigValue(configText: string, key: string): string {
 #   or nested-structure editing behavior in this migration
 ```
 
-- [ ] **Step 5: Replace the shipped config wrappers with Node launchers**
+- [x] **Step 5: Replace the shipped config wrappers with Node launchers**
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -477,7 +477,7 @@ set -euo pipefail
 superpowers_run_node_runtime "$(superpowers_install_root)/runtime/core-helpers/dist/superpowers-config.cjs" "$@"
 ```
 
-- [ ] **Step 6: Rebuild and rerun the targeted config suites**
+- [x] **Step 6: Rebuild and rerun the targeted config suites**
 Run: `npm --prefix runtime/core-helpers run build`
 Expected: PASS and refresh `runtime/core-helpers/dist/superpowers-config.cjs`.
 

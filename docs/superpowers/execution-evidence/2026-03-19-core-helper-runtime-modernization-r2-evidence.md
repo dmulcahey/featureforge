@@ -205,3 +205,117 @@
 **Verification:**
 - `bash tests/codex-runtime/test-superpowers-install-runtime.sh && bash tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh && bash tests/codex-runtime/test-superpowers-migrate-install.sh && bash tests/codex-runtime/test-superpowers-upgrade-skill.sh && bash tests/codex-runtime/test-runtime-instructions.sh` -> PASS
 **Invalidation Reason:** N/A
+
+### Task 2 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T02:43:28Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Committed the staged install/update slice in 46d6527.
+**Files:**
+- .codex/INSTALL.md
+- .copilot/INSTALL.md
+- README.md
+- bin/superpowers-install-runtime
+- bin/superpowers-install-runtime.ps1
+- bin/superpowers-migrate-install
+- bin/superpowers-migrate-install.ps1
+- docs/README.codex.md
+- docs/README.copilot.md
+- docs/superpowers/execution-evidence/2026-03-19-core-helper-runtime-modernization-r2-evidence.md
+- docs/superpowers/plans/2026-03-19-core-helper-runtime-modernization.md
+- docs/testing.md
+- superpowers-upgrade/SKILL.md
+- tests/codex-runtime/test-runtime-instructions.sh
+- tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh
+- tests/codex-runtime/test-superpowers-install-runtime.sh
+- tests/codex-runtime/test-superpowers-migrate-install.sh
+- tests/codex-runtime/test-superpowers-upgrade-skill.sh
+**Verification:**
+- Manual inspection only: Committed the Task 2 staged runtime install flow in 46d6527 after the staged install, PowerShell wrapper, migration delegation, upgrade-skill, and runtime-instructions suites all passed.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T02:48:08Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Added failing config core, CLI, shared-launch, and wrapper regression coverage.
+**Files:**
+- tests/codex-runtime/config-cli.test.mjs
+- tests/codex-runtime/config-core.test.mjs
+- tests/codex-runtime/test-core-helper-runtime-launch.sh
+- tests/codex-runtime/test-superpowers-config.sh
+**Verification:**
+- Manual inspection only: Added node:test config core and CLI suites plus shared-launch and wrapper smoke coverage that now require the Node-backed config runtime.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T02:48:18Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Ran the config and runtime-launch red suites and confirmed the missing config runtime failures.
+**Files:**
+- None (no repo file changed)
+**Verification:**
+- `node --test tests/codex-runtime/config-core.test.mjs tests/codex-runtime/config-cli.test.mjs && bash tests/codex-runtime/test-core-helper-runtime-launch.sh && bash tests/codex-runtime/test-superpowers-config.sh` -> FAIL: runtime/core-helpers/src/core/config.ts is missing, the shared runtime launch helpers do not exist, and the config wrapper is still Bash-backed.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T02:56:13Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Added shared shell and PowerShell runtime launch helpers for migrated commands.
+**Files:**
+- bin/superpowers-runtime-common.ps1
+- bin/superpowers-runtime-common.sh
+- tests/codex-runtime/test-core-helper-runtime-launch.sh
+**Verification:**
+- Manual inspection only: Added install-root-relative runtime launch helpers that fail closed on missing or unsupported Node, missing bundles, and invalid bundles while keeping PowerShell launch logic separate from the Bash-oriented helper.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T02:56:24Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Ported the config core and CLI entrypoint to the bundled runtime while preserving the narrow line-oriented config contract.
+**Files:**
+- runtime/core-helpers/src/cli/superpowers-config.ts
+- runtime/core-helpers/src/core/config.ts
+- runtime/core-helpers/src/core/errors.ts
+- runtime/core-helpers/src/platform/filesystem.ts
+- tests/codex-runtime/config-cli.test.mjs
+- tests/codex-runtime/config-core.test.mjs
+**Verification:**
+- Manual inspection only: Added the pure config module plus CLI adapter with last-match wins reads, replace-or-append writes, preserved unrelated lines, and explicit usage failures.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T02:56:35Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Replaced the shipped config wrappers with Node-backed launchers and updated PowerShell coverage for the migrated helper.
+**Files:**
+- bin/superpowers-config
+- bin/superpowers-config.ps1
+- tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
+- tests/codex-runtime/test-superpowers-config.sh
+**Verification:**
+- Manual inspection only: Switched the config entrypoints to the shared runtime launchers and extended the PowerShell wrapper regression suite so the migrated config helper must bypass Git Bash and launch Node directly.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T02:56:46Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Rebuilt the bundled config runtime and reran the targeted config and wrapper suites until they all passed.
+**Files:**
+- None (no repo file changed)
+**Verification:**
+- `npm --prefix runtime/core-helpers run build && node --test tests/codex-runtime/config-core.test.mjs tests/codex-runtime/config-cli.test.mjs && bash tests/codex-runtime/test-core-helper-runtime-launch.sh && bash tests/codex-runtime/test-superpowers-config.sh && bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh && npm --prefix runtime/core-helpers run build:check` -> PASS
+**Invalidation Reason:** N/A

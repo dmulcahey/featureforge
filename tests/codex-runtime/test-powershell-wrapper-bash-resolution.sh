@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HELPER="$REPO_ROOT/bin/superpowers-pwsh-common.ps1"
+RUNTIME_HELPER="$REPO_ROOT/bin/superpowers-runtime-common.ps1"
+CONFIG_WRAPPER="$REPO_ROOT/bin/superpowers-config.ps1"
 PUBLIC_WORKFLOW_WRAPPER="$REPO_ROOT/bin/superpowers-workflow.ps1"
 WORKFLOW_WRAPPER="$REPO_ROOT/bin/superpowers-workflow-status.ps1"
 PLAN_EXEC_WRAPPER="$REPO_ROOT/bin/superpowers-plan-execution.ps1"
@@ -297,5 +299,53 @@ assert_public_workflow_wrapper_behavior "$PUBLIC_WORKFLOW_WRAPPER"
 assert_wrapper_behavior "$WORKFLOW_WRAPPER" "superpowers-workflow-status" "workflow-status"
 assert_wrapper_behavior "$PLAN_EXEC_WRAPPER" "superpowers-plan-execution" "plan-execution"
 assert_update_check_wrapper_behavior "$UPDATE_CHECK_WRAPPER"
+
+assert_config_wrapper_launches_node_directly() {
+  local wrapper_path="$1"
+  local bash_log="$tmp_root/config-wrapper-bash.log"
+  local config_state="$tmp_root/config-wrapper-state"
+  local wrapper_output
+
+  mkdir -p "$config_state"
+  printf 'update_check: true\n' > "$config_state/config.yaml"
+
+  if [[ ! -f "$RUNTIME_HELPER" ]]; then
+    echo "Expected shared runtime PowerShell helper to exist: $RUNTIME_HELPER"
+    exit 1
+  fi
+
+  if [[ ! -f "$wrapper_path" ]]; then
+    echo "Expected config PowerShell wrapper to exist: $wrapper_path"
+    exit 1
+  fi
+
+  cat > "$git_bin_dir/bash.exe" <<'SH'
+#!/bin/bash
+printf 'bash wrapper invoked\n' >> "${SUPERPOWERS_TEST_BASH_LOG:?}"
+exit 11
+SH
+  chmod +x "$git_bin_dir/bash.exe"
+
+  wrapper_output="$(
+    PATH="$generic_dir:$git_cmd_dir:$PATH" \
+      SUPERPOWERS_TEST_BASH_LOG="$bash_log" \
+      SUPERPOWERS_STATE_DIR="$config_state" \
+      "$pwsh_bin" -NoLogo -NoProfile -Command "& '$wrapper_path' get update_check"
+  )"
+
+  if [[ "$wrapper_output" != "true" ]]; then
+    echo "Expected config PowerShell wrapper to read config through the Node runtime"
+    echo "Actual output: $wrapper_output"
+    exit 1
+  fi
+
+  if [[ -s "$bash_log" ]]; then
+    echo "Expected migrated config PowerShell wrapper to launch Node directly instead of Git Bash"
+    cat "$bash_log"
+    exit 1
+  fi
+}
+
+assert_config_wrapper_launches_node_directly "$CONFIG_WRAPPER"
 
 echo "PowerShell wrapper bash-resolution regression test passed."
