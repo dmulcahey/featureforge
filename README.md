@@ -215,7 +215,9 @@ else
   tmpdir=$(mktemp -d)
   git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
   "$tmpdir/superpowers/bin/superpowers-install-runtime"
+  install_status=$?
   rm -rf "$tmpdir"
+  if [[ $install_status -ne 0 ]]; then exit $install_status; fi
 fi
 ```
 
@@ -232,6 +234,7 @@ if (Test-Path "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-run
   & (Join-Path $tmpDir "superpowers\bin\superpowers-install-runtime.ps1")
   Remove-Item -Recurse -Force $tmpDir
 }
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
 After migrating, finish the normal platform setup:
@@ -382,6 +385,7 @@ Update the shared checkout used by both supported platforms:
 **Windows (PowerShell):**
 ```powershell
 & "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
 The staged helper refreshes already-present compatibility links and already-present copied Windows agent files. If it prints next steps, create any missing first-time discovery links or copied agent files after the update.

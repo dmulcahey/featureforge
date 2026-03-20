@@ -28,7 +28,9 @@ Fetch and follow instructions from https://raw.githubusercontent.com/dmulcahey/s
      tmpdir=$(mktemp -d)
      git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
      "$tmpdir/superpowers/bin/superpowers-install-runtime"
+     install_status=$?
      rm -rf "$tmpdir"
+     if [[ $install_status -ne 0 ]]; then exit $install_status; fi
    fi
    ```
 
@@ -60,6 +62,7 @@ if (Test-Path "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-run
   & (Join-Path $tmpDir "superpowers\bin\superpowers-install-runtime.ps1")
   Remove-Item -Recurse -Force $tmpDir
 }
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.copilot\skills"
 cmd /c mklink /J "$env:USERPROFILE\.copilot\skills\superpowers" "$env:USERPROFILE\.superpowers\install\skills"
@@ -79,7 +82,9 @@ else
   tmpdir=$(mktemp -d)
   git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
   "$tmpdir/superpowers/bin/superpowers-install-runtime"
+  install_status=$?
   rm -rf "$tmpdir"
+  if [[ $install_status -ne 0 ]]; then exit $install_status; fi
 fi
 ```
 
@@ -96,6 +101,7 @@ if (Test-Path "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-run
   & (Join-Path $tmpDir "superpowers\bin\superpowers-install-runtime.ps1")
   Remove-Item -Recurse -Force $tmpDir
 }
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
 The staged helper installs or updates the shared checkout, repairs already-present compatibility links or copied Windows agent files, and prints any remaining first-time setup steps. After migrating, continue with steps 2 and 3 to create or refresh `~/.copilot/skills/superpowers` and `~/.copilot/agents/code-reviewer.agent.md`, then restart GitHub Copilot.
@@ -186,6 +192,7 @@ Create your own skills in `~/.copilot/skills/` and your own agents in `~/.copilo
 **Windows (PowerShell):**
 ```powershell
 & "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
 The staged helper refreshes already-present compatibility links and already-present copied Windows agent files. If it prints next steps, create any missing first-time discovery links or copied agent files after the update.

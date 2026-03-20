@@ -121,4 +121,38 @@ fi
   exit 1
 }
 
+cat > "$tmp_root/failure-check.ps1" <<PS1
+\$env:SUPERPOWERS_NODE_BIN = '$tmp_root/does-not-exist/node'
+\$env:SUPERPOWERS_SHARED_ROOT = '$shared_root'
+\$env:SUPERPOWERS_CODEX_ROOT = '$codex_root'
+\$env:SUPERPOWERS_COPILOT_ROOT = '$copilot_root'
+\$env:SUPERPOWERS_REPO_URL = '$source_repo'
+\$env:SUPERPOWERS_INSTALL_STAGE_ROOT = '$stage_root'
+& '$PWSH_HELPER'
+Write-Output ('LASTEXIT=' + \$LASTEXITCODE)
+if (\$LASTEXITCODE -ne 0) {
+  Write-Output 'GATED_EXIT'
+  exit \$LASTEXITCODE
+}
+Write-Output 'AFTER_HELPER'
+PS1
+
+set +e
+failure_output="$("$pwsh_bin" -NoLogo -NoProfile -File "$tmp_root/failure-check.ps1" 2>&1)"
+failure_status=$?
+set -e
+if [[ "$failure_status" -eq 0 ]]; then
+  echo "Expected gated PowerShell staged install caller to fail closed when the helper fails."
+  printf '%s\n' "$failure_output"
+  exit 1
+fi
+require_contains "$failure_output" "RuntimeDependencyMissing"
+require_contains "$failure_output" "LASTEXIT=1"
+require_contains "$failure_output" "GATED_EXIT"
+if [[ "$failure_output" == *"AFTER_HELPER"* ]]; then
+  echo "Expected gated PowerShell staged install caller to stop before post-install steps."
+  printf '%s\n' "$failure_output"
+  exit 1
+fi
+
 echo "superpowers-install-runtime PowerShell regression test passed."

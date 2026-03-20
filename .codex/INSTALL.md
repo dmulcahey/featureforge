@@ -17,7 +17,9 @@ Enable superpowers skills in Codex via native skill discovery. Codex and GitHub 
      tmpdir=$(mktemp -d)
      git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
      "$tmpdir/superpowers/bin/superpowers-install-runtime"
+     install_status=$?
      rm -rf "$tmpdir"
+     if [[ $install_status -ne 0 ]]; then exit $install_status; fi
    fi
    ```
 
@@ -46,6 +48,7 @@ Enable superpowers skills in Codex via native skill discovery. Codex and GitHub 
      & (Join-Path $tmpDir "superpowers\bin\superpowers-install-runtime.ps1")
      Remove-Item -Recurse -Force $tmpDir
    }
+   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
    New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\skills"
    cmd /c mklink /J "$env:USERPROFILE\.agents\skills\superpowers" "$env:USERPROFILE\.superpowers\install\skills"
@@ -65,7 +68,9 @@ else
   tmpdir=$(mktemp -d)
   git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
   "$tmpdir/superpowers/bin/superpowers-install-runtime"
+  install_status=$?
   rm -rf "$tmpdir"
+  if [[ $install_status -ne 0 ]]; then exit $install_status; fi
 fi
 ```
 
@@ -82,6 +87,7 @@ if (Test-Path "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-run
   & (Join-Path $tmpDir "superpowers\bin\superpowers-install-runtime.ps1")
   Remove-Item -Recurse -Force $tmpDir
 }
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
 The staged helper installs or updates the shared checkout, repairs already-present compatibility links or copied Windows agent files, and prints any remaining first-time setup steps. After migrating, continue with steps 2 and 3 to create or refresh `~/.agents/skills/superpowers` and `~/.codex/agents/code-reviewer.toml`, then restart Codex.
@@ -166,6 +172,7 @@ If you disable update notices, re-enable them with:
 **Windows (PowerShell):**
 ```powershell
 & "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
 Skills update instantly through the symlink.

@@ -14,6 +14,19 @@ require_pattern() {
   fi
 }
 
+require_count_at_least() {
+  local file="$1"
+  local pattern="$2"
+  local minimum="$3"
+  local count
+  count="$(rg -c -F -- "$pattern" "$file" 2>/dev/null || true)"
+  count="${count:-0}"
+  if (( count < minimum )); then
+    echo "Expected at least $minimum occurrences of '$pattern' in $file, found $count"
+    exit 1
+  fi
+}
+
 SKILL_DIRS=(
   "brainstorming"
   "document-release"
@@ -823,6 +836,17 @@ if rg -n -F 'rerun step 3 after updating' .copilot/INSTALL.md docs/README.copilo
 fi
 
 echo "Cross-platform reviewer agent artifacts and copied-agent wording are correct."
+
+require_count_at_least "README.md" 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }' 2
+require_count_at_least ".codex/INSTALL.md" 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }' 3
+require_count_at_least ".copilot/INSTALL.md" 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }' 3
+require_count_at_least "docs/README.codex.md" 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }' 3
+require_count_at_least "docs/README.copilot.md" 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }' 3
+require_count_at_least "README.md" 'if [[ $install_status -ne 0 ]]; then exit $install_status; fi' 1
+require_count_at_least ".codex/INSTALL.md" 'if [[ $install_status -ne 0 ]]; then exit $install_status; fi' 2
+require_count_at_least ".copilot/INSTALL.md" 'if [[ $install_status -ne 0 ]]; then exit $install_status; fi' 2
+require_count_at_least "docs/README.codex.md" 'if [[ $install_status -ne 0 ]]; then exit $install_status; fi' 2
+require_count_at_least "docs/README.copilot.md" 'if [[ $install_status -ne 0 ]]; then exit $install_status; fi' 2
 
 if ! rg -n -F 'node tests/codex-runtime/run-shell-tests.mjs' docs/testing.md >/dev/null; then
   echo "docs/testing.md should use the canonical retained shell-suite runner in the recommended validation order."
