@@ -92,3 +92,22 @@ test('CLI set/get/list roundtrip preserves current config semantics', async () =
     }
   });
 });
+
+test('CLI falls back to USERPROFILE when HOME is unavailable', async () => {
+  await withBundledCli(async (bundledPath) => {
+    const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'superpowers-config-userprofile-'));
+    try {
+      const result = runCli(bundledPath, ['set', 'update_check', 'false'], {
+        HOME: '',
+        USERPROFILE: profileRoot,
+      });
+      assert.equal(result.status, 0);
+
+      const configPath = path.join(profileRoot, '.superpowers', 'config.yaml');
+      const writtenConfig = await fs.readFile(configPath, 'utf8');
+      assert.match(writtenConfig, /^update_check: false$/m);
+    } finally {
+      await fs.rm(profileRoot, { recursive: true, force: true });
+    }
+  });
+});

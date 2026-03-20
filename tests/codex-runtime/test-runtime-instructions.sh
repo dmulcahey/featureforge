@@ -829,6 +829,11 @@ if ! rg -n -F 'node tests/codex-runtime/run-shell-tests.mjs' docs/testing.md >/d
   exit 1
 fi
 
+if rg -n -F 'Once the bundled core-helper runtime ships' README.md >/dev/null; then
+  echo "README.md should describe the bundled core-helper runtime in present tense."
+  exit 1
+fi
+
 if ! rg -n -F '`test-superpowers-plan-execution.sh` covers the execution helper state machine' docs/testing.md >/dev/null; then
   echo "docs/testing.md should still describe the plan-execution helper regression coverage."
   exit 1

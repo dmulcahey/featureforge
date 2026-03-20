@@ -33,7 +33,7 @@ __export(superpowers_config_exports, {
   main: () => main
 });
 module.exports = __toCommonJS(superpowers_config_exports);
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_node_path3 = __toESM(require("node:path"), 1);
 
 // src/core/config.ts
 var KEY_VALUE_PATTERN = /^([^:]+):\s*(.*)$/;
@@ -95,6 +95,25 @@ function writeTextFileAtomic(filePath, contents) {
   import_node_fs.default.renameSync(tempPath, filePath);
 }
 
+// src/platform/paths.ts
+var import_node_os = __toESM(require("node:os"), 1);
+var import_node_path2 = __toESM(require("node:path"), 1);
+function resolveStateDir(env) {
+  if (env.SUPERPOWERS_STATE_DIR && env.SUPERPOWERS_STATE_DIR.length > 0) {
+    return env.SUPERPOWERS_STATE_DIR;
+  }
+  if (env.HOME && env.HOME.length > 0) {
+    return import_node_path2.default.join(env.HOME, ".superpowers");
+  }
+  if (env.USERPROFILE && env.USERPROFILE.length > 0) {
+    return import_node_path2.default.join(env.USERPROFILE, ".superpowers");
+  }
+  if (env.HOMEDRIVE && env.HOMEPATH && env.HOMEDRIVE.length > 0 && env.HOMEPATH.length > 0) {
+    return import_node_path2.default.join(`${env.HOMEDRIVE}${env.HOMEPATH}`, ".superpowers");
+  }
+  return import_node_path2.default.join(import_node_os.default.homedir(), ".superpowers");
+}
+
 // src/platform/process.ts
 function runCli(main2, argv = process.argv) {
   process.exitCode = main2(argv);
@@ -103,8 +122,8 @@ function runCli(main2, argv = process.argv) {
 // src/cli/superpowers-config.ts
 var USAGE = "Usage: superpowers-config {get|set|list} [key] [value]";
 function resolveConfigFile() {
-  const stateDir = process.env.SUPERPOWERS_STATE_DIR ?? import_node_path2.default.join(process.env.HOME ?? "", ".superpowers");
-  return import_node_path2.default.join(stateDir, "config.yaml");
+  const stateDir = resolveStateDir(process.env);
+  return import_node_path3.default.join(stateDir, "config.yaml");
 }
 function writeUsage() {
   console.error(USAGE);

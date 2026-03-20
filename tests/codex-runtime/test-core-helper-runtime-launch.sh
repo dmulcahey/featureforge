@@ -182,6 +182,21 @@ SH
     printf '%s\n' "$pwsh_output"
     exit 1
   fi
+
+  set +e
+  pwsh_old_node_output="$(
+    SUPERPOWERS_NODE_BIN="$node18_stub" \
+      SUPERPOWERS_STATE_DIR="$state_dir" \
+      "$pwsh_bin" -NoLogo -NoProfile -Command "& '$CONFIG_PWSH_WRAPPER' get update_check" 2>&1
+  )"
+  pwsh_old_node_status=$?
+  set -e
+  if [[ "$pwsh_old_node_status" -eq 0 ]]; then
+    echo "Expected PowerShell config wrapper to fail when Node is too old."
+    exit 1
+  fi
+  require_contains "$pwsh_old_node_output" "RuntimeDependencyVersionUnsupported"
+  require_contains "$pwsh_old_node_output" "Found v18.20.0"
 fi
 
 echo "core helper runtime launch regression test passed."

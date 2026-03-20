@@ -28,15 +28,15 @@ function Get-SuperpowersNodePath {
 
   $version = & $nodePath --version 2>$null
   if (-not $version) {
-    throw 'RuntimeDependencyVersionUnsupported'
+    throw "RuntimeDependencyVersionUnsupported:Couldn't determine the installed Node version."
   }
 
   if ($version -notmatch '^v?(?<major>\d+)') {
-    throw 'RuntimeDependencyVersionUnsupported'
+    throw "RuntimeDependencyVersionUnsupported:Couldn't determine the installed Node version."
   }
 
   if ([int]$Matches.major -lt 20) {
-    throw 'RuntimeDependencyVersionUnsupported'
+    throw "RuntimeDependencyVersionUnsupported:Node 20 LTS or newer is required. Found $version."
   }
 
   return $nodePath
@@ -57,14 +57,20 @@ function Invoke-SuperpowersRuntime {
   try {
     $nodePath = Get-SuperpowersNodePath
   } catch {
-    switch ($_.Exception.Message) {
+    $errorMessage = $_.Exception.Message
+    switch ($errorMessage) {
       'RuntimeDependencyMissing' {
         Write-SuperpowersRuntimeFailure 'RuntimeDependencyMissing' 'Node 20 LTS or newer is required.'
         $script:SuperpowersRuntimeExitCode = 1
         return
       }
       default {
-        Write-SuperpowersRuntimeFailure 'RuntimeDependencyVersionUnsupported' "Couldn't determine the installed Node version."
+        if ($errorMessage -like 'RuntimeDependencyVersionUnsupported:*') {
+          $message = $errorMessage.Substring('RuntimeDependencyVersionUnsupported:'.Length)
+          Write-SuperpowersRuntimeFailure 'RuntimeDependencyVersionUnsupported' $message
+        } else {
+          Write-SuperpowersRuntimeFailure 'RuntimeDependencyVersionUnsupported' "Couldn't determine the installed Node version."
+        }
         $script:SuperpowersRuntimeExitCode = 1
         return
       }

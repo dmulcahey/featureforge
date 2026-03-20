@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { getConfigValue, setConfigValue } from '../core/config';
 import { readTextFileIfExists, writeTextFileAtomic } from '../platform/filesystem';
+import { resolveStateDir } from '../platform/paths';
 import { runCli } from '../platform/process';
 
 declare const require: undefined | { main: unknown };
@@ -9,7 +10,7 @@ declare const module: unknown;
 const USAGE = 'Usage: superpowers-config {get|set|list} [key] [value]';
 
 function resolveConfigFile(): string {
-  const stateDir = process.env.SUPERPOWERS_STATE_DIR ?? path.join(process.env.HOME ?? '', '.superpowers');
+  const stateDir = resolveStateDir(process.env);
   return path.join(stateDir, 'config.yaml');
 }
 

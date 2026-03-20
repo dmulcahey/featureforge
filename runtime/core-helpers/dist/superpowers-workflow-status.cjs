@@ -38,7 +38,7 @@ var import_node_path4 = __toESM(require("node:path"), 1);
 // src/core/workflow-status.ts
 var import_node_crypto = __toESM(require("node:crypto"), 1);
 var import_node_fs2 = __toESM(require("node:fs"), 1);
-var import_node_os = __toESM(require("node:os"), 1);
+var import_node_os2 = __toESM(require("node:os"), 1);
 var import_node_path3 = __toESM(require("node:path"), 1);
 var import_node_child_process = require("node:child_process");
 
@@ -84,6 +84,7 @@ function listNewestFiles(directoryPath, options = {}) {
 }
 
 // src/platform/paths.ts
+var import_node_os = __toESM(require("node:os"), 1);
 var import_node_path2 = __toESM(require("node:path"), 1);
 function resolveFromRuntimeRoot(runtimeRoot, relativePath) {
   return import_node_path2.default.resolve(runtimeRoot, relativePath);
@@ -93,6 +94,21 @@ function resolveRuntimeRoot(entryPath, runtimeRootOverride) {
     return import_node_path2.default.resolve(runtimeRootOverride);
   }
   return import_node_path2.default.resolve(import_node_path2.default.dirname(entryPath), "../../..");
+}
+function resolveStateDir(env) {
+  if (env.SUPERPOWERS_STATE_DIR && env.SUPERPOWERS_STATE_DIR.length > 0) {
+    return env.SUPERPOWERS_STATE_DIR;
+  }
+  if (env.HOME && env.HOME.length > 0) {
+    return import_node_path2.default.join(env.HOME, ".superpowers");
+  }
+  if (env.USERPROFILE && env.USERPROFILE.length > 0) {
+    return import_node_path2.default.join(env.USERPROFILE, ".superpowers");
+  }
+  if (env.HOMEDRIVE && env.HOMEPATH && env.HOMEDRIVE.length > 0 && env.HOMEPATH.length > 0) {
+    return import_node_path2.default.join(`${env.HOMEDRIVE}${env.HOMEPATH}`, ".superpowers");
+  }
+  return import_node_path2.default.join(import_node_os.default.homedir(), ".superpowers");
 }
 function normalizeRelativePath(input) {
   if (input.length === 0 || import_node_path2.default.isAbsolute(input)) {
@@ -328,7 +344,7 @@ var WorkflowStatusRunner = class {
     this.cwd = import_node_path3.default.resolve(options.cwd ?? process.cwd());
     this.env = options.env ?? process.env;
     this.runtimeRoot = options.runtimeRoot ?? this.cwd;
-    this.stateDir = this.env.SUPERPOWERS_STATE_DIR ?? import_node_path3.default.join(import_node_os.default.homedir(), ".superpowers");
+    this.stateDir = resolveStateDir(this.env);
     const repoRootResult = this.runGitCommand(["rev-parse", "--show-toplevel"]);
     if (repoRootResult.success) {
       this.repoRoot = repoRootResult.stdout;
@@ -455,7 +471,7 @@ var WorkflowStatusRunner = class {
       return envUser;
     }
     try {
-      return import_node_os.default.userInfo().username;
+      return import_node_os2.default.userInfo().username;
     } catch {
       return "user";
     }

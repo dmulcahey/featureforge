@@ -12,7 +12,7 @@ import {
   readTextFileIfExists,
   writeTextFileAtomic,
 } from '../platform/filesystem';
-import { isPathInsideRoot, normalizeRelativePath, resolveFromRuntimeRoot } from '../platform/paths';
+import { isPathInsideRoot, normalizeRelativePath, resolveFromRuntimeRoot, resolveStateDir } from '../platform/paths';
 
 type WorkflowStatusCode =
   | 'needs_brainstorming'
@@ -386,7 +386,7 @@ class WorkflowStatusRunner {
     this.cwd = path.resolve(options.cwd ?? process.cwd());
     this.env = options.env ?? process.env;
     this.runtimeRoot = options.runtimeRoot ?? this.cwd;
-    this.stateDir = this.env.SUPERPOWERS_STATE_DIR ?? path.join(os.homedir(), '.superpowers');
+    this.stateDir = resolveStateDir(this.env);
 
     const repoRootResult = this.runGitCommand(['rev-parse', '--show-toplevel']);
     if (repoRootResult.success) {

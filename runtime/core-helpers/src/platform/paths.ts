@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 
 export function resolveFromRuntimeRoot(runtimeRoot: string, relativePath: string): string {
@@ -10,6 +11,26 @@ export function resolveRuntimeRoot(entryPath: string, runtimeRootOverride?: stri
   }
 
   return path.resolve(path.dirname(entryPath), '../../..');
+}
+
+export function resolveStateDir(env: NodeJS.ProcessEnv): string {
+  if (env.SUPERPOWERS_STATE_DIR && env.SUPERPOWERS_STATE_DIR.length > 0) {
+    return env.SUPERPOWERS_STATE_DIR;
+  }
+
+  if (env.HOME && env.HOME.length > 0) {
+    return path.join(env.HOME, '.superpowers');
+  }
+
+  if (env.USERPROFILE && env.USERPROFILE.length > 0) {
+    return path.join(env.USERPROFILE, '.superpowers');
+  }
+
+  if (env.HOMEDRIVE && env.HOMEPATH && env.HOMEDRIVE.length > 0 && env.HOMEPATH.length > 0) {
+    return path.join(`${env.HOMEDRIVE}${env.HOMEPATH}`, '.superpowers');
+  }
+
+  return path.join(os.homedir(), '.superpowers');
 }
 
 export function normalizeRelativePath(input: string): string | null {
