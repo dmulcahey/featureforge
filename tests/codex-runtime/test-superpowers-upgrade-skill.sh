@@ -108,7 +108,9 @@ require_pattern 'If `VERSION_RELATION=equal`, tell the user: `You'\''re already 
 require_pattern 'If `VERSION_RELATION=local_ahead`, tell the user: `Your local Superpowers install (v$LOCAL_VERSION) is newer than the fetched remote version (v$REMOTE_VERSION).`'
 require_pattern 'If this skill was invoked from an `UPGRADE_AVAILABLE` handoff'
 require_pattern 'You'\''re already on the latest known version (v$LOCAL_VERSION).'
-if rg -n -F 'git pull --ff-only' "$SKILL_FILE" >/dev/null; then
+require_pattern 'stop before invoking `bin/superpowers-install-runtime` unless `REMOTE_VERSION` is a valid newer version.'
+require_pattern 'If the staged install/update leaves `NEW_VERSION` unchanged'
+if rg -n -F 'git pull' "$SKILL_FILE" >/dev/null; then
   echo "Upgrade skill should route through bin/superpowers-install-runtime instead of raw git pull."
   exit 1
 fi

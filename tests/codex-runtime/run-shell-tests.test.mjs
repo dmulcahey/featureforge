@@ -54,6 +54,11 @@ test('runner reports discovered shell tests in lexical order', async (t) => {
   );
   await writeShellTest(
     tempDir,
+    'test-~.sh',
+    '#!/usr/bin/env bash\nset -euo pipefail\necho "tilde"\n',
+  );
+  await writeShellTest(
+    tempDir,
     'test-alpha.sh',
     '#!/usr/bin/env bash\nset -euo pipefail\necho "alpha"\n',
   );
@@ -65,8 +70,10 @@ test('runner reports discovered shell tests in lexical order', async (t) => {
   assert.deepEqual(results.map((result) => path.basename(result.path)), [
     'test-alpha.sh',
     'test-zeta.sh',
+    'test-~.sh',
   ]);
   assert.ok(report.indexOf('test-alpha.sh') < report.indexOf('test-zeta.sh'));
+  assert.ok(report.indexOf('test-zeta.sh') < report.indexOf('test-~.sh'));
 });
 
 test('runner exits nonzero when a discovered shell test fails', async (t) => {

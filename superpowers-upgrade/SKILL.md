@@ -246,4 +246,4 @@ After the summary, continue with whatever skill the user originally invoked.
 
 ## Standalone usage
 
-When invoked directly as `/superpowers-upgrade`, run Steps 1-6 above. The skill must resolve `LOCAL_VERSION`, fetch `REMOTE_VERSION`, and stop before `git pull` unless `REMOTE_VERSION` is a valid newer version. If the remote lookup fails, tell the user Superpowers could not verify the latest version right now. If the pull leaves `NEW_VERSION` unchanged, tell the user: `You're already on the latest version (v$NEW_VERSION).`
+When invoked directly as `/superpowers-upgrade`, run Steps 1-6 above. The skill must resolve `LOCAL_VERSION`, fetch `REMOTE_VERSION`, and stop before invoking `bin/superpowers-install-runtime` unless `REMOTE_VERSION` is a valid newer version. If the remote lookup fails, tell the user Superpowers could not verify the latest version right now. If the staged install/update leaves `NEW_VERSION` unchanged, tell the user: `You're already on the latest version (v$NEW_VERSION).`

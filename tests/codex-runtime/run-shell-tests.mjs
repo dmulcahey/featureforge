@@ -20,7 +20,7 @@ export async function discoverShellTests({ testDirectory = defaultTestDirectory 
   return entries
     .filter((entry) => entry.isFile() && /^test-.*\.sh$/.test(entry.name))
     .map((entry) => path.join(testDirectory, entry.name))
-    .sort((left, right) => left.localeCompare(right));
+    .sort();
 }
 
 async function runShellTest(testPath, { repoRoot }) {
