@@ -583,9 +583,7 @@ Expected: PASS
 Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 Expected: PASS
 
-- [ ] **Step 7: Commit the workflow-status slice**
-
-  **Execution Note:** Active - Commit the workflow-status slice
+- [x] **Step 7: Commit the workflow-status slice**
 ```bash
 git add bin/superpowers-workflow-status bin/superpowers-workflow-status.ps1 runtime/core-helpers tests/codex-runtime/workflow-status-core.test.mjs tests/codex-runtime/workflow-status-cli.test.mjs tests/codex-runtime/test-superpowers-workflow-status-equivalence.sh tests/codex-runtime/test-superpowers-workflow-status.sh tests/codex-runtime/test-superpowers-workflow.sh tests/codex-runtime/test-workflow-sequencing.sh
 git commit -m "feat: port workflow-status to bundled runtime"
@@ -609,7 +607,7 @@ git commit -m "feat: port workflow-status to bundled runtime"
 - Test: `bash tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh`
 - Test: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
 
-- [ ] **Step 1: Tighten red execution-helper Node-native coverage, parity coverage, and add a temporary equivalence harness**
+- [x] **Step 1: Tighten red execution-helper Node-native coverage, parity coverage, and add a temporary equivalence harness**
 ```bash
 # Preserve:
 # - core/plan-execution state transitions directly under node --test
@@ -621,7 +619,7 @@ git commit -m "feat: port workflow-status to bundled runtime"
 # - legacy shell helper and direct Node CLI match on representative success/failure fixtures
 ```
 
-- [ ] **Step 2: Run the red execution suite**
+- [x] **Step 2: Run the red execution suite**
 Run: `node --test tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs`
 Expected: FAIL because the execution core and CLI adapter do not yet preserve the helper contract.
 
@@ -631,23 +629,23 @@ Expected: FAIL because the direct Node CLI does not yet match the legacy shell h
 Run: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
 Expected: FAIL because the Node-backed implementation does not yet preserve execution semantics.
 
-- [ ] **Step 3: Port the execution state machine with explicit mutation helpers**
+- [x] **Step 3: Port the execution state machine with explicit mutation helpers**
 ```ts
 export function applyExecutionTransition(planText: string, args: BeginArgs | CompleteArgs | NoteArgs): TransitionResult {
   // preserve current checked-step, note, and evidence semantics
 }
 ```
 
-- [ ] **Step 4: Run temporary old-vs-new equivalence checks before wrapper replacement**
+- [x] **Step 4: Run temporary old-vs-new equivalence checks before wrapper replacement**
 Run: `bash tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh`
 Expected: PASS with the legacy shell helper and direct Node CLI producing matching representative success/failure behavior on the chosen fixtures.
 
-- [ ] **Step 5: Replace the shipped execution wrappers with bundled runtime launch**
+- [x] **Step 5: Replace the shipped execution wrappers with bundled runtime launch**
 ```bash
 superpowers_run_node_runtime "$(superpowers_install_root)/runtime/core-helpers/dist/superpowers-plan-execution.cjs" "$@"
 ```
 
-- [ ] **Step 6: Rebuild and rerun the execution suite**
+- [x] **Step 6: Rebuild and rerun the execution suite**
 Run: `npm --prefix runtime/core-helpers run build`
 Expected: PASS and refresh `runtime/core-helpers/dist/superpowers-plan-execution.cjs`.
 

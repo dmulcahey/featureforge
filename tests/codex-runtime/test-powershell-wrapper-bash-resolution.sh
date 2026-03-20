@@ -444,9 +444,112 @@ SH
   fi
 }
 
+assert_plan_execution_wrapper_launches_node_directly() {
+  local wrapper_path="$1"
+  local bash_log="$tmp_root/plan-execution-wrapper-bash.log"
+  local node_log="$tmp_root/plan-execution-wrapper-node.log"
+  local node_stub="$tmp_root/plan-execution-node-stub"
+  local wrapper_output
+  local wrapper_exit
+
+  if [[ ! -f "$RUNTIME_HELPER" ]]; then
+    echo "Expected shared runtime PowerShell helper to exist: $RUNTIME_HELPER"
+    exit 1
+  fi
+
+  if [[ ! -f "$wrapper_path" ]]; then
+    echo "Expected plan-execution PowerShell wrapper to exist: $wrapper_path"
+    exit 1
+  fi
+
+  cat > "$git_bin_dir/bash.exe" <<'SH'
+#!/bin/bash
+printf 'bash wrapper invoked\n' >> "${SUPERPOWERS_TEST_BASH_LOG:?}"
+exit 11
+SH
+  chmod +x "$git_bin_dir/bash.exe"
+
+  cat > "$node_stub" <<'SH'
+#!/bin/bash
+set -euo pipefail
+
+log_file="${SUPERPOWERS_TEST_NODE_LOG:?}"
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'v20.11.1\n'
+  exit 0
+fi
+if [[ "${1:-}" == "--check" ]]; then
+  printf 'CHECK:%s\n' "${2:-}" >> "$log_file"
+  exit 0
+fi
+
+printf 'RUN:%s\n' "$*" >> "$log_file"
+printf '{"execution_mode":"none","execution_started":"no","root":"C:\\tmp\\workspace"}\n'
+SH
+  chmod +x "$node_stub"
+
+  wrapper_output="$(
+    PATH="$generic_dir:$git_cmd_dir:$PATH" \
+      SUPERPOWERS_TEST_BASH_LOG="$bash_log" \
+      SUPERPOWERS_TEST_NODE_LOG="$node_log" \
+      SUPERPOWERS_NODE_BIN="$node_stub" \
+      "$pwsh_bin" -NoLogo -NoProfile -Command "& '$wrapper_path' status --plan docs/superpowers/plans/example.md"
+  )"
+
+  if [[ "$wrapper_output" != *'"root":"C:\tmp\workspace"'* ]]; then
+    echo "Expected plan-execution PowerShell wrapper to emit runtime JSON from Node directly"
+    echo "Actual output: $wrapper_output"
+    exit 1
+  fi
+
+  if [[ -s "$bash_log" ]]; then
+    echo "Expected migrated plan-execution PowerShell wrapper to avoid Git Bash"
+    cat "$bash_log"
+    exit 1
+  fi
+
+  if ! grep -F "CHECK:" "$node_log" >/dev/null; then
+    echo "Expected plan-execution wrapper to validate the runtime bundle with node --check"
+    cat "$node_log"
+    exit 1
+  fi
+  if ! grep -F "RUN:" "$node_log" | grep -F "/runtime/core-helpers/dist/superpowers-plan-execution.cjs status --plan docs/superpowers/plans/example.md" >/dev/null; then
+    echo "Expected plan-execution wrapper to launch the bundled runtime and forward CLI arguments"
+    cat "$node_log"
+    exit 1
+  fi
+
+  cat > "$node_stub" <<'SH'
+#!/bin/bash
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'v20.11.1\n'
+  exit 0
+fi
+if [[ "${1:-}" == "--check" ]]; then
+  exit 0
+fi
+exit 7
+SH
+  chmod +x "$node_stub"
+
+  set +e
+  PATH="$generic_dir:$git_cmd_dir:$PATH" \
+    SUPERPOWERS_NODE_BIN="$node_stub" \
+    "$pwsh_bin" -NoLogo -NoProfile -Command "& '$wrapper_path' status --plan docs/superpowers/plans/example.md" >/dev/null
+  wrapper_exit=$?
+  set -e
+
+  if [[ $wrapper_exit -ne 7 ]]; then
+    echo "Expected plan-execution PowerShell wrapper to preserve nonzero Node exit code"
+    echo "Expected: 7"
+    echo "Actual:   $wrapper_exit"
+    exit 1
+  fi
+}
+
 assert_public_workflow_wrapper_behavior "$PUBLIC_WORKFLOW_WRAPPER"
 assert_workflow_status_wrapper_launches_node_directly "$WORKFLOW_WRAPPER"
-assert_wrapper_behavior "$PLAN_EXEC_WRAPPER" "superpowers-plan-execution" "plan-execution"
+assert_plan_execution_wrapper_launches_node_directly "$PLAN_EXEC_WRAPPER"
 assert_update_check_wrapper_behavior "$UPDATE_CHECK_WRAPPER"
 assert_config_wrapper_launches_node_directly "$CONFIG_WRAPPER"
 

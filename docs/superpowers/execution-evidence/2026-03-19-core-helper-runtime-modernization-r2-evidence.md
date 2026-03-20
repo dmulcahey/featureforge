@@ -425,3 +425,105 @@
 **Verification:**
 - `npm --prefix runtime/core-helpers run build && node --test tests/codex-runtime/workflow-status-core.test.mjs tests/codex-runtime/workflow-status-cli.test.mjs && bash tests/codex-runtime/test-superpowers-workflow-status.sh && bash tests/codex-runtime/test-superpowers-workflow.sh && bash tests/codex-runtime/test-workflow-sequencing.sh && bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh && npm --prefix runtime/core-helpers run build:check` -> PASS
 **Invalidation Reason:** N/A
+
+### Task 4 Step 7
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T03:29:54Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Committed the workflow-status bundled-runtime migration slice in fa5a95d.
+**Files:**
+- bin/superpowers-config.ps1
+- bin/superpowers-runtime-common.ps1
+- bin/superpowers-workflow-status
+- bin/superpowers-workflow-status.ps1
+- runtime/core-helpers/dist/superpowers-config.cjs
+- runtime/core-helpers/dist/superpowers-workflow-status.cjs
+- runtime/core-helpers/src/cli/superpowers-workflow-status.ts
+- runtime/core-helpers/src/core/workflow-status.ts
+- runtime/core-helpers/src/platform/filesystem.ts
+- runtime/core-helpers/src/platform/paths.ts
+- tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
+- tests/codex-runtime/test-superpowers-workflow-status-equivalence.sh
+- tests/codex-runtime/workflow-status-cli.test.mjs
+- tests/codex-runtime/workflow-status-core.test.mjs
+**Verification:**
+- Manual inspection only: Committed fa5a95d after the workflow-status build, direct Node tests, shell helper regression, public workflow regression, workflow sequencing, PowerShell wrapper regression, and build freshness check all passed.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T03:33:56Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Added plan-execution Node-native red coverage and a temporary legacy-vs-bundled equivalence harness for representative status and recommend cases.
+**Files:**
+- tests/codex-runtime/plan-execution-cli.test.mjs
+- tests/codex-runtime/plan-execution-core.test.mjs
+- tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh
+**Verification:**
+- Manual inspection only: Added red coverage for pure evidence-path and task-independence helpers, bundled CLI status and recommend behavior, and representative legacy-vs-bundled parity cases.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T03:34:31Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Ran the plan-execution red suites and confirmed the new bundled-runtime coverage fails against the current stub implementation while the legacy shell regression remains green.
+**Files:**
+- None (no repo file changed)
+**Verification:**
+- `node --test tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs && bash tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh && bash tests/codex-runtime/test-superpowers-plan-execution.sh` -> FAIL: the new plan-execution core module does not exist yet, the bundled CLI still reports 'Not implemented: superpowers-plan-execution', and the temporary equivalence harness diverges immediately while the legacy shell regression suite still passes.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T11:10:45Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Ported the plan-execution state machine into the bundled runtime, including approved-plan parsing, evidence parsing, fingerprints, recommend logic, and the begin, transfer, complete, note, and reopen mutations.
+**Files:**
+- runtime/core-helpers/src/cli/superpowers-plan-execution.ts
+- runtime/core-helpers/src/core/plan-execution.ts
+**Verification:**
+- Manual inspection only: Replaced the bundled CLI stub with a typed plan-execution runtime that preserves the shell helper contract for status, recommend, and mutation semantics.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T11:11:45Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Verified the direct bundled CLI matches the legacy shell helper on representative status, recommend, and malformed-plan cases before wrapper replacement.
+**Files:**
+- None (no repo file changed)
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh` -> PASS
+**Invalidation Reason:** N/A
+
+### Task 5 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T11:12:45Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Replaced the shipped plan-execution Unix and PowerShell wrappers with bundled-runtime launchers and updated the PowerShell regression to assert direct Node execution.
+**Files:**
+- bin/superpowers-plan-execution
+- bin/superpowers-plan-execution.ps1
+- tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
+**Verification:**
+- Manual inspection only: The shipped plan-execution wrappers now launch runtime/core-helpers/dist/superpowers-plan-execution.cjs through the shared runtime helpers instead of delegating through Git Bash.
+**Invalidation Reason:** N/A
+
+### Task 5 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T11:13:45Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Rebuilt the bundled plan-execution runtime and reran the direct Node, wrapper, shell regression, and PowerShell wrapper suites until they all passed.
+**Files:**
+- runtime/core-helpers/dist/superpowers-plan-execution.cjs
+**Verification:**
+- `npm --prefix runtime/core-helpers run build && node --test tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs && bash tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh && bash tests/codex-runtime/test-superpowers-plan-execution.sh && bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh && npm --prefix runtime/core-helpers run build:check` -> PASS
+**Invalidation Reason:** N/A
