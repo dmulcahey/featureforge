@@ -5,6 +5,7 @@ Enable Superpowers skills and agents in GitHub Copilot local installs by linking
 ## Prerequisites
 
 - Git
+- Windows only: Git for Windows or another compatible bash installation discoverable by PowerShell
 - Node 20 LTS or newer
 
 ## Fresh Install

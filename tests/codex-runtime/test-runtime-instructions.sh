@@ -518,6 +518,11 @@ required_patterns=(
   "docs/README.codex.md:~/.superpowers/install/skills"
   "docs/README.codex.md:superpowers-install-runtime.ps1"
   "docs/README.codex.md:superpowers-config.ps1"
+  "README.md:Git for Windows or another compatible bash installation discoverable by the wrapper"
+  ".codex/INSTALL.md:Windows only: Git for Windows or another compatible bash installation discoverable by PowerShell"
+  ".copilot/INSTALL.md:Windows only: Git for Windows or another compatible bash installation discoverable by PowerShell"
+  "docs/README.codex.md:Windows only: Git for Windows or another compatible bash installation discoverable by PowerShell"
+  "docs/README.copilot.md:Windows only: Git for Windows or another compatible bash installation discoverable by PowerShell"
   'docs/README.codex.md:$env:TEMP'
   'docs/README.codex.md:Join-Path $env:TEMP "superpowers-install"'
   "docs/README.codex.md:The staged helper installs or updates the shared checkout"

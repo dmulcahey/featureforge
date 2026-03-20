@@ -166,7 +166,7 @@ That is the reason Superpowers feels opinionated in practice: the agent is not m
 
 Superpowers uses a single shared checkout for its supported runtime surfaces. Codex and GitHub Copilot local installs both point at `~/.superpowers/install`; only the discovery links differ.
 
-The supported install/update path requires Git plus Node 20 LTS or newer.
+The supported install/update path requires Git plus Node 20 LTS or newer. On Windows, the PowerShell install/update wrappers also require Git for Windows or another compatible bash installation discoverable by the wrapper.
 
 Shared runtime layout:
 

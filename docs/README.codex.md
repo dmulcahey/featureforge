@@ -16,6 +16,7 @@ Fetch and follow instructions from https://raw.githubusercontent.com/dmulcahey/s
 
 - OpenAI Codex CLI
 - Git
+- Windows only: Git for Windows or another compatible bash installation discoverable by PowerShell
 - Node 20 LTS or newer
 
 ### Steps
