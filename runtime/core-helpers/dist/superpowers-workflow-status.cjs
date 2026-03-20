@@ -97,6 +97,8 @@ function resolveRuntimeRoot(entryPath, runtimeRootOverride) {
 }
 function resolveStateDir(env, platform = process.platform) {
   const pathApi = platform === "win32" ? import_node_path2.default.win32 : import_node_path2.default;
+  const bashStyleHomeMatch = platform === "win32" ? env.HOME?.match(/^\/([A-Za-z])(?:\/(.*))?$/) : null;
+  const uncStyleHomeMatch = platform === "win32" ? env.HOME?.match(/^\/\/([^/]+)\/([^/]+)(?:\/(.*))?$/) : null;
   if (env.SUPERPOWERS_STATE_DIR && env.SUPERPOWERS_STATE_DIR.length > 0) {
     return env.SUPERPOWERS_STATE_DIR;
   }
@@ -106,6 +108,17 @@ function resolveStateDir(env, platform = process.platform) {
     }
     if (env.HOMEDRIVE && env.HOMEPATH && env.HOMEDRIVE.length > 0 && env.HOMEPATH.length > 0) {
       return pathApi.join(`${env.HOMEDRIVE}${env.HOMEPATH}`, ".superpowers");
+    }
+    if (bashStyleHomeMatch) {
+      const drive = `${bashStyleHomeMatch[1].toUpperCase()}:\\`;
+      const rest = bashStyleHomeMatch[2] ? bashStyleHomeMatch[2].replace(/\//g, "\\") : "";
+      return pathApi.join(drive, rest, ".superpowers");
+    }
+    if (uncStyleHomeMatch) {
+      const server = uncStyleHomeMatch[1];
+      const share = uncStyleHomeMatch[2];
+      const rest = uncStyleHomeMatch[3] ? uncStyleHomeMatch[3].replace(/\//g, "\\") : "";
+      return pathApi.join(`\\\\${server}\\${share}`, rest, ".superpowers");
     }
     if (env.HOME && env.HOME.length > 0) {
       return pathApi.join(env.HOME, ".superpowers");

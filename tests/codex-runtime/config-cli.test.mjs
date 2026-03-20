@@ -143,3 +143,21 @@ test('resolveStateDir prefers USERPROFILE over HOME on win32', async () => {
     },
   );
 });
+
+test('resolveStateDir normalizes bash-style HOME on win32 when USERPROFILE is unavailable', async () => {
+  await withBundledModule(
+    path.join(repoRoot, 'runtime/core-helpers/src/platform/paths.ts'),
+    'paths.cjs',
+    async (module) => {
+      const stateDir = module.resolveStateDir(
+        {
+          HOME: '/c/Users/demo',
+          USERPROFILE: '',
+        },
+        'win32',
+      );
+
+      assert.equal(stateDir, 'C:\\Users\\demo\\.superpowers');
+    },
+  );
+});

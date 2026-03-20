@@ -44,8 +44,11 @@ else
   fi
 fi
 CONFIG_BIN="$INSTALL_DIR/bin/superpowers-config"
+CONFIG_BIN_PWSH="$INSTALL_DIR/bin/superpowers-config.ps1"
 echo "INSTALL_DIR=$INSTALL_DIR"
 ```
+
+The shell snippets below use the bash entrypoints. When continuing from PowerShell on Windows, use the matching wrapper paths instead: `bin/superpowers-config.ps1` and `bin/superpowers-install-runtime.ps1`.
 
 ### Step 2: Resolve versions and auto-upgrade preference
 
@@ -184,7 +187,7 @@ Tell the user the snooze duration and continue with the current skill.
 "$CONFIG_BIN" set update_check false
 ```
 
-Tell the user: `Update checks disabled. Run $CONFIG_BIN set update_check true to re-enable.` Continue with the current skill.
+Tell the user: `Update checks disabled. Re-enable them with $CONFIG_BIN set update_check true on Unix-like shells or $CONFIG_BIN_PWSH set update_check true from PowerShell on Windows.` Continue with the current skill.
 
 ### Step 3: Save old version
 
@@ -196,6 +199,7 @@ OLD_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
 
 ```bash
 INSTALL_BIN="$INSTALL_DIR/bin/superpowers-install-runtime"
+INSTALL_BIN_PWSH="$INSTALL_DIR/bin/superpowers-install-runtime.ps1"
 if [ ! -x "$INSTALL_BIN" ]; then
   echo "ERROR: superpowers upgrade failed during staged install/update"
   exit 1
@@ -211,6 +215,8 @@ printf '%s\n' "$INSTALL_OUTPUT"
 NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
 echo "NEW_VERSION=$NEW_VERSION"
 ```
+
+When continuing from PowerShell on Windows, invoke `$INSTALL_BIN_PWSH` instead of the bash entrypoint above.
 
 ### Step 5: Write marker and clear cache
 
