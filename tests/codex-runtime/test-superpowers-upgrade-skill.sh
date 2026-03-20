@@ -95,9 +95,9 @@ require_pattern 'VERSION'
 require_pattern '[ -d "$candidate/.git" ] || [ -f "$candidate/.git" ]'
 require_pattern '"$HOME/.superpowers/install"'
 require_pattern 'Read `$INSTALL_DIR/RELEASE-NOTES.md`.'
-require_pattern 'git stash push --include-untracked'
-require_pattern 'git stash pop'
-require_pattern 'ERROR: superpowers upgrade failed during git pull'
+require_pattern 'INSTALL_BIN="$INSTALL_DIR/bin/superpowers-install-runtime"'
+require_pattern 'bin/superpowers-install-runtime'
+require_pattern 'ERROR: superpowers upgrade failed during staged install/update'
 require_pattern 'Run $CONFIG_BIN set update_check true to re-enable.'
 require_pattern 'REMOTE_URL="${SUPERPOWERS_REMOTE_URL:-https://raw.githubusercontent.com/dmulcahey/superpowers/main/VERSION}"'
 require_pattern 'REMOTE_STATUS='
@@ -108,6 +108,10 @@ require_pattern 'If `VERSION_RELATION=equal`, tell the user: `You'\''re already 
 require_pattern 'If `VERSION_RELATION=local_ahead`, tell the user: `Your local Superpowers install (v$LOCAL_VERSION) is newer than the fetched remote version (v$REMOTE_VERSION).`'
 require_pattern 'If this skill was invoked from an `UPGRADE_AVAILABLE` handoff'
 require_pattern 'You'\''re already on the latest known version (v$LOCAL_VERSION).'
+if rg -n -F 'git pull --ff-only' "$SKILL_FILE" >/dev/null; then
+  echo "Upgrade skill should route through bin/superpowers-install-runtime instead of raw git pull."
+  exit 1
+fi
 
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "$tmp_root"' EXIT

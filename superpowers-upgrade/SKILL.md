@@ -195,17 +195,22 @@ OLD_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
 ### Step 4: Upgrade
 
 ```bash
-cd "$INSTALL_DIR"
-STASH_OUTPUT=$(git stash push --include-untracked -m "superpowers-upgrade-$(date +%Y%m%d-%H%M%S)" 2>&1 || true)
-if ! git pull --ff-only; then
-  echo "ERROR: superpowers upgrade failed during git pull"
+INSTALL_BIN="$INSTALL_DIR/bin/superpowers-install-runtime"
+if [ ! -x "$INSTALL_BIN" ]; then
+  echo "ERROR: superpowers upgrade failed during staged install/update"
   exit 1
 fi
+
+INSTALL_OUTPUT="$("$INSTALL_BIN" 2>&1)" || {
+  printf '%s\n' "$INSTALL_OUTPUT"
+  echo "ERROR: superpowers upgrade failed during staged install/update"
+  exit 1
+}
+
+printf '%s\n' "$INSTALL_OUTPUT"
 NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
 echo "NEW_VERSION=$NEW_VERSION"
 ```
-
-If `$STASH_OUTPUT` contains `Saved working directory`, warn the user that local changes were stashed and can be restored with `git stash pop`.
 
 ### Step 5: Write marker and clear cache
 

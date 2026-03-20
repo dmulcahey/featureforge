@@ -18,6 +18,8 @@ bash tests/codex-runtime/test-runtime-instructions.sh
 bash tests/codex-runtime/test-workflow-enhancements.sh
 bash tests/codex-runtime/test-workflow-sequencing.sh
 bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
+bash tests/codex-runtime/test-superpowers-install-runtime.sh
+bash tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh
 bash tests/codex-runtime/test-superpowers-plan-execution.sh
 bash tests/codex-runtime/test-superpowers-workflow.sh
 bash tests/codex-runtime/test-superpowers-workflow-status.sh
@@ -43,7 +45,7 @@ node --test tests/brainstorm-server/server.test.js tests/brainstorm-server/ws-pr
 
 - Generated `skills/*/SKILL.md` freshness plus runtime-facing install and workflow contract checks
 - Generated reviewer-agent artifact freshness for Codex and GitHub Copilot
-- Runtime helper contracts for config, plan execution, update checks, migration, and upgrade flow
+- Runtime helper contracts for staged install/update, config, plan execution, update checks, migration delegation, and upgrade flow
 - Supported public workflow CLI contracts for read-only status, next-step, artifact, explain, and failure output
 - Workflow-status helper contracts for branch-scoped workflow manifests and conservative stage routing
 - PowerShell wrapper behavior, including Git Bash selection and Windows path handling
@@ -77,6 +79,8 @@ node --test tests/brainstorm-server/server.test.js tests/brainstorm-server/ws-pr
 - `test-workflow-sequencing.sh` covers artifact-state routing, stage gates, and the optional worktree policy using checked-in workflow fixtures in `tests/codex-runtime/fixtures/workflow-artifacts/`
 - `tests/codex-runtime/*.test.mjs` covers the deterministic generated-skill and fixture assertions that do not need shell execution
 - `test-powershell-wrapper-bash-resolution.sh` covers shared PowerShell wrapper bash selection and override behavior
+- `test-superpowers-install-runtime.sh` covers staged install/update preflight, swap, compatibility-link refresh, and missing-next-step reporting
+- `test-superpowers-install-runtime-pwsh.sh` covers the PowerShell staged-install wrapper and refresh of already-present copied Windows agent files
 - `test-superpowers-plan-execution.sh` covers the execution helper state machine, evidence canonicalization, rollback behavior, and malformed evidence rejection
 - `test-superpowers-workflow.sh` covers the supported public workflow inspection CLI, including read-only state rendering, missing-expected-path handling, manifest diagnostics, and non-mutation guarantees
 - `test-superpowers-workflow-status.sh` covers the internal workflow-state helper, including bootstrap, summary-mode parity, repo-identity recovery, malformed-artifact diagnostics, branch isolation, fallback refresh behavior, and conservative write-conflict handling

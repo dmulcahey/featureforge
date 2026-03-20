@@ -278,7 +278,7 @@ Expected: PASS
 Run: `npm --prefix runtime/core-helpers run build:check`
 Expected: PASS with no bundle drift reported.
 
-- [ ] **Step 8: Commit the runtime workspace scaffold**
+- [x] **Step 8: Commit the runtime workspace scaffold**
 ```bash
 git add runtime/core-helpers tests/codex-runtime/runtime-build-contract.test.mjs tests/codex-runtime/test-runtime-instructions.sh
 git commit -m "build: scaffold core helper runtime workspace"
@@ -308,7 +308,7 @@ git commit -m "build: scaffold core helper runtime workspace"
 - Test: `bash tests/codex-runtime/test-superpowers-upgrade-skill.sh`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
-- [ ] **Step 1: Add failing staged-install tests**
+- [x] **Step 1: Add failing staged-install tests**
 ```bash
 # Cover:
 # - missing Node -> no swap + cleanup of stage + explicit failure
@@ -324,7 +324,7 @@ git commit -m "build: scaffold core helper runtime workspace"
 # - inline upgrade skill routes upgrade/install actions through superpowers-install-runtime
 ```
 
-- [ ] **Step 2: Run the red install/migrate suites**
+- [x] **Step 2: Run the red install/migrate suites**
 Run: `bash tests/codex-runtime/test-superpowers-install-runtime.sh`
 Expected: FAIL because the staged helper does not exist yet.
 
@@ -337,7 +337,7 @@ Expected: FAIL once it expects delegation into the staged runtime helper.
 Run: `bash tests/codex-runtime/test-superpowers-upgrade-skill.sh`
 Expected: FAIL once it expects inline upgrade guidance to use the staged runtime helper instead of direct `git pull`.
 
-- [ ] **Step 3: Implement the staged helper**
+- [x] **Step 3: Implement the staged helper**
 ```bash
 # staged flow:
 # 1. clone or refresh stage
@@ -349,13 +349,13 @@ Expected: FAIL once it expects inline upgrade guidance to use the staged runtime
 # 7. print any remaining first-time discovery-link setup steps
 ```
 
-- [ ] **Step 4: Hook migration and docs into the staged helper**
+- [x] **Step 4: Hook migration and docs into the staged helper**
 ```bash
 # Fresh install, manual update docs, and the inline upgrade skill should point to
 # the staged helper instead of raw `git pull`.
 ```
 
-- [ ] **Step 5: Rerun the install/runtime docs suites**
+- [x] **Step 5: Rerun the install/runtime docs suites**
 Run: `bash tests/codex-runtime/test-superpowers-install-runtime.sh`
 Expected: PASS
 

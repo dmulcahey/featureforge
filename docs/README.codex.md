@@ -16,12 +16,20 @@ Fetch and follow instructions from https://raw.githubusercontent.com/dmulcahey/s
 
 - OpenAI Codex CLI
 - Git
+- Node 20 LTS or newer
 
 ### Steps
 
-1. Clone the repo into the shared runtime location:
+1. Install or update the shared runtime checkout:
    ```bash
-   git clone https://github.com/dmulcahey/superpowers.git ~/.superpowers/install
+   if [[ -x ~/.superpowers/install/bin/superpowers-install-runtime ]]; then
+     ~/.superpowers/install/bin/superpowers-install-runtime
+   else
+     tmpdir=$(mktemp -d)
+     git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
+     "$tmpdir/superpowers/bin/superpowers-install-runtime"
+     rm -rf "$tmpdir"
+   fi
    ```
 
 2. Create the skills symlink:
@@ -43,6 +51,16 @@ Fetch and follow instructions from https://raw.githubusercontent.com/dmulcahey/s
 Use a junction instead of a symlink (works without Developer Mode):
 
 ```powershell
+if (Test-Path "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1") {
+  & "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1"
+} else {
+  $tmpRoot = Join-Path $env:TEMP "superpowers-install"
+  $tmpDir = Join-Path $tmpRoot ([guid]::NewGuid().ToString())
+  git clone --depth 1 https://github.com/dmulcahey/superpowers.git (Join-Path $tmpDir "superpowers")
+  & (Join-Path $tmpDir "superpowers\bin\superpowers-install-runtime.ps1")
+  Remove-Item -Recurse -Force $tmpDir
+}
+
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.agents\skills"
 cmd /c mklink /J "$env:USERPROFILE\.agents\skills\superpowers" "$env:USERPROFILE\.superpowers\install\skills"
 
@@ -52,31 +70,35 @@ Copy-Item "$env:USERPROFILE\.superpowers\install\.codex\agents\code-reviewer.tom
 
 ## Migrating Existing Installs
 
-If you already have `~/.codex/superpowers` or `~/.copilot/superpowers`, migrate them into the shared checkout with:
+If you already have `~/.codex/superpowers` or `~/.copilot/superpowers`, migrate them into the shared checkout with the staged install helper:
 
 ```bash
-tmpdir=$(mktemp -d)
-git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
-"$tmpdir/superpowers/bin/superpowers-migrate-install"
-rm -rf "$tmpdir"
+if [[ -x ~/.superpowers/install/bin/superpowers-install-runtime ]]; then
+  ~/.superpowers/install/bin/superpowers-install-runtime
+else
+  tmpdir=$(mktemp -d)
+  git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
+  "$tmpdir/superpowers/bin/superpowers-install-runtime"
+  rm -rf "$tmpdir"
+fi
 ```
 
-If `~/.superpowers/install` already exists, run `~/.superpowers/install/bin/superpowers-migrate-install` instead.
+`bin/superpowers-migrate-install` remains available as a compatibility shim, but the supported path is `bin/superpowers-install-runtime`.
 
 **Windows (PowerShell):**
 ```powershell
-if (Test-Path "$env:USERPROFILE\.superpowers\install") {
-  & "$env:USERPROFILE\.superpowers\install\bin\superpowers-migrate-install.ps1"
+if (Test-Path "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1") {
+  & "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1"
 } else {
-  $tmpRoot = Join-Path $env:TEMP "superpowers-migrate"
+  $tmpRoot = Join-Path $env:TEMP "superpowers-install"
   $tmpDir = Join-Path $tmpRoot ([guid]::NewGuid().ToString())
   git clone --depth 1 https://github.com/dmulcahey/superpowers.git (Join-Path $tmpDir "superpowers")
-  & (Join-Path $tmpDir "superpowers\bin\superpowers-migrate-install.ps1")
+  & (Join-Path $tmpDir "superpowers\bin\superpowers-install-runtime.ps1")
   Remove-Item -Recurse -Force $tmpDir
 }
 ```
 
-Migration only consolidates the checkout. After migrating, continue with steps 2 and 3 to create or refresh `~/.agents/skills/superpowers` and `~/.codex/agents/code-reviewer.toml`, then restart Codex.
+The staged helper installs or updates the shared checkout, repairs already-present compatibility links or copied Windows agent files, and prints any remaining first-time setup steps. After migrating, continue with steps 2 and 3 to create or refresh `~/.agents/skills/superpowers` and `~/.codex/agents/code-reviewer.toml`, then restart Codex.
 
 ## How It Works
 
@@ -191,14 +213,17 @@ The `description` field is how Codex decides when to activate a skill automatica
 ## Updating
 
 ```bash
-cd ~/.superpowers/install && git pull
+~/.superpowers/install/bin/superpowers-install-runtime
+```
+
+**Windows (PowerShell):**
+```powershell
+& "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1"
 ```
 
 Skills update instantly through the symlink.
 
-If you copied the Codex agent file on Windows, copy `~/.superpowers/install/.codex/agents/code-reviewer.toml` into `~/.codex/agents/code-reviewer.toml` again after updating.
-
-If you migrated from `~/.codex/superpowers` or `~/.copilot/superpowers`, rerun `~/.superpowers/install/bin/superpowers-migrate-install` after updating if you need to restore the compatibility links. In PowerShell, use `& "$env:USERPROFILE\.superpowers\install\bin\superpowers-migrate-install.ps1"`.
+The staged helper refreshes already-present compatibility links and already-present copied Windows agent files. If it prints next steps, create any missing first-time discovery links or copied agent files after the update.
 
 Generated skill preambles run `~/.superpowers/install/bin/superpowers-update-check` automatically when that install root is active, so new sessions can surface `UPGRADE_AVAILABLE` or `JUST_UPGRADED` without extra setup.
 

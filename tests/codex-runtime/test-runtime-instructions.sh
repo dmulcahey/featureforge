@@ -64,6 +64,8 @@ FILES=(
   "VERSION"
   "bin/superpowers-config"
   "bin/superpowers-config.ps1"
+  "bin/superpowers-install-runtime"
+  "bin/superpowers-install-runtime.ps1"
   "bin/superpowers-migrate-install"
   "bin/superpowers-migrate-install.ps1"
   "bin/superpowers-pwsh-common.ps1"
@@ -91,6 +93,8 @@ FILES=(
   "skills/plan-eng-review/accelerated-reviewer-prompt.md"
   "superpowers-upgrade/SKILL.md"
   "tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh"
+  "tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh"
+  "tests/codex-runtime/test-superpowers-install-runtime.sh"
   "tests/codex-runtime/test-superpowers-migrate-install.sh"
   "tests/codex-runtime/test-superpowers-plan-execution.sh"
   "tests/codex-runtime/test-superpowers-workflow.sh"
@@ -264,19 +268,25 @@ if ! rg -n -F '_IS_SUPERPOWERS_RUNTIME_ROOT()' skills/using-superpowers/SKILL.md
   exit 1
 fi
 
-if ! rg -n -F '[[ -x "$dir/bin/superpowers-config" ]]' bin/superpowers-migrate-install >/dev/null; then
-  echo "Migration helper should require superpowers-config as part of the valid install contract."
+if ! rg -n -F 'RuntimeDependencyMissing' bin/superpowers-install-runtime >/dev/null; then
+  echo "Staged install helper should fail closed when Node is missing."
   exit 1
 fi
 
 for pattern in \
-  '[[ -f "$dir/agents/code-reviewer.md" ]]' \
-  '[[ -f "$dir/.codex/agents/code-reviewer.toml" ]]'; do
-  if ! rg -n -F "$pattern" bin/superpowers-migrate-install >/dev/null; then
-    echo "Migration helper should require reviewer agent artifacts as part of the valid install contract."
+  'runtime/core-helpers/dist/superpowers-config.cjs' \
+  'runtime/core-helpers/dist/superpowers-workflow-status.cjs' \
+  'runtime/core-helpers/dist/superpowers-plan-execution.cjs'; do
+  if ! rg -n -F "$pattern" bin/superpowers-install-runtime >/dev/null; then
+    echo "Staged install helper should require bundled runtime artifacts before swap."
     exit 1
   fi
 done
+
+if ! rg -n -F 'superpowers-install-runtime' bin/superpowers-migrate-install >/dev/null; then
+  echo "Migration helper should delegate into the staged install helper."
+  exit 1
+fi
 
 echo "Generated skills use marker-based current-repo detection."
 
@@ -310,10 +320,10 @@ required_patterns=(
   "README.md:single shared checkout"
   "README.md:bin/superpowers-config set superpowers_contributor true"
   "README.md:bin/superpowers-migrate-install"
-  "README.md:superpowers-migrate-install.ps1"
+  "README.md:superpowers-install-runtime.ps1"
   "README.md:superpowers-config.ps1"
   'README.md:$env:TEMP'
-  'README.md:Join-Path $env:TEMP "superpowers-migrate"'
+  'README.md:Join-Path $env:TEMP "superpowers-install"'
   "README.md:After migrating, finish the normal platform setup:"
   'README.md:Codex: create or refresh `~/.agents/skills/superpowers`'
   'README.md:Codex: create or refresh `~/.codex/agents/code-reviewer.toml`'
@@ -409,16 +419,16 @@ required_patterns=(
   ".copilot/INSTALL.md:~/.superpowers/install/skills"
   ".copilot/INSTALL.md:~/.superpowers/install/agents/code-reviewer.md"
   '.copilot/INSTALL.md:Runtime helper state lives in `~/.superpowers/`'
-  ".copilot/INSTALL.md:bin/superpowers-migrate-install"
-  ".copilot/INSTALL.md:superpowers-migrate-install.ps1"
+  ".copilot/INSTALL.md:bin/superpowers-install-runtime"
+  ".copilot/INSTALL.md:superpowers-install-runtime.ps1"
   ".copilot/INSTALL.md:superpowers-config.ps1"
   '.copilot/INSTALL.md:$env:TEMP'
-  '.copilot/INSTALL.md:Join-Path $env:TEMP "superpowers-migrate"'
-  ".copilot/INSTALL.md:Migration only consolidates the checkout."
+  '.copilot/INSTALL.md:Join-Path $env:TEMP "superpowers-install"'
+  ".copilot/INSTALL.md:The staged helper installs or updates the shared checkout"
   ".copilot/INSTALL.md:After migrating, continue with steps 2 and 3"
   ".copilot/INSTALL.md:Use a junction for the skills directory and copy the agent file into Copilot's agent directory:"
   '.copilot/INSTALL.md:Copy-Item "$env:USERPROFILE\.superpowers\install\agents\code-reviewer.md" "$env:USERPROFILE\.copilot\agents\code-reviewer.agent.md" -Force'
-  ".copilot/INSTALL.md:If you copied the agent file on Windows, copy ~/.superpowers/install/agents/code-reviewer.md into ~/.copilot/agents/code-reviewer.agent.md again after updating."
+  ".copilot/INSTALL.md:already-present copied Windows agent files"
   '.copilot/INSTALL.md:Get-Item "$env:USERPROFILE\.copilot\skills\superpowers"'
   '.copilot/INSTALL.md:Get-Item "$env:USERPROFILE\.copilot\agents\code-reviewer.agent.md"'
   '.copilot/INSTALL.md:Remove-Item "$env:USERPROFILE\.copilot\skills\superpowers"'
@@ -430,9 +440,9 @@ required_patterns=(
   "docs/README.copilot.md:~/.copilot/agents/code-reviewer.agent.md"
   "docs/README.copilot.md:~/.superpowers/install/skills"
   "docs/README.copilot.md:~/.superpowers/install/agents/code-reviewer.md"
-  "docs/README.copilot.md:superpowers-migrate-install.ps1"
+  "docs/README.copilot.md:superpowers-install-runtime.ps1"
   "docs/README.copilot.md:superpowers-config.ps1"
-  "docs/README.copilot.md:Migration only consolidates the checkout."
+  "docs/README.copilot.md:The staged helper installs or updates the shared checkout"
   "docs/README.copilot.md:After migrating, continue with steps 2 and 3"
   'docs/README.copilot.md:Get-Item "$env:USERPROFILE\.copilot\skills\superpowers"'
   'docs/README.copilot.md:Get-Item "$env:USERPROFILE\.copilot\agents\code-reviewer.agent.md"'
@@ -452,12 +462,12 @@ required_patterns=(
   ".codex/INSTALL.md:max_depth"
   ".codex/INSTALL.md:job_max_runtime_seconds"
   '.codex/INSTALL.md:Runtime helper state lives in `~/.superpowers/`'
-  ".codex/INSTALL.md:bin/superpowers-migrate-install"
-  ".codex/INSTALL.md:superpowers-migrate-install.ps1"
+  ".codex/INSTALL.md:bin/superpowers-install-runtime"
+  ".codex/INSTALL.md:superpowers-install-runtime.ps1"
   ".codex/INSTALL.md:superpowers-config.ps1"
   '.codex/INSTALL.md:$env:TEMP'
-  '.codex/INSTALL.md:Join-Path $env:TEMP "superpowers-migrate"'
-  ".codex/INSTALL.md:Migration only consolidates the checkout."
+  '.codex/INSTALL.md:Join-Path $env:TEMP "superpowers-install"'
+  ".codex/INSTALL.md:The staged helper installs or updates the shared checkout"
   ".codex/INSTALL.md:After migrating, continue with steps 2 and 3"
   '.codex/INSTALL.md:Get-Item "$env:USERPROFILE\.agents\skills\superpowers"'
   '.codex/INSTALL.md:Get-Item "$env:USERPROFILE\.codex\agents\code-reviewer.toml"'
@@ -467,18 +477,18 @@ required_patterns=(
   ".codex/INSTALL.md:bin/superpowers-config set superpowers_contributor true"
   ".codex/INSTALL.md:update_check true"
   "docs/README.codex.md:~/.superpowers/install/skills"
-  "docs/README.codex.md:superpowers-migrate-install.ps1"
+  "docs/README.codex.md:superpowers-install-runtime.ps1"
   "docs/README.codex.md:superpowers-config.ps1"
   'docs/README.codex.md:$env:TEMP'
-  'docs/README.codex.md:Join-Path $env:TEMP "superpowers-migrate"'
-  "docs/README.codex.md:Migration only consolidates the checkout."
+  'docs/README.codex.md:Join-Path $env:TEMP "superpowers-install"'
+  "docs/README.codex.md:The staged helper installs or updates the shared checkout"
   "docs/README.codex.md:After migrating, continue with steps 2 and 3"
   'docs/README.codex.md:Get-Item "$env:USERPROFILE\.agents\skills\superpowers"'
   'docs/README.codex.md:Get-Item "$env:USERPROFILE\.codex\agents\code-reviewer.toml"'
   "docs/README.codex.md:rm ~/.codex/agents/code-reviewer.toml"
   'docs/README.codex.md:Remove-Item "$env:USERPROFILE\.codex\agents\code-reviewer.toml"'
   'docs/README.copilot.md:$env:TEMP'
-  'docs/README.copilot.md:Join-Path $env:TEMP "superpowers-migrate"'
+  'docs/README.copilot.md:Join-Path $env:TEMP "superpowers-install"'
   "skills/subagent-driven-development/SKILL.md:Current Codex releases enable subagent workflows by default"
   'skills/subagent-driven-development/SKILL.md:built-in `worker` agent'
   'skills/subagent-driven-development/SKILL.md:built-in `explorer` agent'

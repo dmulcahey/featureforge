@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SHARED_ROOT="${SUPERPOWERS_SHARED_ROOT:-$HOME/.superpowers/install}"
+CODEX_ROOT="${SUPERPOWERS_CODEX_ROOT:-$HOME/.codex/superpowers}"
+COPILOT_ROOT="${SUPERPOWERS_COPILOT_ROOT:-$HOME/.copilot/superpowers}"
+REPO_URL="${SUPERPOWERS_REPO_URL:-https://github.com/dmulcahey/superpowers.git}"
+STAMP_OVERRIDE="${SUPERPOWERS_MIGRATE_STAMP:-}"
+STAGE_ROOT="${SUPERPOWERS_INSTALL_STAGE_ROOT:-${SHARED_ROOT}.stage}"
+NODE_BIN_OVERRIDE="${SUPERPOWERS_NODE_BIN:-}"
+TEST_LOG="${SUPERPOWERS_INSTALL_RUNTIME_TEST_LOG:-}"
+TEST_PLATFORM="${SUPERPOWERS_INSTALL_RUNTIME_TEST_PLATFORM:-}"
+
+timestamp() {
+  if [[ -n "$STAMP_OVERRIDE" ]]; then
+    printf '%s\n' "$STAMP_OVERRIDE"
+  else
+    date +%Y%m%d-%H%M%S
+  fi
+}
+
+record_test_log() {
+  [[ -n "$TEST_LOG" ]] || return 0
+  mkdir -p "$(dirname "$TEST_LOG")"
+  printf 'delegated-to-install-runtime\n' >> "$TEST_LOG"
+}
+
+is_windows_mode() {
+  if [[ "$TEST_PLATFORM" == "windows" ]]; then
+    return 0
+  fi
+
+  case "$(uname -s)" in
+    CYGWIN*|MINGW*|MSYS*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+canonical_path() {
+  local dir="$1"
+  (
+    cd "$dir" >/dev/null 2>&1
+    pwd -P
+  )
+}
+
+same_directory_target() {
+  local left="$1"
+  local right="$2"
+
+  [[ -e "$left" || -L "$left" ]] || return 1
+  [[ -e "$right" || -L "$right" ]] || return 1
+  [[ "$(canonical_path "$left")" == "$(canonical_path "$right")" ]]
+}
+
+remove_path() {
+  local path="$1"
+  if [[ -L "$path" || -f "$path" ]]; then
+    rm -f "$path"
+  elif [[ -d "$path" ]]; then
+    rm -rf "$path"
+  fi
+}
+
+link_directory() {
+  local link_path="$1"
+  local target_path="$2"
+
+  mkdir -p "$(dirname "$link_path")"
+  remove_path "$link_path"
+
+  if is_windows_mode && command -v cygpath >/dev/null 2>&1; then
+    cmd //c "mklink /J \"$(cygpath -w "$link_path")\" \"$(cygpath -w "$target_path")\"" >/dev/null
+  else
+    ln -s "$target_path" "$link_path"
+  fi
+}
+
+stage_active=0
+
+cleanup_stage() {
+  if [[ "$stage_active" -eq 1 && -n "$STAGE_ROOT" ]]; then
+    remove_path "$STAGE_ROOT"
+    stage_active=0
+  fi
+}
+
+fail_install() {
+  local failure_class="$1"
+  local message="$2"
+  cleanup_stage
+  printf '%s: %s\n' "$failure_class" "$message" >&2
+  exit 1
+}
+
+trap cleanup_stage EXIT
+
+resolve_node_bin() {
+  if [[ -n "$NODE_BIN_OVERRIDE" ]]; then
+    printf '%s\n' "$NODE_BIN_OVERRIDE"
+    return 0
+  fi
+
+  command -v node 2>/dev/null || true
+}
+
+verify_node_runtime() {
+  local node_bin
+  node_bin="$(resolve_node_bin)"
+
+  if [[ -z "$node_bin" || ! -x "$node_bin" ]]; then
+    fail_install "RuntimeDependencyMissing" "Node 20 LTS is required before installing or updating Superpowers."
+  fi
+
+  local version
+  version="$("$node_bin" --version 2>/dev/null || true)"
+  if [[ ! "$version" =~ ^v?([0-9]+) ]]; then
+    fail_install "RuntimeDependencyVersionUnsupported" "Couldn't determine the installed Node version. Install or upgrade to Node 20 LTS."
+  fi
+
+  local major="${BASH_REMATCH[1]}"
+  if (( major < 20 )); then
+    fail_install "RuntimeDependencyVersionUnsupported" "Node 20 LTS or newer is required. Found $version."
+  fi
+}
+
+prepare_stage_checkout() {
+  remove_path "$STAGE_ROOT"
+  mkdir -p "$(dirname "$STAGE_ROOT")"
+
+  if ! git clone "$REPO_URL" "$STAGE_ROOT" >/dev/null 2>&1; then
+    fail_install "InstallStageCloneFailed" "Failed to stage the Superpowers checkout from $REPO_URL."
+  fi
+
+  stage_active=1
+}
+
+verify_staged_checkout() {
+  local required_paths=(
+    "$STAGE_ROOT/bin/superpowers-update-check"
+    "$STAGE_ROOT/bin/superpowers-config"
+    "$STAGE_ROOT/VERSION"
+    "$STAGE_ROOT/agents/code-reviewer.md"
+    "$STAGE_ROOT/.codex/agents/code-reviewer.toml"
+    "$STAGE_ROOT/runtime/core-helpers/dist/superpowers-config.cjs"
+    "$STAGE_ROOT/runtime/core-helpers/dist/superpowers-workflow-status.cjs"
+    "$STAGE_ROOT/runtime/core-helpers/dist/superpowers-plan-execution.cjs"
+  )
+
+  local required
+  for required in "${required_paths[@]}"; do
+    if [[ ! -f "$required" && ! -x "$required" ]]; then
+      fail_install "RuntimeArtifactMissing" "Required runtime artifact is missing from the staged checkout: $(basename "$required")."
+    fi
+  done
+}
+
+swap_staged_checkout() {
+  local backup_path=""
+  if [[ -e "$SHARED_ROOT" || -L "$SHARED_ROOT" ]]; then
+    backup_path="${SHARED_ROOT}.backup-$(timestamp)"
+    mv "$SHARED_ROOT" "$backup_path"
+  fi
+
+  mkdir -p "$(dirname "$SHARED_ROOT")"
+  mv "$STAGE_ROOT" "$SHARED_ROOT"
+  stage_active=0
+
+  if [[ -n "$backup_path" ]]; then
+    remove_path "$backup_path"
+  fi
+}
+
+refresh_existing_directory_path() {
+  local path="$1"
+  local target="$2"
+
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    return 0
+  fi
+
+  if same_directory_target "$path" "$target"; then
+    return 0
+  fi
+
+  link_directory "$path" "$target"
+}
+
+refresh_existing_agent_path() {
+  local path="$1"
+  local source_path="$2"
+
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$path")"
+  if is_windows_mode || [[ ! -L "$path" ]]; then
+    cp "$source_path" "$path"
+  else
+    rm -f "$path"
+    ln -s "$source_path" "$path"
+  fi
+}
+
+repair_existing_paths() {
+  refresh_existing_directory_path "$CODEX_ROOT" "$SHARED_ROOT"
+  refresh_existing_directory_path "$COPILOT_ROOT" "$SHARED_ROOT"
+  refresh_existing_directory_path "$HOME/.agents/skills/superpowers" "$SHARED_ROOT/skills"
+  refresh_existing_directory_path "$HOME/.copilot/skills/superpowers" "$SHARED_ROOT/skills"
+  refresh_existing_agent_path "$HOME/.codex/agents/code-reviewer.toml" "$SHARED_ROOT/.codex/agents/code-reviewer.toml"
+  refresh_existing_agent_path "$HOME/.copilot/agents/code-reviewer.agent.md" "$SHARED_ROOT/agents/code-reviewer.md"
+}
+
+print_next_steps() {
+  local install_root="$1"
+
+  if [[ ! -e "$HOME/.agents/skills/superpowers" && ! -L "$HOME/.agents/skills/superpowers" ]]; then
+    echo "Codex next step: create or refresh ~/.agents/skills/superpowers -> $install_root/skills"
+  fi
+  if [[ ! -e "$HOME/.codex/agents/code-reviewer.toml" && ! -L "$HOME/.codex/agents/code-reviewer.toml" ]]; then
+    echo "Codex next step: create or refresh ~/.codex/agents/code-reviewer.toml from $install_root/.codex/agents/code-reviewer.toml (copy on Windows; symlink on Unix-like installs)"
+  fi
+  if [[ ! -e "$HOME/.copilot/skills/superpowers" && ! -L "$HOME/.copilot/skills/superpowers" ]]; then
+    echo "GitHub Copilot next step: create or refresh ~/.copilot/skills/superpowers -> $install_root/skills"
+  fi
+  if [[ ! -e "$HOME/.copilot/agents/code-reviewer.agent.md" && ! -L "$HOME/.copilot/agents/code-reviewer.agent.md" ]]; then
+    echo "GitHub Copilot next step: create or refresh ~/.copilot/agents/code-reviewer.agent.md from $install_root/agents/code-reviewer.md (copy on Windows; symlink on Unix-like installs)"
+  fi
+}
+
+record_test_log
+verify_node_runtime
+prepare_stage_checkout
+verify_staged_checkout
+swap_staged_checkout
+repair_existing_paths
+
+echo "Shared install ready at $SHARED_ROOT"
+print_next_steps "$SHARED_ROOT"

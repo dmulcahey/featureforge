@@ -166,6 +166,8 @@ That is the reason Superpowers feels opinionated in practice: the agent is not m
 
 Superpowers uses a single shared checkout for its supported runtime surfaces. Codex and GitHub Copilot local installs both point at `~/.superpowers/install`; only the discovery links differ.
 
+Once the bundled core-helper runtime ships, the supported install/update path requires Git plus Node 20 LTS or newer.
+
 Shared runtime layout:
 
 - `~/.superpowers/install` - canonical checkout
@@ -204,26 +206,30 @@ Fetch and follow instructions from https://raw.githubusercontent.com/dmulcahey/s
 
 ### Migrating Existing Platform-Specific Installs
 
-If you already have `~/.codex/superpowers` or `~/.copilot/superpowers`, migrate them into the single shared checkout with:
+If you already have `~/.codex/superpowers` or `~/.copilot/superpowers`, install or refresh the single shared checkout with:
 
 ```bash
-tmpdir=$(mktemp -d)
-git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
-"$tmpdir/superpowers/bin/superpowers-migrate-install"
-rm -rf "$tmpdir"
+if [[ -x ~/.superpowers/install/bin/superpowers-install-runtime ]]; then
+  ~/.superpowers/install/bin/superpowers-install-runtime
+else
+  tmpdir=$(mktemp -d)
+  git clone --depth 1 https://github.com/dmulcahey/superpowers.git "$tmpdir/superpowers"
+  "$tmpdir/superpowers/bin/superpowers-install-runtime"
+  rm -rf "$tmpdir"
+fi
 ```
 
-If `~/.superpowers/install` already exists, run `~/.superpowers/install/bin/superpowers-migrate-install` instead.
+`bin/superpowers-migrate-install` remains available as a compatibility shim, but `bin/superpowers-install-runtime` is the supported path.
 
 **Windows (PowerShell):**
 ```powershell
-if (Test-Path "$env:USERPROFILE\.superpowers\install") {
-  & "$env:USERPROFILE\.superpowers\install\bin\superpowers-migrate-install.ps1"
+if (Test-Path "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1") {
+  & "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1"
 } else {
-  $tmpRoot = Join-Path $env:TEMP "superpowers-migrate"
+  $tmpRoot = Join-Path $env:TEMP "superpowers-install"
   $tmpDir = Join-Path $tmpRoot ([guid]::NewGuid().ToString())
   git clone --depth 1 https://github.com/dmulcahey/superpowers.git (Join-Path $tmpDir "superpowers")
-  & (Join-Path $tmpDir "superpowers\bin\superpowers-migrate-install.ps1")
+  & (Join-Path $tmpDir "superpowers\bin\superpowers-install-runtime.ps1")
   Remove-Item -Recurse -Force $tmpDir
 }
 ```
@@ -277,7 +283,8 @@ Windows (PowerShell): `& "$env:USERPROFILE\.superpowers\install\bin\superpowers-
 
 - `skills/` contains the 18 public Superpowers skills. `using-superpowers` is the entry skill; `brainstorming`, `plan-ceo-review`, `writing-plans`, and `plan-eng-review` form the default planning chain.
 - `scripts/gen-skill-docs.mjs` renders every checked-in `SKILL.md` from its template and injects the shared runtime preamble used across the skill library.
-- `bin/superpowers-migrate-install` consolidates legacy platform-specific installs into the single shared checkout and recreates compatibility links when needed.
+- `bin/superpowers-install-runtime` is the canonical staged install/update helper for the shared runtime checkout.
+- `bin/superpowers-migrate-install` is a compatibility shim that delegates into `bin/superpowers-install-runtime`.
 - `bin/superpowers-config` and `bin/superpowers-update-check` manage local runtime state, contributor mode, and per-session upgrade notices under `~/.superpowers/`.
 - `bin/superpowers-workflow` and `bin/superpowers-workflow.ps1` are the supported public read-only workflow inspection surfaces for humans.
 - `bin/superpowers-workflow-status` and `bin/superpowers-workflow-status.ps1` maintain branch-scoped local workflow state and route skills conservatively when docs are missing or stale.
@@ -369,10 +376,15 @@ See `skills/writing-skills/SKILL.md` for the complete guide.
 Update the shared checkout used by both supported platforms:
 
 ```bash
-git -C ~/.superpowers/install pull
+~/.superpowers/install/bin/superpowers-install-runtime
 ```
 
-If you are migrating from old per-platform clones, run `~/.superpowers/install/bin/superpowers-migrate-install` after updating so legacy paths keep resolving to the shared checkout. In PowerShell, use `& "$env:USERPROFILE\.superpowers\install\bin\superpowers-migrate-install.ps1"`.
+**Windows (PowerShell):**
+```powershell
+& "$env:USERPROFILE\.superpowers\install\bin\superpowers-install-runtime.ps1"
+```
+
+The staged helper refreshes already-present compatibility links and already-present copied Windows agent files. If it prints next steps, create any missing first-time discovery links or copied agent files after the update.
 
 Every generated skill preamble runs `bin/superpowers-update-check` from the active install root. New sessions will announce `UPGRADE_AVAILABLE` or `JUST_UPGRADED` when the local runtime state says you should act.
 
