@@ -2,6 +2,20 @@
 
 For release history before `v5.1.0 (2026-03-16)`, see the upstream README: https://github.com/obra/superpowers/blob/main/README.md
 
+## v5.6.0 (2026-03-20)
+
+### Bundled Core Helper Runtime
+
+- Shipped the core helper runtime as checked-in bundled Node artifacts under `runtime/core-helpers/dist/` and moved `superpowers-config`, `superpowers-workflow-status`, and `superpowers-plan-execution` onto that shared runtime surface
+- Replaced the migrated PowerShell wrappers so the core helpers launch Node directly on Windows instead of delegating through Git Bash
+- Added a staged `superpowers-install-runtime` upgrade path so Node/runtime preflight and bundled-artifact validation fail closed before install swap
+- Removed the temporary legacy-vs-bundled equivalence harnesses after the migrated helpers matched the legacy contract and the shipped wrappers became launchers only
+
+### Testing
+
+- Added `npm --prefix runtime/core-helpers run build:check` as the checked-in bundle freshness gate for the migrated core helper runtime
+- Added `node tests/codex-runtime/run-shell-tests.mjs` as the canonical retained shell-suite entrypoint, with the durable `test-*.sh` runtime tests running in parallel with stable lexical reporting
+
 ## v5.5.0 (2026-03-19)
 
 ### Borrowed Layer Alignment

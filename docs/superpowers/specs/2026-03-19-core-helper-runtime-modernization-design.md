@@ -1,8 +1,8 @@
 # Core Helper Runtime Modernization
 
-**Workflow State:** Draft
+**Workflow State:** CEO Approved
 **Spec Revision:** 2
-**Last Reviewed By:** brainstorming
+**Last Reviewed By:** plan-ceo-review
 
 ## Summary
 
@@ -322,11 +322,26 @@ Runner contract:
 - discover every durable `test-*.sh` directly under `tests/codex-runtime/`
 - sort the discovered files lexically
 - launch every discovered shell test in parallel
-- capture stdout, stderr, exit code, and elapsed time per test
+- capture per-test console output
+- wait for all started shell tests to complete before reporting results
 - print the final report in lexical order instead of completion order
 - exit non-zero if any shell test fails
 
 The runner should buffer per-test output and print deterministic failure blocks rather than streaming interleaved child output live.
+
+The goal of this runner is intentionally narrow. It should use existing tooling and basic process orchestration to execute the retained shell tests in parallel in a deterministic way. It does not need to become a full testing framework with structured result schemas, custom outcome taxonomies, or other broad runner features.
+
+The runner should use only Node standard-library APIs plus the existing shell tooling already assumed by the repository. This work should not introduce a new third-party dependency just to orchestrate the retained shell suite.
+
+After shell tests have been spawned, the canonical runner should wait for all started tests to finish, then emit the complete deterministic console summary.
+
+`docs/testing.md` and the runtime-instruction contract should treat this canonical runner as the supported way to execute the retained `tests/codex-runtime/test-*.sh` suite as a suite.
+
+The canonical suite-level invocation should be a direct Node entrypoint:
+
+- `node tests/codex-runtime/run-shell-tests.mjs`
+
+Individual `bash tests/codex-runtime/<name>.sh` commands may still be used for direct debugging, but they should no longer be presented as an equally supported suite-level validation path in the main testing documentation.
 
 ### Migration equivalence tests
 
@@ -400,6 +415,8 @@ Release verification for the retained shell suite must also confirm that:
 
 - the canonical shell runner discovers the full durable `tests/codex-runtime/test-*.sh` set
 - repeated runs produce stable summary ordering
+- the canonical shell runner waits for the started parallel batch to finish and reports the full deterministic outcome set
+- `docs/testing.md` and runtime-instruction checks identify the canonical shell runner as the supported suite-level shell-test entrypoint
 - retained shell tests pass when launched concurrently
 - no retained shell test still depends on mutating shared repo-root runtime artifacts
 

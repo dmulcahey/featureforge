@@ -5,12 +5,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 UPDATE_BIN="$REPO_ROOT/bin/superpowers-update-check"
 CONFIG_BIN="$REPO_ROOT/bin/superpowers-config"
+RUNTIME_COMMON_SH="$REPO_ROOT/bin/superpowers-runtime-common.sh"
+DIST_CONFIG="$REPO_ROOT/runtime/core-helpers/dist/superpowers-config.cjs"
 
 make_install_dir() {
   local dir
   dir="$(mktemp -d)"
-  mkdir -p "$dir/bin"
-  ln -s "$CONFIG_BIN" "$dir/bin/superpowers-config"
+  mkdir -p "$dir/bin" "$dir/runtime/core-helpers/dist"
+  cp "$CONFIG_BIN" "$dir/bin/superpowers-config"
+  cp "$RUNTIME_COMMON_SH" "$dir/bin/superpowers-runtime-common.sh"
+  cp "$DIST_CONFIG" "$dir/runtime/core-helpers/dist/superpowers-config.cjs"
+  chmod +x "$dir/bin/superpowers-config"
   printf '%s\n' "$1" > "$dir/VERSION"
   echo "$dir"
 }

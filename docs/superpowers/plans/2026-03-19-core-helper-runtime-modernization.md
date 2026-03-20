@@ -3,17 +3,17 @@
 > **For Codex and GitHub Copilot workers:** REQUIRED: Use `superpowers:subagent-driven-development` when isolated-agent workflows are available in the current platform/session; otherwise use `superpowers:executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Workflow State:** Engineering Approved
-**Plan Revision:** 2
+**Plan Revision:** 3
 **Execution Mode:** superpowers:subagent-driven-development
 **Source Spec:** `docs/superpowers/specs/2026-03-19-core-helper-runtime-modernization-design.md`
-**Source Spec Revision:** 1
+**Source Spec Revision:** 2
 **Last Reviewed By:** plan-eng-review
 
-**Goal:** Replace the shell-first implementations of `superpowers-config`, `superpowers-workflow-status`, and `superpowers-plan-execution` with a bundled TypeScript/Node runtime while preserving the documented/tested CLI contract and introducing staged install/update flows for the new runtime generation.
+**Goal:** Replace the shell-first implementations of `superpowers-config`, `superpowers-workflow-status`, and `superpowers-plan-execution` with a bundled TypeScript/Node runtime while preserving the documented/tested CLI contract, introducing staged install/update flows for the new runtime generation, and making the retained shell suite parallel-safe with one deterministic suite runner.
 
-**Architecture:** Add a dedicated `runtime/core-helpers/` workspace that owns TypeScript source, lockfile, bundling, and checked-in runtime artifacts. Keep the shipped `bin/` command names, but convert those three targeted commands into thin launchers for the bundled runtime with a stable fail-closed wrapper contract. Add a staged install/update helper that validates Node 20 and the bundled runtime before swapping the shared install into place, then update docs, inline upgrade guidance, and tests to treat the bundled runtime and staged helper as first-class release surfaces. `bin/superpowers-install-runtime` becomes the canonical owner of staging, preflight, swap, and repair of update-sensitive install artifacts that already exist; `bin/superpowers-migrate-install` remains a compatibility entrypoint that delegates into that staged flow.
+**Architecture:** Add a dedicated `runtime/core-helpers/` workspace that owns TypeScript source, lockfile, bundling, and checked-in runtime artifacts. Keep the shipped `bin/` command names, but convert those three targeted commands into thin launchers for the bundled runtime with a stable fail-closed wrapper contract. Add a staged install/update helper that validates Node 20 and the bundled runtime before swapping the shared install into place, then update docs, inline upgrade guidance, and tests to treat the bundled runtime and staged helper as first-class release surfaces. Finish the release/test slice by refactoring the retained shell tests to avoid shared repo-root mutation and by adding a minimal Node-based `tests/codex-runtime/run-shell-tests.mjs` entrypoint that discovers the durable `test-*.sh` files, runs them in parallel, and reports them in stable order. `bin/superpowers-install-runtime` becomes the canonical owner of staging, preflight, swap, and repair of update-sensitive install artifacts that already exist; `bin/superpowers-migrate-install` remains a compatibility entrypoint that delegates into that staged flow.
 
-**Tech Stack:** Node 20 LTS, TypeScript, bundled checked-in JavaScript runtime artifacts, POSIX shell launchers, PowerShell wrappers, `npm` in the dedicated runtime subdirectory, `node --test`, existing `tests/codex-runtime/` shell suites, runtime docs, release notes
+**Tech Stack:** Node 20 LTS, TypeScript, bundled checked-in JavaScript runtime artifacts, POSIX shell launchers, PowerShell wrappers, `npm` in the dedicated runtime subdirectory, `node --test`, `node tests/codex-runtime/run-shell-tests.mjs`, existing `tests/codex-runtime/` shell suites, runtime docs, release notes
 
 ---
 
@@ -26,6 +26,8 @@
 - `tests/codex-runtime/test-superpowers-config.sh`, `tests/codex-runtime/test-superpowers-workflow-status.sh`, `tests/codex-runtime/test-superpowers-plan-execution.sh`, and `tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh` already pin large parts of the behavioral contract that the migrated helpers must keep.
 - `tests/codex-runtime/test-runtime-instructions.sh`, `docs/testing.md`, `README.md`, `.codex/INSTALL.md`, `.copilot/INSTALL.md`, `docs/README.codex.md`, and `docs/README.copilot.md` already define the runtime/install contract and must be updated rather than bypassed.
 - `scripts/gen-skill-docs.mjs` and `scripts/gen-agent-docs.mjs` already establish the repo’s pattern of checked-in generated artifacts with freshness checks.
+- `tests/codex-runtime/test-core-helper-runtime-launch.sh` currently validates the wrapper/runtime failure contract by mutating the checked-in config bundle in the repo root, so it must be isolated before the durable shell suite can safely run in parallel.
+- `docs/testing.md` still documents the codex-runtime shell coverage as a manual command list, so the final release surface still needs one canonical suite-level shell runner entrypoint.
 
 ## Planned File Structure
 
@@ -78,6 +80,8 @@
 - Create tests:
   - `tests/codex-runtime/runtime-build-contract.test.mjs`
   - `tests/codex-runtime/test-core-helper-runtime-launch.sh`
+  - `tests/codex-runtime/run-shell-tests.mjs`
+  - `tests/codex-runtime/run-shell-tests.test.mjs`
   - `tests/codex-runtime/test-superpowers-install-runtime.sh`
   - `tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh`
   - `tests/codex-runtime/config-core.test.mjs`
@@ -655,7 +659,7 @@ Expected: PASS
 Run: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
 Expected: PASS
 
-- [ ] **Step 7: Commit the execution slice**
+- [x] **Step 7: Commit the execution slice**
 ```bash
 git add bin/superpowers-plan-execution bin/superpowers-plan-execution.ps1 runtime/core-helpers tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh tests/codex-runtime/test-superpowers-plan-execution.sh
 git commit -m "feat: port plan execution to bundled runtime"
@@ -669,6 +673,9 @@ git commit -m "feat: port plan execution to bundled runtime"
 - Modify: `bin/superpowers-plan-execution`
 - Delete: `tests/codex-runtime/test-superpowers-workflow-status-equivalence.sh`
 - Delete: `tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh`
+- Create: `tests/codex-runtime/run-shell-tests.mjs`
+- Create: `tests/codex-runtime/run-shell-tests.test.mjs`
+- Modify: `tests/codex-runtime/test-core-helper-runtime-launch.sh`
 - Modify: `tests/codex-runtime/test-runtime-instructions.sh`
 - Modify: `docs/testing.md`
 - Modify: `RELEASE-NOTES.md`
@@ -680,37 +687,59 @@ git commit -m "feat: port plan execution to bundled runtime"
 - Test: `node --test tests/codex-runtime/config-core.test.mjs tests/codex-runtime/config-cli.test.mjs`
 - Test: `node --test tests/codex-runtime/workflow-status-core.test.mjs tests/codex-runtime/workflow-status-cli.test.mjs`
 - Test: `node --test tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs`
+- Test: `node --test tests/codex-runtime/run-shell-tests.test.mjs`
+- Test: `node tests/codex-runtime/run-shell-tests.mjs`
 - Test: `bash tests/codex-runtime/test-core-helper-runtime-launch.sh`
-- Test: `bash tests/codex-runtime/test-superpowers-config.sh`
-- Test: `bash tests/codex-runtime/test-superpowers-workflow-status.sh`
-- Test: `bash tests/codex-runtime/test-superpowers-workflow.sh`
-- Test: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
-- Test: `bash tests/codex-runtime/test-superpowers-install-runtime.sh`
-- Test: `bash tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh`
-- Test: `bash tests/codex-runtime/test-superpowers-migrate-install.sh`
-- Test: `bash tests/codex-runtime/test-superpowers-upgrade-skill.sh`
-- Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
-- Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
-- [ ] **Step 1: Remove any remaining live legacy helper logic from the targeted shipped wrappers and delete the temporary equivalence harnesses**
+- [x] **Step 1: Remove any remaining live legacy helper logic from the targeted shipped wrappers and delete the temporary equivalence harnesses**
 ```bash
 # After this step the targeted `bin/` files should be launchers only,
 # not dormant copies of the old Bash implementations, and the temporary
 # old-vs-new equivalence tests should be gone.
 ```
 
-- [ ] **Step 2: Update release/testing docs for the bundled runtime generation**
-```bash
-# Add the runtime build/freshness check to docs/testing.md:
-npm --prefix runtime/core-helpers run build:check
-```
-
-- [ ] **Step 3: Refresh the bundled runtime artifacts one last time**
+- [x] **Step 2: Refresh the bundled runtime artifacts one last time**
 Run: `npm --prefix runtime/core-helpers run build`
 Expected: PASS and refresh all checked-in `dist/*.cjs` artifacts.
 
-- [ ] **Step 4: Run the full verification matrix**
+- [x] **Step 3: Refactor the retained shell launch regression test to be parallel-safe**
+```bash
+# Change `tests/codex-runtime/test-core-helper-runtime-launch.sh` so it:
+# - does not rename or corrupt repo-root `runtime/core-helpers/dist/*.cjs`
+# - creates an isolated temp install copy for runtime bundle mutation cases
+# - still verifies missing/invalid runtime-bundle behavior against that temp install
+```
+
+- [x] **Step 4: Add the canonical retained-shell-suite runner**
+```js
+// In tests/codex-runtime/run-shell-tests.mjs:
+// - discover `tests/codex-runtime/test-*.sh`
+// - sort the list lexically
+// - launch them in parallel
+// - capture each test's console output separately
+// - print summary/failure blocks in lexical order
+// - exit non-zero if any discovered shell test fails
+```
+
+- [x] **Step 5: Add one minimal automated test for the canonical shell runner**
+```js
+// In tests/codex-runtime/run-shell-tests.test.mjs:
+// - create temp `test-*.sh` fixtures
+// - verify lexical discovery/order in runner output
+// - verify a failing child test makes the runner exit non-zero
+```
+
+- [x] **Step 6: Update release/testing docs for the bundled runtime generation and the canonical shell-suite entrypoint**
+```bash
+# Add the runtime build/freshness check to docs/testing.md:
+npm --prefix runtime/core-helpers run build:check
+
+# Replace the hand-maintained shell command list with:
+node tests/codex-runtime/run-shell-tests.mjs
+```
+
+- [x] **Step 7: Run the full verification matrix**
 Run: `npm --prefix runtime/core-helpers run build:check`
 Expected: PASS
 
@@ -726,44 +755,16 @@ Expected: PASS
 Run: `node --test tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs`
 Expected: PASS
 
-Run: `bash tests/codex-runtime/test-core-helper-runtime-launch.sh`
+Run: `node --test tests/codex-runtime/run-shell-tests.test.mjs`
 Expected: PASS
 
-Run: `bash tests/codex-runtime/test-superpowers-config.sh`
-Expected: PASS
+Run: `node tests/codex-runtime/run-shell-tests.mjs`
+Expected: PASS with the durable shell tests executing in parallel and reporting in stable lexical order.
 
-Run: `bash tests/codex-runtime/test-superpowers-workflow-status.sh`
-Expected: PASS
+- [ ] **Step 8: Commit the coordinated cutover release surface**
 
-Run: `bash tests/codex-runtime/test-superpowers-workflow.sh`
-Expected: PASS
-
-Run: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
-Expected: PASS
-
-Run: `bash tests/codex-runtime/test-superpowers-install-runtime.sh`
-Expected: PASS
-
-Run: `bash tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh`
-Expected: PASS
-
-Run: `bash tests/codex-runtime/test-superpowers-migrate-install.sh`
-Expected: PASS
-
-Run: `bash tests/codex-runtime/test-superpowers-upgrade-skill.sh`
-Expected: PASS
-
-Run: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
-Expected: PASS
-
-Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`
-Expected: PASS
-
-Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
-Expected: PASS
-
-- [ ] **Step 5: Commit the coordinated cutover release surface**
+  **Execution Note:** Active - Commit the coordinated cutover release surface
 ```bash
-git add bin runtime/core-helpers tests/codex-runtime README.md .codex/INSTALL.md .copilot/INSTALL.md docs/README.codex.md docs/README.copilot.md docs/testing.md RELEASE-NOTES.md
+git add bin runtime/core-helpers tests/codex-runtime README.md .codex/INSTALL.md .copilot/INSTALL.md docs/README.codex.md docs/README.copilot.md docs/testing.md RELEASE-NOTES.md VERSION
 git commit -m "feat: ship bundled core helper runtime"
 ```

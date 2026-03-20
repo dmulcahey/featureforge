@@ -93,6 +93,8 @@ FILES=(
   "skills/plan-eng-review/accelerated-reviewer-prompt.md"
   "superpowers-upgrade/SKILL.md"
   "tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh"
+  "tests/codex-runtime/run-shell-tests.mjs"
+  "tests/codex-runtime/run-shell-tests.test.mjs"
   "tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh"
   "tests/codex-runtime/test-superpowers-install-runtime.sh"
   "tests/codex-runtime/test-superpowers-migrate-install.sh"
@@ -165,6 +167,8 @@ retired_files=(
   "hooks"
   "skills/brainstorming/spec-document-reviewer-prompt.md"
   "skills/writing-plans/plan-document-reviewer-prompt.md"
+  "tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh"
+  "tests/codex-runtime/test-superpowers-workflow-status-equivalence.sh"
   "tests/explicit-skill-requests"
   "tests/skill-triggering"
   "tests/claude-code"
@@ -252,6 +256,29 @@ require_pattern docs/README.codex.md 'Accelerated review is an opt-in branch ins
 require_pattern docs/README.codex.md "Only the user can initiate accelerated review, and section approval plus final approval remain human-owned even when the review uses reviewer subagents and persisted section packets."
 require_pattern docs/README.copilot.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
 require_pattern docs/README.copilot.md "Only the user can initiate accelerated review, and section approval plus final approval remain human-owned even when the review uses reviewer subagents and persisted section packets."
+require_pattern docs/testing.md "npm --prefix runtime/core-helpers run build:check"
+require_pattern docs/testing.md "node tests/codex-runtime/run-shell-tests.mjs"
+
+for stale_command in \
+  "bash tests/codex-runtime/test-runtime-instructions.sh" \
+  "bash tests/codex-runtime/test-workflow-enhancements.sh" \
+  "bash tests/codex-runtime/test-workflow-sequencing.sh" \
+  "bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh" \
+  "bash tests/codex-runtime/test-superpowers-install-runtime.sh" \
+  "bash tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh" \
+  "bash tests/codex-runtime/test-superpowers-plan-execution.sh" \
+  "bash tests/codex-runtime/test-superpowers-workflow.sh" \
+  "bash tests/codex-runtime/test-superpowers-workflow-status.sh" \
+  "bash tests/codex-runtime/test-superpowers-config.sh" \
+  "bash tests/codex-runtime/test-superpowers-migrate-install.sh" \
+  "bash tests/codex-runtime/test-superpowers-update-check.sh" \
+  "bash tests/codex-runtime/test-superpowers-upgrade-skill.sh" \
+  "bash tests/codex-runtime/test-superpowers-slug.sh"; do
+  if rg -n -F "$stale_command" docs/testing.md >/dev/null; then
+    echo "docs/testing.md should use the canonical shell-suite runner instead of listing '$stale_command'."
+    exit 1
+  fi
+done
 
 if rg -n -F '[ "$(basename "$_REPO_ROOT")" = "superpowers" ]' skills/*/SKILL.md >/dev/null; then
   echo "Generated skills should detect the current Superpowers checkout by runtime markers, not repo basename."
@@ -339,8 +366,7 @@ required_patterns=(
   "README.md:bash tests/codex-runtime/test-workflow-sequencing.sh"
   "docs/testing.md:tests/codex-runtime/"
   "docs/testing.md:tests/brainstorm-server/"
-  "docs/testing.md:bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh"
-  "docs/testing.md:bash tests/codex-runtime/test-superpowers-workflow.sh"
+  "docs/testing.md:node tests/codex-runtime/run-shell-tests.mjs"
   "docs/testing.md:bash tests/brainstorm-server/test-launch-wrappers.sh"
   "README.md:bin/superpowers-workflow"
   "README.md:bin/superpowers-workflow.ps1"
@@ -798,13 +824,18 @@ fi
 
 echo "Cross-platform reviewer agent artifacts and copied-agent wording are correct."
 
-if ! rg -n -F 'bash tests/codex-runtime/test-superpowers-plan-execution.sh' docs/testing.md >/dev/null; then
-  echo "docs/testing.md should include the plan-execution helper regression in the recommended validation order."
+if ! rg -n -F 'node tests/codex-runtime/run-shell-tests.mjs' docs/testing.md >/dev/null; then
+  echo "docs/testing.md should use the canonical retained shell-suite runner in the recommended validation order."
   exit 1
 fi
 
-if ! rg -n -F 'bash tests/codex-runtime/test-superpowers-slug.sh' docs/testing.md >/dev/null; then
-  echo "docs/testing.md should include the slug helper regression in the recommended validation order."
+if ! rg -n -F '`test-superpowers-plan-execution.sh` covers the execution helper state machine' docs/testing.md >/dev/null; then
+  echo "docs/testing.md should still describe the plan-execution helper regression coverage."
+  exit 1
+fi
+
+if ! rg -n -F '`test-superpowers-slug.sh` covers the shared slug helper' docs/testing.md >/dev/null; then
+  echo "docs/testing.md should still describe the slug helper regression coverage."
   exit 1
 fi
 

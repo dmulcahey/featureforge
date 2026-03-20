@@ -527,3 +527,44 @@
 **Verification:**
 - `npm --prefix runtime/core-helpers run build && node --test tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs && bash tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh && bash tests/codex-runtime/test-superpowers-plan-execution.sh && bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh && npm --prefix runtime/core-helpers run build:check` -> PASS
 **Invalidation Reason:** N/A
+
+### Task 6 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T12:03:18Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Removed the temporary workflow-status and plan-execution equivalence harnesses and tightened the runtime-instructions gate to reject them.
+**Files:**
+- tests/codex-runtime/test-runtime-instructions.sh
+- tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh
+- tests/codex-runtime/test-superpowers-workflow-status-equivalence.sh
+**Verification:**
+- Manual inspection only: bash tests/codex-runtime/test-runtime-instructions.sh passed after the temporary equivalence harnesses were deleted.
+**Invalidation Reason:** N/A
+
+### Task 6 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T12:03:32Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Updated the release and testing docs for the bundled runtime generation, including the checked-in bundle freshness gate.
+**Files:**
+- docs/testing.md
+- RELEASE-NOTES.md
+**Verification:**
+- Manual inspection only: bash tests/codex-runtime/test-runtime-instructions.sh passed with docs/testing.md now documenting npm --prefix runtime/core-helpers run build:check.
+**Invalidation Reason:** N/A
+
+### Task 6 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-20T12:03:54Z
+**Execution Source:** superpowers:subagent-driven-development
+**Claim:** Refreshed the checked-in bundled core helper runtime artifacts one last time before the coordinated release-surface verification pass.
+**Files:**
+- runtime/core-helpers/dist/superpowers-config.cjs
+- runtime/core-helpers/dist/superpowers-plan-execution.cjs
+- runtime/core-helpers/dist/superpowers-workflow-status.cjs
+**Verification:**
+- Manual inspection only: npm --prefix runtime/core-helpers run build passed and rewrote the checked-in dist bundles from the current runtime source tree.
+**Invalidation Reason:** N/A

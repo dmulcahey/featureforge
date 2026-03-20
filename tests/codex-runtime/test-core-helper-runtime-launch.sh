@@ -5,8 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 COMMON_SH="$REPO_ROOT/bin/superpowers-runtime-common.sh"
 COMMON_PS1="$REPO_ROOT/bin/superpowers-runtime-common.ps1"
-CONFIG_WRAPPER="$REPO_ROOT/bin/superpowers-config"
-CONFIG_PWSH_WRAPPER="$REPO_ROOT/bin/superpowers-config.ps1"
 DIST_CONFIG="$REPO_ROOT/runtime/core-helpers/dist/superpowers-config.cjs"
 
 pwsh_bin="$(command -v pwsh || command -v powershell || true)"
@@ -37,6 +35,21 @@ EOF
   chmod +x "$path"
 }
 
+make_temp_install() {
+  local install_root="$1"
+
+  mkdir -p \
+    "$install_root/bin" \
+    "$install_root/runtime/core-helpers/dist"
+
+  cp "$REPO_ROOT/bin/superpowers-config" "$install_root/bin/superpowers-config"
+  cp "$REPO_ROOT/bin/superpowers-config.ps1" "$install_root/bin/superpowers-config.ps1"
+  cp "$COMMON_SH" "$install_root/bin/superpowers-runtime-common.sh"
+  cp "$COMMON_PS1" "$install_root/bin/superpowers-runtime-common.ps1"
+  cp "$DIST_CONFIG" "$install_root/runtime/core-helpers/dist/superpowers-config.cjs"
+  chmod +x "$install_root/bin/superpowers-config"
+}
+
 if [[ ! -f "$COMMON_SH" ]]; then
   echo "Expected shared shell runtime launcher to exist: $COMMON_SH"
   exit 1
@@ -49,6 +62,13 @@ fi
 
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "$tmp_root"' EXIT
+
+install_root="$tmp_root/install"
+make_temp_install "$install_root"
+
+CONFIG_WRAPPER="$install_root/bin/superpowers-config"
+CONFIG_PWSH_WRAPPER="$install_root/bin/superpowers-config.ps1"
+TEMP_DIST_CONFIG="$install_root/runtime/core-helpers/dist/superpowers-config.cjs"
 
 state_dir="$tmp_root/state"
 mkdir -p "$state_dir"
@@ -83,9 +103,7 @@ if [[ "$old_node_status" -eq 0 ]]; then
 fi
 require_contains "$old_node_output" "RuntimeDependencyVersionUnsupported"
 
-dist_backup="$tmp_root/superpowers-config.cjs.backup"
-cp "$DIST_CONFIG" "$dist_backup"
-mv "$DIST_CONFIG" "$DIST_CONFIG.missing"
+mv "$TEMP_DIST_CONFIG" "$TEMP_DIST_CONFIG.missing"
 set +e
 missing_dist_output="$(
   SUPERPOWERS_STATE_DIR="$state_dir" \
@@ -93,15 +111,15 @@ missing_dist_output="$(
 )"
 missing_dist_status=$?
 set -e
-mv "$DIST_CONFIG.missing" "$DIST_CONFIG"
+mv "$TEMP_DIST_CONFIG.missing" "$TEMP_DIST_CONFIG"
 if [[ "$missing_dist_status" -eq 0 ]]; then
   echo "Expected config wrapper to fail when the runtime bundle is missing."
   exit 1
 fi
 require_contains "$missing_dist_output" "RuntimeArtifactMissing"
 
-cp "$DIST_CONFIG" "$tmp_root/superpowers-config.valid"
-printf 'not valid javascript {\n' > "$DIST_CONFIG"
+cp "$TEMP_DIST_CONFIG" "$tmp_root/superpowers-config.valid"
+printf 'not valid javascript {\n' > "$TEMP_DIST_CONFIG"
 set +e
 invalid_dist_output="$(
   SUPERPOWERS_STATE_DIR="$state_dir" \
@@ -109,7 +127,7 @@ invalid_dist_output="$(
 )"
 invalid_dist_status=$?
 set -e
-cp "$tmp_root/superpowers-config.valid" "$DIST_CONFIG"
+cp "$tmp_root/superpowers-config.valid" "$TEMP_DIST_CONFIG"
 if [[ "$invalid_dist_status" -eq 0 ]]; then
   echo "Expected config wrapper to fail when the runtime bundle is invalid."
   exit 1
