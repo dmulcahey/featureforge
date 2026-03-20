@@ -1,0 +1,16 @@
+{
+  "name": "superpowers-core-helpers-runtime",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20 <21 || >=22"
+  },
+  "scripts": {
+    "build": "node scripts/build-runtime.mjs",
+    "build:check": "node scripts/build-runtime.mjs --check"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.11",
+    "typescript": "^5.9.2"
+  }
+}

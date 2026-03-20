@@ -209,8 +209,7 @@ install/update command
 - Test: `node --test tests/codex-runtime/runtime-build-contract.test.mjs`
 - Test: `npm --prefix runtime/core-helpers run build:check`
 
-- [ ] **Step 1: Write the failing runtime workspace contract test**
-
+- [x] **Step 1: Write the failing runtime workspace contract test**
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -228,13 +227,11 @@ test('runtime workspace files exist', () => {
 });
 ```
 
-- [ ] **Step 2: Run the red build-contract test**
-
+- [x] **Step 2: Run the red build-contract test**
 Run: `node --test tests/codex-runtime/runtime-build-contract.test.mjs`
 Expected: FAIL with missing-file assertions for the new runtime workspace.
 
-- [ ] **Step 3: Add the dedicated runtime workspace files**
-
+- [x] **Step 3: Add the dedicated runtime workspace files**
 ```json
 {
   "name": "superpowers-core-helpers-runtime",
@@ -248,24 +245,21 @@ Expected: FAIL with missing-file assertions for the new runtime workspace.
 }
 ```
 
-- [ ] **Step 4: Add compileable placeholder entrypoints and bundle generation**
-
+- [x] **Step 4: Add compileable placeholder entrypoints and bundle generation**
 ```ts
 export function main(argv: string[]): number {
   throw new Error(`Not implemented: ${argv[1] ?? 'helper'}`);
 }
 ```
 
-- [ ] **Step 5: Generate the checked-in lockfile and dist placeholders**
-
+- [x] **Step 5: Generate the checked-in lockfile and dist placeholders**
 Run: `npm --prefix runtime/core-helpers install`
 Expected: PASS and create/update `runtime/core-helpers/package-lock.json`.
 
 Run: `npm --prefix runtime/core-helpers run build`
 Expected: PASS and write the checked-in `dist/*.cjs` placeholder bundles.
 
-- [ ] **Step 6: Add the runtime workspace to runtime validation**
-
+- [x] **Step 6: Add the runtime workspace to runtime validation**
 ```bash
 # Add to tests/codex-runtime/test-runtime-instructions.sh validation inventory:
 "runtime/core-helpers/package.json"
@@ -277,8 +271,7 @@ Expected: PASS and write the checked-in `dist/*.cjs` placeholder bundles.
 "runtime/core-helpers/dist/superpowers-plan-execution.cjs"
 ```
 
-- [ ] **Step 7: Re-run the targeted green checks**
-
+- [x] **Step 7: Re-run the targeted green checks**
 Run: `node --test tests/codex-runtime/runtime-build-contract.test.mjs`
 Expected: PASS
 
@@ -286,7 +279,6 @@ Run: `npm --prefix runtime/core-helpers run build:check`
 Expected: PASS with no bundle drift reported.
 
 - [ ] **Step 8: Commit the runtime workspace scaffold**
-
 ```bash
 git add runtime/core-helpers tests/codex-runtime/runtime-build-contract.test.mjs tests/codex-runtime/test-runtime-instructions.sh
 git commit -m "build: scaffold core helper runtime workspace"
@@ -317,7 +309,6 @@ git commit -m "build: scaffold core helper runtime workspace"
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
 - [ ] **Step 1: Add failing staged-install tests**
-
 ```bash
 # Cover:
 # - missing Node -> no swap + cleanup of stage + explicit failure
@@ -334,7 +325,6 @@ git commit -m "build: scaffold core helper runtime workspace"
 ```
 
 - [ ] **Step 2: Run the red install/migrate suites**
-
 Run: `bash tests/codex-runtime/test-superpowers-install-runtime.sh`
 Expected: FAIL because the staged helper does not exist yet.
 
@@ -348,7 +338,6 @@ Run: `bash tests/codex-runtime/test-superpowers-upgrade-skill.sh`
 Expected: FAIL once it expects inline upgrade guidance to use the staged runtime helper instead of direct `git pull`.
 
 - [ ] **Step 3: Implement the staged helper**
-
 ```bash
 # staged flow:
 # 1. clone or refresh stage
@@ -361,14 +350,12 @@ Expected: FAIL once it expects inline upgrade guidance to use the staged runtime
 ```
 
 - [ ] **Step 4: Hook migration and docs into the staged helper**
-
 ```bash
 # Fresh install, manual update docs, and the inline upgrade skill should point to
 # the staged helper instead of raw `git pull`.
 ```
 
 - [ ] **Step 5: Rerun the install/runtime docs suites**
-
 Run: `bash tests/codex-runtime/test-superpowers-install-runtime.sh`
 Expected: PASS
 
@@ -385,7 +372,6 @@ Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: PASS
 
 - [ ] **Step 6: Commit the staged install/update slice**
-
 ```bash
 git add bin/superpowers-install-runtime bin/superpowers-install-runtime.ps1 bin/superpowers-migrate-install bin/superpowers-migrate-install.ps1 superpowers-upgrade/SKILL.md .codex/INSTALL.md .copilot/INSTALL.md README.md docs/README.codex.md docs/README.copilot.md docs/testing.md tests/codex-runtime/test-superpowers-install-runtime.sh tests/codex-runtime/test-superpowers-install-runtime-pwsh.sh tests/codex-runtime/test-superpowers-migrate-install.sh tests/codex-runtime/test-superpowers-upgrade-skill.sh tests/codex-runtime/test-runtime-instructions.sh
 git commit -m "feat: add staged runtime install flow"
@@ -415,7 +401,6 @@ git commit -m "feat: add staged runtime install flow"
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
 - [ ] **Step 1: Add failing Node-native config tests and launch-contract coverage**
-
 ```bash
 # Cover:
 # - core/config read, write, and list behavior directly under node --test
@@ -433,7 +418,6 @@ git commit -m "feat: add staged runtime install flow"
 ```
 
 - [ ] **Step 2: Run the red launch/config tests**
-
 Run: `node --test tests/codex-runtime/config-core.test.mjs tests/codex-runtime/config-cli.test.mjs`
 Expected: FAIL because the config core and CLI adapter do not exist yet.
 
@@ -444,7 +428,6 @@ Run: `bash tests/codex-runtime/test-superpowers-config.sh`
 Expected: FAIL once the test expects the Node-backed wrapper contract.
 
 - [ ] **Step 3: Add the shared shell and PowerShell launch helpers**
-
 ```bash
 emit_runtime_failure() {
   printf '{"failure_class":"%s","message":"%s"}\n' "$1" "$2" >&2
@@ -471,7 +454,6 @@ function Get-SuperpowersNodePath {
 Keep this logic in the new `bin/superpowers-runtime-common.ps1` file so the existing `bin/superpowers-pwsh-common.ps1` remains Bash-focused for non-migrated wrappers.
 
 - [ ] **Step 4: Port the config core and CLI entrypoint**
-
 ```ts
 export function getConfigValue(configText: string, key: string): string {
   // preserve current "last matching key wins" behavior
@@ -488,7 +470,6 @@ export function getConfigValue(configText: string, key: string): string {
 ```
 
 - [ ] **Step 5: Replace the shipped config wrappers with Node launchers**
-
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -497,7 +478,6 @@ superpowers_run_node_runtime "$(superpowers_install_root)/runtime/core-helpers/d
 ```
 
 - [ ] **Step 6: Rebuild and rerun the targeted config suites**
-
 Run: `npm --prefix runtime/core-helpers run build`
 Expected: PASS and refresh `runtime/core-helpers/dist/superpowers-config.cjs`.
 
@@ -514,7 +494,6 @@ Run: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 Expected: PASS with the targeted migrated wrappers no longer depending on Bash.
 
 - [ ] **Step 7: Commit the config slice**
-
 ```bash
 git add bin/superpowers-runtime-common.sh bin/superpowers-runtime-common.ps1 bin/superpowers-config bin/superpowers-config.ps1 runtime/core-helpers tests/codex-runtime/config-core.test.mjs tests/codex-runtime/config-cli.test.mjs tests/codex-runtime/test-core-helper-runtime-launch.sh tests/codex-runtime/test-superpowers-config.sh tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
 git commit -m "feat: port superpowers-config to bundled runtime"
@@ -543,7 +522,6 @@ git commit -m "feat: port superpowers-config to bundled runtime"
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 
 - [ ] **Step 1: Extend workflow-status tests with Node-native coverage, explicit parity expectations, and a temporary equivalence harness**
-
 ```bash
 # Keep assertions for:
 # - core/workflow-status routing and manifest logic directly under node --test
@@ -557,7 +535,6 @@ git commit -m "feat: port superpowers-config to bundled runtime"
 ```
 
 - [ ] **Step 2: Run the red workflow-status suites**
-
 Run: `node --test tests/codex-runtime/workflow-status-core.test.mjs tests/codex-runtime/workflow-status-cli.test.mjs`
 Expected: FAIL because the workflow-status core and CLI adapter do not yet preserve the helper contract.
 
@@ -571,7 +548,6 @@ Run: `bash tests/codex-runtime/test-superpowers-workflow.sh`
 Expected: FAIL if the public workflow CLI no longer matches the helper behavior.
 
 - [ ] **Step 3: Port the workflow core with typed state and failure outputs**
-
 ```ts
 export type WorkflowStatusResult =
   | { kind: 'resolved'; status: string; nextSkill: string; specPath: string; planPath: string; reason?: string }
@@ -583,18 +559,15 @@ export type WorkflowStatusResult =
 ```
 
 - [ ] **Step 4: Run temporary old-vs-new equivalence checks before wrapper replacement**
-
 Run: `bash tests/codex-runtime/test-superpowers-workflow-status-equivalence.sh`
 Expected: PASS with the legacy shell helper and direct Node CLI producing matching representative outputs on the chosen fixtures.
 
 - [ ] **Step 5: Replace the shipped workflow-status wrappers with bundled runtime launch**
-
 ```bash
 superpowers_run_node_runtime "$(superpowers_install_root)/runtime/core-helpers/dist/superpowers-workflow-status.cjs" "$@"
 ```
 
 - [ ] **Step 6: Rebuild and rerun the workflow suites**
-
 Run: `npm --prefix runtime/core-helpers run build`
 Expected: PASS and refresh `runtime/core-helpers/dist/superpowers-workflow-status.cjs`.
 
@@ -611,7 +584,6 @@ Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 Expected: PASS
 
 - [ ] **Step 7: Commit the workflow-status slice**
-
 ```bash
 git add bin/superpowers-workflow-status bin/superpowers-workflow-status.ps1 runtime/core-helpers tests/codex-runtime/workflow-status-core.test.mjs tests/codex-runtime/workflow-status-cli.test.mjs tests/codex-runtime/test-superpowers-workflow-status-equivalence.sh tests/codex-runtime/test-superpowers-workflow-status.sh tests/codex-runtime/test-superpowers-workflow.sh tests/codex-runtime/test-workflow-sequencing.sh
 git commit -m "feat: port workflow-status to bundled runtime"
@@ -636,7 +608,6 @@ git commit -m "feat: port workflow-status to bundled runtime"
 - Test: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
 
 - [ ] **Step 1: Tighten red execution-helper Node-native coverage, parity coverage, and add a temporary equivalence harness**
-
 ```bash
 # Preserve:
 # - core/plan-execution state transitions directly under node --test
@@ -649,7 +620,6 @@ git commit -m "feat: port workflow-status to bundled runtime"
 ```
 
 - [ ] **Step 2: Run the red execution suite**
-
 Run: `node --test tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs`
 Expected: FAIL because the execution core and CLI adapter do not yet preserve the helper contract.
 
@@ -660,7 +630,6 @@ Run: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
 Expected: FAIL because the Node-backed implementation does not yet preserve execution semantics.
 
 - [ ] **Step 3: Port the execution state machine with explicit mutation helpers**
-
 ```ts
 export function applyExecutionTransition(planText: string, args: BeginArgs | CompleteArgs | NoteArgs): TransitionResult {
   // preserve current checked-step, note, and evidence semantics
@@ -668,18 +637,15 @@ export function applyExecutionTransition(planText: string, args: BeginArgs | Com
 ```
 
 - [ ] **Step 4: Run temporary old-vs-new equivalence checks before wrapper replacement**
-
 Run: `bash tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh`
 Expected: PASS with the legacy shell helper and direct Node CLI producing matching representative success/failure behavior on the chosen fixtures.
 
 - [ ] **Step 5: Replace the shipped execution wrappers with bundled runtime launch**
-
 ```bash
 superpowers_run_node_runtime "$(superpowers_install_root)/runtime/core-helpers/dist/superpowers-plan-execution.cjs" "$@"
 ```
 
 - [ ] **Step 6: Rebuild and rerun the execution suite**
-
 Run: `npm --prefix runtime/core-helpers run build`
 Expected: PASS and refresh `runtime/core-helpers/dist/superpowers-plan-execution.cjs`.
 
@@ -690,7 +656,6 @@ Run: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
 Expected: PASS
 
 - [ ] **Step 7: Commit the execution slice**
-
 ```bash
 git add bin/superpowers-plan-execution bin/superpowers-plan-execution.ps1 runtime/core-helpers tests/codex-runtime/plan-execution-core.test.mjs tests/codex-runtime/plan-execution-cli.test.mjs tests/codex-runtime/test-superpowers-plan-execution-equivalence.sh tests/codex-runtime/test-superpowers-plan-execution.sh
 git commit -m "feat: port plan execution to bundled runtime"
@@ -729,7 +694,6 @@ git commit -m "feat: port plan execution to bundled runtime"
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
 - [ ] **Step 1: Remove any remaining live legacy helper logic from the targeted shipped wrappers and delete the temporary equivalence harnesses**
-
 ```bash
 # After this step the targeted `bin/` files should be launchers only,
 # not dormant copies of the old Bash implementations, and the temporary
@@ -737,19 +701,16 @@ git commit -m "feat: port plan execution to bundled runtime"
 ```
 
 - [ ] **Step 2: Update release/testing docs for the bundled runtime generation**
-
 ```bash
 # Add the runtime build/freshness check to docs/testing.md:
 npm --prefix runtime/core-helpers run build:check
 ```
 
 - [ ] **Step 3: Refresh the bundled runtime artifacts one last time**
-
 Run: `npm --prefix runtime/core-helpers run build`
 Expected: PASS and refresh all checked-in `dist/*.cjs` artifacts.
 
 - [ ] **Step 4: Run the full verification matrix**
-
 Run: `npm --prefix runtime/core-helpers run build:check`
 Expected: PASS
 
@@ -802,7 +763,6 @@ Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: PASS
 
 - [ ] **Step 5: Commit the coordinated cutover release surface**
-
 ```bash
 git add bin runtime/core-helpers tests/codex-runtime README.md .codex/INSTALL.md .copilot/INSTALL.md docs/README.codex.md docs/README.copilot.md docs/testing.md RELEASE-NOTES.md
 git commit -m "feat: ship bundled core helper runtime"
