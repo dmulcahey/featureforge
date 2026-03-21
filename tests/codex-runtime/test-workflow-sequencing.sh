@@ -112,6 +112,10 @@ require_pattern skills/writing-plans/SKILL.md "evidence expectations"
 require_pattern skills/writing-plans/SKILL.md "rollout plan"
 require_pattern skills/writing-plans/SKILL.md "rollback plan"
 require_pattern skills/writing-plans/SKILL.md "risks and mitigations"
+require_pattern skills/writing-plans/SKILL.md "## Existing Capabilities / Built-ins to Reuse"
+require_pattern skills/writing-plans/SKILL.md "## Known Footguns / Constraints"
+require_pattern skills/writing-plans/SKILL.md 'pull from the approved spec'"'"'s `Landscape Snapshot` when present'
+require_pattern skills/writing-plans/SKILL.md "Do not make fresh search the default here."
 
 require_pattern skills/plan-eng-review/SKILL.md "**Workflow State:** Draft | Engineering Approved"
 require_pattern skills/plan-eng-review/SKILL.md "**Source Spec Revision:** <integer>"
@@ -126,6 +130,14 @@ require_pattern skills/plan-eng-review/SKILL.md 'If isolated-agent workflows are
 require_pattern skills/plan-eng-review/SKILL.md 'if `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`'
 require_pattern skills/plan-eng-review/SKILL.md 'If the helper returns a non-empty `next_skill`, use that route instead of re-deriving state manually.'
 require_pattern skills/plan-eng-review/SKILL.md 'If the helper returns `status` `implementation_ready`, present the normal execution handoff below.'
+require_pattern skills/plan-eng-review/SKILL.md "Step 0.4: Search Check"
+require_pattern skills/plan-eng-review/SKILL.md "Does the framework, runtime, or platform already provide a built-in?"
+require_pattern skills/plan-eng-review/SKILL.md "Is the chosen pattern still considered current best practice?"
+require_pattern skills/plan-eng-review/SKILL.md "What are the known footguns or failure modes?"
+require_pattern skills/plan-eng-review/SKILL.md "[Layer 1]"
+require_pattern skills/plan-eng-review/SKILL.md "[Layer 2]"
+require_pattern skills/plan-eng-review/SKILL.md "[Layer 3]"
+require_pattern skills/plan-eng-review/SKILL.md "[EUREKA]"
 require_pattern skills/plan-eng-review/SKILL.md "ordered implementation steps"
 require_pattern skills/plan-eng-review/SKILL.md "documentation update expectations"
 require_pattern skills/plan-eng-review/SKILL.md "evidence expectations"
