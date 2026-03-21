@@ -76,6 +76,9 @@ require_pattern skills/qa-only/SKILL.md '| Mode | full | `--quick`, `--regressio
 require_pattern skills/qa-only/SKILL.md 'bin/superpowers-slug'
 require_pattern skills/qa-only/SKILL.md 'PLAN_ARTIFACT=$(ls -t'
 require_pattern skills/qa-only/SKILL.md '*-"$BRANCH"-test-plan-*.md'
+require_pattern skills/qa-only/SKILL.md 'Known ecosystem issue lookup (optional)'
+require_pattern skills/qa-only/SKILL.md 'label the result as a hypothesis, not a fix'
+require_pattern skills/qa-only/SKILL.md 'do not block the report if search is unavailable'
 
 require_pattern skills/document-release/SKILL.md "CHANGELOG"
 require_pattern skills/document-release/SKILL.md "NEVER CLOBBER CHANGELOG ENTRIES"

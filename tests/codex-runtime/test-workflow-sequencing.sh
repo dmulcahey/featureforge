@@ -61,6 +61,9 @@ require_pattern skills/brainstorming/SKILL.md "### Decision impact"
 
 require_description_pattern skills/using-superpowers/SKILL.md "deciding which skill or workflow stage applies"
 require_description_pattern skills/systematic-debugging/SKILL.md "investigating a bug, regression, test failure, or unexpected behavior"
+require_pattern skills/systematic-debugging/SKILL.md "Phase 2.5: External Pattern Search"
+require_pattern skills/systematic-debugging/SKILL.md "Phase 3.2b: Search Escalation on failed hypothesis"
+require_pattern skills/systematic-debugging/SKILL.md "treat results as candidate hypotheses, not conclusions"
 require_description_pattern skills/document-release/SKILL.md "release notes, changelog, TODO, or handoff documentation"
 require_description_pattern skills/qa-only/SKILL.md "browser-based QA, repro steps, screenshots, evidence, and reports"
 
@@ -203,7 +206,11 @@ require_pattern skills/requesting-code-review/SKILL.md 'For plan-routed final re
 require_pattern skills/requesting-code-review/SKILL.md 'Run `superpowers-plan-execution status --plan <approved-plan-path>` before dispatching the reviewer.'
 require_pattern skills/requesting-code-review/SKILL.md 'If helper status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state.'
 require_pattern skills/requesting-code-review/SKILL.md 'Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context.'
+require_pattern skills/requesting-code-review/SKILL.md 'built-in-before-bespoke'
+require_pattern skills/requesting-code-review/SKILL.md 'known ecosystem footguns'
 require_description_absent_pattern skills/requesting-code-review/SKILL.md 'implementing major features'
+require_pattern skills/receiving-code-review/SKILL.md 'novel rewrite, unfamiliar framework pattern, or a "best practice" that does not match repo reality'
+require_pattern skills/receiving-code-review/SKILL.md 'do a quick capability or landscape check before implementing it'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'rejects branch-completion handoff if the approved plan is execution-dirty or malformed'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'must not allow branch completion while any checked-off plan step still lacks semantic implementation evidence'
 require_description_pattern skills/finishing-a-development-branch/SKILL.md 'verification passes'
