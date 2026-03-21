@@ -393,6 +393,11 @@ required_patterns=(
   "skills/using-superpowers/SKILL.md:If the session decision file exists but contains malformed content:"
   "skills/using-superpowers/SKILL.md:if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to \`enabled\` and continue on the same turn"
   "skills/using-superpowers/SKILL.md:If the user explicitly requests re-entry but the bootstrap cannot rewrite the session decision to \`enabled\`:"
+  'skills/using-superpowers/SKILL.md:## Normal Superpowers Stack'
+  'skills/using-superpowers/SKILL.md:If the bypass gate resolves to `enabled` for this turn, run the normal shared Superpowers stack before any further Superpowers behavior:'
+  'skills/using-superpowers/SKILL.md:_UPD=""'
+  'skills/using-superpowers/SKILL.md:_SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d '\'' '\'')'
+  'skills/using-superpowers/SKILL.md:_CONTRIB=""'
   "skills/using-superpowers/SKILL.md:then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review -> execution."
   "skills/using-superpowers/SKILL.md:## Superpowers Workflow Router"
   "skills/using-superpowers/SKILL.md:Do NOT jump from brainstorming straight to implementation. For workflow-routed work, every stage owns the handoff into the next one."

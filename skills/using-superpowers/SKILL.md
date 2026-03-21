@@ -34,6 +34,57 @@ _SP_USING_SUPERPOWERS_DECISION_DIR="$_SP_STATE_DIR/session-flags/using-superpowe
 _SP_USING_SUPERPOWERS_DECISION_PATH="$_SP_USING_SUPERPOWERS_DECISION_DIR/$PPID"
 ```
 
+## Bypass Gate
+
+The session decision file lives at `~/.superpowers/session-flags/using-superpowers/$PPID`.
+
+If no valid session decision exists yet, ask one interactive question before any normal Superpowers work happens.
+
+The first-turn opt-out question is a pre-Superpowers gate:
+
+- do not compute `_SESSIONS`
+- do not apply the shared ELI16 multi-session grounding rule
+- use the normal context / recommendation / option structure, but treat this question as the gate into the Superpowers stack rather than a normal in-stack Superpowers interactive question
+
+Before any normal Superpowers behavior:
+
+- if the session decision is `enabled`, continue into the normal stack
+- if the session decision is `bypassed` and the user did not explicitly request Superpowers, stop and bypass the rest of this skill
+- if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to `enabled` and continue on the same turn
+- if the session decision is missing, ask the opt-out question and persist either `enabled` or `bypassed`
+
+If the session decision file exists but contains malformed content:
+
+- do not treat it as `enabled`
+- do not treat it as `bypassed`
+- ignore it for bypass purposes on that turn
+- continue to normal Superpowers behavior
+- only rewrite the file after a fresh explicit choice
+
+If the user explicitly requests re-entry but the bootstrap cannot rewrite the session decision to `enabled`:
+
+- honor the explicit re-entry request for the current turn
+- continue through the normal Superpowers stack on that turn
+- do not pretend persistence succeeded
+- treat future turns as undecided until a later write succeeds
+
+
+## Normal Superpowers Stack
+
+If the bypass gate resolves to `enabled` for this turn, run the normal shared Superpowers stack before any further Superpowers behavior:
+
+```bash
+_UPD=""
+[ -n "$_SUPERPOWERS_ROOT" ] && _UPD=$("$_SUPERPOWERS_ROOT/bin/superpowers-update-check" 2>/dev/null || true)
+[ -n "$_UPD" ] && echo "$_UPD" || true
+mkdir -p "$_SP_STATE_DIR/sessions"
+touch "$_SP_STATE_DIR/sessions/$PPID"
+_SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
+find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true
+_CONTRIB=""
+[ -n "$_SUPERPOWERS_ROOT" ] && _CONTRIB=$("$_SUPERPOWERS_ROOT/bin/superpowers-config" get superpowers_contributor 2>/dev/null || true)
+```
+
 If output shows `UPGRADE_AVAILABLE <old> <new>`: read the installed `superpowers-upgrade/SKILL.md` from the same superpowers root (check the current repo when it contains the Superpowers runtime, then `$HOME/.superpowers/install`, then `$HOME/.codex/superpowers`, then `$HOME/.copilot/superpowers`) and follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If `JUST_UPGRADED <from> <to>`: tell the user "Running superpowers v{to} (just updated!)" and continue.
 
 ## Interactive User Question Format
@@ -87,41 +138,6 @@ fi
 ```
 
 Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Skip if the file already exists. Max 3 reports per session. File inline and continue — don't stop the workflow. Tell the user: "Filed superpowers field report: {title}"
-
-## Bypass Gate
-
-The session decision file lives at `~/.superpowers/session-flags/using-superpowers/$PPID`.
-
-If no valid session decision exists yet, ask one interactive question before any normal Superpowers work happens.
-
-The first-turn opt-out question is a pre-Superpowers gate:
-
-- do not compute `_SESSIONS`
-- do not apply the shared ELI16 multi-session grounding rule
-- use the normal context / recommendation / option structure, but treat this question as the gate into the Superpowers stack rather than a normal in-stack Superpowers interactive question
-
-Before any normal Superpowers behavior:
-
-- if the session decision is `enabled`, continue into the normal stack
-- if the session decision is `bypassed` and the user did not explicitly request Superpowers, stop and bypass the rest of this skill
-- if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to `enabled` and continue on the same turn
-- if the session decision is missing, ask the opt-out question and persist either `enabled` or `bypassed`
-
-If the session decision file exists but contains malformed content:
-
-- do not treat it as `enabled`
-- do not treat it as `bypassed`
-- ignore it for bypass purposes on that turn
-- continue to normal Superpowers behavior
-- only rewrite the file after a fresh explicit choice
-
-If the user explicitly requests re-entry but the bootstrap cannot rewrite the session decision to `enabled`:
-
-- honor the explicit re-entry request for the current turn
-- continue through the normal Superpowers stack on that turn
-- do not pretend persistence succeeded
-- treat future turns as undecided until a later write succeeds
-
 
 
 <EXTREMELY-IMPORTANT>

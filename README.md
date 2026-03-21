@@ -276,7 +276,7 @@ Windows (PowerShell): `& "$env:USERPROFILE\.superpowers\install\bin\superpowers-
 ## What Actually Runs
 
 - `skills/` contains the 18 public Superpowers skills. `using-superpowers` is the entry skill and session bypass gate; `brainstorming`, `plan-ceo-review`, `writing-plans`, and `plan-eng-review` form the default planning chain.
-- `scripts/gen-skill-docs.mjs` renders every checked-in `SKILL.md` from its template and injects the shared runtime preamble used across the skill library.
+- `scripts/gen-skill-docs.mjs` renders every checked-in `SKILL.md` from its template and injects the shared runtime preamble contracts, including the dedicated `using-superpowers` bootstrap plus its post-gate normal-stack handoff.
 - `bin/superpowers-migrate-install` consolidates legacy platform-specific installs into the single shared checkout and recreates compatibility links when needed.
 - `bin/superpowers-config` and `bin/superpowers-update-check` manage local runtime state, contributor mode, and per-session upgrade notices under `~/.superpowers/`.
 - `bin/superpowers-workflow` and `bin/superpowers-workflow.ps1` are the supported public read-only workflow inspection surfaces for humans.

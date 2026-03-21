@@ -33,6 +33,10 @@ require_pattern 'if the user explicitly requests Superpowers or explicitly names
 require_pattern 'If the session decision file exists but contains malformed content:'
 require_pattern 'do not compute `_SESSIONS`'
 require_pattern 'If the user explicitly requests re-entry but the bootstrap cannot rewrite the session decision to `enabled`:'
+require_pattern 'If the bypass gate resolves to `enabled` for this turn, run the normal shared Superpowers stack before any further Superpowers behavior:'
+require_pattern '_UPD=""'
+require_pattern '_SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d '\'' '\'')'
+require_pattern '_CONTRIB=""'
 
 PREAMBLE_BASH="$(extract_preamble_bash)"
 if [[ -z "$PREAMBLE_BASH" ]]; then

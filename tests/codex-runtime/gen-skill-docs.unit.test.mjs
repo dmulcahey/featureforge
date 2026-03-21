@@ -7,6 +7,7 @@ import {
   buildReviewShellLines,
   buildUsingSuperpowersShellLines,
   buildUsingSuperpowersBypassGateSection,
+  buildUsingSuperpowersNormalStackSection,
 } from '../../scripts/gen-skill-docs.mjs';
 
 test('insertGeneratedHeader inserts the generated header after YAML frontmatter', () => {
@@ -58,4 +59,8 @@ test('using-superpowers bypass helpers render the decision-state contract', () =
   const bypassGate = buildUsingSuperpowersBypassGateSection();
   assert.match(bypassGate, /enabled/);
   assert.match(bypassGate, /bypassed/);
+  const normalStack = buildUsingSuperpowersNormalStackSection();
+  assert.match(normalStack, /superpowers-update-check/);
+  assert.match(normalStack, /_SESSIONS=/);
+  assert.match(normalStack, /_CONTRIB=/);
 });

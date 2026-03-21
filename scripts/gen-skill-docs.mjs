@@ -119,6 +119,30 @@ If the user explicitly requests re-entry but the bootstrap cannot rewrite the se
 `;
 }
 
+export function buildUsingSuperpowersNormalStackSection() {
+  return `## Normal Superpowers Stack
+
+If the bypass gate resolves to \`enabled\` for this turn, run the normal shared Superpowers stack before any further Superpowers behavior:
+
+\`\`\`bash
+_UPD=""
+[ -n "$_SUPERPOWERS_ROOT" ] && _UPD=$("$_SUPERPOWERS_ROOT/bin/superpowers-update-check" 2>/dev/null || true)
+[ -n "$_UPD" ] && echo "$_UPD" || true
+mkdir -p "$_SP_STATE_DIR/sessions"
+touch "$_SP_STATE_DIR/sessions/$PPID"
+_SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
+find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true
+_CONTRIB=""
+[ -n "$_SUPERPOWERS_ROOT" ] && _CONTRIB=$("$_SUPERPOWERS_ROOT/bin/superpowers-config" get superpowers_contributor 2>/dev/null || true)
+\`\`\`
+
+${buildUpgradeNote()}
+
+${buildQuestionFormat()}
+
+${buildContributorMode()}`;
+}
+
 export function buildContributorMode() {
   return `## Contributor Mode
 
@@ -196,12 +220,6 @@ export function generateUsingSuperpowersPreamble() {
     '```bash',
     ...buildUsingSuperpowersShellLines(),
     '```',
-    '',
-    buildUpgradeNote(),
-    '',
-    buildQuestionFormat(),
-    '',
-    buildContributorMode(),
   ];
   return parts.join('\n');
 }
@@ -214,6 +232,7 @@ export const RESOLVERS = {
   BASE_PREAMBLE: (templatePath) => (isUsingSuperpowersTemplate(templatePath) ? generateUsingSuperpowersPreamble() : generatePreamble({ review: false })),
   REVIEW_PREAMBLE: () => generatePreamble({ review: true }),
   USING_SUPERPOWERS_BYPASS_GATE: () => buildUsingSuperpowersBypassGateSection(),
+  USING_SUPERPOWERS_NORMAL_STACK: () => buildUsingSuperpowersNormalStackSection(),
 };
 
 export function insertGeneratedHeader(content) {
