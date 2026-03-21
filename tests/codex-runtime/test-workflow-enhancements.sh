@@ -14,6 +14,15 @@ require_pattern() {
   fi
 }
 
+require_absent_pattern() {
+  local file="$1"
+  local pattern="$2"
+  if rg -n -F -- "$pattern" "$file" >/dev/null; then
+    echo "Unexpected pattern '$pattern' in $file"
+    exit 1
+  fi
+}
+
 for file in \
   review/checklist.md \
   qa/references/issue-taxonomy.md \
@@ -85,24 +94,39 @@ require_pattern skills/finishing-a-development-branch/SKILL.md "gh pr view --jso
 require_pattern skills/finishing-a-development-branch/SKILL.md "gh repo view --json defaultBranchRef -q .defaultBranchRef.name"
 require_pattern skills/finishing-a-development-branch/SKILL.md 'superpowers:requesting-code-review'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'superpowers:qa-only'
-require_pattern skills/finishing-a-development-branch/SKILL.md 'Optional Pre-Landing QA Gate'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'Verify tests → Run required pre-completion gates → Present options → Execute choice → Clean up.'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'Conditional Pre-Landing QA Gate'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'test-plan'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'superpowers:document-release'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'FEATURE_WORKTREE=$(git worktree list --porcelain'
 require_pattern skills/finishing-a-development-branch/SKILL.md "RELEASE-NOTES.md"
 require_pattern skills/finishing-a-development-branch/SKILL.md 'bin/superpowers-slug'
-require_pattern skills/finishing-a-development-branch/SKILL.md 'required `document-release` pass'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'require the `document-release` pass'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'For workflow-routed work, if the repo has release-facing docs or metadata'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'For ad-hoc or non-workflow-routed work, keep `document-release` available as an optional cleanup pass'
 require_pattern skills/finishing-a-development-branch/SKILL.md "Gate F-style"
 require_pattern skills/finishing-a-development-branch/SKILL.md "documentation has been refreshed"
 require_pattern skills/finishing-a-development-branch/SKILL.md "release notes or equivalent release-history updates are ready"
-require_pattern skills/finishing-a-development-branch/SKILL.md "require the existing QA handoff when the change type or test-plan artifact clearly warrants browser QA"
+require_pattern skills/finishing-a-development-branch/SKILL.md "**If tests pass:** Continue to Step 1.5."
+require_pattern skills/finishing-a-development-branch/SKILL.md "When browser QA is warranted by the change type or test-plan artifact, require the existing QA handoff before presenting completion options."
 require_pattern skills/finishing-a-development-branch/SKILL.md "When browser QA is clearly warranted, do not present a skip option."
 require_pattern skills/finishing-a-development-branch/SKILL.md 'Possible options when browser QA is required:'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'Possible options when browser QA is optional:'
 require_pattern skills/finishing-a-development-branch/SKILL.md '- `B)` Skip QA handoff this time'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'Required release-readiness pass for workflow-routed work before completion'
 require_pattern skills/requesting-code-review/SKILL.md "target base branch"
+require_pattern skills/executing-plans/SKILL.md 'Read the source spec named in the plan and confirm it is still `CEO Approved`, and that the latest approved spec still matches that exact source-spec path and revision.'
+require_pattern skills/executing-plans/SKILL.md 'to `superpowers:writing-plans` if the source spec path or revision is stale'
+require_pattern skills/executing-plans/SKILL.md 'Follow that skill to verify tests, require `qa-only` when browser QA is warranted, require `document-release` for workflow-routed work'
+require_pattern skills/subagent-driven-development/SKILL.md 'Conditional completion gate:'
+require_pattern skills/subagent-driven-development/SKILL.md 'Read the source spec named in the plan and confirm it is still `CEO Approved`, and that the latest approved spec still matches that exact source-spec path and revision.'
+require_pattern skills/subagent-driven-development/SKILL.md 'to `superpowers:writing-plans` if the source spec path or revision is stale'
+require_pattern skills/subagent-driven-development/SKILL.md 'Required release-readiness pass for workflow-routed work before completion'
+require_pattern skills/subagent-driven-development/SKILL.md 'Let that skill require qa-only when browser QA is warranted, require document-release for workflow-routed work'
+require_absent_pattern skills/executing-plans/SKILL.md 'offer optional `superpowers:qa-only` when appropriate'
+require_absent_pattern skills/subagent-driven-development/SKILL.md 'Report-only browser QA offered from the branch-finishing flow when the branch has UI or route changes'
+require_absent_pattern skills/subagent-driven-development/SKILL.md 'offer optional qa-only when appropriate'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'Conditional pre-landing browser QA when the branch change surface or test-plan artifact warrants it'
 
 require_pattern review/checklist.md "Spec / Plan Delivery Content"
 require_pattern review/checklist.md "Release Readiness"
@@ -151,10 +175,11 @@ require_pattern README.md "document-release"
 require_pattern README.md "qa-only"
 require_pattern README.md "~/.superpowers/projects/"
 require_pattern README.md 'required `document-release` handoff'
-require_pattern README.md 'conditional `qa-only` handoff for browser-facing work'
-require_pattern README.md 'FINISH_BRANCH --> DOC_RELEASE["workflow-routed work: required document-release<br/>ad-hoc work: optional release/doc cleanup"]'
-require_pattern README.md 'DOC_RELEASE --> QA_OR_COMPLETE["conditional qa-only for browser-facing work,<br/>then PR / merge / keep-branch completion flow"]'
-require_pattern README.md 'The completion flow then runs `requesting-code-review`, requires `document-release` for workflow-routed work, may offer `qa-only` when browser QA is warranted'
+require_pattern README.md 'conditional `qa-only` handoff'
+require_pattern README.md 'FINISH_BRANCH --> QA_GATE["conditional qa-only for browser-facing work<br/>required when browser interaction or test-plan context warrants it"]'
+require_pattern README.md 'QA_GATE --> DOC_RELEASE["workflow-routed work: required document-release<br/>ad-hoc work: optional release/doc cleanup"]'
+require_pattern README.md 'DOC_RELEASE --> COMPLETE_FLOW["PR / merge / keep-branch completion flow"]'
+require_pattern README.md 'The completion flow then runs `requesting-code-review`, requires `qa-only` when browser QA is warranted, requires `document-release` for workflow-routed work'
 require_pattern docs/README.codex.md "document-release"
 require_pattern docs/README.codex.md "qa-only"
 require_pattern docs/README.copilot.md "document-release"

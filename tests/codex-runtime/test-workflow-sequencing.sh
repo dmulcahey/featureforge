@@ -108,7 +108,9 @@ require_pattern skills/writing-plans/SKILL.md "risks and mitigations"
 
 require_pattern skills/plan-eng-review/SKILL.md "**Workflow State:** Draft | Engineering Approved"
 require_pattern skills/plan-eng-review/SKILL.md "**Source Spec Revision:** <integer>"
-require_pattern skills/plan-eng-review/SKILL.md 'If the plan'"'"'s `**Source Spec Revision:**` does not match the latest approved spec revision, stop and direct the agent back to `superpowers:writing-plans`.'
+require_pattern skills/plan-eng-review/SKILL.md 'Read the source spec named in `**Source Spec:**` and confirm both the path and revision match the latest approved spec before approving execution.'
+require_pattern skills/plan-eng-review/SKILL.md 'Keep the plan in `Draft` while review issues remain open or while the source spec path or revision is stale.'
+require_pattern skills/plan-eng-review/SKILL.md 'If the plan'"'"'s `**Source Spec:**` path or `**Source Spec Revision:**` does not match the latest approved spec, stop and direct the agent back to `superpowers:writing-plans`.'
 require_pattern skills/plan-eng-review/SKILL.md 'Only write `**Workflow State:** Engineering Approved` as the last step of a successful review'
 require_pattern skills/plan-eng-review/SKILL.md "The handoff must include the exact approved plan path"
 require_pattern skills/plan-eng-review/SKILL.md 'superpowers-plan-execution recommend --plan <approved-plan-path>'
@@ -156,7 +158,8 @@ require_pattern skills/using-superpowers/SKILL.md "Do NOT jump from brainstormin
 require_pattern skills/using-superpowers/SKILL.md 'Spec state: `^\*\*Workflow State:\*\* (Draft|CEO Approved)$`'
 require_pattern skills/using-superpowers/SKILL.md 'Plan source revision: `^\*\*Source Spec Revision:\*\* ([0-9]+)$`'
 require_pattern skills/using-superpowers/SKILL.md "If artifacts are ambiguous or incomplete, route to the earlier safe stage instead of skipping ahead."
-require_pattern skills/using-superpowers/SKILL.md 'Plan is `Engineering Approved` and matches the latest approved spec revision: proceed to implementation through the normal execution handoff for that approved plan path.'
+require_pattern skills/using-superpowers/SKILL.md 'Plan is `Engineering Approved` but its `Source Spec:` path or `Source Spec Revision:` does not match the latest approved spec: invoke `superpowers:writing-plans`.'
+require_pattern skills/using-superpowers/SKILL.md 'Plan is `Engineering Approved` and its `Source Spec:` path plus `Source Spec Revision:` match the latest approved spec: proceed to implementation through the normal execution handoff for that approved plan path.'
 
 require_pattern skills/executing-plans/SKILL.md "Require the exact approved plan path as input."
 require_pattern skills/executing-plans/SKILL.md "Do not auto-clean the workspace and do not auto-create a worktree."
@@ -243,6 +246,7 @@ WORKFLOW_FIXTURE_DIR="tests/codex-runtime/fixtures/workflow-artifacts"
 
 for file in \
   "$WORKFLOW_FIXTURE_DIR/specs/2026-01-22-document-review-system-design.md" \
+  "$WORKFLOW_FIXTURE_DIR/specs/2026-01-22-document-review-system-design-v2.md" \
   "$WORKFLOW_FIXTURE_DIR/specs/2026-02-19-visual-brainstorming-refactor-design.md" \
   "$WORKFLOW_FIXTURE_DIR/specs/2026-03-11-zero-dep-brainstorm-server-design.md"; do
   require_pattern "$file" "**Workflow State:** CEO Approved"
@@ -259,6 +263,12 @@ for file in \
   require_pattern "$file" "**Source Spec Revision:** 1"
   require_pattern "$file" "**Last Reviewed By:** plan-eng-review"
 done
+
+STALE_PATH_PLAN="$WORKFLOW_FIXTURE_DIR/plans/2026-01-22-document-review-system-stale-path.md"
+require_pattern "$STALE_PATH_PLAN" "**Workflow State:** Engineering Approved"
+require_pattern "$STALE_PATH_PLAN" '**Source Spec:** `tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-01-22-document-review-system-design.md`'
+require_pattern "$STALE_PATH_PLAN" "**Source Spec Revision:** 1"
+require_pattern "$STALE_PATH_PLAN" "**Last Reviewed By:** plan-eng-review"
 
 if rg -n -F "created by brainstorming skill" skills/writing-plans/SKILL.md skills/writing-plans/SKILL.md.tmpl >/dev/null; then
   echo "writing-plans should not attribute worktree creation to brainstorming."

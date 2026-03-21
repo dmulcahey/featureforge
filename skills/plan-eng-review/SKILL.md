@@ -119,9 +119,9 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 ```
 
 - If any header line is missing or malformed, normalize the plan to this contract before continuing and treat it as `Draft`.
-- Read the source spec named in `**Source Spec:**` and confirm it is the latest approved spec revision before approving execution.
+- Read the source spec named in `**Source Spec:**` and confirm both the path and revision match the latest approved spec before approving execution.
 - When review decisions change the written plan, update the plan document before continuing.
-- Keep the plan in `Draft` while review issues remain open or while the source spec revision is stale.
+- Keep the plan in `Draft` while review issues remain open or while the source spec path or revision is stale.
 - Only write `**Workflow State:** Engineering Approved` as the last step of a successful review, and set `**Last Reviewed By:** plan-eng-review` at the same time.
 - When the review is resolved and the written plan is approved, present the normal execution handoff.
 - `superpowers:subagent-driven-development` and `superpowers:executing-plans` own implementation. Do not start implementation inside `plan-eng-review`.
@@ -217,7 +217,7 @@ Before moving into the review sections:
 1. Read `**Source Spec:**` and confirm the file exists.
 2. Read that spec's `**Workflow State:**` and `**Spec Revision:**`.
 3. If the spec is not `CEO Approved`, stop and direct the agent back to `superpowers:plan-ceo-review`.
-4. If the plan's `**Source Spec Revision:**` does not match the latest approved spec revision, stop and direct the agent back to `superpowers:writing-plans`.
+4. If the plan's `**Source Spec:**` path or `**Source Spec Revision:**` does not match the latest approved spec, stop and direct the agent back to `superpowers:writing-plans`.
 5. If you make plan edits during this review, keep `**Workflow State:** Draft` until every review issue is resolved.
 
 ## Review Sections
