@@ -14,7 +14,7 @@ Superpowers is not just a collection of prompts. It is a small runtime plus a sk
 
 Three layers matter:
 
-- `using-superpowers` is the entry router. It runs before the agent responds, checks whether another skill applies, and decides which workflow owns the turn.
+- `using-superpowers` is the entry router. It runs before the agent responds, can ask once whether to use or bypass Superpowers for the session, and otherwise decides which workflow owns the turn.
 - `superpowers-workflow-status` owns product-work routing up to `implementation_ready`.
 - `superpowers-plan-execution` owns execution state after an approved plan is handed off.
 
@@ -275,7 +275,7 @@ Windows (PowerShell): `& "$env:USERPROFILE\.superpowers\install\bin\superpowers-
 
 ## What Actually Runs
 
-- `skills/` contains the 18 public Superpowers skills. `using-superpowers` is the entry skill; `brainstorming`, `plan-ceo-review`, `writing-plans`, and `plan-eng-review` form the default planning chain.
+- `skills/` contains the 18 public Superpowers skills. `using-superpowers` is the entry skill and session bypass gate; `brainstorming`, `plan-ceo-review`, `writing-plans`, and `plan-eng-review` form the default planning chain.
 - `scripts/gen-skill-docs.mjs` renders every checked-in `SKILL.md` from its template and injects the shared runtime preamble used across the skill library.
 - `bin/superpowers-migrate-install` consolidates legacy platform-specific installs into the single shared checkout and recreates compatibility links when needed.
 - `bin/superpowers-config` and `bin/superpowers-update-check` manage local runtime state, contributor mode, and per-session upgrade notices under `~/.superpowers/`.

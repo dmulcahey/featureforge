@@ -387,6 +387,10 @@ required_patterns=(
   "skills/using-superpowers/SKILL.md:## Preamble (run first)"
   "skills/using-superpowers/SKILL.md:_IS_SUPERPOWERS_RUNTIME_ROOT()"
   "skills/using-superpowers/SKILL.md:\$HOME/.superpowers/install"
+  "skills/using-superpowers/SKILL.md:ask one interactive question before any normal Superpowers work happens"
+  "skills/using-superpowers/SKILL.md:~/.superpowers/session-flags/using-superpowers/\$PPID"
+  'skills/using-superpowers/SKILL.md:do not compute `_SESSIONS`'
+  "skills/using-superpowers/SKILL.md:If the session decision file exists but contains malformed content:"
   "skills/using-superpowers/SKILL.md:then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review -> execution."
   "skills/using-superpowers/SKILL.md:## Superpowers Workflow Router"
   "skills/using-superpowers/SKILL.md:Do NOT jump from brainstorming straight to implementation. For workflow-routed work, every stage owns the handoff into the next one."

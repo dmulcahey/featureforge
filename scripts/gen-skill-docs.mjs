@@ -85,12 +85,30 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 export function buildUsingSuperpowersBypassGateSection() {
   return `## Bypass Gate
 
+The session decision file lives at \`~/.superpowers/session-flags/using-superpowers/$PPID\`.
+
+If no valid session decision exists yet, ask one interactive question before any normal Superpowers work happens.
+
+The first-turn opt-out question is a pre-Superpowers gate:
+
+- do not compute \`_SESSIONS\`
+- do not apply the shared ELI16 multi-session grounding rule
+- use the normal context / recommendation / option structure, but treat this question as the gate into the Superpowers stack rather than a normal in-stack Superpowers interactive question
+
 Before any normal Superpowers behavior:
 
 - if the session decision is \`enabled\`, continue into the normal stack
 - if the session decision is \`bypassed\` and the user did not explicitly request Superpowers, stop and bypass the rest of this skill
 - if the user explicitly requests Superpowers, rewrite the session decision to \`enabled\` and continue on the same turn
-- if the session decision is missing or malformed, ask the opt-out question and persist either \`enabled\` or \`bypassed\`
+- if the session decision is missing, ask the opt-out question and persist either \`enabled\` or \`bypassed\`
+
+If the session decision file exists but contains malformed content:
+
+- do not treat it as \`enabled\`
+- do not treat it as \`bypassed\`
+- ignore it for bypass purposes on that turn
+- continue to normal Superpowers behavior
+- only rewrite the file after a fresh explicit choice
 `;
 }
 

@@ -54,6 +54,9 @@ test('using-superpowers gets a dedicated bootstrap preamble contract', () => {
   assert.match(bashBlock, /session-flags\/using-superpowers/, 'using-superpowers should derive the decision-file path');
   assert.doesNotMatch(bashBlock, /touch "\$_SP_STATE_DIR\/sessions\/\$PPID"/, 'using-superpowers should not write session markers before the bypass decision');
   assert.doesNotMatch(bashBlock, /_CONTRIB=/, 'using-superpowers should not load contributor mode before the bypass decision');
+  assert.match(content, /ask one interactive question before any normal Superpowers work happens/, 'using-superpowers should ask before the normal stack');
+  assert.match(content, /do not compute `_SESSIONS`/, 'using-superpowers should exempt the opt-out gate from _SESSIONS handling');
+  assert.match(content, /If the session decision file exists but contains malformed content:/, 'using-superpowers should document malformed-state handling');
 });
 
 test('generated preambles capture _BRANCH exactly once and keep helper BRANCH out of grounding', () => {

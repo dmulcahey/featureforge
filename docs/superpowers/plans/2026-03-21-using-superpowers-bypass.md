@@ -177,9 +177,7 @@ Update `scripts/gen-skill-docs.mjs` so `using-superpowers` can resolve its pream
 Run: `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs`
 Expected: PASS for the dedicated bootstrap contract without regressing the shared preamble checks for other skills.
 
-- [ ] **Step 6: Commit the generator/bootstrap foundation**
-
-  **Execution Note:** Active - Commit the generator/bootstrap foundation
+- [x] **Step 6: Commit the generator/bootstrap foundation**
 ```bash
 git add scripts/gen-skill-docs.mjs tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs
 git commit -m "feat: add using-superpowers bootstrap preamble"
@@ -199,7 +197,7 @@ git commit -m "feat: add using-superpowers bootstrap preamble"
 - Test: `node scripts/gen-skill-docs.mjs --check`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
-- [ ] **Step 1: Add red wording assertions for the bypass gate**
+- [x] **Step 1: Add red wording assertions for the bypass gate**
 ```bash
 require_pattern skills/using-superpowers/SKILL.md "ask one interactive question before any normal Superpowers work happens"
 require_pattern skills/using-superpowers/SKILL.md "~/.superpowers/session-flags/using-superpowers/\$PPID"
@@ -207,11 +205,11 @@ require_pattern skills/using-superpowers/SKILL.md "do not compute `_SESSIONS`"
 require_pattern skills/using-superpowers/SKILL.md "If the session decision file exists but contains malformed content:"
 ```
 
-- [ ] **Step 2: Run the red runtime-instructions check**
+- [x] **Step 2: Run the red runtime-instructions check**
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: FAIL because the current generated `using-superpowers` doc and docs do not yet describe the bypass gate or the pre-Superpowers question exception.
 
-- [ ] **Step 3: Update the `using-superpowers` template**
+- [x] **Step 3: Update the `using-superpowers` template**
 ```markdown
 ## Bypass Gate
 
@@ -222,14 +220,14 @@ Before any normal Superpowers behavior:
 - if no valid decision exists, ask the opt-out question and persist `enabled` or `bypassed`
 ```
 
-- [ ] **Step 4: Regenerate the generated skill doc**
+- [x] **Step 4: Regenerate the generated skill doc**
 Run: `node scripts/gen-skill-docs.mjs`
 Expected: `skills/using-superpowers/SKILL.md` matches the updated template and dedicated bootstrap preamble.
 
-- [ ] **Step 5: Align runtime-facing docs**
+- [x] **Step 5: Align runtime-facing docs**
 Update `README.md`, `docs/README.codex.md`, and `docs/README.copilot.md` so they describe `using-superpowers` as the entry router with a session-scoped bypass gate rather than an unconditional takeover surface.
 
-- [ ] **Step 6: Re-run the doc freshness and wording checks**
+- [x] **Step 6: Re-run the doc freshness and wording checks**
 Run: `node scripts/gen-skill-docs.mjs --check`
 Expected: PASS
 
@@ -237,6 +235,8 @@ Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: PASS with the new bypass-gate wording and no stale unconditional-router language.
 
 - [ ] **Step 7: Commit the skill-template and doc updates**
+
+  **Execution Note:** Active - Commit the skill-template and doc updates
 ```bash
 git add \
   skills/using-superpowers/SKILL.md.tmpl \
