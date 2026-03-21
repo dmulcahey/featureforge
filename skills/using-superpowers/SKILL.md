@@ -104,7 +104,7 @@ Before any normal Superpowers behavior:
 
 - if the session decision is `enabled`, continue into the normal stack
 - if the session decision is `bypassed` and the user did not explicitly request Superpowers, stop and bypass the rest of this skill
-- if the user explicitly requests Superpowers, rewrite the session decision to `enabled` and continue on the same turn
+- if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to `enabled` and continue on the same turn
 - if the session decision is missing, ask the opt-out question and persist either `enabled` or `bypassed`
 
 If the session decision file exists but contains malformed content:

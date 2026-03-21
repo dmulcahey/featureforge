@@ -29,6 +29,7 @@ export SUPERPOWERS_STATE_DIR="$STATE_DIR"
 require_pattern '~/.superpowers/session-flags/using-superpowers/$PPID'
 require_pattern 'if the session decision is `enabled`, continue into the normal stack'
 require_pattern 'if the session decision is `bypassed` and the user did not explicitly request Superpowers, stop and bypass the rest of this skill'
+require_pattern 'if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to `enabled` and continue on the same turn'
 require_pattern 'If the session decision file exists but contains malformed content:'
 require_pattern 'do not compute `_SESSIONS`'
 require_pattern 'If the user explicitly requests re-entry but the bootstrap cannot rewrite the session decision to `enabled`:'

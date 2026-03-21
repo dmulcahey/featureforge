@@ -391,6 +391,7 @@ required_patterns=(
   "skills/using-superpowers/SKILL.md:~/.superpowers/session-flags/using-superpowers/\$PPID"
   'skills/using-superpowers/SKILL.md:do not compute `_SESSIONS`'
   "skills/using-superpowers/SKILL.md:If the session decision file exists but contains malformed content:"
+  "skills/using-superpowers/SKILL.md:if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to \`enabled\` and continue on the same turn"
   "skills/using-superpowers/SKILL.md:If the user explicitly requests re-entry but the bootstrap cannot rewrite the session decision to \`enabled\`:"
   "skills/using-superpowers/SKILL.md:then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review -> execution."
   "skills/using-superpowers/SKILL.md:## Superpowers Workflow Router"
