@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** superpowers:executing-plans
 **Source Spec:** `docs/superpowers/specs/2026-03-21-skill-layer-delivery-governance-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -155,7 +155,7 @@ task.md governance detail
 - Test: `node scripts/gen-skill-docs.mjs`
 - Test: `node scripts/gen-skill-docs.mjs --check`
 
-- [ ] **Step 1: Add red sequencing assertions for Gate A and Gate B skill contracts**
+- [x] **Step 1: Add red sequencing assertions for Gate A and Gate B skill contracts**
 ```bash
 require_pattern skills/brainstorming/SKILL.md "problem statement"
 require_pattern skills/brainstorming/SKILL.md "failure and edge-case behavior"
@@ -178,11 +178,11 @@ require_pattern skills/plan-eng-review/SKILL.md "evidence expectations"
 require_pattern skills/plan-eng-review/SKILL.md "explicit risks"
 ```
 
-- [ ] **Step 2: Run the red sequencing check**
+- [x] **Step 2: Run the red sequencing check**
 Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 Expected: FAIL because the current skill docs do not yet encode the richer Gate A/B contract.
 
-- [ ] **Step 3: Update the spec-authoring templates and regenerate**
+- [x] **Step 3: Update the spec-authoring templates and regenerate**
 ```markdown
 Update `skills/brainstorming/SKILL.md.tmpl` so draft specs explicitly cover:
 - problem statement / desired outcome / why it matters
@@ -190,7 +190,7 @@ Update `skills/brainstorming/SKILL.md.tmpl` so draft specs explicitly cover:
 - failure behavior, observability, rollout/rollback, risks, acceptance criteria
 ```
 
-- [ ] **Step 4: Update the spec-review and plan-authoring/review templates and regenerate**
+- [x] **Step 4: Update the spec-review and plan-authoring/review templates and regenerate**
 ```markdown
 Update the relevant templates so:
 - `plan-ceo-review` blocks approval on materially missing Gate A content
@@ -198,18 +198,18 @@ Update the relevant templates so:
 - `plan-eng-review` blocks approval on materially missing Gate B content and carries the concrete domain overlays plus conditional Gate E QA policy
 ```
 
-- [ ] **Step 5: Regenerate generated skill docs**
+- [x] **Step 5: Regenerate generated skill docs**
 Run: `node scripts/gen-skill-docs.mjs`
 Expected: the generated `SKILL.md` files reflect the updated template contracts.
 
-- [ ] **Step 6: Re-run the focused verification**
+- [x] **Step 6: Re-run the focused verification**
 Run: `bash tests/codex-runtime/test-workflow-sequencing.sh`
 Expected: PASS
 
 Run: `node scripts/gen-skill-docs.mjs --check`
 Expected: PASS
 
-- [ ] **Step 7: Commit the authoring/review contract slice**
+- [x] **Step 7: Commit the authoring/review contract slice**
 ```bash
 git add \
   skills/brainstorming/SKILL.md.tmpl \
@@ -242,7 +242,7 @@ git commit -m "feat: strengthen workflow authoring and review gates"
 - Test: `node scripts/gen-skill-docs.mjs`
 - Test: `node scripts/gen-skill-docs.mjs --check`
 
-- [ ] **Step 1: Add red enhancement assertions for required release/doc gating**
+- [x] **Step 1: Add red enhancement assertions for required release/doc gating**
 ```bash
 require_pattern skills/document-release/SKILL.md "release-readiness"
 require_pattern skills/document-release/SKILL.md "rollout notes"
@@ -264,14 +264,14 @@ require_pattern docs/README.copilot.md "document-release"
 require_pattern docs/README.copilot.md "qa-only"
 ```
 
-- [ ] **Step 2: Run the red enhancement/runtime checks**
+- [x] **Step 2: Run the red enhancement/runtime checks**
 Run: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 Expected: FAIL because release-readiness is still optional and the checklist surface does not yet model the new governance standard.
 
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: FAIL once the new runtime-facing wording assertions are added.
 
-- [ ] **Step 3: Update `document-release` and `finishing-a-development-branch` templates**
+- [x] **Step 3: Update `document-release` and `finishing-a-development-branch` templates**
 ```markdown
 Update the templates so:
 - `document-release` is required before completion for workflow-routed work
@@ -279,7 +279,7 @@ Update the templates so:
 - `finishing-a-development-branch` performs the short Gate F-style confirmation and enforces conditional `qa-only`
 ```
 
-- [ ] **Step 4: Update the modeled checklist and contributor-facing docs**
+- [x] **Step 4: Update the modeled checklist and contributor-facing docs**
 ```markdown
 Update `review/checklist.md` so it reflects the new governance surfaces without becoming a second workflow state machine.
 
@@ -290,11 +290,11 @@ Update `README.md`, `docs/README.codex.md`, and `docs/README.copilot.md` so they
 - conditional `qa-only` handoff for browser-facing work
 ```
 
-- [ ] **Step 5: Regenerate generated skill docs**
+- [x] **Step 5: Regenerate generated skill docs**
 Run: `node scripts/gen-skill-docs.mjs`
 Expected: generated outputs for `document-release` and `finishing-a-development-branch` match the updated templates.
 
-- [ ] **Step 6: Re-run the focused verification**
+- [x] **Step 6: Re-run the focused verification**
 Run: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 Expected: PASS
 
@@ -304,7 +304,7 @@ Expected: PASS
 Run: `node scripts/gen-skill-docs.mjs --check`
 Expected: PASS
 
-- [ ] **Step 7: Commit the release/checklist slice**
+- [x] **Step 7: Commit the release/checklist slice**
 ```bash
 git add \
   skills/document-release/SKILL.md.tmpl \
@@ -330,14 +330,14 @@ git commit -m "feat: add release-readiness workflow gates"
 - Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
-- [ ] **Step 1: Verify the approved spec and written plan still match the intended scope**
+- [x] **Step 1: Verify the approved spec and written plan still match the intended scope**
 Run a manual diff pass against:
 - `docs/superpowers/specs/2026-03-21-skill-layer-delivery-governance-design.md`
 - `docs/superpowers/plans/2026-03-21-skill-layer-delivery-governance.md`
 
 Expected: the plan still implements the approved narrow skill-layer-only governance change and has not drifted into helper/runtime expansion.
 
-- [ ] **Step 2: Run the full targeted verification matrix**
+- [x] **Step 2: Run the full targeted verification matrix**
 Run: `node scripts/gen-skill-docs.mjs --check`
 Expected: PASS
 
@@ -350,10 +350,12 @@ Expected: PASS
 Run: `bash tests/codex-runtime/test-runtime-instructions.sh`
 Expected: PASS
 
-- [ ] **Step 3: Use verification-before-completion for the planning slice**
+- [x] **Step 3: Use verification-before-completion for the planning slice**
 Invoke `superpowers:verification-before-completion`, capture the verification results above, and confirm the working tree contains only the intended spec/plan/skill/doc/test changes plus plan-execution bookkeeping.
 
 - [ ] **Step 4: Commit the approved spec header change and written plan**
+
+  **Execution Note:** Active - Commit the approved spec header change and written plan
 ```bash
 git add \
   docs/superpowers/specs/2026-03-21-skill-layer-delivery-governance-design.md \
