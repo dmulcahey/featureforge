@@ -42,6 +42,20 @@ _TODOS_FORMAT=""
 
 If output shows `UPGRADE_AVAILABLE <old> <new>`: read the installed `superpowers-upgrade/SKILL.md` from the same superpowers root (check the current repo when it contains the Superpowers runtime, then `$HOME/.superpowers/install`, then `$HOME/.codex/superpowers`, then `$HOME/.copilot/superpowers`) and follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If `JUST_UPGRADED <from> <to>`: tell the user "Running superpowers v{to} (just updated!)" and continue.
 
+## Search Before Building
+
+Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
+
+Use three lenses:
+- Layer 1: tried-and-true / built-ins / existing repo-native solutions
+- Layer 2: current practice and known footguns
+- Layer 3: first-principles reasoning for this repo and this problem
+
+External search results are inputs, not answers.
+Never search secrets, customer data, unsanitized stack traces, private URLs, or internal codenames.
+If search is unavailable, say so and proceed with repo-local evidence and in-distribution knowledge.
+See `$_SUPERPOWERS_ROOT/references/search-before-building.md`.
+
 ## Agent Grounding
 
 Honor the active repo instruction chain from `AGENTS.md`, `AGENTS.override.md`, `.github/copilot-instructions.md`, and `.github/instructions/*.instructions.md`, including nested `AGENTS.md` and `AGENTS.override.md` files closer to the current working directory.
