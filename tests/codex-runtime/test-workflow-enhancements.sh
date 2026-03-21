@@ -52,6 +52,8 @@ for file in agents/code-reviewer.instructions.md agents/code-reviewer.md .codex/
   require_pattern "$file" "base branch"
   require_pattern "$file" "TODO cross-reference"
   require_pattern "$file" "Documentation staleness"
+  require_pattern "$file" "Never search secrets, customer data, unsanitized stack traces, private URLs, or internal codenames"
+  require_pattern "$file" "If search is unavailable, disallowed, or unsafe, say so and continue the review with the diff, checklist, plan, and repo-local evidence only"
 done
 
 require_pattern skills/requesting-code-review/SKILL.md "review checklist"
@@ -63,6 +65,8 @@ require_pattern skills/requesting-code-review/code-reviewer.md "official documen
 require_pattern skills/requesting-code-review/code-reviewer.md "issue trackers or maintainer guidance"
 require_pattern skills/requesting-code-review/code-reviewer.md "primary-source technical references"
 require_pattern skills/requesting-code-review/code-reviewer.md "file:line"
+require_pattern skills/requesting-code-review/code-reviewer.md "Never search secrets, customer data, unsanitized stack traces, private URLs, or internal codenames"
+require_pattern skills/requesting-code-review/code-reviewer.md "If search is unavailable, disallowed, or unsafe, say so and continue the review with the diff, checklist, plan, and repo-local evidence only"
 require_pattern skills/subagent-driven-development/code-quality-reviewer-prompt.md "BASE_BRANCH"
 
 require_pattern skills/plan-eng-review/SKILL.md '$_SP_STATE_DIR/projects'

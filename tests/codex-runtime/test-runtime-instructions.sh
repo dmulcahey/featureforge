@@ -930,6 +930,36 @@ if ! rg -n -F 'the routing gate does not use `tests/evals/helpers/openai-judge.m
   exit 1
 fi
 
+if ! rg -n -F 'Search-Before-Building eval note:' tests/evals/README.md >/dev/null; then
+  echo "tests/evals/README.md should give Search-Before-Building its own doc-driven eval note."
+  exit 1
+fi
+
+if ! rg -n -F '`search-before-building-contract` is also doc-driven instead of `.eval.mjs` driven' tests/evals/README.md >/dev/null; then
+  echo "tests/evals/README.md should state that Search-Before-Building is doc-driven rather than a Node .eval.mjs test."
+  exit 1
+fi
+
+if ! rg -n -F 'it does not use `tests/evals/helpers/openai-judge.mjs`' tests/evals/README.md >/dev/null; then
+  echo "tests/evals/README.md should state that the Search-Before-Building gate does not use the Node OpenAI judge helper."
+  exit 1
+fi
+
+if ! rg -n -F 'it does not require `EVALS`, `OPENAI_API_KEY`, or `EVAL_MODEL`' tests/evals/README.md >/dev/null; then
+  echo "tests/evals/README.md should state that Search-Before-Building does not need the Node eval env vars."
+  exit 1
+fi
+
+if ! rg -n -F 'it uses a checked-in scenario matrix plus fresh runner and judge subagents against repo-versioned prompt surfaces' tests/evals/README.md >/dev/null; then
+  echo "tests/evals/README.md should state that Search-Before-Building uses a checked-in scenario matrix plus fresh runner and judge subagents."
+  exit 1
+fi
+
+if ! rg -n -F 'The Search-Before-Building gate also writes per-scenario evidence bundles under:' tests/evals/README.md >/dev/null; then
+  echo "tests/evals/README.md should document where the Search-Before-Building runner/judge evidence is written."
+  exit 1
+fi
+
 if ! rg -n -F 'The routing gate intentionally starts after the first-turn bypass decision has already been resolved to `enabled` for the synthetic scenario session.' tests/evals/README.md >/dev/null; then
   echo "tests/evals/README.md should explain that the routing gate validates post-bypass routing rather than the first-turn opt-out question."
   exit 1
@@ -957,6 +987,46 @@ fi
 
 if ! rg -n -F 'Derive that path from the same `using-superpowers` runtime shell the runner will use; do not guess or hardcode a `$PPID` from outside the runner session.' tests/evals/using-superpowers-routing.orchestrator.md >/dev/null; then
   echo "The routing orchestrator should forbid guessing PPIDs instead of deriving the runner's decision path."
+  exit 1
+fi
+
+if ! rg -n -F 'Start a fresh isolated runner subagent for each required scenario.' tests/evals/search-before-building-contract.orchestrator.md >/dev/null; then
+  echo "The Search-Before-Building orchestrator should require a fresh isolated runner subagent for each required scenario."
+  exit 1
+fi
+
+if ! rg -n -F 'Start a fresh isolated judge subagent after each runner finishes.' tests/evals/search-before-building-contract.orchestrator.md >/dev/null; then
+  echo "The Search-Before-Building orchestrator should require a fresh isolated judge subagent after each runner."
+  exit 1
+fi
+
+if ! rg -n -F 'Pass only when every required scenario in the checked-in matrix passes and no scenario is ambiguous.' tests/evals/search-before-building-contract.orchestrator.md >/dev/null; then
+  echo "The Search-Before-Building orchestrator should fail closed across the full checked-in scenario matrix."
+  exit 1
+fi
+
+if ! rg -n -F 'It does not create a new workflow stage and it does not depend on the Node OpenAI judge helper.' tests/evals/search-before-building-contract.orchestrator.md >/dev/null; then
+  echo "The Search-Before-Building orchestrator should stay item-local and independent of the Node OpenAI judge helper."
+  exit 1
+fi
+
+if ! rg -n -F 'The judge reads raw runner evidence first, then this file, then the canonical Search-Before-Building contract.' tests/evals/search-before-building-contract.scenarios.md >/dev/null; then
+  echo "The Search-Before-Building scenarios should require the judge to read raw runner evidence first."
+  exit 1
+fi
+
+if ! rg -n -F '| S5 | `skills/requesting-code-review/code-reviewer.md` | reviewer prompt surface B for known footguns and built-in-before-bespoke review | Preserve the same bounded reviewer behavior as surface A, including explicit sanitization and fallback language | Replacing checklist-driven review with an external-search verdict |' tests/evals/search-before-building-contract.scenarios.md >/dev/null; then
+  echo "The Search-Before-Building scenarios should keep S5 self-contained instead of referring back to S4."
+  exit 1
+fi
+
+if ! rg -n -F '3. Privacy and sanitization boundaries are explicit.' tests/evals/search-before-building-contract.scenarios.md >/dev/null; then
+  echo "The Search-Before-Building rubric should require explicit privacy and sanitization boundaries."
+  exit 1
+fi
+
+if ! rg -n -F 'Do not use other repo context or inferred intent as a substitute for the selected surface plus the canonical contract.' tests/evals/search-before-building-contract.judge.md >/dev/null; then
+  echo "The Search-Before-Building judge should forbid substituting other repo context or inferred intent for the selected surface plus contract."
   exit 1
 fi
 
