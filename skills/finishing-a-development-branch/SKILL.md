@@ -176,6 +176,22 @@ Possible options:
 
 If a fresh `qa-only` report already happened in the current workflow, continue silently.
 
+When the change type or test-plan artifact clearly warrants browser QA, require the existing QA handoff when the change type or test-plan artifact clearly warrants browser QA before presenting completion options. Keep QA optional only for clearly non-browser work.
+
+### Step 1.9: Required Document Release Gate
+
+For workflow-routed work, require the required `document-release` pass before presenting completion options.
+
+If the repo has release-facing docs or metadata such as `CHANGELOG.md`, `RELEASE-NOTES.md`, `VERSION`, `TODOS.md`, `README.md`, or platform workflow docs, do not treat documentation as optional cleanup. Route through `superpowers:document-release` first unless a fresh pass already happened in the current workflow.
+
+Before moving on, perform a short Gate F-style confirmation:
+
+- documentation has been refreshed
+- release notes or equivalent release-history updates are ready
+- rollout and rollback are addressed
+- known risks are documented
+- monitoring or verification expectations are addressed when relevant
+
 ### Step 2: Determine Base Branch
 
 Try platform-aware detection first:
@@ -317,17 +333,9 @@ If found:
 
 **For Option C:** Keep worktree.
 
-### Step 6: Optional Document Release Handoff
+### Step 6: Document Release Follow-Through
 
-For Options A, B, or C only: if the repo contains `CHANGELOG.md`, `RELEASE-NOTES.md`, `VERSION`, or `TODOS.md`, offer an optional handoff to `superpowers:document-release`.
-
-Recommendation logic:
-- Recommend running `superpowers:document-release` when user-visible behavior changed or release metadata exists
-- Skip the handoff when there are no docs or release surfaces to reconcile
-
-Possible options:
-- `A)` Run `superpowers:document-release` now
-- `B)` Skip documentation handoff this time
+If Step 1.9 already routed through `superpowers:document-release`, summarize the release-readiness result and continue. Do not offer a skip path here for workflow-routed work.
 
 ## Quick Reference
 

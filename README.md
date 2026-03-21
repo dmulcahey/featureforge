@@ -158,6 +158,8 @@ A few important consequences fall out of that state machine:
 - `superpowers-plan-execution recommend` is only valid before execution has started for that exact plan revision. After that, the plan's persisted `**Execution Mode:**` and the helper's `status --plan` output are the source of truth.
 - Execution is deliberately serial at the plan-step level. The execution helper allows subagents, but not multiple simultaneously active plan steps.
 - Final review and branch completion both fail closed if the approved plan and execution evidence disagree with reality.
+- Workflow-routed implementation now expects a required `document-release` handoff before branch completion, while keeping release truth in repo docs and review rather than helper state.
+- Browser-facing work keeps a conditional `qa-only` handoff for browser-facing work instead of turning browser QA into a universal gate.
 
 That is the reason Superpowers feels opinionated in practice: the agent is not merely told to follow a workflow; the runtime keeps re-deriving the safest next state from the repo, the local branch-scoped manifest, and the exact approval headers written by the prior skill.
 

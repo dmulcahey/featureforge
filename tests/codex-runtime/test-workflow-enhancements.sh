@@ -75,6 +75,11 @@ require_pattern skills/document-release/SKILL.md "TODOS.md"
 require_pattern skills/document-release/SKILL.md "RELEASE-NOTES.md"
 require_pattern skills/document-release/SKILL.md 'BASE_BRANCH=$(gh pr view --json baseRefName -q .baseRefName'
 require_pattern skills/document-release/SKILL.md 'origin/$BASE_BRANCH...HEAD'
+require_pattern skills/document-release/SKILL.md "release-readiness"
+require_pattern skills/document-release/SKILL.md "rollout notes"
+require_pattern skills/document-release/SKILL.md "rollback notes"
+require_pattern skills/document-release/SKILL.md "known risks or operator-facing caveats"
+require_pattern skills/document-release/SKILL.md "monitoring or verification expectations"
 
 require_pattern skills/finishing-a-development-branch/SKILL.md "gh pr view --json baseRefName -q .baseRefName"
 require_pattern skills/finishing-a-development-branch/SKILL.md "gh repo view --json defaultBranchRef -q .defaultBranchRef.name"
@@ -86,7 +91,15 @@ require_pattern skills/finishing-a-development-branch/SKILL.md 'superpowers:docu
 require_pattern skills/finishing-a-development-branch/SKILL.md 'FEATURE_WORKTREE=$(git worktree list --porcelain'
 require_pattern skills/finishing-a-development-branch/SKILL.md "RELEASE-NOTES.md"
 require_pattern skills/finishing-a-development-branch/SKILL.md 'bin/superpowers-slug'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'required `document-release` pass'
+require_pattern skills/finishing-a-development-branch/SKILL.md "Gate F-style"
+require_pattern skills/finishing-a-development-branch/SKILL.md "documentation has been refreshed"
+require_pattern skills/finishing-a-development-branch/SKILL.md "release notes or equivalent release-history updates are ready"
+require_pattern skills/finishing-a-development-branch/SKILL.md "require the existing QA handoff when the change type or test-plan artifact clearly warrants browser QA"
 require_pattern skills/requesting-code-review/SKILL.md "target base branch"
+
+require_pattern review/checklist.md "Spec / Plan Delivery Content"
+require_pattern review/checklist.md "Release Readiness"
 
 if rg -n -F 'git diff main...HEAD --name-only' skills/qa-only/SKILL.md >/dev/null; then
   echo "qa-only should not hardcode main for diff-aware mode."
@@ -131,5 +144,11 @@ fi
 require_pattern README.md "document-release"
 require_pattern README.md "qa-only"
 require_pattern README.md "~/.superpowers/projects/"
+require_pattern README.md 'required `document-release` handoff'
+require_pattern README.md 'conditional `qa-only` handoff for browser-facing work'
+require_pattern docs/README.codex.md "document-release"
+require_pattern docs/README.codex.md "qa-only"
+require_pattern docs/README.copilot.md "document-release"
+require_pattern docs/README.copilot.md "qa-only"
 
 echo "Workflow enhancement assets and contracts are present."

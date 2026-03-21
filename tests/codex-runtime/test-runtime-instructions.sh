@@ -239,8 +239,12 @@ require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Do not wr
 require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Escalate any high-judgment issue individually."
 require_pattern docs/README.codex.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
 require_pattern docs/README.codex.md "Only the user can initiate accelerated review, and section approval plus final approval remain human-owned even when the review uses reviewer subagents and persisted section packets."
+require_pattern docs/README.codex.md 'required `document-release` handoff'
+require_pattern docs/README.codex.md 'conditional `qa-only` handoff for browser-facing work'
 require_pattern docs/README.copilot.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
 require_pattern docs/README.copilot.md "Only the user can initiate accelerated review, and section approval plus final approval remain human-owned even when the review uses reviewer subagents and persisted section packets."
+require_pattern docs/README.copilot.md 'required `document-release` handoff'
+require_pattern docs/README.copilot.md 'conditional `qa-only` handoff for browser-facing work'
 
 if rg -n -F '[ "$(basename "$_REPO_ROOT")" = "superpowers" ]' skills/*/SKILL.md >/dev/null; then
   echo "Generated skills should detect the current Superpowers checkout by runtime markers, not repo basename."
