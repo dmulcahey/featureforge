@@ -233,6 +233,8 @@ Evaluate:
 * Security architecture: auth, data access, API boundaries
 * Whether key flows deserve ASCII diagrams in the plan or in code comments
 * For each new codepath or integration point, one realistic production failure scenario and whether the plan accounts for it
+* rollout and rollback thinking where the change affects delivery or operations
+* explicit risks where the planned change introduces operational, architectural, or delivery risk
 
 **STOP.** In normal review, use one interactive user question per issue. In accelerated review, keep routine issues in the section packet and break out only escalated high-judgment issues as direct human questions. Present options, state your recommendation, explain WHY. Do NOT batch escalated issues into one interactive user question. Only proceed to the next section after the current section is resolved.
 
@@ -246,12 +248,30 @@ Evaluate:
 * Technical debt hotspots
 * Areas that are over-engineered or under-engineered relative to the preferences above
 * Existing ASCII diagrams in touched files. Are they still accurate after this change?
+* ordered implementation steps: can an engineer execute the plan without inventing missing structure?
+* documentation update expectations: does the plan say what contributor or operator docs must move with the change?
+* evidence expectations: does the plan say what proof each meaningful slice must leave behind?
+
+Apply domain overlays when relevant so review questions stay concrete rather than generic:
+
+* web/UI: user flow, navigation impact, empty/loading/error states, accessibility impact, responsive behavior, browser and flow validation
+* API/service/backend: request/response contracts, backward compatibility, error semantics, timeouts/retries/rate limits, contract tests, compatibility checks
+* data/ETL: schema evolution, source/sink compatibility, data quality expectations, backfill or reprocessing needs, downstream compatibility
+* infrastructure/IaC: blast radius, environment impact, security or policy impact, drift implications, rollback practicality, preview or post-change verification
+* library/SDK: public API changes, semantic-versioning impact, consumer migration impact, breaking changes, compatibility and packaging validation
 
 **STOP.** In normal review, use one interactive user question per issue. In accelerated review, keep routine issues in the section packet and break out only escalated high-judgment issues as direct human questions. Present options, state your recommendation, explain WHY. Do NOT batch escalated issues into one interactive user question. Only proceed to the next section after the current section is resolved.
 
 ### 3. Test review
 
 Make a diagram of all new UX, new data flow, new codepaths, and new branching if statements or outcomes. For each, note what is new about the features discussed in this branch and plan. Then, for each new item in the diagram, make sure there is a project-native automated test.
+
+Before approving the plan, also verify:
+
+* preconditions are explicit where setup, environment, or migration state matters
+* validation strategy covers the planned change surface
+* require `qa-only` when the approved plan, branch-specific test-plan artifact, or change surface clearly indicates browser-facing behavior or browser interaction
+* do not turn `qa-only` into a universal workflow gate for all change types
 
 For LLM or prompt changes, check the repo's prompt or evaluation docs. If this plan touches those patterns, state which eval suites must be run, which cases should be added, and what baselines to compare against. Then use one interactive user question to confirm the eval scope with the user.
 

@@ -49,6 +49,11 @@ require_pattern skills/brainstorming/SKILL.md "record the intended spec path wit
 require_pattern skills/brainstorming/SKILL.md '"$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status" expect --artifact spec --path'
 require_pattern skills/brainstorming/SKILL.md "runs `sync --artifact spec`"
 require_pattern skills/brainstorming/SKILL.md '"$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status" sync --artifact spec --path'
+require_pattern skills/brainstorming/SKILL.md "problem statement"
+require_pattern skills/brainstorming/SKILL.md "failure and edge-case behavior"
+require_pattern skills/brainstorming/SKILL.md "observability expectations"
+require_pattern skills/brainstorming/SKILL.md "rollout and rollback expectations"
+require_pattern skills/brainstorming/SKILL.md "testable acceptance criteria"
 
 require_description_pattern skills/using-superpowers/SKILL.md "deciding which skill or workflow stage applies"
 require_description_pattern skills/systematic-debugging/SKILL.md "investigating a bug, regression, test failure, or unexpected behavior"
@@ -64,6 +69,10 @@ require_pattern skills/plan-ceo-review/SKILL.md '**The terminal state is invokin
 require_pattern skills/plan-ceo-review/SKILL.md 'Do not draft a plan or offer implementation options from `plan-ceo-review`.'
 require_pattern skills/plan-ceo-review/SKILL.md "runs `sync --artifact spec`"
 require_pattern skills/plan-ceo-review/SKILL.md '"$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status" sync --artifact spec --path'
+require_pattern skills/plan-ceo-review/SKILL.md "Gate A checklist"
+require_pattern skills/plan-ceo-review/SKILL.md "explicit failure-mode thinking"
+require_pattern skills/plan-ceo-review/SKILL.md "rollout and rollback expectations"
+require_pattern skills/plan-ceo-review/SKILL.md "testable acceptance criteria"
 require_pattern skills/plan-ceo-review/SKILL.md 'Accelerated review is available only when the user explicitly requests `accelerated` or `accelerator` mode for the current CEO review.'
 require_pattern skills/plan-ceo-review/SKILL.md 'Do not activate accelerated review from heuristics, vague wording like "make this fast", saved preferences, or agent-only judgment.'
 require_pattern skills/plan-ceo-review/SKILL.md 'Accelerated CEO review must process one canonical CEO section at a time through a section packet and explicit human section approval.'
@@ -90,6 +99,12 @@ require_pattern skills/writing-plans/SKILL.md "runs `sync --artifact plan`"
 require_pattern skills/writing-plans/SKILL.md '"$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status" sync --artifact plan --path'
 require_pattern skills/writing-plans/SKILL.md "**Plan Revision:** 1"
 require_pattern skills/writing-plans/SKILL.md "**Execution Mode:** none"
+require_pattern skills/writing-plans/SKILL.md "preconditions"
+require_pattern skills/writing-plans/SKILL.md "validation strategy"
+require_pattern skills/writing-plans/SKILL.md "evidence expectations"
+require_pattern skills/writing-plans/SKILL.md "rollout plan"
+require_pattern skills/writing-plans/SKILL.md "rollback plan"
+require_pattern skills/writing-plans/SKILL.md "risks and mitigations"
 
 require_pattern skills/plan-eng-review/SKILL.md "**Workflow State:** Draft | Engineering Approved"
 require_pattern skills/plan-eng-review/SKILL.md "**Source Spec Revision:** <integer>"
@@ -102,6 +117,10 @@ require_pattern skills/plan-eng-review/SKILL.md 'If isolated-agent workflows are
 require_pattern skills/plan-eng-review/SKILL.md 'if `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`'
 require_pattern skills/plan-eng-review/SKILL.md 'If the helper returns a non-empty `next_skill`, use that route instead of re-deriving state manually.'
 require_pattern skills/plan-eng-review/SKILL.md 'If the helper returns `status` `implementation_ready`, present the normal execution handoff below.'
+require_pattern skills/plan-eng-review/SKILL.md "ordered implementation steps"
+require_pattern skills/plan-eng-review/SKILL.md "documentation update expectations"
+require_pattern skills/plan-eng-review/SKILL.md "evidence expectations"
+require_pattern skills/plan-eng-review/SKILL.md "explicit risks"
 require_pattern skills/plan-eng-review/SKILL.md 'Accelerated review is available only when the user explicitly requests `accelerated` or `accelerator` mode for the current engineering review.'
 require_pattern skills/plan-eng-review/SKILL.md 'Do not activate accelerated review from heuristics, vague wording like "make this fast", saved preferences, or agent-only judgment.'
 require_pattern skills/plan-eng-review/SKILL.md 'Use `skills/plan-eng-review/accelerated-reviewer-prompt.md` when briefing the accelerated engineering reviewer subagent.'
