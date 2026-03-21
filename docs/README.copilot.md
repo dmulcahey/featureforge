@@ -115,7 +115,7 @@ During implementation, either `subagent-driven-development` or `executing-plans`
 
 ## Search Before Building
 
-Most substantive generated skills include a shared `Search Before Building` preamble. It applies in places like `brainstorming`, CEO and ENG review, debugging, review reception and dispatch, and optional QA issue lookup. It does not run in `using-superpowers`, which stays focused on routing first.
+Generated non-router skills include a shared `Search Before Building` preamble. It applies in places like `brainstorming`, CEO and ENG review, debugging, review reception and dispatch, and optional QA issue lookup. It does not run in `using-superpowers`, which stays focused on routing first.
 
 The check uses three lenses:
 
@@ -123,11 +123,11 @@ The check uses three lenses:
 - `Layer 2`: current external practice and known footguns
 - `Layer 3`: first-principles reasoning for this repo, this user, and this problem
 
-External search is optional, not mandatory. If network access is unavailable, unnecessary, or unsafe, the workflow continues with repo-local evidence and existing model knowledge. `Layer 2` is input, not authority, so outside search never outranks repo truth, approved artifacts, or explicit user instructions.
+External search is optional, not mandatory. If network access is unavailable, unnecessary, disallowed, or unsafe, the workflow continues with repo-local evidence and existing model knowledge. `Layer 2` is input, not authority, so outside search never outranks repo truth, approved artifacts, or explicit user instructions.
 
 Privacy rules are part of the contract:
 
-- never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, repo codenames, or raw SQL or log payloads
+- never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers
 - product ideation uses generalized category terms only
 - debugging searches must sanitize down to a generic error type plus framework or library context
 - if safe sanitization is not possible, skip external search

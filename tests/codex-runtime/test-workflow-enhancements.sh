@@ -64,6 +64,7 @@ require_pattern skills/requesting-code-review/code-reviewer.md "known pattern fo
 require_pattern skills/requesting-code-review/code-reviewer.md "official documentation"
 require_pattern skills/requesting-code-review/code-reviewer.md "issue trackers or maintainer guidance"
 require_pattern skills/requesting-code-review/code-reviewer.md "primary-source technical references"
+require_pattern skills/requesting-code-review/code-reviewer.md "Only fall back to secondary technical references when primary sources are absent or clearly insufficient for the specific review question"
 require_pattern skills/requesting-code-review/code-reviewer.md "file:line"
 require_pattern skills/requesting-code-review/code-reviewer.md "Never search secrets, customer data, unsanitized stack traces, private URLs, or internal codenames"
 require_pattern skills/requesting-code-review/code-reviewer.md "If search is unavailable, disallowed, or unsafe, say so and continue the review with the diff, checklist, plan, and repo-local evidence only"

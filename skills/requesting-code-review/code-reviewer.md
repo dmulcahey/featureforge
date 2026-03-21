@@ -54,6 +54,7 @@ cat "$CHECKLIST_PATH"
 3. When the diff introduces a new or unfamiliar framework, API, dependency, or pattern and external search is available:
    - Do 1-2 targeted checks only
    - Prefer official documentation, issue trackers or maintainer guidance, and release notes, standards, or other primary-source technical references
+   - Only fall back to secondary technical references when primary sources are absent or clearly insufficient for the specific review question
    - Use this pass to strengthen built-in-before-bespoke and known pattern footguns findings
    - Keep every finding anchored in the actual diff and concrete file:line evidence
    - Never search secrets, customer data, unsanitized stack traces, private URLs, or internal codenames; sanitize or generalize before any external lookup

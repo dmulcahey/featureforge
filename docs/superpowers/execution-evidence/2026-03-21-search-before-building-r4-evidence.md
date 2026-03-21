@@ -632,3 +632,28 @@
 **Verification:**
 - Manual inspection only: Commit 3f7d3f70fce781bc46feb2b7b1778cc1b8d91084 (feat: document and verify search-before-building) is the shipped code state, and the fresh all-pass r2 runner/judge evidence bundle is recorded under ~/.superpowers/projects/dmulcahey-superpowers/search-before-building-contract-r2/run-20260321T225427Z/evidence/ with S1.md through S5.md.
 **Invalidation Reason:** N/A
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-21T23:44:07Z
+**Execution Source:** manual deep review
+**Claim:** Closed the remaining post-implementation review gaps by normalizing the approved plan summary sections to the doc-driven gate, aligning the shared generated Search-Before-Building preamble with the canonical sanitization/fallback contract, restoring reviewer-surface parity on secondary-source fallback, tightening the scenario/test wording that missed the drift, and rerunning deterministic plus runner/judge verification to all-pass.
+**Files:**
+- README.md
+- docs/README.codex.md
+- docs/README.copilot.md
+- docs/superpowers/execution-evidence/2026-03-21-search-before-building-r4-evidence.md
+- docs/superpowers/plans/2026-03-21-search-before-building.md
+- scripts/gen-skill-docs.mjs
+- skills/*/SKILL.md (regenerated non-router skill docs touched by the shared preamble change)
+- skills/requesting-code-review/code-reviewer.md
+- tests/codex-runtime/gen-skill-docs.unit.test.mjs
+- tests/codex-runtime/skill-doc-contracts.test.mjs
+- tests/codex-runtime/test-runtime-instructions.sh
+- tests/codex-runtime/test-workflow-enhancements.sh
+- tests/evals/search-before-building-contract.scenarios.md
+**Verification:**
+- `node scripts/gen-skill-docs.mjs --check && node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs && bash tests/codex-runtime/test-workflow-enhancements.sh && bash tests/codex-runtime/test-runtime-instructions.sh` -> PASS
+- `node scripts/gen-agent-docs.mjs --check && node scripts/gen-skill-docs.mjs --check && node --test tests/codex-runtime/*.test.mjs && bash tests/codex-runtime/test-runtime-instructions.sh && bash tests/codex-runtime/test-using-superpowers-bypass.sh && bash tests/codex-runtime/test-workflow-enhancements.sh && bash tests/codex-runtime/test-workflow-sequencing.sh && bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh && bash tests/codex-runtime/test-superpowers-plan-execution.sh && bash tests/codex-runtime/test-superpowers-workflow.sh && bash tests/codex-runtime/test-superpowers-workflow-status.sh && bash tests/codex-runtime/test-superpowers-config.sh && bash tests/codex-runtime/test-superpowers-migrate-install.sh && bash tests/codex-runtime/test-superpowers-update-check.sh && bash tests/codex-runtime/test-superpowers-upgrade-skill.sh && bash tests/codex-runtime/test-superpowers-slug.sh && bash tests/brainstorm-server/test-launch-wrappers.sh && node --test tests/brainstorm-server/server.test.js tests/brainstorm-server/ws-protocol.test.js` -> PASS
+- Fresh Search-Before-Building runner/judge gate rerun on scenarios S1-S5 -> PASS
+**Invalidation Reason:** N/A

@@ -64,7 +64,9 @@ test('generated non-router skill docs include the shared Search Before Building 
     assert.match(normalized, /Layer 2: current practice and known footguns/, `${skill} should describe Layer 2`);
     assert.match(normalized, /Layer 3: first-principles reasoning for this repo and this problem/, `${skill} should describe Layer 3`);
     assert.match(normalized, /External search results are inputs, not answers\./, `${skill} should keep Layer 2 non-authoritative`);
-    assert.match(normalized, /Never search secrets, customer data, unsanitized stack traces, private URLs, or internal codenames\./, `${skill} should include privacy rules`);
+    assert.match(normalized, /Never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers\./, `${skill} should include privacy rules`);
+    assert.match(normalized, /If search is unavailable, disallowed, or unsafe, say so and proceed with repo-local evidence and in-distribution knowledge\./, `${skill} should include explicit fallback language`);
+    assert.match(normalized, /If safe sanitization is not possible, skip external search\./, `${skill} should require skipping unsafe external search`);
     assert.match(normalized, /See `\$_SUPERPOWERS_ROOT\/references\/search-before-building\.md`\./, `${skill} should link to the shared reference`);
   }
 });

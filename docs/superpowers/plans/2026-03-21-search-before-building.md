@@ -70,12 +70,15 @@
 - Modify: `tests/codex-runtime/test-workflow-enhancements.sh`
 - Modify: `tests/codex-runtime/test-workflow-sequencing.sh`
   Extend the existing contract tests to cover the new behavior.
-- Create: `tests/evals/search-before-building-contract.eval.mjs`
-  Opt-in prompt-contract eval for a bounded representative set of generated non-router skills plus both reviewer prompt surfaces.
+- Create: `tests/evals/search-before-building-contract.orchestrator.md`
+- Create: `tests/evals/search-before-building-contract.scenarios.md`
+- Create: `tests/evals/search-before-building-contract.runner.md`
+- Create: `tests/evals/search-before-building-contract.judge.md`
+  Doc-driven runner/judge contract gate for a bounded representative set of generated non-router skills plus both reviewer prompt surfaces.
 - Modify: `tests/evals/README.md`
   Document the new Search-Before-Building eval and how to run it.
 - Modify: `docs/testing.md`
-  Document the deterministic-first validation matrix plus the change-specific opt-in eval.
+  Document the deterministic-first validation matrix plus the change-specific doc-driven gate.
 
 ## Preconditions
 
@@ -119,9 +122,13 @@ Focused validation after each task:
   `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - runtime guidance/regeneration contract:
   `bash tests/codex-runtime/test-runtime-instructions.sh`
-- change-specific prompt/eval coverage after all Search-Before-Building prompt surfaces land:
-  `EVALS=1 OPENAI_API_KEY=... EVAL_MODEL=... node --test tests/evals/search-before-building-contract.eval.mjs`
-  Scope it to 2-3 representative generated non-router skills plus both reviewer prompt surfaces. When eval credentials are unavailable, skip explicitly and record that the opt-in eval environment was not present.
+- change-specific doc-driven contract coverage after all Search-Before-Building prompt surfaces land:
+  Run the checked-in flow defined by:
+  - `tests/evals/search-before-building-contract.orchestrator.md`
+  - `tests/evals/search-before-building-contract.scenarios.md`
+  - `tests/evals/search-before-building-contract.runner.md`
+  - `tests/evals/search-before-building-contract.judge.md`
+  Scope it to 2-3 representative generated non-router skills plus both reviewer prompt surfaces. If isolated subagent execution is unavailable, skip explicitly and record that the doc-driven gate could not be run in the current environment.
 
 Final verification gate:
 
@@ -136,8 +143,12 @@ Final verification gate:
 Additional change-specific coverage for this plan:
 
 - `bash tests/codex-runtime/test-workflow-enhancements.sh`
-- `EVALS=1 OPENAI_API_KEY=... EVAL_MODEL=... node --test tests/evals/search-before-building-contract.eval.mjs`
-  If eval credentials are unavailable, explicitly record that this opt-in eval was skipped.
+- the checked-in doc-driven Search-Before-Building gate:
+  - `tests/evals/search-before-building-contract.orchestrator.md`
+  - `tests/evals/search-before-building-contract.scenarios.md`
+  - `tests/evals/search-before-building-contract.runner.md`
+  - `tests/evals/search-before-building-contract.judge.md`
+  If isolated subagent execution is unavailable, explicitly record that the doc-driven gate was skipped.
 
 ## Documentation Update Expectations
 

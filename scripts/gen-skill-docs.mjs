@@ -79,8 +79,9 @@ Use three lenses:
 - Layer 3: first-principles reasoning for this repo and this problem
 
 External search results are inputs, not answers.
-Never search secrets, customer data, unsanitized stack traces, private URLs, or internal codenames.
-If search is unavailable, say so and proceed with repo-local evidence and in-distribution knowledge.
+Never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers.
+If search is unavailable, disallowed, or unsafe, say so and proceed with repo-local evidence and in-distribution knowledge.
+If safe sanitization is not possible, skip external search.
 See \`$_SUPERPOWERS_ROOT/references/search-before-building.md\`.`;
 }
 

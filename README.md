@@ -169,7 +169,7 @@ That is the reason Superpowers feels opinionated in practice: the agent is not m
 
 ## Search Before Building
 
-Search Before Building is a lightweight operating rule for substantive non-router skills. Before introducing a bespoke auth/session flow, cache or queue wrapper, concurrency primitive, browser workaround, external service, or unfamiliar framework pattern, the agent does a short capability or landscape check through three lenses:
+Search Before Building is a lightweight operating rule for generated non-router skills. Before introducing a bespoke auth/session flow, cache or queue wrapper, concurrency primitive, browser workaround, external service, or unfamiliar framework pattern, the agent does a short capability or landscape check through three lenses:
 
 - `Layer 1`: built-ins, official guidance, and existing repo-native solutions
 - `Layer 2`: current external practice and known footguns
@@ -177,11 +177,11 @@ Search Before Building is a lightweight operating rule for substantive non-route
 
 `Layer 2` is input, not authority. Repo truth, approved artifact headers, official docs, and explicit user instructions still outrank outside search results.
 
-Internet access remains optional. If search is unavailable, unnecessary, or unsafe, the agent says so plainly and proceeds with repo-local evidence plus in-distribution knowledge. The durable reference for this behavior is [references/search-before-building.md](references/search-before-building.md).
+Internet access remains optional. If search is unavailable, unnecessary, disallowed, or unsafe, the agent says so plainly and proceeds with repo-local evidence plus in-distribution knowledge. The durable reference for this behavior is [references/search-before-building.md](references/search-before-building.md).
 
 Privacy and sanitization are part of the v1 contract:
 
-- never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, repo codenames, or raw SQL or log payloads
+- never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers
 - product ideation uses generalized category terms only
 - debugging must sanitize to the generic error type plus component, framework, or library context first
 - if safe sanitization is not possible, skip external search

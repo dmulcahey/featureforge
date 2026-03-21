@@ -1015,7 +1015,7 @@ if ! rg -n -F 'The judge reads raw runner evidence first, then this file, then t
   exit 1
 fi
 
-if ! rg -n -F '| S5 | `skills/requesting-code-review/code-reviewer.md` | reviewer prompt surface B for known footguns and built-in-before-bespoke review | Preserve the same bounded reviewer behavior as surface A, including explicit sanitization and fallback language | Replacing checklist-driven review with an external-search verdict |' tests/evals/search-before-building-contract.scenarios.md >/dev/null; then
+if ! rg -n -F '| S5 | `skills/requesting-code-review/code-reviewer.md` | reviewer prompt surface B for known footguns and built-in-before-bespoke review | Preserve diff-grounded review, keep search bounded and primary-source-first, allow secondary fallback only when primary sources are insufficient, say when search is unavailable or unsafe, and keep known-footgun checks subordinate to the code and checklist | Replacing checklist-driven review with an external-search verdict |' tests/evals/search-before-building-contract.scenarios.md >/dev/null; then
   echo "The Search-Before-Building scenarios should keep S5 self-contained instead of referring back to S4."
   exit 1
 fi
