@@ -353,9 +353,7 @@ Expected: PASS
 - [x] **Step 3: Use verification-before-completion for the planning slice**
 Invoke `superpowers:verification-before-completion`, capture the verification results above, and confirm the working tree contains only the intended spec/plan/skill/doc/test changes plus plan-execution bookkeeping.
 
-- [ ] **Step 4: Commit the approved spec header change and written plan**
-
-  **Execution Note:** Active - Commit the approved spec header change and written plan
+- [x] **Step 4: Commit the approved spec header change and written plan**
 ```bash
 git add \
   docs/superpowers/specs/2026-03-21-skill-layer-delivery-governance-design.md \
@@ -363,6 +361,6 @@ git add \
 git commit -m "docs: approve delivery governance spec and add plan"
 ```
 
-- [ ] **Step 5: Hand off to engineering review**
+- [x] **Step 5: Hand off to engineering review**
 Invoke `superpowers:plan-eng-review` with this exact approved plan path:
 `docs/superpowers/plans/2026-03-21-skill-layer-delivery-governance.md`
