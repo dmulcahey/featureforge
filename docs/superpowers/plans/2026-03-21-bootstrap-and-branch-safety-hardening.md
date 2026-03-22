@@ -568,16 +568,12 @@ Expected: PASS for the representative Search-Before-Building matrix after the wo
 - [x] **Step 3: Run `superpowers:verification-before-completion`**
 Confirm the helper binaries, generated docs, and regression surfaces all pass before handoff.
 
-- [ ] **Step 4: Commit the final verification/doc updates**
-
-  **Execution Note:** Active - Commit the final verification/doc updates
+- [x] **Step 4: Commit the final verification/doc updates**
 ```bash
 git commit -m "test: finalize bootstrap and branch-safety hardening coverage"
 ```
 
-- [ ] **Step 5: Sync the plan artifact and hand off**
-
-  **Execution Note:** Interrupted - Parked for repair of Task 6 Step 4
+- [x] **Step 5: Sync the plan artifact and hand off**
 Run: `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status sync --artifact plan --path docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md`
 Expected: manifest reports the draft plan path.
 
