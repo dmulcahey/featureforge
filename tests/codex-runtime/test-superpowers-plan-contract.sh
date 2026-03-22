@@ -27,6 +27,7 @@ FIXTURE_NAMES=(
   invalid-malformed-files-plan.md
   invalid-malformed-task-structure-plan.md
   invalid-path-traversal-plan.md
+  overlapping-write-scopes-plan.md
 )
 
 require_helper() {
@@ -297,6 +298,79 @@ EOF
   assert_json_equals "$output" "plan_task_count" "2" "lint"
 }
 
+test_analyze_plan_reports_valid_contract_and_buildable_packets() {
+  reset_artifacts
+  install_valid_artifacts
+
+  local output
+  output="$(run_json_command "$REPO_DIR" analyze-plan --spec "$SPEC_REL" --plan "$PLAN_REL" --format json)"
+  assert_json_equals "$output" "contract_state" "valid" "analyze-plan"
+  assert_json_equals "$output" "spec_path" "$SPEC_REL" "analyze-plan"
+  assert_json_equals "$output" "spec_revision" "1" "analyze-plan"
+  assert_json_nonempty "$output" "spec_fingerprint" "analyze-plan"
+  assert_json_equals "$output" "plan_path" "$PLAN_REL" "analyze-plan"
+  assert_json_equals "$output" "plan_revision" "1" "analyze-plan"
+  assert_json_nonempty "$output" "plan_fingerprint" "analyze-plan"
+  assert_json_equals "$output" "task_count" "2" "analyze-plan"
+  assert_json_equals "$output" "packet_buildable_tasks" "2" "analyze-plan"
+  assert_json_equals "$output" "coverage_complete" "true" "analyze-plan"
+  assert_json_equals "$output" "open_questions_resolved" "true" "analyze-plan"
+  assert_json_equals "$output" "task_structure_valid" "true" "analyze-plan"
+  assert_json_equals "$output" "files_blocks_valid" "true" "analyze-plan"
+  assert_json_equals "$output" "overlapping_write_scopes" "[]" "analyze-plan"
+  assert_json_equals "$output" "diagnostics" "[]" "analyze-plan"
+}
+
+test_analyze_plan_reports_missing_coverage_as_invalid() {
+  reset_artifacts
+  install_fixture "valid-spec.md" "$SPEC_REL"
+  install_fixture "invalid-missing-coverage-plan.md" "$PLAN_REL"
+
+  local output
+  output="$(run_json_command "$REPO_DIR" analyze-plan --spec "$SPEC_REL" --plan "$PLAN_REL" --format json)"
+  assert_json_equals "$output" "contract_state" "invalid" "analyze-plan missing coverage"
+  assert_json_equals "$output" "task_count" "2" "analyze-plan missing coverage"
+  assert_json_equals "$output" "packet_buildable_tasks" "2" "analyze-plan missing coverage"
+  assert_json_equals "$output" "coverage_complete" "false" "analyze-plan missing coverage"
+  assert_json_equals "$output" "open_questions_resolved" "true" "analyze-plan missing coverage"
+  assert_json_equals "$output" "task_structure_valid" "true" "analyze-plan missing coverage"
+  assert_json_equals "$output" "files_blocks_valid" "true" "analyze-plan missing coverage"
+  assert_json_nonempty "$output" "reason_codes.0" "analyze-plan missing coverage"
+  assert_json_nonempty "$output" "diagnostics" "analyze-plan missing coverage"
+}
+
+test_analyze_plan_reports_partial_packet_buildability() {
+  reset_artifacts
+  install_fixture "valid-spec.md" "$SPEC_REL"
+  install_fixture "invalid-malformed-files-plan.md" "$PLAN_REL"
+
+  local output
+  output="$(run_json_command "$REPO_DIR" analyze-plan --spec "$SPEC_REL" --plan "$PLAN_REL" --format json)"
+  assert_json_equals "$output" "contract_state" "invalid" "analyze-plan malformed files"
+  assert_json_equals "$output" "task_count" "2" "analyze-plan malformed files"
+  assert_json_equals "$output" "packet_buildable_tasks" "1" "analyze-plan malformed files"
+  assert_json_equals "$output" "coverage_complete" "true" "analyze-plan malformed files"
+  assert_json_equals "$output" "open_questions_resolved" "true" "analyze-plan malformed files"
+  assert_json_equals "$output" "task_structure_valid" "true" "analyze-plan malformed files"
+  assert_json_equals "$output" "files_blocks_valid" "false" "analyze-plan malformed files"
+  assert_json_nonempty "$output" "reason_codes.0" "analyze-plan malformed files"
+  assert_json_nonempty "$output" "diagnostics" "analyze-plan malformed files"
+}
+
+test_analyze_plan_reports_overlapping_write_scopes() {
+  reset_artifacts
+  install_fixture "valid-spec.md" "$SPEC_REL"
+  install_fixture "overlapping-write-scopes-plan.md" "$PLAN_REL"
+
+  local output
+  output="$(run_json_command "$REPO_DIR" analyze-plan --spec "$SPEC_REL" --plan "$PLAN_REL" --format json)"
+  assert_json_equals "$output" "contract_state" "valid" "analyze-plan overlapping scopes"
+  assert_json_equals "$output" "task_count" "2" "analyze-plan overlapping scopes"
+  assert_json_equals "$output" "packet_buildable_tasks" "2" "analyze-plan overlapping scopes"
+  assert_json_nonempty "$output" "overlapping_write_scopes.0.path" "analyze-plan overlapping scopes"
+  assert_json_equals "$output" "overlapping_write_scopes.0.path" "skills/writing-plans/SKILL.md" "analyze-plan overlapping scopes"
+}
+
 test_build_task_packet_json_preserves_exact_contract_text() {
   reset_artifacts
   install_valid_artifacts
@@ -521,6 +595,10 @@ init_repo "$REPO_DIR"
 
 test_lint_succeeds_for_valid_contract
 test_lint_ignores_fenced_example_requirement_index_blocks
+test_analyze_plan_reports_valid_contract_and_buildable_packets
+test_analyze_plan_reports_missing_coverage_as_invalid
+test_analyze_plan_reports_partial_packet_buildability
+test_analyze_plan_reports_overlapping_write_scopes
 test_build_task_packet_json_preserves_exact_contract_text
 test_build_task_packet_markdown_preserves_exact_contract_text
 test_missing_requirement_index_fails

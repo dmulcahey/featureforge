@@ -84,6 +84,30 @@ copy_fixture() {
   cp "$src" "$dst"
 }
 
+install_full_contract_ready_artifacts() {
+  local repo_dir="$1"
+  local spec_rel="docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md"
+  local plan_rel="docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md"
+  copy_fixture \
+    "$WORKFLOW_FIXTURE_DIR/specs/2026-03-22-runtime-integration-hardening-design.md" \
+    "$repo_dir/$spec_rel"
+  copy_fixture \
+    "$WORKFLOW_FIXTURE_DIR/plans/2026-03-22-runtime-integration-hardening.md" \
+    "$repo_dir/$plan_rel"
+  node - "$repo_dir/$plan_rel" "$spec_rel" <<'NODE'
+const fs = require("fs");
+const [file, specRel] = process.argv.slice(2);
+const source = fs.readFileSync(file, "utf8");
+fs.writeFileSync(
+  file,
+  source.replace(
+    "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
+    specRel,
+  ),
+);
+NODE
+}
+
 repo_slug_for_manifest() {
   local repo_dir="$1"
   local repo_root remote_url slug repo_base hash
@@ -296,6 +320,78 @@ EOF
   assert_contains "$output" "Next safe step: Use the approved plan for execution handoff:" "next implementation ready"
   assert_contains "$output" "docs/superpowers/plans/2026-03-18-ready-plan.md" "next implementation ready"
   assert_not_contains "$output" "recommend" "next implementation ready"
+}
+
+run_phase_reports_implementation_handoff_json() {
+  local repo="$REPO_DIR/phase-implementation-handoff"
+  init_repo "$repo"
+  install_full_contract_ready_artifacts "$repo"
+
+  local output
+  output="$(run_workflow "$repo" "phase implementation handoff json" phase --json)"
+  assert_contains "$output" '"phase":"implementation_handoff"' "phase implementation handoff json"
+  assert_contains "$output" '"plan_path":"docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md"' "phase implementation handoff json"
+}
+
+run_doctor_surfaces_invalid_contract_json() {
+  local repo="$REPO_DIR/doctor-invalid-contract"
+  local spec_path="$repo/docs/superpowers/specs/2026-03-22-doctor-invalid-contract-design.md"
+  local plan_path="$repo/docs/superpowers/plans/2026-03-22-doctor-invalid-contract.md"
+  local output
+
+  init_repo "$repo"
+  write_file "$spec_path" <<'EOF'
+# Doctor Invalid Contract Spec
+
+**Workflow State:** CEO Approved
+**Spec Revision:** 1
+**Last Reviewed By:** plan-ceo-review
+EOF
+  write_file "$plan_path" <<'EOF'
+# Doctor Invalid Contract Plan
+
+**Workflow State:** Engineering Approved
+**Source Spec:** `docs/superpowers/specs/2026-03-22-doctor-invalid-contract-design.md`
+**Source Spec Revision:** 1
+**Last Reviewed By:** plan-eng-review
+EOF
+
+  output="$(run_workflow "$repo" "doctor invalid contract json" doctor --json)"
+  assert_contains "$output" '"route_status":"plan_draft"' "doctor invalid contract json"
+  assert_contains "$output" '"contract_state":"invalid"' "doctor invalid contract json"
+}
+
+run_handoff_reports_plan_and_recommendation_json() {
+  local repo="$REPO_DIR/handoff-implementation-ready"
+  init_repo "$repo"
+  install_full_contract_ready_artifacts "$repo"
+
+  local output
+  output="$(run_workflow "$repo" "handoff implementation ready json" handoff --json)"
+  assert_contains "$output" '"route_status":"implementation_ready"' "handoff implementation ready json"
+  assert_contains "$output" '"plan_path":"docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md"' "handoff implementation ready json"
+  assert_contains "$output" '"recommended_skill":"superpowers:executing-plans"' "handoff implementation ready json"
+}
+
+run_preflight_wraps_execution_helper_json() {
+  local repo="$REPO_DIR/workflow-preflight"
+  init_repo "$repo"
+  install_full_contract_ready_artifacts "$repo"
+
+  local output
+  output="$(run_workflow "$repo" "workflow preflight json" preflight --plan docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md --json)"
+  assert_contains "$output" '"allowed":true' "workflow preflight json"
+}
+
+run_gate_finish_blocks_missing_release_artifact_json() {
+  local repo="$REPO_DIR/workflow-gate-finish"
+  init_repo "$repo"
+  install_full_contract_ready_artifacts "$repo"
+
+  local output
+  output="$(run_workflow "$repo" "workflow gate finish json" gate finish --plan docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md --json)"
+  assert_contains "$output" '"allowed":false' "workflow gate finish json"
+  assert_contains "$output" '"failure_class":"ReleaseArtifactNotFresh"' "workflow gate finish json"
 }
 
 run_artifacts_empty() {
@@ -695,6 +791,11 @@ run_status_approved_spec_no_plan
 run_next_draft_plan
 run_status_stale_plan
 run_next_implementation_ready
+run_phase_reports_implementation_handoff_json
+run_doctor_surfaces_invalid_contract_json
+run_handoff_reports_plan_and_recommendation_json
+run_preflight_wraps_execution_helper_json
+run_gate_finish_blocks_missing_release_artifact_json
 run_artifacts_empty
 run_artifacts_expected_missing_plan
 run_artifacts_from_subdir_uses_repo_root

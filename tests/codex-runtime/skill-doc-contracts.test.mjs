@@ -518,3 +518,23 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   const readme = readUtf8(path.join(REPO_ROOT, 'README.md'));
   assert.match(readme, /Six layers matter:/);
 });
+
+test('deprecated command docs act as compatibility shims instead of dead-end deprecations', () => {
+  const brainstorm = readUtf8(path.join(REPO_ROOT, 'commands/brainstorm.md'));
+  assert.match(brainstorm, /current phase/i);
+  assert.match(brainstorm, /superpowers-workflow phase/);
+  assert.match(brainstorm, /superpowers:brainstorming/);
+  assert.doesNotMatch(brainstorm, /will be removed in the next major release/i);
+
+  const writePlan = readUtf8(path.join(REPO_ROOT, 'commands/write-plan.md'));
+  assert.match(writePlan, /current phase/i);
+  assert.match(writePlan, /superpowers-workflow handoff/);
+  assert.match(writePlan, /superpowers:writing-plans/);
+  assert.doesNotMatch(writePlan, /will be removed in the next major release/i);
+
+  const executePlan = readUtf8(path.join(REPO_ROOT, 'commands/execute-plan.md'));
+  assert.match(executePlan, /public handoff surface/i);
+  assert.match(executePlan, /exact approved plan/i);
+  assert.match(executePlan, /recommended execution path/i);
+  assert.doesNotMatch(executePlan, /will be removed in the next major release/i);
+});

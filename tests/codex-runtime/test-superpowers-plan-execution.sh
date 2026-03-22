@@ -370,6 +370,62 @@ write_completed_attempt() {
 EOF
 }
 
+hash_file_sha256() {
+  local path="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+    return
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+    return
+  fi
+  cksum "$path" | awk '{print $1}'
+}
+
+write_v2_completed_attempt() {
+  local repo_dir="$1"
+  local packet_fingerprint="$2"
+  local evidence_rel plan_fingerprint spec_fingerprint head_sha base_sha file_digest
+
+  evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+  plan_fingerprint="$(hash_file_sha256 "$repo_dir/$PLAN_REL")"
+  spec_fingerprint="$(hash_file_sha256 "$repo_dir/$SPEC_REL")"
+  head_sha="$(git -C "$repo_dir" rev-parse HEAD)"
+  base_sha="$(git -C "$repo_dir" rev-list --max-parents=0 HEAD | tail -n1)"
+  mkdir -p "$repo_dir/docs"
+  printf 'verified output\n' > "$repo_dir/docs/example-output.md"
+  file_digest="$(hash_file_sha256 "$repo_dir/docs/example-output.md")"
+  write_file "$repo_dir/$evidence_rel" <<EOF
+# Execution Evidence: 2026-03-17-example-execution-plan
+
+**Plan Path:** ${PLAN_REL}
+**Plan Revision:** 1
+**Plan Fingerprint:** ${plan_fingerprint}
+**Source Spec Path:** ${SPEC_REL}
+**Source Spec Revision:** 1
+**Source Spec Fingerprint:** ${spec_fingerprint}
+
+## Step Evidence
+
+### Task 1 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-17T14:22:31Z
+**Execution Source:** superpowers:executing-plans
+**Task Number:** 1
+**Step Number:** 1
+**Packet Fingerprint:** ${packet_fingerprint}
+**Head SHA:** ${head_sha}
+**Base SHA:** ${base_sha}
+**Claim:** Prepared the workspace for execution.
+**Files Proven:**
+- docs/example-output.md | sha256:${file_digest}
+**Verification Summary:** Manual inspection only: Verified by fixture setup.
+**Invalidation Reason:** N/A
+EOF
+}
+
 create_base_repo() {
   local name="$1"
   local repo_dir="$REPO_DIR/$name"
@@ -428,12 +484,81 @@ run_status_rejects_missing_execution_mode() {
   run_command_fails "$repo_dir" PlanNotExecutionReady status --plan "$PLAN_REL" >/dev/null
 }
 
+run_preflight_reports_allowed_for_clean_plan() {
+  local repo_dir
+  local output
+  repo_dir="$(create_base_repo preflight-clean-plan)"
+
+  output="$(run_json_command "$repo_dir" preflight --plan "$PLAN_REL")"
+  assert_json_equals "$output" "allowed" "true" "preflight clean plan"
+  assert_json_equals "$output" "failure_class" "" "preflight clean plan"
+  assert_json_equals "$output" "reason_codes" "[]" "preflight clean plan"
+  assert_json_equals "$output" "diagnostics" "[]" "preflight clean plan"
+}
+
+run_preflight_rejects_detached_head() {
+  local repo_dir
+  local output
+  repo_dir="$(create_base_repo preflight-detached-head)"
+  git -C "$repo_dir" checkout --detach >/dev/null 2>&1
+
+  output="$(run_json_command "$repo_dir" preflight --plan "$PLAN_REL")"
+  assert_json_equals "$output" "allowed" "false" "preflight detached head"
+  assert_json_equals "$output" "failure_class" "WorkspaceNotSafe" "preflight detached head"
+  assert_json_equals "$output" "reason_codes.0" "detached_head" "preflight detached head"
+}
+
 run_status_rejects_evidence_history_with_none_mode() {
   local repo_dir
   repo_dir="$(create_base_repo none-mode-evidence-history)"
   write_completed_attempt "$repo_dir" "superpowers:executing-plans"
 
   run_command_fails "$repo_dir" MalformedExecutionState status --plan "$PLAN_REL" >/dev/null
+}
+
+run_gate_review_warns_on_legacy_evidence_format() {
+  local repo_dir="$REPO_DIR/gate-review-legacy-evidence"
+  local output
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_plan "$repo_dir" "superpowers:executing-plans"
+  write_completed_attempt "$repo_dir" "superpowers:executing-plans"
+
+  output="$(run_json_command "$repo_dir" gate-review --plan "$PLAN_REL")"
+  assert_json_equals "$output" "allowed" "true" "gate-review legacy evidence"
+  assert_json_equals "$output" "warning_codes.0" "legacy_evidence_format" "gate-review legacy evidence"
+}
+
+run_gate_review_rejects_packet_fingerprint_mismatch() {
+  local repo_dir="$REPO_DIR/gate-review-packet-mismatch"
+  local output
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_plan "$repo_dir" "superpowers:executing-plans"
+  write_v2_completed_attempt "$repo_dir" "packet-fingerprint-mismatch"
+
+  output="$(run_json_command "$repo_dir" gate-review --plan "$PLAN_REL")"
+  assert_json_equals "$output" "allowed" "false" "gate-review packet mismatch"
+  assert_json_equals "$output" "failure_class" "StaleExecutionEvidence" "gate-review packet mismatch"
+  assert_json_equals "$output" "reason_codes.0" "packet_fingerprint_mismatch" "gate-review packet mismatch"
+}
+
+run_gate_review_rejects_missed_reopen_after_file_drift() {
+  local repo_dir="$REPO_DIR/gate-review-missed-reopen"
+  local output
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_plan "$repo_dir" "superpowers:executing-plans"
+  write_v2_completed_attempt "$repo_dir" "packet-fingerprint-from-approved-plan"
+  printf 'drift after completion\n' > "$repo_dir/docs/example-output.md"
+
+  output="$(run_json_command "$repo_dir" gate-review --plan "$PLAN_REL")"
+  assert_json_equals "$output" "allowed" "false" "gate-review missed reopen"
+  assert_json_equals "$output" "failure_class" "MissedReopenRequired" "gate-review missed reopen"
+  assert_json_equals "$output" "reason_codes.0" "files_proven_drifted" "gate-review missed reopen"
 }
 
 run_status_rejects_malformed_note_structure() {
@@ -1709,7 +1834,12 @@ require_helper
 run_status_reports_bounded_schema_for_clean_plan
 run_status_treats_header_only_stub_as_same_empty_state
 run_status_rejects_missing_execution_mode
+run_preflight_reports_allowed_for_clean_plan
+run_preflight_rejects_detached_head
 run_status_rejects_evidence_history_with_none_mode
+run_gate_review_warns_on_legacy_evidence_format
+run_gate_review_rejects_packet_fingerprint_mismatch
+run_gate_review_rejects_missed_reopen_after_file_drift
 run_status_rejects_malformed_note_structure
 run_status_rejects_task_without_parseable_files_block
 run_status_rejects_malformed_evidence_attempt_fields

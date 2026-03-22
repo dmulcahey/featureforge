@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** superpowers:executing-plans
 **Source Spec:** `docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -275,14 +275,15 @@ Helpers enforce and inspect.
 - Test: `bash tests/codex-runtime/test-superpowers-session-entry-gate.sh`
 - Test: `bash tests/codex-runtime/test-using-superpowers-bypass.sh`
 
-- [ ] **Step 1: Extend route-time fixtures for thin-header, malformed-contract, stale-plan, and ambiguous-resolution cases**
-- [ ] **Step 2: Extend plan-contract fixtures for invalid analysis output, incomplete packet buildability, and overlapping write-scope diagnostics**
-- [ ] **Step 3: Extend execution-state fixtures for legacy evidence, stale evidence, missed reopen, and packet-fingerprint mismatch**
-- [ ] **Step 4: Add QA-result and release-readiness freshness fixtures plus wrapper expectations for `phase`, `doctor`, `handoff`, and gate surfaces**
-- [ ] **Step 5: Add red assertions to workflow, skill-doc, and session-entry tests for the new helper-owned wording and compatibility-shim behavior**
-- [ ] **Step 6: Run the targeted tests and confirm failures point at missing hardening rather than unrelated repo state**
+- [x] **Step 1: Extend route-time fixtures for thin-header, malformed-contract, stale-plan, and ambiguous-resolution cases**
+- [x] **Step 2: Extend plan-contract fixtures for invalid analysis output, incomplete packet buildability, and overlapping write-scope diagnostics**
+- [x] **Step 3: Extend execution-state fixtures for legacy evidence, stale evidence, missed reopen, and packet-fingerprint mismatch**
+- [x] **Step 4: Add QA-result and release-readiness freshness fixtures plus wrapper expectations for `phase`, `doctor`, `handoff`, and gate surfaces**
+- [x] **Step 5: Add red assertions to workflow, skill-doc, and session-entry tests for the new helper-owned wording and compatibility-shim behavior**
+- [x] **Step 6: Run the targeted tests and confirm failures point at missing hardening rather than unrelated repo state**
 - [ ] **Step 7: Commit the red contract scaffold**
 
+  **Execution Note:** Active - Commit the red contract scaffold
 ## Task 2: Harden `superpowers-workflow-status` Around The Full Approved-Plan Contract
 
 **Spec Coverage:** REQ-001, REQ-002, REQ-003, REQ-004, REQ-020, REQ-021, VERIFY-001, NONGOAL-001
@@ -311,7 +312,6 @@ Helpers enforce and inspect.
 - [ ] **Step 5: Mirror the behavior and output schema in `bin/superpowers-workflow-status.ps1`**
 - [ ] **Step 6: Run the workflow-status, wrapper, and parity tests until the new route-time contract is green**
 - [ ] **Step 7: Commit the route-time hardening slice**
-
 ## Task 3: Promote `superpowers-plan-contract` Into Approval And Handoff Law
 
 **Spec Coverage:** REQ-002, REQ-005, REQ-006, REQ-007, REQ-014, REQ-020, REQ-021, VERIFY-001, NONGOAL-001
@@ -343,7 +343,6 @@ Helpers enforce and inspect.
 - [ ] **Step 5: Upgrade the ENG review handoff wording so execution never starts from packets that are missing or stale for the approved revision**
 - [ ] **Step 6: Regenerate skill docs and run the helper plus skill-contract suites**
 - [ ] **Step 7: Commit the plan-contract and ENG-gate slice**
-
 ## Task 4: Add Execution Preflight, Review And Finish Gates Plus Evidence V2
 
 **Spec Coverage:** REQ-007, REQ-008, REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, REQ-020, VERIFY-001, NONGOAL-003
@@ -379,7 +378,6 @@ Helpers enforce and inspect.
 - [ ] **Step 5: Update `executing-plans`, `subagent-driven-development`, and `requesting-code-review` to call the new preflight and review gates instead of relying on prose-only checks**
 - [ ] **Step 6: Run execution, sequencing, enhancement, and parity tests until stale-evidence and missed-reopen cases are green**
 - [ ] **Step 7: Commit the execution-gates and evidence-v2 slice**
-
 ## Task 5: Formalize QA And Release-Readiness Artifacts
 
 **Spec Coverage:** REQ-011, REQ-014, REQ-015, REQ-020, VERIFY-001, NONGOAL-002, NONGOAL-003
@@ -414,7 +412,6 @@ Helpers enforce and inspect.
 - [ ] **Step 5: Update `finishing-a-development-branch` to rely on helper-backed finish readiness instead of prose-only late-stage checks**
 - [ ] **Step 6: Regenerate skill docs and run finish-gate, workflow-enhancement, and runtime-instruction tests**
 - [ ] **Step 7: Commit the structured-artifact slice**
-
 ## Task 6: Expand `superpowers-workflow` Into The Full Read-Only Operator Surface
 
 **Spec Coverage:** REQ-004, REQ-016, REQ-017, REQ-020, VERIFY-001, NONGOAL-001, NONGOAL-002, NONGOAL-003
@@ -445,7 +442,6 @@ Helpers enforce and inspect.
 - [ ] **Step 5: Update operator-facing README docs so the supported public CLI reflects the expanded read-only surface**
 - [ ] **Step 6: Run wrapper, fixture, and parity tests until the public CLI contract is green**
 - [ ] **Step 7: Commit the public-CLI expansion slice**
-
 ## Task 7: Make `using-superpowers` Session-Entry First And Replace Dead-End Command Docs
 
 **Spec Coverage:** REQ-018, REQ-019, REQ-022, REQ-020, VERIFY-001, NONGOAL-002
@@ -479,7 +475,6 @@ Helpers enforce and inspect.
 - [ ] **Step 4: Regenerate skill docs and update wording-contract tests for the new Step 1 gate and shim behavior**
 - [ ] **Step 5: Run bypass, session-entry, sequencing, and runtime-instruction tests until the fallback path cannot produce false-positive readiness**
 - [ ] **Step 6: Commit the routing-hardening and compatibility-shim slice**
-
 ## Task 8: Align Docs, Release Notes, And Run Full Verification
 
 **Spec Coverage:** REQ-020, VERIFY-001
