@@ -142,6 +142,8 @@ require_pattern skills/plan-eng-review/SKILL.md "Requirement Index"
 require_pattern skills/plan-eng-review/SKILL.md "Requirement Coverage Matrix"
 require_pattern skills/plan-eng-review/SKILL.md 'tasks with `Open Questions` not equal to `none`'
 require_pattern skills/plan-eng-review/SKILL.md 'invalid `Files:` block structure'
+require_pattern skills/plan-eng-review/SKILL.md 'Does the `Requirement Coverage Matrix` cover every approved requirement without orphaned or over-broad tasks?'
+require_pattern skills/plan-eng-review/SKILL.md 'Do `Files:` blocks stay within the minimum file scope needed for the covered requirements, or do they signal file-scope drift that should be split or reapproved?'
 require_pattern skills/plan-eng-review/SKILL.md 'Present the helper-recommended execution skill as the default path with the approved plan path.'
 require_pattern skills/plan-eng-review/SKILL.md 'If isolated-agent workflows are unavailable, do not present `superpowers:subagent-driven-development` as an available override.'
 require_pattern skills/plan-eng-review/SKILL.md 'if `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`'

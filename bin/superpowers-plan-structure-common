@@ -51,6 +51,7 @@ plan_structure_find_task_index() {
 
 plan_structure_parse() {
   local plan_abs="$1"
+  local require_full_fields="${PLAN_STRUCTURE_REQUIRE_FULL_TASK_FIELDS:-yes}"
   local line
   local current_task=""
   local current_title=""
@@ -89,21 +90,23 @@ plan_structure_parse() {
       return 0
     fi
 
-    if [[ -z "$current_spec_coverage" ]]; then
-      plan_structure_set_error "TaskMissingSpecCoverage" "Task $current_task is missing Spec Coverage."
-      return 1
-    fi
-    if [[ -z "$current_outcome" ]]; then
-      plan_structure_set_error "MalformedTaskStructure" "Task $current_task is missing Task Outcome."
-      return 1
-    fi
-    if [[ -z "$current_constraints" ]]; then
-      plan_structure_set_error "MalformedTaskStructure" "Task $current_task is missing Plan Constraints."
-      return 1
-    fi
-    if [[ -z "$current_open_questions" ]]; then
-      plan_structure_set_error "MalformedTaskStructure" "Task $current_task is missing Open Questions."
-      return 1
+    if [[ "$require_full_fields" != "no" ]]; then
+      if [[ -z "$current_spec_coverage" ]]; then
+        plan_structure_set_error "TaskMissingSpecCoverage" "Task $current_task is missing Spec Coverage."
+        return 1
+      fi
+      if [[ -z "$current_outcome" ]]; then
+        plan_structure_set_error "MalformedTaskStructure" "Task $current_task is missing Task Outcome."
+        return 1
+      fi
+      if [[ -z "$current_constraints" ]]; then
+        plan_structure_set_error "MalformedTaskStructure" "Task $current_task is missing Plan Constraints."
+        return 1
+      fi
+      if [[ -z "$current_open_questions" ]]; then
+        plan_structure_set_error "MalformedTaskStructure" "Task $current_task is missing Open Questions."
+        return 1
+      fi
     fi
     if (( files_seen == 0 || files_count == 0 )); then
       plan_structure_set_error "MalformedFilesBlock" "Task $current_task is missing a parseable Files block."

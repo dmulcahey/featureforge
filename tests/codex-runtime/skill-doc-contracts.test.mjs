@@ -301,6 +301,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(planEngReview, /Requirement Coverage Matrix/);
   assert.match(planEngReview, /tasks with `Open Questions` not equal to `none`/);
   assert.match(planEngReview, /invalid `Files:` block structure/);
+  assert.match(planEngReview, /Does the `Requirement Coverage Matrix` cover every approved requirement without orphaned or over-broad tasks\?/);
+  assert.match(planEngReview, /Do `Files:` blocks stay within the minimum file scope needed for the covered requirements, or do they signal file-scope drift that should be split or reapproved\?/);
 
   const executingPlans = readUtf8(getSkillPath('executing-plans'));
   assert.match(executingPlans, /build the canonical task packet/);
