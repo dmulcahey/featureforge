@@ -95,9 +95,11 @@ This project affects the following Superpowers surfaces directly:
 - `skills/subagent-driven-development/spec-reviewer-prompt.md`
 - `skills/subagent-driven-development/code-quality-reviewer-prompt.md`
 - `skills/requesting-code-review/SKILL.md`
+- `skills/requesting-code-review/code-reviewer.md`
 - `bin/superpowers-plan-execution`
+- `README.md`, `docs/README.codex.md`, `docs/README.copilot.md`, `docs/testing.md`, and `RELEASE-NOTES.md`
 - new derived helper surfaces for plan-contract validation and packet generation
-- tests and fixtures under `tests/codex-runtime/`
+- tests and fixtures under `tests/codex-runtime/`, especially the workflow-sequencing, workflow-enhancement, runtime-instruction, PowerShell-wrapper, and workflow-artifact fixture surfaces
 
 ## Architecture Boundary
 
@@ -1083,6 +1085,7 @@ Add regression coverage for helper behavior, workflow integration, and bad-fixtu
 - `subagent-driven-development` dispatches packets, not freeform context
 - spec-reviewer prompt includes exact task packet
 - final review path consumes lint and task-packet data for plan-routed work
+- workflow-enhancement and runtime-instruction suites pin the revised review-prompt, skill-doc, and runtime-doc wording
 - workflow-owned flows persist packets by default while manual helper calls remain ephemeral by default
 
 ### Fixture tests
@@ -1100,6 +1103,7 @@ Add regression coverage for helper behavior, workflow integration, and bad-fixtu
 ### New files
 
 - `bin/superpowers-plan-contract`
+- `bin/superpowers-plan-structure-common`
 - `bin/superpowers-plan-contract.ps1`
 - `tests/codex-runtime/test-superpowers-plan-contract.sh`
 - helper fixtures for valid and invalid spec and plan pairs
@@ -1114,9 +1118,19 @@ Add regression coverage for helper behavior, workflow integration, and bad-fixtu
 - `skills/subagent-driven-development/spec-reviewer-prompt.md`
 - `skills/subagent-driven-development/code-quality-reviewer-prompt.md`
 - `skills/requesting-code-review/SKILL.md`
+- `skills/requesting-code-review/code-reviewer.md`
 - `bin/superpowers-plan-execution`
+- `README.md`
+- `docs/README.codex.md`
+- `docs/README.copilot.md`
+- `docs/testing.md`
+- `RELEASE-NOTES.md`
 - `tests/codex-runtime/test-superpowers-plan-execution.sh`
 - `tests/codex-runtime/test-workflow-sequencing.sh`
+- `tests/codex-runtime/test-workflow-enhancements.sh`
+- `tests/codex-runtime/test-runtime-instructions.sh`
+- `tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
+- `tests/codex-runtime/fixtures/workflow-artifacts/README.md`
 - doc-generation or fixture tests that validate task heading structure
 
 ## Dream State Delta

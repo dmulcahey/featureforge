@@ -22,7 +22,7 @@
 - `bin/superpowers-plan-execution` already owns execution-state truth for approved plans and paired execution evidence.
 - `skills/writing-plans/SKILL.md.tmpl` and `skills/plan-eng-review/SKILL.md.tmpl` already own the authoring and approval path for implementation plans.
 - `skills/executing-plans/`, `skills/subagent-driven-development/`, and `skills/requesting-code-review/` already own execution and review consumption of approved plan artifacts.
-- `tests/codex-runtime/test-superpowers-plan-execution.sh`, `tests/codex-runtime/test-workflow-sequencing.sh`, `tests/codex-runtime/test-runtime-instructions.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` already pin much of the workflow wording and helper behavior this change must preserve.
+- `tests/codex-runtime/test-superpowers-plan-execution.sh`, `tests/codex-runtime/test-workflow-sequencing.sh`, `tests/codex-runtime/test-workflow-enhancements.sh`, `tests/codex-runtime/test-runtime-instructions.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` already pin much of the workflow wording and helper behavior this change must preserve.
 - `README.md`, `docs/README.codex.md`, `docs/README.copilot.md`, and `docs/testing.md` already describe the current runtime authority model and test surfaces.
 
 ## Planned File Structure
@@ -64,6 +64,7 @@
 - Modify: `RELEASE-NOTES.md`
 - Modify: `tests/codex-runtime/test-superpowers-plan-execution.sh`
 - Modify: `tests/codex-runtime/test-workflow-sequencing.sh`
+- Modify: `tests/codex-runtime/test-workflow-enhancements.sh`
 - Modify: `tests/codex-runtime/test-runtime-instructions.sh`
 - Modify: `tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 - Modify: `tests/codex-runtime/skill-doc-contracts.test.mjs`
@@ -72,7 +73,6 @@
 ## Preconditions
 
 - Work from the `task-fidelity-improvement` branch, not `main`.
-- Leave the unrelated dirty file `tests/brainstorm-server/package-lock.json` untouched.
 - Treat `docs/superpowers/specs/2026-03-21-task-fidelity-improvement-design.md` revision `1` as the exact source contract.
 - Keep markdown authoritative throughout; no helper may become a second approval authority.
 - Treat persisted task packets as helper-private cache only; execution and review flows must call `superpowers-plan-contract build-task-packet` rather than reading packet files directly.
@@ -110,6 +110,7 @@ node --test tests/codex-runtime/*.test.mjs
 bash tests/codex-runtime/test-superpowers-plan-contract.sh
 bash tests/codex-runtime/test-superpowers-plan-execution.sh
 bash tests/codex-runtime/test-workflow-sequencing.sh
+bash tests/codex-runtime/test-workflow-enhancements.sh
 bash tests/codex-runtime/test-runtime-instructions.sh
 bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
 ```
@@ -224,11 +225,13 @@ Helpers enforce and compile; they do not approve.
 - Create: `tests/codex-runtime/fixtures/plan-contract/invalid-malformed-task-structure-plan.md`
 - Create: `tests/codex-runtime/fixtures/plan-contract/invalid-path-traversal-plan.md`
 - Modify: `tests/codex-runtime/test-workflow-sequencing.sh`
+- Modify: `tests/codex-runtime/test-workflow-enhancements.sh`
 - Modify: `tests/codex-runtime/test-runtime-instructions.sh`
 - Modify: `tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 - Modify: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 - Test: `bash tests/codex-runtime/test-superpowers-plan-contract.sh`
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
+- Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
@@ -240,7 +243,7 @@ Helpers enforce and compile; they do not approve.
   Write the new fixture markdown files so the harness can cover valid Requirement Index and Coverage Matrix cases plus missing index, missing coverage, unknown IDs, ambiguity wording, requirement weakening, malformed `Files:` blocks, malformed task structure, path-traversal rejection, and unresolved open-question failures.
 
 - [ ] **Step 3: Add red assertions for canonical plan-contract wording**
-  Extend `tests/codex-runtime/test-workflow-sequencing.sh` and `tests/codex-runtime/skill-doc-contracts.test.mjs` so they expect `Requirement Index`, `Requirement Coverage Matrix`, `Spec Coverage`, `Open Questions`, task-packet usage, and fail-closed lint gates in the relevant skills and prompts.
+  Extend `tests/codex-runtime/test-workflow-sequencing.sh`, `tests/codex-runtime/test-workflow-enhancements.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` so they expect `Requirement Index`, `Requirement Coverage Matrix`, `Spec Coverage`, `Open Questions`, task-packet usage, and fail-closed lint gates in the relevant skills and prompts.
 
 - [ ] **Step 4: Add red runtime-surface and wrapper assertions**
   Extend `tests/codex-runtime/test-runtime-instructions.sh` and `tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh` so they expect the new helper binary, wrapper, and runtime-doc references.
@@ -268,6 +271,7 @@ Helpers enforce and compile; they do not approve.
     tests/codex-runtime/fixtures/plan-contract/invalid-malformed-task-structure-plan.md \
     tests/codex-runtime/fixtures/plan-contract/invalid-path-traversal-plan.md \
     tests/codex-runtime/test-workflow-sequencing.sh \
+    tests/codex-runtime/test-workflow-enhancements.sh \
     tests/codex-runtime/test-runtime-instructions.sh \
     tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh \
     tests/codex-runtime/skill-doc-contracts.test.mjs
@@ -351,11 +355,13 @@ Helpers enforce and compile; they do not approve.
 - Modify: `bin/superpowers-plan-execution`
 - Modify: `tests/codex-runtime/test-superpowers-plan-execution.sh`
 - Modify: `tests/codex-runtime/test-workflow-sequencing.sh`
+- Modify: `tests/codex-runtime/test-workflow-enhancements.sh`
 - Modify: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 - Test: `node scripts/gen-skill-docs.mjs`
 - Test: `node scripts/gen-skill-docs.mjs --check`
 - Test: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
+- Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 
 - [ ] **Step 1: Update the writing-plans template to require the new contract**
@@ -371,7 +377,7 @@ Helpers enforce and compile; they do not approve.
   Make `superpowers-plan-execution` consume `bin/superpowers-plan-structure-common`, reject malformed canonical structure earlier, and surface enough task metadata for downstream review correlation without taking over semantic mapping.
 
 - [ ] **Step 5: Update parser and wording tests**
-  Extend `tests/codex-runtime/test-superpowers-plan-execution.sh`, `tests/codex-runtime/test-workflow-sequencing.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` so they pin the new authoring/review and parser interop contract.
+  Extend `tests/codex-runtime/test-superpowers-plan-execution.sh`, `tests/codex-runtime/test-workflow-sequencing.sh`, `tests/codex-runtime/test-workflow-enhancements.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` so they pin the new authoring/review and parser interop contract.
 
 - [ ] **Step 6: Run the focused verification**
   Run:
@@ -379,6 +385,7 @@ Helpers enforce and compile; they do not approve.
   node scripts/gen-skill-docs.mjs --check
   bash tests/codex-runtime/test-superpowers-plan-execution.sh
   bash tests/codex-runtime/test-workflow-sequencing.sh
+  bash tests/codex-runtime/test-workflow-enhancements.sh
   node --test tests/codex-runtime/skill-doc-contracts.test.mjs
   ```
   Expected: all pass with canonical task syntax and lint-gated plan approval behavior.
@@ -395,6 +402,7 @@ Helpers enforce and compile; they do not approve.
     bin/superpowers-plan-execution \
     tests/codex-runtime/test-superpowers-plan-execution.sh \
     tests/codex-runtime/test-workflow-sequencing.sh \
+    tests/codex-runtime/test-workflow-enhancements.sh \
     tests/codex-runtime/skill-doc-contracts.test.mjs
   git commit -m "feat: enforce plan traceability contracts"
   ```
@@ -422,10 +430,12 @@ Helpers enforce and compile; they do not approve.
 - Modify: `skills/requesting-code-review/SKILL.md`
 - Modify: `skills/requesting-code-review/code-reviewer.md`
 - Modify: `tests/codex-runtime/test-workflow-sequencing.sh`
+- Modify: `tests/codex-runtime/test-workflow-enhancements.sh`
 - Modify: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 - Test: `node scripts/gen-skill-docs.mjs`
 - Test: `node scripts/gen-skill-docs.mjs --check`
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
+- Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 
 - [ ] **Step 1: Update same-session execution guidance**
@@ -441,13 +451,14 @@ Helpers enforce and compile; they do not approve.
   Add plan-contract lint preflight, helper-built packet context requirements, and fail-closed handling for invalid approved artifacts or stale packet-cache state.
 
 - [ ] **Step 5: Regenerate generated skill docs and update contract tests**
-  Run `node scripts/gen-skill-docs.mjs`, then extend `tests/codex-runtime/test-workflow-sequencing.sh` and `tests/codex-runtime/skill-doc-contracts.test.mjs` to pin packet-backed execution and review wording.
+  Run `node scripts/gen-skill-docs.mjs`, then extend `tests/codex-runtime/test-workflow-sequencing.sh`, `tests/codex-runtime/test-workflow-enhancements.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` to pin packet-backed execution and review wording.
 
 - [ ] **Step 6: Run the focused verification**
   Run:
   ```bash
   node scripts/gen-skill-docs.mjs --check
   bash tests/codex-runtime/test-workflow-sequencing.sh
+  bash tests/codex-runtime/test-workflow-enhancements.sh
   node --test tests/codex-runtime/skill-doc-contracts.test.mjs
   ```
   Expected: packet-backed execution and review contracts are present and pass.
@@ -467,6 +478,7 @@ Helpers enforce and compile; they do not approve.
     skills/requesting-code-review/SKILL.md \
     skills/requesting-code-review/code-reviewer.md \
     tests/codex-runtime/test-workflow-sequencing.sh \
+    tests/codex-runtime/test-workflow-enhancements.sh \
     tests/codex-runtime/skill-doc-contracts.test.mjs
   git commit -m "feat: route execution and review through task packets"
   ```
@@ -487,12 +499,14 @@ Helpers enforce and compile; they do not approve.
 - Modify: `docs/README.copilot.md`
 - Modify: `docs/testing.md`
 - Modify: `RELEASE-NOTES.md`
+- Modify: `tests/codex-runtime/test-workflow-enhancements.sh`
 - Modify: `tests/codex-runtime/test-runtime-instructions.sh`
 - Modify: `tests/codex-runtime/fixtures/workflow-artifacts/README.md`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 - Test: `bash tests/codex-runtime/test-superpowers-plan-contract.sh`
 - Test: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
 - Test: `bash tests/codex-runtime/test-workflow-sequencing.sh`
+- Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 - Test: `node scripts/gen-skill-docs.mjs --check`
 - Test: `node --test tests/codex-runtime/*.test.mjs`
@@ -501,7 +515,7 @@ Helpers enforce and compile; they do not approve.
   Document `superpowers-plan-contract` as an internal runtime helper, explain packet-backed planning and review behavior, and restate that `superpowers-workflow` remains the only supported public read-only workflow CLI.
 
 - [ ] **Step 2: Update testing and fixture guidance**
-  Update `docs/testing.md`, `tests/codex-runtime/test-runtime-instructions.sh`, and `tests/codex-runtime/fixtures/workflow-artifacts/README.md` so the new helper suite, fixture family, and runtime-doc references are pinned.
+  Update `docs/testing.md`, `tests/codex-runtime/test-workflow-enhancements.sh`, `tests/codex-runtime/test-runtime-instructions.sh`, and `tests/codex-runtime/fixtures/workflow-artifacts/README.md` so the new helper suite, packet-backed reviewer wording, fixture family, and runtime-doc references are pinned.
 
 - [ ] **Step 3: Add a release-note entry**
   Summarize the new semantic traceability layer, task-packet-backed execution/review flow, and stricter plan-authoring and engineering-review contracts in `RELEASE-NOTES.md`.
@@ -514,6 +528,7 @@ Helpers enforce and compile; they do not approve.
   bash tests/codex-runtime/test-superpowers-plan-contract.sh
   bash tests/codex-runtime/test-superpowers-plan-execution.sh
   bash tests/codex-runtime/test-workflow-sequencing.sh
+  bash tests/codex-runtime/test-workflow-enhancements.sh
   bash tests/codex-runtime/test-runtime-instructions.sh
   bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
   ```
@@ -528,6 +543,7 @@ Helpers enforce and compile; they do not approve.
     docs/README.copilot.md \
     docs/testing.md \
     RELEASE-NOTES.md \
+    tests/codex-runtime/test-workflow-enhancements.sh \
     tests/codex-runtime/test-runtime-instructions.sh \
     tests/codex-runtime/fixtures/workflow-artifacts/README.md
   git commit -m "docs: describe task fidelity workflow contract"
