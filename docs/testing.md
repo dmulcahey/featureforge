@@ -16,6 +16,7 @@ node scripts/gen-skill-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 bash tests/codex-runtime/test-runtime-instructions.sh
 bash tests/codex-runtime/test-using-superpowers-bypass.sh
+bash tests/codex-runtime/test-superpowers-session-entry-gate.sh
 bash tests/codex-runtime/test-workflow-enhancements.sh
 bash tests/codex-runtime/test-workflow-sequencing.sh
 bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
@@ -45,7 +46,7 @@ For prompt-surface or workflow-doc changes, keep validation deterministic-first:
 ### `tests/codex-runtime/`
 
 - Generated `skills/*/SKILL.md` freshness plus runtime-facing install and workflow contract checks
-- `using-superpowers` bypass-gate wording, decision-file contract, malformed-state handling, and explicit re-entry semantics
+- `using-superpowers` runtime-owned session-entry wording, decision-file contract, malformed-state fail-closed handling, explicit re-entry semantics, and the deterministic first-turn gate
 - Generated reviewer-agent artifact freshness for Codex and GitHub Copilot
 - Runtime helper contracts for config, plan execution, update checks, migration, and upgrade flow
 - Supported public workflow CLI contracts for read-only status, next-step, artifact, explain, and failure output
@@ -64,7 +65,7 @@ For prompt-surface or workflow-doc changes, keep validation deterministic-first:
 ## When To Run What
 
 - Editing any `SKILL.md.tmpl`, runtime helper, or install/readme doc: run `node --test tests/codex-runtime/*.test.mjs` plus the full `tests/codex-runtime/` shell suite
-- Editing `skills/using-superpowers/*`, `scripts/gen-skill-docs.mjs`, or entry-routing docs: include `bash tests/codex-runtime/test-using-superpowers-bypass.sh` and review the routing-gate notes below
+- Editing `skills/using-superpowers/*`, `scripts/gen-skill-docs.mjs`, or entry-routing docs: include `bash tests/codex-runtime/test-using-superpowers-bypass.sh`, `bash tests/codex-runtime/test-superpowers-session-entry-gate.sh`, and review the routing-gate notes below
 - Editing brainstorming server files under `skills/brainstorming/scripts/`: run `bash tests/brainstorm-server/test-launch-wrappers.sh` and `node --test tests/brainstorm-server/server.test.js tests/brainstorm-server/ws-protocol.test.js`
 - Editing both runtime and brainstorming-server files: run both suites
 
@@ -74,7 +75,8 @@ For prompt-surface or workflow-doc changes, keep validation deterministic-first:
 - `tests/evals/using-superpowers-routing.orchestrator.md` is the authoritative Item 1 routing gate and drives the repo-versioned scenario, runner, and judge markdown artifacts plus local per-scenario evidence bundles under `~/.superpowers/projects/<slug>/...`
   This gate is agent-executed and does not run through `node --test` or the Node OpenAI-judge helper path. It is not part of the default deterministic validation order, but it is a required change-specific gate for Item 1 routing-safety work.
 - `tests/evals/search-before-building-contract.orchestrator.md` is the doc-driven contract gate for the shared Search-Before-Building preamble plus both reviewer prompt surfaces. It uses repo-versioned scenarios plus fresh runner and judge subagents, stays representative instead of exhaustive, and does not require the Node OpenAI-judge helper path.
-- `bash tests/codex-runtime/test-using-superpowers-bypass.sh` is the deterministic gate for the pre-routing session bypass wording and decision-path contract. The routing gate above assumes the scenario turn starts after that decision has already been resolved to `enabled` using the runner's own derived session-decision path.
+- `bash tests/codex-runtime/test-using-superpowers-bypass.sh` is the deterministic wording gate for the pre-routing session-entry contract and decision-path surface.
+- `bash tests/codex-runtime/test-superpowers-session-entry-gate.sh` is the deterministic first-turn supported-entry gate for fresh and malformed session-entry outcomes. The routing gate above is complementary coverage and assumes the scenario turn starts after that decision has already been resolved to `enabled` using the runner's own derived session-decision path.
 - See `tests/evals/README.md` for the Node-based eval environment variables and for routing-eval logging behavior.
 - The same README also documents the doc-driven Search-Before-Building runner/judge gate instructions.
 
@@ -90,7 +92,8 @@ That gate uses fresh runner and judge subagents against the checked-in scenario 
 ## Notes
 
 - `test-runtime-instructions.sh` is the contract gate for supported install and runtime documentation, including repo-root workflow diagrams and platform workflow summaries
-- `test-using-superpowers-bypass.sh` covers the pre-routing `using-superpowers` bypass wording, including the session decision path, malformed-state wording, and explicit re-entry semantics
+- `test-using-superpowers-bypass.sh` covers the pre-routing `using-superpowers` session-entry wording, including the decision path, malformed-state fail-closed wording, and explicit re-entry semantics
+- `test-superpowers-session-entry-gate.sh` covers the deterministic first-turn supported-entry contract, including fresh-session and malformed-state `needs_user_choice` behavior before the normal stack can start
 - `test-workflow-enhancements.sh` covers the imported review, QA, document-release, and branch-completion workflow contracts
 - `test-workflow-sequencing.sh` covers artifact-state routing, fixture-backed stage gates, and the optional worktree policy using checked-in workflow fixtures in `tests/codex-runtime/fixtures/workflow-artifacts/`
 - `tests/codex-runtime/*.test.mjs` covers the deterministic generated-skill and fixture assertions that do not need shell execution

@@ -84,6 +84,8 @@ test('using-superpowers gets a dedicated bootstrap preamble contract', () => {
   assert.match(normalStackBlock, /_CONTRIB=/, 'using-superpowers should restore contributor mode after the bypass gate');
   assert.match(content, /ask one interactive question before any normal Superpowers work happens/, 'using-superpowers should ask before the normal stack');
   assert.match(content, /do not compute `_SESSIONS`/, 'using-superpowers should exempt the opt-out gate from _SESSIONS handling');
+  assert.match(content, /session-entry bootstrap ownership is runtime-owned/, 'using-superpowers should name runtime ownership for the bootstrap boundary');
+  assert.match(content, /missing or malformed decision state fails closed/, 'using-superpowers should document fail-closed missing or malformed state');
   assert.match(content, /If the bypass gate resolves to `enabled` for this turn, run the normal shared Superpowers stack before any further Superpowers behavior:/, 'using-superpowers should explicitly restore the normal stack after an enabled decision');
   assert.match(content, /If the session decision file exists but contains malformed content:/, 'using-superpowers should document malformed-state handling');
   assert.match(content, /if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to `enabled` and continue on the same turn/, 'using-superpowers should treat explicit skill naming as re-entry');
