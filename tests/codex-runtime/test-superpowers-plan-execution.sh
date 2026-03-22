@@ -1836,6 +1836,25 @@ EOF
   assert_contains "$evidence_text" "**Verification Summary:** Manual inspection only: Verified by inspection" "canonical files verification"
 }
 
+run_gate_review_accepts_fresh_packet_provenance_after_complete() {
+  local repo_dir
+  local before
+  local active
+  local output
+
+  repo_dir="$(create_base_repo gate-review-after-complete)"
+  write_file "$repo_dir/docs/output.md" <<'EOF'
+fresh output
+EOF
+
+  before="$(run_json_command "$repo_dir" status --plan "$PLAN_REL")"
+  active="$(run_json_command "$repo_dir" begin --plan "$PLAN_REL" --task 1 --step 1 --execution-mode superpowers:executing-plans --expect-execution-fingerprint "$(json_value "$before" "execution_fingerprint")")"
+  run_json_command "$repo_dir" complete --plan "$PLAN_REL" --task 1 --step 1 --source superpowers:executing-plans --claim "Prepared the workspace" --file docs/output.md --manual-verify-summary "Verified by inspection" --expect-execution-fingerprint "$(json_value "$active" "execution_fingerprint")" >/dev/null
+
+  output="$(run_json_command "$repo_dir" gate-review --plan "$PLAN_REL")"
+  assert_json_equals "$output" "allowed" "true" "gate-review after complete"
+}
+
 run_complete_accepts_deleted_paths_from_current_change_set() {
   local repo_dir
   local before
@@ -2266,6 +2285,7 @@ run_complete_rejects_mixed_verification_inputs
 run_complete_rejects_stale_fingerprint
 run_complete_applies_whitespace_normalization
 run_complete_sorts_and_deduplicates_file_entries
+run_gate_review_accepts_fresh_packet_provenance_after_complete
 run_complete_accepts_deleted_paths_from_current_change_set
 run_complete_canonicalizes_rename_backed_paths
 run_complete_rejects_file_path_outside_repo_root

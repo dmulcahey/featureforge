@@ -1635,6 +1635,36 @@ compute_current_execution_packet_fingerprint() {
     "$step"
 }
 
+compute_pending_execution_packet_fingerprint() {
+  local task="$1"
+  local step="$2"
+  local plan_tmp="" plan_fingerprint="" source_spec_fingerprint="" source_spec_abs=""
+
+  plan_tmp="$(mktemp "${PLAN_ABS_PATH}.packet.XXXXXX")" || return 1
+  render_plan_file "$PLAN_ABS_PATH" "$plan_tmp" || {
+    rm -f "$plan_tmp"
+    return 1
+  }
+  plan_fingerprint="$(hash_file "$plan_tmp")" || {
+    rm -f "$plan_tmp"
+    return 1
+  }
+  rm -f "$plan_tmp"
+
+  source_spec_abs="$(plan_rel_to_abs "$PLAN_SOURCE_SPEC")"
+  source_spec_fingerprint="$(hash_file "$source_spec_abs")" || return 1
+
+  compute_execution_packet_fingerprint_from_values \
+    "$PLAN_REL_PATH" \
+    "$PLAN_REVISION" \
+    "$plan_fingerprint" \
+    "$PLAN_SOURCE_SPEC" \
+    "$PLAN_SOURCE_SPEC_REVISION" \
+    "$source_spec_fingerprint" \
+    "$task" \
+    "$step"
+}
+
 current_head_sha() {
   git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true
 }
@@ -2691,16 +2721,15 @@ cmd_complete() {
   files_entry="$FILES_ENTRY"
   build_files_proven_entry "$files_entry" || { emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"; return 1; }
   files_proven_entry="$FILES_PROVEN_ENTRY"
-  packet_fingerprint="$(compute_current_execution_packet_fingerprint "$task" "$step")" || {
+  STEP_CHECKED[$step_index]='x'
+  STEP_NOTE_STATES[$step_index]=""
+  STEP_NOTE_SUMMARIES[$step_index]=""
+  packet_fingerprint="$(compute_pending_execution_packet_fingerprint "$task" "$step")" || {
     emit_error "EvidenceWriteFailed" "Could not compute the current execution packet fingerprint."
     return 1
   }
   head_sha="$(current_head_sha)"
   base_sha="$(current_base_sha)"
-
-  STEP_CHECKED[$step_index]='x'
-  STEP_NOTE_STATES[$step_index]=""
-  STEP_NOTE_SUMMARIES[$step_index]=""
   append_attempt \
     "$task" \
     "$step" \
