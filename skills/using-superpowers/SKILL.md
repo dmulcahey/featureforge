@@ -284,6 +284,12 @@ When the helper succeeds, route using its JSON result and do not re-derive state
 
 If the helper is unavailable or fails, inspect artifacts manually using the rules below.
 
+If helpers are unavailable, fallback stays minimal and conservative:
+
+- Manual fallback must not infer readiness from the legacy thin header subset.
+- Manual fallback is only a conservative backward-routing path until the helper works again.
+- If the helper failure leaves workflow state unclear, route to the earlier safe stage instead of synthesizing a parallel readiness decision.
+
 Inspect `docs/superpowers/specs/` and `docs/superpowers/plans/` conservatively for the exact relevant artifacts. If more than one plausible latest or approved artifact exists, treat that as ambiguity and route to the earlier safe stage rather than guessing. Then parse these exact-match header lines:
 
 - Spec state: `^\*\*Workflow State:\*\* (Draft|CEO Approved)$`
