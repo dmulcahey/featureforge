@@ -249,6 +249,35 @@ run_feature_branch_write_allowed() {
   assert_json_equals "$output" "protected_by" "default" "feature branch allowed"
 }
 
+run_root_agents_override_protects_branch() {
+  local repo="$REPO_DIR/root-agents-override-protected"
+  local output
+
+  init_repo "$repo" "release" "https://example.com/acme/repo-safety.git"
+  write_file "$repo/AGENTS.override.md" <<'EOF'
+Superpowers protected branches: release
+EOF
+  output="$(run_json_command "$repo" "root AGENTS.override branch protection" check --intent write --stage superpowers:brainstorming --task-id release-task --path docs/superpowers/specs/release-spec.md --write-target spec-artifact-write)"
+  assert_json_equals "$output" "outcome" "blocked" "root AGENTS.override branch protection"
+  assert_json_equals "$output" "failure_class" "ProtectedBranchDetected" "root AGENTS.override branch protection"
+  assert_json_equals "$output" "protected_by" "instructions" "root AGENTS.override branch protection"
+}
+
+run_nested_agents_override_protects_branch() {
+  local repo="$REPO_DIR/nested-agents-override-protected"
+  local output
+
+  init_repo "$repo" "release" "https://example.com/acme/repo-safety.git"
+  mkdir -p "$repo/apps/cli"
+  write_file "$repo/apps/AGENTS.override.md" <<'EOF'
+Superpowers protected branches: release
+EOF
+  output="$(run_json_command "$repo/apps/cli" "nested AGENTS.override branch protection" check --intent write --stage superpowers:brainstorming --task-id nested-release-task --path docs/superpowers/specs/release-spec.md --write-target spec-artifact-write)"
+  assert_json_equals "$output" "outcome" "blocked" "nested AGENTS.override branch protection"
+  assert_json_equals "$output" "failure_class" "ProtectedBranchDetected" "nested AGENTS.override branch protection"
+  assert_json_equals "$output" "protected_by" "instructions" "nested AGENTS.override branch protection"
+}
+
 run_matching_approval_allows_write() {
   local repo="$REPO_DIR/matching-approval"
   local approval
@@ -261,6 +290,19 @@ run_matching_approval_allows_write() {
   assert_json_equals "$check" "outcome" "allowed" "matching approval allows write"
   assert_json_equals "$check" "protected" "true" "matching approval allows write"
   assert_json_nonempty "$check" "approval_fingerprint" "matching approval allows write"
+}
+
+run_full_scope_approval_allows_follow_on_git_phase() {
+  local repo="$REPO_DIR/full-scope-approval"
+  local approval
+  local check
+
+  init_repo "$repo" "main" "https://example.com/acme/repo-safety.git"
+  approval="$(run_json_command "$repo" "approve full protected-branch scope" approve --stage superpowers:brainstorming --task-id spec-task --reason "User explicitly approved the spec write and same-slice commit on main." --path docs/superpowers/specs/new-spec.md --write-target spec-artifact-write --write-target git-commit)"
+  check="$(run_json_command "$repo" "full-scope approval reused for follow-on git phase" check --intent write --stage superpowers:brainstorming --task-id spec-task --path docs/superpowers/specs/new-spec.md --write-target spec-artifact-write --write-target git-commit)"
+  assert_json_equals "$approval" "approval_path" "$(json_value "$check" "approval_path")" "full-scope approval reused for follow-on git phase"
+  assert_json_equals "$check" "outcome" "allowed" "full-scope approval reused for follow-on git phase"
+  assert_json_equals "$check" "protected" "true" "full-scope approval reused for follow-on git phase"
 }
 
 run_mismatched_path_blocks_with_fingerprint_mismatch() {
@@ -324,7 +366,10 @@ require_helper
 run_read_intent_allows_protected_branch
 run_write_blocked_on_protected_branch_by_default
 run_feature_branch_write_allowed
+run_root_agents_override_protects_branch
+run_nested_agents_override_protects_branch
 run_matching_approval_allows_write
+run_full_scope_approval_allows_follow_on_git_phase
 run_mismatched_path_blocks_with_fingerprint_mismatch
 run_mismatched_target_blocks_with_fingerprint_mismatch
 run_malformed_scope_record_blocks

@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SKILL_DOC="$REPO_ROOT/skills/using-superpowers/SKILL.md"
-HELPER_BIN="$REPO_ROOT/bin/superpowers-session-entry"
+ENTRY_HARNESS="$REPO_ROOT/tests/codex-runtime/session-entry-supported-entry-harness.sh"
 STATE_DIR="$(mktemp -d)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$STATE_DIR" "$TMP_DIR"' EXIT
@@ -92,7 +92,7 @@ run_json_command() {
   shift
   local output
   local status=0
-  output="$("$HELPER_BIN" "$@" 2>&1)" || status=$?
+  output="$("$ENTRY_HARNESS" "$@" 2>&1)" || status=$?
   if [[ $status -ne 0 ]]; then
     echo "Expected command to succeed for: $label"
     printf '%s\n' "$output"
@@ -108,8 +108,8 @@ require_pattern 'if the helper returns `needs_user_choice`, ask the opt-out ques
 require_pattern '`superpowers-session-entry resolve` should surface `outcome` `needs_user_choice` with `failure_class` `MalformedDecisionState`'
 require_absent_pattern 'continue to normal Superpowers behavior'
 
-if [[ ! -x "$HELPER_BIN" ]]; then
-  echo "Expected helper to exist and be executable: $HELPER_BIN"
+if [[ ! -x "$ENTRY_HARNESS" ]]; then
+  echo "Expected supported-entry harness to exist and be executable: $ENTRY_HARNESS"
   exit 1
 fi
 
@@ -118,11 +118,12 @@ Please route this from a fresh entry path.
 EOF
 )"
 missing_output="$(run_json_command "fresh entry needs user choice" resolve --message-file "$missing_message" --session-key "fresh-entry")"
-assert_json_equals "$missing_output" "outcome" "needs_user_choice" "fresh entry needs user choice"
+assert_json_equals "$missing_output" "helper_outcome" "needs_user_choice" "fresh entry needs user choice"
+assert_json_equals "$missing_output" "first_response_kind" "bypass_prompt" "fresh entry needs user choice"
+assert_json_equals "$missing_output" "normal_stack_started" "false" "fresh entry needs user choice"
 assert_json_equals "$missing_output" "decision_source" "missing" "fresh entry needs user choice"
 assert_json_equals "$missing_output" "decision_path" "$(decision_path_for_key "fresh-entry")" "fresh entry needs user choice"
-assert_json_equals "$missing_output" "persisted" "false" "fresh entry needs user choice"
-assert_json_nonempty "$missing_output" "prompt.question" "fresh entry needs user choice"
+assert_json_nonempty "$missing_output" "prompt_question" "fresh entry needs user choice"
 
 malformed_message="$(write_message_file malformed-entry.txt <<'EOF'
 Please route this from malformed state.
@@ -132,10 +133,24 @@ malformed_path="$(decision_path_for_key "malformed-entry")"
 mkdir -p "$(dirname "$malformed_path")"
 printf 'corrupt\nextra\n' > "$malformed_path"
 malformed_output="$(run_json_command "malformed entry needs user choice" resolve --message-file "$malformed_message" --session-key "malformed-entry")"
-assert_json_equals "$malformed_output" "outcome" "needs_user_choice" "malformed entry needs user choice"
+assert_json_equals "$malformed_output" "helper_outcome" "needs_user_choice" "malformed entry needs user choice"
+assert_json_equals "$malformed_output" "first_response_kind" "bypass_prompt" "malformed entry needs user choice"
+assert_json_equals "$malformed_output" "normal_stack_started" "false" "malformed entry needs user choice"
 assert_json_equals "$malformed_output" "decision_source" "malformed" "malformed entry needs user choice"
 assert_json_equals "$malformed_output" "decision_path" "$malformed_path" "malformed entry needs user choice"
-assert_json_equals "$malformed_output" "failure_class" "MalformedDecisionState" "malformed entry needs user choice"
-assert_json_nonempty "$malformed_output" "prompt.question" "malformed entry needs user choice"
+assert_json_nonempty "$malformed_output" "prompt_question" "malformed entry needs user choice"
+
+enabled_message="$(write_message_file enabled-entry.txt <<'EOF'
+Please route this from enabled state.
+EOF
+)"
+enabled_path="$(decision_path_for_key "enabled-entry")"
+mkdir -p "$(dirname "$enabled_path")"
+printf 'enabled\n' > "$enabled_path"
+enabled_output="$(run_json_command "enabled entry allows normal stack" resolve --message-file "$enabled_message" --session-key "enabled-entry")"
+assert_json_equals "$enabled_output" "helper_outcome" "enabled" "enabled entry allows normal stack"
+assert_json_equals "$enabled_output" "first_response_kind" "normal_stack" "enabled entry allows normal stack"
+assert_json_equals "$enabled_output" "normal_stack_started" "true" "enabled entry allows normal stack"
+assert_json_equals "$enabled_output" "decision_source" "existing_enabled" "enabled entry allows normal stack"
 
 echo "session-entry gate regression test passed."

@@ -123,15 +123,16 @@ superpowers-repo-safety check --intent write --stage superpowers:finishing-a-dev
 
 - If the helper returns `allowed`, continue with the selected completion path.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `superpowers:using-git-worktrees` or explicit user approval for this exact completion scope.
-- If the user explicitly approves the protected-branch completion write, run:
+- If the user explicitly approves the protected-branch completion write, approve the full completion scope you intend to use on that branch, including any follow-on git targets that are part of the same branch-finish task:
 
 ```bash
-superpowers-repo-safety approve --stage superpowers:finishing-a-development-branch --task-id <current-branch-finish> --reason "<explicit user approval>" --write-target branch-finish
-superpowers-repo-safety check --intent write --stage superpowers:finishing-a-development-branch --task-id <current-branch-finish> --write-target branch-finish
+superpowers-repo-safety approve --stage superpowers:finishing-a-development-branch --task-id <current-branch-finish> --reason "<explicit user approval>" --write-target branch-finish [--write-target git-merge] [--write-target git-push] [--write-target git-worktree-cleanup]
+superpowers-repo-safety check --intent write --stage superpowers:finishing-a-development-branch --task-id <current-branch-finish> --write-target branch-finish [--write-target git-merge] [--write-target git-push] [--write-target git-worktree-cleanup]
 ```
 
 - Continue only if the re-check returns `allowed`.
-- Before `git merge`, `git push`, or worktree cleanup, re-run the gate with the same task id and the specific target `git-merge`, `git-push`, or `git-worktree-cleanup` before that command.
+- Before a follow-on `git merge`, `git push`, or worktree cleanup on the same protected-branch task, re-run the gate with the same task id and the same approved write-target set.
+- If the protected-branch task scope changes, run a new `approve` plus full-scope `check` before continuing.
 - Do not treat a worktree on `main`, `master`, `dev`, or `develop` as safe by itself; the branch must be non-protected or explicitly approved.
 
 ### Step 2: Determine Base Branch

@@ -242,6 +242,29 @@ EOF
   fi
 }
 
+run_natural_language_skill_request_triggers_reentry() {
+  local message_file
+  local decision_path
+  local output
+
+  message_file="$(write_message_file natural-language-reentry-message.txt <<'EOF'
+Please use brainstorming for this task.
+EOF
+)"
+  decision_path="$(decision_path_for_key "natural-language-reentry")"
+  mkdir -p "$(dirname "$decision_path")"
+  printf 'bypassed\n' > "$decision_path"
+
+  output="$(run_json_command "natural language explicit re-entry" resolve --message-file "$message_file" --session-key "natural-language-reentry")"
+  assert_json_equals "$output" "outcome" "enabled" "natural language explicit re-entry"
+  assert_json_equals "$output" "decision_source" "explicit_reentry" "natural language explicit re-entry"
+  assert_json_equals "$output" "persisted" "true" "natural language explicit re-entry"
+  if [[ "$(cat "$decision_path")" != "enabled" ]]; then
+    echo "Expected natural-language explicit re-entry to persist enabled decision"
+    exit 1
+  fi
+}
+
 run_explicit_reentry_write_failure_is_unpersisted() {
   local message_file
   local decision_path
@@ -314,6 +337,7 @@ run_existing_enabled_decision
 run_existing_bypassed_decision
 run_malformed_decision_needs_user_choice
 run_explicit_reentry_rewrites_bypassed_decision
+run_natural_language_skill_request_triggers_reentry
 run_explicit_reentry_write_failure_is_unpersisted
 run_record_persists_enabled_choice
 run_record_rejects_invalid_decision

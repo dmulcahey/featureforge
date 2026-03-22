@@ -130,7 +130,7 @@ build_prompt_json_or_fail() {
 
 message_requests_reentry() {
   local raw_text="$1"
-  local lowered normalized skill_doc skill_name
+  local lowered normalized skill_doc skill_name token
 
   lowered="$(printf '%s' "$raw_text" | tr '[:upper:]' '[:lower:]')"
   if [[ "$lowered" == *"use superpowers"* || "$lowered" == *"using superpowers"* || "$lowered" == *"superpowers:"* ]]; then
@@ -145,6 +145,14 @@ message_requests_reentry() {
       shopt -u nullglob
       return 0
     fi
+    while IFS= read -r token; do
+      case "$token" in
+        "$skill_name"|"\$$skill_name"|"superpowers:$skill_name")
+          shopt -u nullglob
+          return 0
+          ;;
+      esac
+    done < <(printf '%s\n' "$normalized" | tr -cs '[:alnum:]$:_-' '\n')
   done
   shopt -u nullglob
 

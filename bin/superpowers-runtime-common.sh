@@ -36,3 +36,47 @@ normalize_whitespace_bounded() {
 normalize_identifier_token() {
   printf '%s\n' "${1:-}" | sed 's/[^[:alnum:]._-]/-/g'
 }
+
+collect_active_instruction_files() {
+  local repo_root="${1:-}"
+  local start_dir="${2:-$(pwd)}"
+  local dir
+  local -a nested_dirs=()
+  ACTIVE_INSTRUCTION_FILES=()
+
+  [[ -n "$repo_root" && -d "$repo_root" ]] || return 1
+  repo_root="$(cd "$repo_root" && pwd -P)"
+  if [[ -n "$start_dir" && -d "$start_dir" ]]; then
+    start_dir="$(cd "$start_dir" && pwd -P)"
+  fi
+
+  [[ -f "$repo_root/AGENTS.md" ]] && ACTIVE_INSTRUCTION_FILES+=("$repo_root/AGENTS.md")
+  [[ -f "$repo_root/AGENTS.override.md" ]] && ACTIVE_INSTRUCTION_FILES+=("$repo_root/AGENTS.override.md")
+  [[ -f "$repo_root/.github/copilot-instructions.md" ]] && ACTIVE_INSTRUCTION_FILES+=("$repo_root/.github/copilot-instructions.md")
+
+  shopt -s nullglob
+  for dir in "$repo_root"/.github/instructions/*.instructions.md; do
+    ACTIVE_INSTRUCTION_FILES+=("$dir")
+  done
+  shopt -u nullglob
+
+  case "$start_dir" in
+    "$repo_root" | "$repo_root"/*) ;;
+    *) start_dir="$repo_root" ;;
+  esac
+
+  dir="$start_dir"
+  while :; do
+    nested_dirs=("$dir" "${nested_dirs[@]:-}")
+    [[ "$dir" == "$repo_root" ]] && break
+    dir="$(dirname "$dir")"
+  done
+
+  for dir in "${nested_dirs[@]}"; do
+    [[ "$dir" == "$repo_root" ]] && continue
+    [[ -f "$dir/AGENTS.md" ]] && ACTIVE_INSTRUCTION_FILES+=("$dir/AGENTS.md")
+    [[ -f "$dir/AGENTS.override.md" ]] && ACTIVE_INSTRUCTION_FILES+=("$dir/AGENTS.override.md")
+  done
+
+  return 0
+}

@@ -135,15 +135,16 @@ superpowers-repo-safety check --intent write --stage superpowers:writing-plans -
 
 - If the helper returns `allowed`, continue with the plan write.
 - If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `superpowers:using-git-worktrees` or explicit user approval for this exact plan-writing scope.
-- If the user explicitly approves writing this plan on the current protected branch, run:
+- If the user explicitly approves writing this plan on the current protected branch, approve the full protected-branch task scope you intend to use, including the plan path and any follow-on git targets that are part of the same task slice:
 
 ```bash
-superpowers-repo-safety approve --stage superpowers:writing-plans --task-id <current-plan-write> --reason "<explicit user approval>" --path docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
-superpowers-repo-safety check --intent write --stage superpowers:writing-plans --task-id <current-plan-write> --path docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write
+superpowers-repo-safety approve --stage superpowers:writing-plans --task-id <current-plan-write> --reason "<explicit user approval>" --path docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write [--write-target git-commit]
+superpowers-repo-safety check --intent write --stage superpowers:writing-plans --task-id <current-plan-write> --path docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md --write-target plan-artifact-write [--write-target git-commit]
 ```
 
 - Continue only if the re-check returns `allowed`.
-- If you commit the plan on the same protected branch, re-run the gate for the commit itself with `--write-target git-commit` before `git commit`.
+- Before `git commit` on the same protected branch, re-run the gate with the same task id, the same repo-relative path, and the same approved write-target set.
+- If the protected-branch task scope changes, run a new `approve` plus full-scope `check` before continuing.
 
 ## Prerequisite Gate
 

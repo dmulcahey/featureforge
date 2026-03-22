@@ -139,8 +139,8 @@
 
 ### Task 2 Step 3
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-22T00:18:40Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T02:34:59Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Implemented the Bash session-entry helper with deterministic decision paths, fail-closed malformed handling, and explicit re-entry support.
 **Files:**
@@ -148,6 +148,18 @@
 - tests/codex-runtime/test-superpowers-session-entry.sh
 **Verification:**
 - `bash tests/codex-runtime/test-superpowers-session-entry.sh` -> passed
+**Invalidation Reason:** Code review found that session-entry explicit re-entry does not honor natural-language skill mentions like 'use brainstorming', which invalidates the completed helper behavior against the documented contract.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-22T02:36:40Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Broadened explicit session-entry re-entry detection so natural-language skill requests re-enable a bypassed session when they name a real Superpowers skill token.
+**Files:**
+- bin/superpowers-session-entry
+- tests/codex-runtime/test-superpowers-session-entry.sh
+**Verification:**
+- Manual inspection only: bash tests/codex-runtime/test-superpowers-session-entry.sh passed, including the new natural-language skill-request re-entry case.
 **Invalidation Reason:** N/A
 
 ### Task 2 Step 4
@@ -221,14 +233,27 @@
 
 ### Task 3 Step 3
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-22T00:38:12Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T02:31:02Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Implemented the Bash repo-safety helper with deterministic approval-path lookup, protected-branch defaults, task-scope fingerprints, and bounded input validation.
 **Files:**
 - bin/superpowers-repo-safety
 **Verification:**
 - Manual inspection only: Manual inspection confirmed the helper contract now matches the approved design and test surface; executable syntax check passed.
+**Invalidation Reason:** Code review found that repo-safety ignores AGENTS.override.md and the active instruction chain, which breaks configured protected-branch enforcement and invalidates the completed helper slice.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-22T02:34:40Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Updated repo-safety to resolve the active instruction chain, including root and nested AGENTS.override.md files, before evaluating configured protected branches.
+**Files:**
+- bin/superpowers-repo-safety
+- bin/superpowers-runtime-common.sh
+- tests/codex-runtime/test-superpowers-repo-safety.sh
+**Verification:**
+- Manual inspection only: bash tests/codex-runtime/test-superpowers-repo-safety.sh passed, including the new root and nested AGENTS.override.md protected-branch cases.
 **Invalidation Reason:** N/A
 
 ### Task 3 Step 4
@@ -299,8 +324,8 @@
 
 ### Task 4 Step 3
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-22T00:48:15Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T02:38:49Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Updated the skill-doc generator and using-superpowers template to document runtime-owned session entry, needs_user_choice outcomes, and fail-closed missing or malformed state.
 **Files:**
@@ -309,6 +334,19 @@
 - skills/using-superpowers/SKILL.md.tmpl
 **Verification:**
 - `node scripts/gen-skill-docs.mjs` -> PASS (regenerated skills/using-superpowers/SKILL.md with the runtime-owned session-entry contract text)
+**Invalidation Reason:** Code review found that the first-turn gate test invokes the helper directly and overclaims supported-entry integration, so the Task 4 docs/test slice needs a real supported-entry harness fixture and narrower claims.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-22T02:40:58Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Replaced the direct-helper first-turn gate with a supported-entry harness fixture and narrowed the docs to the harness-level guarantee it actually proves.
+**Files:**
+- docs/testing.md
+- tests/codex-runtime/session-entry-supported-entry-harness.sh
+- tests/codex-runtime/test-superpowers-session-entry-gate.sh
+**Verification:**
+- Manual inspection only: bash tests/codex-runtime/test-superpowers-session-entry-gate.sh and bash tests/codex-runtime/test-runtime-instructions.sh both passed after the harness-backed gate and docs wording update.
 **Invalidation Reason:** N/A
 
 ### Task 4 Step 4
@@ -450,8 +488,8 @@
 
 ### Task 5 Step 3
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-22T01:25:51Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T02:41:45Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Updated every repo-writing workflow template to document the shared protected-branch repo-safety preflight and rescue flow.
 **Files:**
@@ -465,6 +503,30 @@
 - skills/writing-plans/SKILL.md.tmpl
 **Verification:**
 - Manual inspection only: Manual inspection only: each touched template now documents the same check -> blocked/explain -> approve -> re-check flow with stage-specific write targets for spec, plan, execution, release, and branch-finishing writes.
+**Invalidation Reason:** Code review found that the workflow repo-safety rescue copy narrows follow-on git checks in a way that cannot match the helper's fingerprinted scope, so the workflow template slice must document full-scope approvals and re-checks.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-22T02:44:26Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Updated the repo-writing workflow rescue flow to approve and re-check the same full protected-branch scope, and added regression coverage for full-scope repo-safety approvals plus the repo-safety PowerShell wrapper.
+**Files:**
+- skills/brainstorming/SKILL.md
+- skills/brainstorming/SKILL.md.tmpl
+- skills/document-release/SKILL.md
+- skills/document-release/SKILL.md.tmpl
+- skills/executing-plans/SKILL.md
+- skills/executing-plans/SKILL.md.tmpl
+- skills/finishing-a-development-branch/SKILL.md
+- skills/finishing-a-development-branch/SKILL.md.tmpl
+- skills/subagent-driven-development/SKILL.md
+- skills/subagent-driven-development/SKILL.md.tmpl
+- skills/writing-plans/SKILL.md
+- skills/writing-plans/SKILL.md.tmpl
+- tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
+- tests/codex-runtime/test-superpowers-repo-safety.sh
+**Verification:**
+- Manual inspection only: node scripts/gen-skill-docs.mjs, node scripts/gen-skill-docs.mjs --check, bash tests/codex-runtime/test-workflow-enhancements.sh, bash tests/codex-runtime/test-workflow-sequencing.sh, and bash tests/codex-runtime/test-superpowers-repo-safety.sh all passed; the PowerShell wrapper regression skipped cleanly because no pwsh or powershell binary is installed in this environment.
 **Invalidation Reason:** N/A
 
 ### Task 5 Step 4
@@ -542,8 +604,8 @@
 
 ### Task 6 Step 2
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-22T02:19:48Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T02:45:47Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Completed the full Task 6 verification matrix, including the deterministic runtime suites plus fresh Search-Before-Building and using-superpowers routing eval passes.
 **Files:**
@@ -556,12 +618,24 @@
 - tests/codex-runtime/test-runtime-instructions.sh
 **Verification:**
 - Manual inspection only: Verified the green command matrix, the PASS Search-Before-Building evidence under /Users/davidmulcahey/.superpowers/projects/dmulcahey-superpowers/search-before-building-contract-r2/run-20260322T013138Z/, and the PASS routing summary at /Users/davidmulcahey/.superpowers/projects/dmulcahey-superpowers/routing-evals/using-superpowers-routing-r4/run-20260322T020443Z/summary.md. The PowerShell wrapper bash-resolution regression also skipped cleanly because no pwsh or powershell binary is installed in this environment.
+**Invalidation Reason:** Later repair slices changed helper behavior, workflow skill docs, and the supported-entry harness gate, so the previously completed final verification matrix is stale and must be rerun on the current tree before handoff.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-22T02:58:03Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Re-ran the full targeted verification matrix on the repaired tree, including fresh Search-Before-Building and using-superpowers routing eval passes.
+**Files:**
+- docs/superpowers/execution-evidence/2026-03-21-bootstrap-and-branch-safety-hardening-r1-evidence.md
+- docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
+**Verification:**
+- Manual inspection only: The deterministic matrix passed for agent-doc and skill-doc freshness, Node runtime suites, runtime-instructions, using-superpowers bypass, session-entry, supported-entry gate, repo-safety, workflow enhancement/sequencing, plan-execution, workflow-status, slug, and the PowerShell wrapper bash-resolution check, which skipped cleanly because no pwsh or powershell binary is installed. Fresh eval controllers also passed with no blocked scenarios: Search-Before-Building evidence root /Users/davidmulcahey/.superpowers/projects/skills-3a93f4639977/search-before-building-contract-r2/run-20260322T025218Z and using-superpowers routing evidence root /Users/davidmulcahey/.superpowers/projects/dmulcahey-superpowers/routing-evals/using-superpowers-routing-r4/run-20260322T025415Z.
 **Invalidation Reason:** N/A
 
 ### Task 6 Step 3
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-22T02:21:45Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T02:58:34Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Re-ran the final generated-doc and runtime regression pass on the current tree before handoff.
 **Files:**
@@ -569,4 +643,34 @@
 - docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
 **Verification:**
 - Manual inspection only: Fresh verification passed for agent-doc and skill-doc freshness, the Node runtime suites, the runtime-instructions/session-entry/repo-safety/workflow/plan/workflow-status/slug bash regressions, and the PowerShell wrapper bash-resolution check, which skipped cleanly because no pwsh or powershell binary is installed.
+**Invalidation Reason:** Later repair slices changed helper behavior, workflow skill docs, and the supported-entry harness gate after the previous verification-before-completion attempt, so the completion gate must be rerun on the repaired tree.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-22T02:59:50Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Re-ran the completion gate on the repaired tree so the generated docs and runtime regressions are freshly verified immediately before the final commit.
+**Files:**
+- docs/superpowers/execution-evidence/2026-03-21-bootstrap-and-branch-safety-hardening-r1-evidence.md
+- docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
+**Verification:**
+- Manual inspection only: Fresh checks passed for generated agent docs, generated skill docs, the Node codex-runtime suite, runtime-instructions, using-superpowers bypass, session-entry, supported-entry gate, repo-safety, workflow enhancement/sequencing, plan-execution, workflow-status, and slug. The PowerShell wrapper bash-resolution check also ran and skipped cleanly because no pwsh or powershell binary is installed in this environment.
 **Invalidation Reason:** N/A
+
+### Task 6 Step 4
+#### Attempt 1
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T03:00:13Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Committed the final verification, docs, and execution-artifact updates as 966118d.
+**Files:**
+- README.md
+- docs/README.codex.md
+- docs/README.copilot.md
+- docs/superpowers/execution-evidence/2026-03-21-bootstrap-and-branch-safety-hardening-r1-evidence.md
+- docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
+- docs/testing.md
+- tests/codex-runtime/test-runtime-instructions.sh
+**Verification:**
+- Manual inspection only: Verified HEAD is commit 966118d and git status --short returned no remaining worktree changes after the commit.
+**Invalidation Reason:** Later repair slices changed helper behavior, workflow docs, tests, and execution evidence after the previous final commit checkpoint, so the final commit step must be rerun on the repaired tree.

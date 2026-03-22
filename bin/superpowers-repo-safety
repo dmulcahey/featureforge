@@ -179,13 +179,14 @@ load_instruction_branches_or_fail() {
     return 1
   fi
 
-  [[ -f "$REPO_ROOT/.github/copilot-instructions.md" ]] && instruction_files+=("$REPO_ROOT/.github/copilot-instructions.md")
-  [[ -f "$REPO_ROOT/AGENTS.md" ]] && instruction_files+=("$REPO_ROOT/AGENTS.md")
-  shopt -s nullglob
-  for file in "$REPO_ROOT"/.github/instructions/*.instructions.md; do
+  collect_active_instruction_files "$REPO_ROOT" "$PWD" || {
+    emit_failure "InstructionParseFailed" "Could not resolve the active instruction chain." "$INTENT" "$BRANCH_NAME" "$PROTECTED" "$PROTECTED_BY" "$TASK_ID" "$APPROVAL_FINGERPRINT" "$APPROVAL_PATH"
+    return 1
+  }
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
     instruction_files+=("$file")
-  done
-  shopt -u nullglob
+  done < <(printf '%s\n' "${ACTIVE_INSTRUCTION_FILES[@]:-}")
 
   if [[ ${#instruction_files[@]} -gt 0 ]]; then
     for file in "${instruction_files[@]}"; do
