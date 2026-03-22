@@ -53,7 +53,7 @@ digraph process {
         "Build task packet + dispatch implementer subagent (./implementer-prompt.md)" [shape=box];
         "Implementer subagent asks questions?" [shape=diamond];
         "Answer from packet or escalate ambiguity" [shape=box];
-        "Implementer subagent implements, tests, commits, self-reviews" [shape=box];
+        "Implementer subagent implements, tests, self-reviews, prepares handoff" [shape=box];
         "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" [shape=box];
         "Spec reviewer subagent confirms code matches spec?" [shape=diamond];
         "Implementer subagent fixes spec gaps" [shape=box];
@@ -72,8 +72,8 @@ digraph process {
     "Build task packet + dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer subagent asks questions?";
     "Implementer subagent asks questions?" -> "Answer from packet or escalate ambiguity" [label="yes"];
     "Answer from packet or escalate ambiguity" -> "Build task packet + dispatch implementer subagent (./implementer-prompt.md)";
-    "Implementer subagent asks questions?" -> "Implementer subagent implements, tests, commits, self-reviews" [label="no"];
-    "Implementer subagent implements, tests, commits, self-reviews" -> "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)";
+    "Implementer subagent asks questions?" -> "Implementer subagent implements, tests, self-reviews, prepares handoff" [label="no"];
+    "Implementer subagent implements, tests, self-reviews, prepares handoff" -> "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)";
     "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" -> "Spec reviewer subagent confirms code matches spec?";
     "Spec reviewer subagent confirms code matches spec?" -> "Implementer subagent fixes spec gaps" [label="no"];
     "Implementer subagent fixes spec gaps" -> "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" [label="re-review"];
@@ -122,6 +122,7 @@ Before dispatching any implementation subagent:
 ## Protected-Branch Repo-Write Gate
 
 The main agent owns the protected-branch gate for every repo-writing task slice, even when an implementer subagent does the coding.
+The coordinator owns every `git commit`, `git merge`, and `git push` for this workflow, even when an implementer subagent does the coding.
 
 Before dispatching or applying any repo-writing task slice, run the shared repo-safety preflight for that exact scope:
 
@@ -140,7 +141,7 @@ superpowers-repo-safety check --intent write --stage superpowers:subagent-driven
 ```
 
 - Continue only if the re-check returns `allowed`.
-- Before a follow-on `git commit`, `git merge`, or `git push` on the same protected-branch task slice, re-run the gate with the same task id, the same repo-relative paths, and the same approved write-target set.
+- Before a coordinator-owned follow-on `git commit`, `git merge`, or `git push` on the same protected-branch task slice, re-run the gate with the same task id, the same repo-relative paths, and the same approved write-target set.
 - If the protected-branch task scope changes, run a new `approve` plus full-scope `check` before continuing.
 - Do not treat a worktree on `main`, `master`, `dev`, or `develop` as safe by itself; the branch must be non-protected or explicitly approved.
 
@@ -221,7 +222,7 @@ Implementer: "Got it. Implementing now..."
   - Updated shared-root migration docs
   - Added tests, 5/5 passing
   - Self-review: Found I missed the PowerShell temp-clone cleanup, added it
-  - Committed
+  - Ready for coordinator-owned git actions
 
 [Dispatch spec compliance reviewer]
 Spec reviewer: ✅ Spec compliant - all requirements met, nothing extra
@@ -241,7 +242,7 @@ Implementer:
   - Added verify/repair modes
   - 8/8 tests passing
   - Self-review: All good
-  - Committed
+  - Ready for coordinator-owned git actions
 
 [Dispatch spec compliance reviewer]
 Spec reviewer: ❌ Issues:
@@ -291,9 +292,9 @@ Code reviewer: ✅ Approved
 - Review checkpoints automatic
 
 **Efficiency gains:**
-- No file reading overhead (controller provides full text)
-- Controller curates exactly what context is needed
-- Subagent gets complete information upfront
+- No repeated artifact parsing per subagent (controller provides the helper-built packet)
+- Semantic context stays packet-backed instead of drifting into controller summaries
+- Subagent gets the exact approved task contract upfront
 - Questions surfaced before work begins (not after)
 
 **Quality gates:**
@@ -305,7 +306,7 @@ Code reviewer: ✅ Approved
 
 **Cost:**
 - More subagent invocations (implementer + 2 reviewers per task)
-- Controller does more prep work (extracting all tasks upfront)
+- Controller does more prep work (building packets and coordinating reviewers)
 - Review loops add iterations
 - But catches issues early (cheaper than debugging later)
 
@@ -316,8 +317,8 @@ Code reviewer: ✅ Approved
 - Skip reviews (spec compliance OR code quality)
 - Proceed with unfixed issues
 - Dispatch multiple implementation subagents in parallel (conflicts)
-- Make subagent read plan file (provide full text instead)
-- Skip scene-setting context (subagent needs to understand where task fits)
+- Make subagent re-read the plan/spec when the helper-built packet already defines the task contract
+- Replace the packet with controller-written semantic summaries or extra "scene-setting" requirements
 - Ignore subagent questions (answer before letting them proceed)
 - Accept "close enough" on spec compliance (spec reviewer found issues = not done)
 - Skip review loops (reviewer found issues = implementer fixes = review again)

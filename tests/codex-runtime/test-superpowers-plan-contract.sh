@@ -9,6 +9,8 @@ STATE_DIR="$(mktemp -d)"
 REPO_DIR="$(mktemp -d)"
 trap 'rm -rf "$STATE_DIR" "$REPO_DIR"' EXIT
 export SUPERPOWERS_STATE_DIR="$STATE_DIR"
+REAL_SPEC_REL="docs/superpowers/specs/2026-03-21-task-fidelity-improvement-design.md"
+REAL_PLAN_REL="docs/superpowers/plans/2026-03-21-task-fidelity-improvement.md"
 
 SPEC_REL="docs/superpowers/specs/2026-03-22-plan-contract-fixture-design.md"
 PLAN_REL="docs/superpowers/plans/2026-03-22-plan-contract-fixture.md"
@@ -462,6 +464,26 @@ test_build_task_packet_detects_tampered_cache_and_regenerates() {
   assert_contains "$(cat "$packet_path")" "Dispatch exact packet-backed execution" "regenerated packet file"
 }
 
+test_real_approved_task_fidelity_artifacts_lint_clean() {
+  local output
+  output="$(run_json_command "$REPO_ROOT" lint --spec "$REAL_SPEC_REL" --plan "$REAL_PLAN_REL")"
+  assert_json_equals "$output" "status" "ok" "real task-fidelity lint"
+  assert_json_equals "$output" "spec_requirement_count" "18" "real task-fidelity lint"
+  assert_json_equals "$output" "plan_task_count" "5" "real task-fidelity lint"
+  assert_json_equals "$output" "coverage.REQ-006.0" "4" "real task-fidelity lint"
+  assert_json_equals "$output" "coverage.VERIFY-001.1" "5" "real task-fidelity lint"
+}
+
+test_real_approved_task_fidelity_packet_builds() {
+  local output
+  output="$(run_json_command "$REPO_ROOT" build-task-packet --plan "$REAL_PLAN_REL" --task 4 --format json --persist no)"
+  assert_json_equals "$output" "status" "ok" "real task-fidelity packet"
+  assert_json_equals "$output" "task_number" "4" "real task-fidelity packet"
+  assert_json_equals "$output" "persisted" "false" "real task-fidelity packet"
+  assert_contains "$output" "Execution modes must build and consume canonical task packets" "real task-fidelity packet"
+  assert_contains "$output" "## Task 4: Switch Execution And Review Consumers To Task Packets" "real task-fidelity packet"
+}
+
 test_persisted_packet_cache_prunes_old_entries() {
   reset_artifacts
   install_valid_artifacts
@@ -513,6 +535,8 @@ test_path_traversal_in_files_block_fails
 test_build_task_packet_fails_for_unknown_task
 test_build_task_packet_detects_stale_plan_revision_and_regenerates
 test_build_task_packet_detects_tampered_cache_and_regenerates
+test_real_approved_task_fidelity_artifacts_lint_clean
+test_real_approved_task_fidelity_packet_builds
 test_persisted_packet_cache_prunes_old_entries
 
 echo "Plan-contract helper regression test passed."

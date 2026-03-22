@@ -136,6 +136,9 @@ In Codex, Superpowers installs the `code-reviewer` custom agent alongside the sh
 - If lint fails, stop and return to the current execution flow; do not review stale or malformed approved artifacts.
 - Run `superpowers-plan-execution status --plan <approved-plan-path>` before dispatching the reviewer.
 - If helper status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state.
+- Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON.
+- If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.
+- If `evidence_path` is empty or unreadable, stop and return to the current execution flow instead of reviewing against missing execution evidence.
 - Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context.
 - Build completed task-packet context from the approved plan and pass that completed task-packet context plus the plan's coverage matrix into the reviewer briefing.
 - If the current review is not governed by an approved Superpowers plan, skip this execution-state gate and continue with the normal diff review.
@@ -231,6 +234,7 @@ You: [Fix progress indicators]
 ## Execution-State Gate
 
 - rejects final review if the plan has invalid execution state or required unfinished work not truthfully represented
+- treats non-null `active_task`, `blocking_task`, or `resume_task` as execution-dirty and rejects final review until execution returns to a clean state
 - consumes the execution evidence artifact for checked-off steps
 - consumes completed task-packet context and the approved plan's coverage matrix for plan-routed review
 - must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself

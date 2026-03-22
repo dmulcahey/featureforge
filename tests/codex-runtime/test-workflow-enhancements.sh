@@ -114,6 +114,8 @@ require_pattern skills/document-release/SKILL.md "rollout notes"
 require_pattern skills/document-release/SKILL.md "rollback notes"
 require_pattern skills/document-release/SKILL.md "known risks or operator-facing caveats"
 require_pattern skills/document-release/SKILL.md "monitoring or verification expectations"
+require_pattern skills/document-release/SKILL.md 'does not own `git commit`, `git merge`, or `git push`'
+require_absent_pattern skills/document-release/SKILL.md '[--write-target git-commit]'
 
 require_pattern skills/finishing-a-development-branch/SKILL.md "gh pr view --json baseRefName -q .baseRefName"
 require_pattern skills/finishing-a-development-branch/SKILL.md "gh repo view --json defaultBranchRef -q .defaultBranchRef.name"
@@ -129,6 +131,8 @@ require_pattern skills/finishing-a-development-branch/SKILL.md 'bin/superpowers-
 require_pattern skills/finishing-a-development-branch/SKILL.md 'require the `document-release` pass'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'For workflow-routed work, if the repo has release-facing docs or metadata'
 require_pattern skills/finishing-a-development-branch/SKILL.md 'For ad-hoc or non-workflow-routed work, keep `document-release` available as an optional cleanup pass'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'A review stops being fresh as soon as new repo changes land, including release-doc or metadata edits from `superpowers:document-release`'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'If `superpowers:document-release` writes repo files or changes release metadata, treat any earlier code review as stale and loop back through `superpowers:requesting-code-review` before presenting completion options.'
 require_pattern skills/finishing-a-development-branch/SKILL.md "Gate F-style"
 require_pattern skills/finishing-a-development-branch/SKILL.md "documentation has been refreshed"
 require_pattern skills/finishing-a-development-branch/SKILL.md "release notes or equivalent release-history updates are ready"

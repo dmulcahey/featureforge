@@ -31,7 +31,7 @@ Implementation sub-agent / custom agent:
     1. Implement exactly what the packet specifies
     2. Write tests (following TDD if task says to)
     3. Verify implementation works
-    4. Commit your work
+    4. Prepare the change for coordinator-owned git actions; do not create commits, merges, or pushes yourself
     5. Self-review (see below)
     6. Report back
 
