@@ -266,6 +266,8 @@ require_pattern docs/testing.md 'npm ci --prefix tests/brainstorm-server'
 require_pattern docs/testing.md 'protected-branch repo-write guarantees'
 require_pattern docs/testing.md 'The routing gate above is complementary coverage'
 require_pattern docs/testing.md 'decision resolution, explicit re-entry detection, clause/negation handling, deterministic decision paths, and invalid command input'
+require_pattern tests/codex-runtime/fixtures/workflow-artifacts/README.md 'Requirement Index and Requirement Coverage Matrix structure'
+require_pattern tests/codex-runtime/fixtures/workflow-artifacts/README.md 'canonical `## Task N:` plus parseable `**Files:**` blocks'
 require_pattern docs/README.codex.md "Only the user can initiate accelerated review, and section approval plus final approval remain human-owned even when the review uses reviewer subagents and persisted section packets."
 require_pattern docs/README.codex.md 'requires the `document-release` handoff before workflow-routed branch completion'
 require_pattern docs/README.codex.md 'conditional `qa-only` handoff, requires it when browser interaction or test-plan context warrants it'

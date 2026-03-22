@@ -4,6 +4,20 @@ For release history before `v5.1.0 (2026-03-16)`, see the upstream README: https
 
 ## v5.6.0 (2026-03-21)
 
+### Task Fidelity Contract
+
+- Added internal `bin/superpowers-plan-contract` plus `bin/superpowers-plan-contract.ps1` so execution-bound specs and approved plans can be linted for Requirement Index and Requirement Coverage Matrix fidelity before planning, execution, or review proceeds
+- Added shared canonical task-structure parsing through `bin/superpowers-plan-structure-common` and tightened `bin/superpowers-plan-execution` so malformed `## Task N:` or `**Files:**` structure fails closed earlier
+- Updated `writing-plans` and `plan-eng-review` so new or revised execution plans must carry canonical task blocks, explicit spec coverage, resolved open questions, and a plan-contract lint gate before engineering approval
+- Updated `executing-plans`, `subagent-driven-development`, `requesting-code-review`, and the implementer/reviewer prompt surfaces so execution and review consume helper-built task packets instead of controller-written semantic summaries
+- Kept `bin/superpowers-workflow` as the supported public read-only workflow inspection CLI while treating `superpowers-plan-contract` as an internal helper that enforces authoritative repo markdown rather than replacing it
+
+### Task Fidelity Testing
+
+- Added `tests/codex-runtime/test-superpowers-plan-contract.sh` plus fixture coverage for missing indexes, missing coverage, unknown IDs, ambiguity, requirement weakening, malformed task structure, malformed `Files:` blocks, path traversal rejection, stale packets, and retention pruning
+- Expanded execution, workflow sequencing, workflow enhancement, runtime-instruction, and skill-doc contract coverage so canonical task syntax, packet-backed execution/review wording, and runtime-helper documentation stay aligned
+- Added PowerShell-wrapper parity coverage for the new plan-contract helper surface
+
 ### Session Entry And Repo Safety
 
 - Added runtime-owned `bin/superpowers-session-entry` plus `bin/superpowers-session-entry.ps1` so first-turn Superpowers bootstrap resolves through a helper-backed session-entry contract before the normal `using-superpowers` stack can start
