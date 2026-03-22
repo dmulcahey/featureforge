@@ -90,3 +90,90 @@
 **Verification:**
 - `bash tests/codex-runtime/test-superpowers-workflow-status.sh` -> Failed in the intended RED place: bounded refresh lacks scan_truncated and the new structured schema fields.
 **Invalidation Reason:** N/A
+
+### Task 1 Step 7
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:01:47Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Committed the red runtime-hardening scaffold as cd3b339 so green work can build from a clean failing baseline.
+**Files:**
+- docs/superpowers/execution-evidence/2026-03-22-runtime-integration-hardening-r1-evidence.md
+- docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md
+**Verification:**
+- `git rev-parse HEAD` -> cd3b3394bf06cf5b0f1819c839c8ff8c5f4eeea2 committed the red scaffold.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:03:52Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Extracted strict approved-plan header parsing into superpowers-plan-structure-common and switched workflow-status to consume the shared contract.
+**Files:**
+- bin/superpowers-plan-structure-common
+- bin/superpowers-workflow-status
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-workflow-status.sh` -> Passed after the shared parser replacement and stricter route-time contract checks.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:05:16Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Made implementation_ready depend on the full approved-plan header contract, exact source-spec linkage, and a passing plan-contract lint result.
+**Files:**
+- bin/superpowers-workflow-status
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-workflow-status.sh` -> Passed with implementation_ready reserved for full-contract approved plans only.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:06:10Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Added conservative backward routing for malformed approved-plan headers, stale spec-plan linkage, and ambiguous candidate resolution with explicit diagnostics.
+**Files:**
+- bin/superpowers-workflow-status
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-workflow-status.sh` -> Passed with malformed plans routing to plan_draft, stale linkage routing to stale_plan, and ambiguous candidates surfacing conservative fallback diagnostics.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:07:10Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Added schema-versioned route-time JSON with contract_state, reason_codes, diagnostics, scan_truncated, and candidate counts while preserving the legacy reason string.
+**Files:**
+- bin/superpowers-workflow-status
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-workflow-status.sh` -> Passed with the new structured schema fields and legacy reason compatibility preserved.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:07:59Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Kept the PowerShell wrapper aligned with the new route-time schema and converted helper-owned path fields for Windows consumers.
+**Files:**
+- bin/superpowers-workflow-status.ps1
+**Verification:**
+- `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh` -> Passed with the workflow-status PowerShell wrapper preserving JSON behavior and path conversion.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:08:51Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Ran the route-time verification matrix: workflow-status is green, the PowerShell wrapper parity test is green, and the public workflow wrapper still reports the implementation handoff for a full-contract approved plan.
+**Files:**
+- tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
+- tests/codex-runtime/test-superpowers-workflow-status.sh
+**Verification:**
+- `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh` -> Passed, and manual wrapper next verification reported the approved-plan execution handoff for a full-contract fixture.
+**Invalidation Reason:** N/A

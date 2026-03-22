@@ -305,14 +305,39 @@ run_next_implementation_ready() {
 **Workflow State:** CEO Approved
 **Spec Revision:** 2
 **Last Reviewed By:** plan-ceo-review
+
+## Requirement Index
+
+- [REQ-001][behavior] Ready workflow fixtures preserve implementation handoff through the public wrapper.
+- [VERIFY-001][verification] The public wrapper continues to expose the approved plan handoff when the plan contract is valid.
 EOF
   write_file "$repo/docs/superpowers/plans/2026-03-18-ready-plan.md" <<'EOF'
 # Ready Plan
 
 **Workflow State:** Engineering Approved
+**Plan Revision:** 1
+**Execution Mode:** none
 **Source Spec:** `docs/superpowers/specs/2026-03-18-ready-spec.md`
 **Source Spec Revision:** 2
 **Last Reviewed By:** plan-eng-review
+
+## Requirement Coverage Matrix
+
+- REQ-001 -> Task 1
+- VERIFY-001 -> Task 1
+
+## Task 1: Preserve wrapper handoff
+
+**Spec Coverage:** REQ-001, VERIFY-001
+**Task Outcome:** The public wrapper keeps exposing the implementation handoff for a valid approved plan.
+**Plan Constraints:**
+- Keep the fixture minimal.
+**Open Questions:** none
+
+**Files:**
+- Test: `bash tests/codex-runtime/test-superpowers-workflow.sh`
+
+- [ ] **Step 1: Report the implementation handoff**
 EOF
 
   local output

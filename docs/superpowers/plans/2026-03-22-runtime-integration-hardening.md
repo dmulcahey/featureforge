@@ -281,9 +281,7 @@ Helpers enforce and inspect.
 - [x] **Step 4: Add QA-result and release-readiness freshness fixtures plus wrapper expectations for `phase`, `doctor`, `handoff`, and gate surfaces**
 - [x] **Step 5: Add red assertions to workflow, skill-doc, and session-entry tests for the new helper-owned wording and compatibility-shim behavior**
 - [x] **Step 6: Run the targeted tests and confirm failures point at missing hardening rather than unrelated repo state**
-- [ ] **Step 7: Commit the red contract scaffold**
-
-  **Execution Note:** Active - Commit the red contract scaffold
+- [x] **Step 7: Commit the red contract scaffold**
 ## Task 2: Harden `superpowers-workflow-status` Around The Full Approved-Plan Contract
 
 **Spec Coverage:** REQ-001, REQ-002, REQ-003, REQ-004, REQ-020, REQ-021, VERIFY-001, NONGOAL-001
@@ -305,13 +303,15 @@ Helpers enforce and inspect.
 - Test: `bash tests/codex-runtime/test-superpowers-workflow.sh`
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
-- [ ] **Step 1: Extract or extend canonical approved-plan header parsing so route-time and deeper helpers can share one effective contract**
-- [ ] **Step 2: Make route-time readiness require full header validation, approved spec path and revision matching, and contract-valid execution-bound plans**
-- [ ] **Step 3: Add conservative backward routing for invalid headers, invalid contract state, stale spec-plan linkage, and ambiguous artifact resolution**
-- [ ] **Step 4: Add schema-versioned structured diagnostics, bounded-scan visibility, and candidate counts while preserving legacy `reason`**
-- [ ] **Step 5: Mirror the behavior and output schema in `bin/superpowers-workflow-status.ps1`**
-- [ ] **Step 6: Run the workflow-status, wrapper, and parity tests until the new route-time contract is green**
+- [x] **Step 1: Extract or extend canonical approved-plan header parsing so route-time and deeper helpers can share one effective contract**
+- [x] **Step 2: Make route-time readiness require full header validation, approved spec path and revision matching, and contract-valid execution-bound plans**
+- [x] **Step 3: Add conservative backward routing for invalid headers, invalid contract state, stale spec-plan linkage, and ambiguous artifact resolution**
+- [x] **Step 4: Add schema-versioned structured diagnostics, bounded-scan visibility, and candidate counts while preserving legacy `reason`**
+- [x] **Step 5: Mirror the behavior and output schema in `bin/superpowers-workflow-status.ps1`**
+- [x] **Step 6: Run the workflow-status, wrapper, and parity tests until the new route-time contract is green**
 - [ ] **Step 7: Commit the route-time hardening slice**
+
+  **Execution Note:** Active - Commit the route-time hardening slice
 ## Task 3: Promote `superpowers-plan-contract` Into Approval And Handoff Law
 
 **Spec Coverage:** REQ-002, REQ-005, REQ-006, REQ-007, REQ-014, REQ-020, REQ-021, VERIFY-001, NONGOAL-001

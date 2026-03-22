@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/superpowers-runtime-common.sh
 . "$SCRIPT_DIR/superpowers-runtime-common.sh"
+# shellcheck source=bin/superpowers-plan-structure-common
+. "$SCRIPT_DIR/superpowers-plan-structure-common"
 STATE_DIR="${SUPERPOWERS_STATE_DIR:-$HOME/.superpowers}"
 GIT_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 REPO_CONTEXT_AVAILABLE=1
@@ -83,6 +85,13 @@ RESOLVED_PLAN_PATH=""
 STATUS_CODE="needs_brainstorming"
 NEXT_SKILL="superpowers:brainstorming"
 STATUS_NOTE=""
+CONTRACT_STATE="unknown"
+SCHEMA_VERSION=2
+SCAN_TRUNCATED="false"
+SPEC_CANDIDATE_COUNT=0
+PLAN_CANDIDATE_COUNT=0
+STATUS_REASON_CODES=()
+STATUS_DIAGNOSTICS=()
 
 usage() {
   echo "Usage: superpowers-workflow-status {status|resolve|expect|sync} ..."
@@ -108,10 +117,17 @@ emit_json() {
   local plan_path="$4"
   local reason="${5:-}"
   printf '{'
+  printf '"schema_version":%s,' "$SCHEMA_VERSION"
   printf '"status":"%s",' "$(json_escape "$status_code")"
   printf '"next_skill":"%s",' "$(json_escape "$next_skill")"
   printf '"spec_path":"%s",' "$(json_escape "$spec_path")"
   printf '"plan_path":"%s",' "$(json_escape "$plan_path")"
+  printf '"contract_state":"%s",' "$(json_escape "$CONTRACT_STATE")"
+  printf '"reason_codes":%s,' "$(emit_reason_codes_json "$reason")"
+  printf '"diagnostics":%s,' "$(emit_diagnostics_json)"
+  printf '"scan_truncated":%s,' "$SCAN_TRUNCATED"
+  printf '"spec_candidate_count":%s,' "$SPEC_CANDIDATE_COUNT"
+  printf '"plan_candidate_count":%s,' "$PLAN_CANDIDATE_COUNT"
   printf '"manifest_path":"%s",' "$(json_escape "$MANIFEST_PATH")"
   printf '"root":"%s"' "$(json_escape "$REPO_ROOT")"
   if [ -n "$reason" ]; then
@@ -130,10 +146,17 @@ emit_resolve_json() {
   local source_path="${6:-}"
   printf '{'
   printf '"outcome":"resolved",'
+  printf '"schema_version":%s,' "$SCHEMA_VERSION"
   printf '"status":"%s",' "$(json_escape "$status_code")"
   printf '"next_skill":"%s",' "$(json_escape "$next_skill")"
   printf '"spec_path":"%s",' "$(json_escape "$spec_path")"
   printf '"plan_path":"%s",' "$(json_escape "$plan_path")"
+  printf '"contract_state":"%s",' "$(json_escape "$CONTRACT_STATE")"
+  printf '"reason_codes":%s,' "$(emit_reason_codes_json "$reason")"
+  printf '"diagnostics":%s,' "$(emit_diagnostics_json)"
+  printf '"scan_truncated":%s,' "$SCAN_TRUNCATED"
+  printf '"spec_candidate_count":%s,' "$SPEC_CANDIDATE_COUNT"
+  printf '"plan_candidate_count":%s,' "$PLAN_CANDIDATE_COUNT"
   printf '"manifest_path":"%s",' "$(json_escape "$MANIFEST_PATH")"
   printf '"manifest_source_path":"%s",' "$(json_escape "$source_path")"
   printf '"root":"%s"' "$(json_escape "$REPO_ROOT")"
@@ -333,14 +356,12 @@ parse_plan_headers() {
   plan_reviewer=""
   [ -f "$path" ] || return 1
 
-  plan_state="$(sed -nE 's/^\*\*Workflow State:\*\* (Draft|Engineering Approved)$/\1/p' "$path" | head -n1)"
-  plan_source_spec="$(sed -nE 's/^\*\*Source Spec:\*\* (.+)$/\1/p' "$path" | head -n1)"
-  plan_source_spec="${plan_source_spec#\`}"
-  plan_source_spec="${plan_source_spec%\`}"
-  plan_source_revision="$(sed -nE 's/^\*\*Source Spec Revision:\*\* ([0-9]+)$/\1/p' "$path" | head -n1)"
-  plan_reviewer="$(sed -nE 's/^\*\*Last Reviewed By:\*\* (writing-plans|plan-eng-review)$/\1/p' "$path" | head -n1)"
-
-  [ -n "$plan_state" ] && [ -n "$plan_source_spec" ] && [ -n "$plan_source_revision" ] && [ -n "$plan_reviewer" ]
+  plan_structure_parse_plan_headers "$path" || return 1
+  plan_state="$PLAN_STRUCTURE_PLAN_WORKFLOW_STATE"
+  plan_source_spec="$PLAN_STRUCTURE_PLAN_SOURCE_SPEC"
+  plan_source_revision="$PLAN_STRUCTURE_PLAN_SOURCE_SPEC_REVISION"
+  plan_reviewer="$PLAN_STRUCTURE_PLAN_LAST_REVIEWED_BY"
+  return 0
 }
 
 list_newest_candidates() {
@@ -356,16 +377,6 @@ rel_from_root() {
     "$REPO_ROOT"/*) printf '%s\n' "${abs#"$REPO_ROOT"/}" ;;
     *) return 1 ;;
   esac
-}
-
-append_status_note() {
-  local note="$1"
-  [ -n "$note" ] || return 0
-  if [ -z "$STATUS_NOTE" ]; then
-    STATUS_NOTE="$note"
-  else
-    STATUS_NOTE="${STATUS_NOTE},$note"
-  fi
 }
 
 SPEC_FROM_MANIFEST=0
@@ -388,8 +399,197 @@ reset_resolution_flags() {
   PLAN_AMBIGUOUS=0
 }
 
+reset_status_diagnostics() {
+  CONTRACT_STATE="unknown"
+  SCHEMA_VERSION=2
+  SCAN_TRUNCATED="false"
+  SPEC_CANDIDATE_COUNT=0
+  PLAN_CANDIDATE_COUNT=0
+  STATUS_NOTE=""
+  STATUS_REASON_CODES=()
+  STATUS_DIAGNOSTICS=()
+}
+
+append_status_note() {
+  local note="$1"
+  [ -n "$note" ] || return 0
+  if [ -z "$STATUS_NOTE" ]; then
+    STATUS_NOTE="$note"
+  else
+    STATUS_NOTE="${STATUS_NOTE},$note"
+  fi
+}
+
+append_reason_code() {
+  local code="$1"
+  local existing
+  local has_reason_codes=0
+  [ -n "$code" ] || return 0
+  if declare -p STATUS_REASON_CODES >/dev/null 2>&1; then
+    has_reason_codes=1
+  fi
+  if [ "$has_reason_codes" -eq 1 ] && [ -n "${STATUS_REASON_CODES[*]-}" ]; then
+    for existing in "${STATUS_REASON_CODES[@]}"; do
+      [ "$existing" = "$code" ] && return 0
+    done
+  else
+    STATUS_REASON_CODES=()
+  fi
+  STATUS_REASON_CODES+=("$code")
+}
+
+emit_reason_codes_json() {
+  local fallback_reason="${1:-}"
+  local i=0
+  local split_reason
+  local -a codes=()
+  local has_reason_codes=0
+
+  if declare -p STATUS_REASON_CODES >/dev/null 2>&1; then
+    has_reason_codes=1
+  fi
+
+  if [ "$has_reason_codes" -eq 1 ] && [ -n "${STATUS_REASON_CODES[*]-}" ]; then
+    codes=("${STATUS_REASON_CODES[@]}")
+  elif [ -n "$fallback_reason" ]; then
+    OLD_IFS="$IFS"
+    IFS=','
+    for split_reason in $fallback_reason; do
+      [ -n "$split_reason" ] && codes+=("$split_reason")
+    done
+    IFS="$OLD_IFS"
+  fi
+
+  printf '['
+  for ((i=0; i<${#codes[@]}; i++)); do
+    [ "$i" -gt 0 ] && printf ','
+    printf '"%s"' "$(json_escape "${codes[$i]}")"
+  done
+  printf ']'
+}
+
+append_diagnostic() {
+  local code="$1"
+  local severity="$2"
+  local artifact="$3"
+  local message="$4"
+  local remediation="${5:-}"
+  local diagnostic
+
+  diagnostic='{"code":"'"$(json_escape "$code")"'","severity":"'"$(json_escape "$severity")"'","artifact":"'"$(json_escape "$artifact")"'","message":"'"$(json_escape "$message")"'","remediation":"'"$(json_escape "$remediation")"'"}'
+  if ! declare -p STATUS_DIAGNOSTICS >/dev/null 2>&1; then
+    STATUS_DIAGNOSTICS=()
+  fi
+  STATUS_DIAGNOSTICS+=("$diagnostic")
+}
+
+emit_diagnostics_json() {
+  local i
+  local count=0
+
+  if declare -p STATUS_DIAGNOSTICS >/dev/null 2>&1; then
+    if [ -n "${STATUS_DIAGNOSTICS[*]-}" ]; then
+      count="${#STATUS_DIAGNOSTICS[@]}"
+    fi
+  fi
+
+  printf '['
+  for ((i=0; i<count; i++)); do
+    [ "$i" -gt 0 ] && printf ','
+    printf '%s' "${STATUS_DIAGNOSTICS[$i]}"
+  done
+  printf ']'
+}
+
+count_candidates_in_dir() {
+  local dir="$1"
+  local count=0
+  local path
+
+  [ -d "$dir" ] || {
+    printf '0\n'
+    return 0
+  }
+
+  shopt -s nullglob
+  for path in "$dir"/*.md; do
+    count=$((count + 1))
+  done
+  shopt -u nullglob
+
+  printf '%s\n' "$count"
+}
+
+camel_to_snake() {
+  printf '%s' "$1" | sed -E 's/([a-z0-9])([A-Z])/\1_\2/g' | tr 'A-Z' 'a-z'
+}
+
+json_field_string() {
+  local json="$1"
+  local key="$2"
+  printf '%s\n' "$json" | sed -nE 's/.*"'"$key"'":"([^"]*)".*/\1/p' | head -n1
+}
+
+record_contract_header_failure() {
+  local artifact="$1"
+  local reason_code="$2"
+  local message="$3"
+
+  CONTRACT_STATE="invalid"
+  append_status_note "malformed_plan_headers"
+  append_reason_code "$reason_code"
+  append_diagnostic "$reason_code" "error" "$artifact" "$message" "Update the plan through the planning workflow."
+}
+
+record_invalid_contract_result() {
+  local artifact="$1"
+  local error_class="$2"
+  local message="$3"
+  local reason_code
+
+  reason_code="$(camel_to_snake "$error_class")"
+  [ -n "$reason_code" ] || reason_code="invalid_plan_contract"
+  CONTRACT_STATE="invalid"
+  append_status_note "$reason_code"
+  append_reason_code "$reason_code"
+  append_diagnostic "$reason_code" "error" "$artifact" "$message" "Fix the approved plan contract before execution handoff."
+}
+
+record_valid_contract_result() {
+  CONTRACT_STATE="valid"
+}
+
+run_plan_contract_lint() {
+  local spec_path="$1"
+  local plan_path="$2"
+  local output
+  local status=0
+
+  CONTRACT_LINT_JSON=""
+  CONTRACT_LINT_STATUS=""
+  CONTRACT_LINT_ERROR_CLASS=""
+  CONTRACT_LINT_MESSAGE=""
+
+  output="$(
+    cd "$REPO_ROOT" &&
+      "$SCRIPT_DIR/superpowers-plan-contract" lint --spec "$spec_path" --plan "$plan_path"
+  )" || status=$?
+
+  CONTRACT_LINT_JSON="$output"
+  CONTRACT_LINT_STATUS="$(json_field_string "$output" "status")"
+  CONTRACT_LINT_ERROR_CLASS="$(json_field_string "$output" "error_class")"
+  CONTRACT_LINT_MESSAGE="$(json_field_string "$output" "message")"
+
+  [ "$status" -eq 0 ] && [ "$CONTRACT_LINT_STATUS" = "ok" ]
+}
+
 resolve_preferred_spec() {
-  local normalized abs local_rel first_valid="" valid_count=0 first_any=""
+  local normalized abs local_rel first_any="" first_any_valid=0 valid_count=0
+
+  SPEC_CANDIDATE_COUNT="$(count_candidates_in_dir "$REPO_ROOT/docs/superpowers/specs")"
+  if [ "$SPEC_CANDIDATE_COUNT" -gt "$FALLBACK_LIMIT" ]; then
+    SCAN_TRUNCATED="true"
+  fi
 
   RESOLVED_SPEC_PATH=""
 
@@ -427,40 +627,40 @@ resolve_preferred_spec() {
     fi
     if [ -z "$first_any" ]; then
       first_any="$local_rel"
+      if parse_spec_headers "$abs"; then
+        first_any_valid=1
+        valid_count=1
+      fi
+      continue
     fi
     if parse_spec_headers "$abs"; then
       valid_count=$((valid_count + 1))
-      if [ -z "$first_valid" ]; then
-        first_valid="$local_rel"
-      fi
     fi
   done < <(list_newest_candidates "$REPO_ROOT/docs/superpowers/specs")
 
-  if [ "$valid_count" -gt 1 ]; then
-    SPEC_AMBIGUOUS=1
-    return 0
-  fi
-
-  if [ "$valid_count" -eq 1 ] && [ -n "$first_valid" ]; then
-    RESOLVED_SPEC_PATH="$first_valid"
-    MANIFEST_SPEC_PATH="$first_valid"
-    if parse_spec_headers "$REPO_ROOT/$first_valid"; then
-      SPEC_VALID=1
-    fi
-    return 0
-  fi
-
   if [ -n "$first_any" ]; then
     RESOLVED_SPEC_PATH="$first_any"
-    if parse_spec_headers "$REPO_ROOT/$first_any"; then
+    MANIFEST_SPEC_PATH="$first_any"
+    if [ "$first_any_valid" -eq 1 ]; then
+      parse_spec_headers "$REPO_ROOT/$first_any" || true
       SPEC_VALID=1
+      if [ "$valid_count" -gt 1 ]; then
+        SPEC_AMBIGUOUS=1
+      fi
     fi
+    return 0
   fi
+
   return 0
 }
 
 resolve_preferred_plan() {
-  local normalized abs local_rel first_valid="" valid_count=0 first_any=""
+  local normalized abs local_rel first_any="" first_any_valid=0 valid_count=0
+
+  PLAN_CANDIDATE_COUNT="$(count_candidates_in_dir "$REPO_ROOT/docs/superpowers/plans")"
+  if [ "$PLAN_CANDIDATE_COUNT" -gt "$FALLBACK_LIMIT" ]; then
+    SCAN_TRUNCATED="true"
+  fi
 
   RESOLVED_PLAN_PATH=""
 
@@ -498,44 +698,39 @@ resolve_preferred_plan() {
     fi
     if [ -z "$first_any" ]; then
       first_any="$local_rel"
+      if parse_plan_headers "$abs"; then
+        first_any_valid=1
+        valid_count=1
+      fi
+      continue
     fi
     if parse_plan_headers "$abs"; then
       valid_count=$((valid_count + 1))
-      if [ -z "$first_valid" ]; then
-        first_valid="$local_rel"
-      fi
     fi
   done < <(list_newest_candidates "$REPO_ROOT/docs/superpowers/plans")
 
-  if [ "$valid_count" -gt 1 ]; then
-    PLAN_AMBIGUOUS=1
-    return 0
-  fi
-
-  if [ "$valid_count" -eq 1 ] && [ -n "$first_valid" ]; then
-    RESOLVED_PLAN_PATH="$first_valid"
-    MANIFEST_PLAN_PATH="$first_valid"
-    if parse_plan_headers "$REPO_ROOT/$first_valid"; then
-      PLAN_VALID=1
-    fi
-    return 0
-  fi
-
   if [ -n "$first_any" ]; then
     RESOLVED_PLAN_PATH="$first_any"
-    if parse_plan_headers "$REPO_ROOT/$first_any"; then
+    MANIFEST_PLAN_PATH="$first_any"
+    if [ "$first_any_valid" -eq 1 ]; then
+      parse_plan_headers "$REPO_ROOT/$first_any" || true
       PLAN_VALID=1
+      if [ "$valid_count" -gt 1 ]; then
+        PLAN_AMBIGUOUS=1
+      fi
     fi
+    return 0
   fi
+
   return 0
 }
 
 derive_status() {
   local spec_abs="" plan_abs="" normalized_source=""
   reset_resolution_flags
+  reset_status_diagnostics
   STATUS_CODE="needs_brainstorming"
   NEXT_SKILL="superpowers:brainstorming"
-  STATUS_NOTE=""
 
   resolve_preferred_spec
   resolve_preferred_plan
@@ -544,6 +739,8 @@ derive_status() {
     STATUS_CODE="spec_draft"
     NEXT_SKILL="superpowers:plan-ceo-review"
     append_status_note "fallback_ambiguity_spec"
+    append_reason_code "ambiguous_spec_candidates"
+    append_diagnostic "ambiguous_spec_candidates" "error" "$RESOLVED_SPEC_PATH" "More than one current spec candidate matches the fallback scan window." "Reduce spec ambiguity before proceeding."
     return 0
   fi
 
@@ -564,6 +761,8 @@ derive_status() {
     STATUS_CODE="spec_draft"
     NEXT_SKILL="superpowers:plan-ceo-review"
     append_status_note "malformed_spec_headers"
+    append_reason_code "malformed_spec_headers"
+    append_diagnostic "malformed_spec_headers" "error" "$RESOLVED_SPEC_PATH" "The current spec headers are missing or malformed." "Update the spec through the review workflow."
     return 0
   fi
 
@@ -581,6 +780,8 @@ derive_status() {
     STATUS_CODE="spec_approved_needs_plan"
     NEXT_SKILL="superpowers:writing-plans"
     append_status_note "fallback_ambiguity_plan"
+    append_reason_code "ambiguous_plan_candidates"
+    append_diagnostic "ambiguous_plan_candidates" "error" "$RESOLVED_PLAN_PATH" "More than one current plan candidate matches the fallback scan window." "Reduce plan ambiguity before proceeding."
     return 0
   fi
 
@@ -600,7 +801,7 @@ derive_status() {
   if [ "$PLAN_VALID" -ne 1 ] && ! parse_plan_headers "$plan_abs"; then
     STATUS_CODE="plan_draft"
     NEXT_SKILL="superpowers:plan-eng-review"
-    append_status_note "malformed_plan_headers"
+    record_contract_header_failure "$RESOLVED_PLAN_PATH" "${PLAN_STRUCTURE_HEADER_REASON_CODE:-malformed_plan_headers}" "${PLAN_STRUCTURE_HEADER_ERROR_MESSAGE:-Plan headers are malformed.}"
     return 0
   fi
 
@@ -611,6 +812,8 @@ derive_status() {
   if [ "$plan_state" = "Draft" ]; then
     STATUS_CODE="plan_draft"
     NEXT_SKILL="superpowers:plan-eng-review"
+    append_status_note "plan_draft"
+    append_reason_code "plan_draft"
     return 0
   fi
 
@@ -618,12 +821,26 @@ derive_status() {
   if [ -z "$normalized_source" ] || [ "$normalized_source" != "$RESOLVED_SPEC_PATH" ] || [ "$plan_source_revision" != "$spec_revision" ]; then
     STATUS_CODE="stale_plan"
     NEXT_SKILL="superpowers:writing-plans"
+    CONTRACT_STATE="stale"
+    append_status_note "stale_plan"
+    append_reason_code "stale_spec_plan_linkage"
+    append_diagnostic "stale_spec_plan_linkage" "error" "$RESOLVED_PLAN_PATH" "The approved plan does not match the latest approved spec path and revision." "Rewrite the plan from the latest approved spec."
     return 0
   fi
+
+  if ! run_plan_contract_lint "$RESOLVED_SPEC_PATH" "$RESOLVED_PLAN_PATH"; then
+    STATUS_CODE="plan_draft"
+    NEXT_SKILL="superpowers:plan-eng-review"
+    record_invalid_contract_result "$RESOLVED_PLAN_PATH" "${CONTRACT_LINT_ERROR_CLASS:-InvalidPlanContract}" "${CONTRACT_LINT_MESSAGE:-Plan contract analysis failed.}"
+    return 0
+  fi
+
+  record_valid_contract_result
 
   STATUS_CODE="implementation_ready"
   NEXT_SKILL=""
   append_status_note "implementation_ready"
+  append_reason_code "implementation_ready"
   return 0
 }
 
@@ -820,18 +1037,23 @@ apply_resolution_diagnostics() {
     STATUS_CODE="needs_brainstorming"
     NEXT_SKILL="superpowers:brainstorming"
     STATUS_NOTE="corrupt_manifest_recovered"
+    append_reason_code "corrupt_manifest_recovered"
   elif [ "$mode" = "read_only" ] && [ "$MANIFEST_CORRUPT" -eq 1 ]; then
     append_status_note "corrupt_manifest_present"
+    append_reason_code "corrupt_manifest_present"
   fi
 
   if [ "$MANIFEST_IDENTITY_MISMATCH" -eq 1 ]; then
     append_status_note "$MANIFEST_IDENTITY_REASON"
+    append_reason_code "$MANIFEST_IDENTITY_REASON"
   fi
   if [ "$MANIFEST_RECOVERED" -eq 1 ]; then
     append_status_note "repo_slug_recovered"
+    append_reason_code "repo_slug_recovered"
   fi
   if [ "$MANIFEST_RECOVERY_AMBIGUOUS" -eq 1 ]; then
     append_status_note "repo_slug_recovery_ambiguous"
+    append_reason_code "repo_slug_recovery_ambiguous"
   fi
 }
 

@@ -727,6 +727,11 @@ run_status_summary_matches_json() {
 **Workflow State:** CEO Approved
 **Spec Revision:** 2
 **Last Reviewed By:** plan-ceo-review
+
+## Requirement Index
+
+- [REQ-001][behavior] Summary fixtures preserve implementation-ready routing when the approved plan stays contract-valid.
+- [VERIFY-001][verification] Route-time summary output stays aligned with JSON output for valid approved artifacts.
 EOF
   write_file "$plan_path" <<'EOF'
 # Summary Plan
@@ -1314,6 +1319,11 @@ run_implementation_ready() {
 **Workflow State:** CEO Approved
 **Spec Revision:** 3
 **Last Reviewed By:** plan-ceo-review
+
+## Requirement Index
+
+- [REQ-001][behavior] Fully valid approved plans still route to implementation handoff.
+- [VERIFY-001][verification] Implementation-ready fixtures preserve manifest parity and route-time readiness.
 EOF
   write_file "$plan_path" <<'EOF'
 # Implementation Ready Plan
