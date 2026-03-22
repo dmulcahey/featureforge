@@ -288,6 +288,75 @@ EOF
   fi
 }
 
+run_use_no_skill_request_does_not_trigger_reentry() {
+  local message_file
+  local decision_path
+  local output
+
+  message_file="$(write_message_file use-no-skill-request-message.txt <<'EOF'
+Please use no brainstorming here.
+EOF
+)"
+  decision_path="$(decision_path_for_key "use-no-skill-request")"
+  mkdir -p "$(dirname "$decision_path")"
+  printf 'bypassed\n' > "$decision_path"
+
+  output="$(run_json_command "use no skill request" resolve --message-file "$message_file" --session-key "use-no-skill-request")"
+  assert_json_equals "$output" "outcome" "bypassed" "use no skill request"
+  assert_json_equals "$output" "decision_source" "existing_bypassed" "use no skill request"
+  assert_json_equals "$output" "persisted" "true" "use no skill request"
+  if [[ "$(cat "$decision_path")" != "bypassed" ]]; then
+    echo "Expected use-no skill request to keep bypassed decision"
+    exit 1
+  fi
+}
+
+run_use_no_superpowers_does_not_trigger_reentry() {
+  local message_file
+  local decision_path
+  local output
+
+  message_file="$(write_message_file use-no-superpowers-message.txt <<'EOF'
+Please use no superpowers here.
+EOF
+)"
+  decision_path="$(decision_path_for_key "use-no-superpowers")"
+  mkdir -p "$(dirname "$decision_path")"
+  printf 'bypassed\n' > "$decision_path"
+
+  output="$(run_json_command "use no superpowers" resolve --message-file "$message_file" --session-key "use-no-superpowers")"
+  assert_json_equals "$output" "outcome" "bypassed" "use no superpowers"
+  assert_json_equals "$output" "decision_source" "existing_bypassed" "use no superpowers"
+  assert_json_equals "$output" "persisted" "true" "use no superpowers"
+  if [[ "$(cat "$decision_path")" != "bypassed" ]]; then
+    echo "Expected use-no superpowers request to keep bypassed decision"
+    exit 1
+  fi
+}
+
+run_never_use_skill_request_does_not_trigger_reentry() {
+  local message_file
+  local decision_path
+  local output
+
+  message_file="$(write_message_file never-use-skill-request-message.txt <<'EOF'
+Please never use brainstorming here.
+EOF
+)"
+  decision_path="$(decision_path_for_key "never-use-skill-request")"
+  mkdir -p "$(dirname "$decision_path")"
+  printf 'bypassed\n' > "$decision_path"
+
+  output="$(run_json_command "never use skill request" resolve --message-file "$message_file" --session-key "never-use-skill-request")"
+  assert_json_equals "$output" "outcome" "bypassed" "never use skill request"
+  assert_json_equals "$output" "decision_source" "existing_bypassed" "never use skill request"
+  assert_json_equals "$output" "persisted" "true" "never use skill request"
+  if [[ "$(cat "$decision_path")" != "bypassed" ]]; then
+    echo "Expected never-use skill request to keep bypassed decision"
+    exit 1
+  fi
+}
+
 run_explicit_reentry_write_failure_is_unpersisted() {
   local message_file
   local decision_path
@@ -362,6 +431,9 @@ run_malformed_decision_needs_user_choice
 run_explicit_reentry_rewrites_bypassed_decision
 run_natural_language_skill_request_triggers_reentry
 run_negated_skill_request_does_not_trigger_reentry
+run_use_no_skill_request_does_not_trigger_reentry
+run_use_no_superpowers_does_not_trigger_reentry
+run_never_use_skill_request_does_not_trigger_reentry
 run_explicit_reentry_write_failure_is_unpersisted
 run_record_persists_enabled_choice
 run_record_rejects_invalid_decision

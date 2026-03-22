@@ -135,7 +135,7 @@ message_requests_reentry() {
 
   token_is_negator() {
     case "${1:-}" in
-      dont|not|without|avoid|avoiding|skip|skipping|except|excluding) return 0 ;;
+      dont|never|no|not|stop|stopping|without|avoid|avoiding|skip|skipping|except|excluding) return 0 ;;
       *) return 1 ;;
     esac
   }
