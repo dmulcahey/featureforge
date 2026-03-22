@@ -3,10 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STATUS_BIN="$SCRIPT_DIR/superpowers-workflow-status"
+PLAN_CONTRACT_BIN="$SCRIPT_DIR/superpowers-plan-contract"
+PLAN_EXECUTION_BIN="$SCRIPT_DIR/superpowers-plan-execution"
 
 # Public CLI data flow:
-# user command -> superpowers-workflow -> workflow-status resolve -> human renderer
-# status/expect/sync mutations stay inside the internal helper; this surface is read-only.
+# user command -> superpowers-workflow -> read-only helper composition -> human or JSON output
+# status/expect/sync mutations stay inside internal helpers; this surface remains read-only.
 
 json_field() {
   local json="$1"
@@ -14,10 +16,31 @@ json_field() {
   printf '%s\n' "$json" | sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p" | head -n1
 }
 
+json_bool_field() {
+  local json="$1"
+  local key="$2"
+  printf '%s\n' "$json" | sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*(true|false|null).*/\\1/p" | head -n1
+}
+
+json_number_field() {
+  local json="$1"
+  local key="$2"
+  printf '%s\n' "$json" | sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*([0-9]+).*/\\1/p" | head -n1
+}
+
 json_has_key() {
   local json="$1"
   local key="$2"
   printf '%s\n' "$json" | grep -q "\"$key\"[[:space:]]*:"
+}
+
+json_escape() {
+  local value="${1:-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  value="${value//$'\r'/\\r}"
+  printf '%s' "$value"
 }
 
 usage() {
@@ -27,6 +50,12 @@ Usage:
   superpowers-workflow next [--debug]
   superpowers-workflow artifacts [--debug]
   superpowers-workflow explain [--debug]
+  superpowers-workflow phase [--json] [--debug]
+  superpowers-workflow doctor [--json] [--debug]
+  superpowers-workflow handoff [--json] [--debug]
+  superpowers-workflow preflight --plan <approved-plan-path> [--json] [--debug]
+  superpowers-workflow gate review --plan <approved-plan-path> [--json] [--debug]
+  superpowers-workflow gate finish --plan <approved-plan-path> [--json] [--debug]
   superpowers-workflow help
 EOF
 }
@@ -41,6 +70,136 @@ human_status() {
     implementation_ready) printf 'Ready for implementation handoff' ;;
     *) printf 'Workflow state unresolved' ;;
   esac
+}
+
+phase_id_for_status() {
+  case "$1" in
+    needs_brainstorming) printf 'brainstorming' ;;
+    spec_draft) printf 'spec_review' ;;
+    spec_approved_needs_plan) printf 'plan_writing' ;;
+    plan_draft) printf 'plan_review' ;;
+    stale_plan) printf 'plan_update' ;;
+    implementation_ready) printf 'implementation_handoff' ;;
+    *) printf 'workflow_unresolved' ;;
+  esac
+}
+
+phase_label() {
+  case "$1" in
+    needs_brainstorming) printf 'Brainstorming' ;;
+    spec_draft) printf 'Spec review' ;;
+    spec_approved_needs_plan) printf 'Plan writing' ;;
+    plan_draft) printf 'Engineering plan review' ;;
+    stale_plan) printf 'Plan update' ;;
+    implementation_ready) printf 'Implementation handoff' ;;
+    *) printf 'Workflow unresolved' ;;
+  esac
+}
+
+extract_header_value() {
+  local path="$1"
+  local key="$2"
+  [ -f "$path" ] || return 0
+  sed -nE "s/^\\*\\*$key:\\*\\*[[:space:]]*(.*)$/\\1/p" "$path" | head -n1 | sed -E 's/^`//; s/`$//'
+}
+
+public_status_for_resolve() {
+  local resolve_json="$1"
+  local status reason root spec_path plan_path plan_state plan_source_spec plan_source_spec_revision spec_revision
+  status="$(json_field "$resolve_json" "status")"
+  reason="$(json_field "$resolve_json" "reason")"
+  root="$(json_field "$resolve_json" "root")"
+  spec_path="$(json_field "$resolve_json" "spec_path")"
+  plan_path="$(json_field "$resolve_json" "plan_path")"
+
+  if [ "$status" != "plan_draft" ] || ! contains_reason "$reason" "malformed_plan_headers"; then
+    printf '%s' "$status"
+    return
+  fi
+
+  if [ -z "$root" ] || [ -z "$spec_path" ] || [ -z "$plan_path" ]; then
+    printf '%s' "$status"
+    return
+  fi
+  if [ ! -f "$root/$spec_path" ] || [ ! -f "$root/$plan_path" ]; then
+    printf '%s' "$status"
+    return
+  fi
+
+  plan_state="$(extract_header_value "$root/$plan_path" "Workflow State")"
+  plan_source_spec="$(extract_header_value "$root/$plan_path" "Source Spec")"
+  plan_source_spec_revision="$(extract_header_value "$root/$plan_path" "Source Spec Revision")"
+  spec_revision="$(extract_header_value "$root/$spec_path" "Spec Revision")"
+
+  if [ "$plan_state" = "Engineering Approved" ] && [ -n "$plan_source_spec" ] && [ -n "$spec_revision" ]; then
+    if [ "$plan_source_spec" != "$spec_path" ]; then
+      printf 'stale_plan'
+      return
+    fi
+    if [ -n "$plan_source_spec_revision" ] && [ "$plan_source_spec_revision" != "$spec_revision" ]; then
+      printf 'stale_plan'
+      return
+    fi
+  fi
+
+  printf '%s' "$status"
+}
+
+public_next_skill_for_status() {
+  local display_status="$1"
+  local resolve_json="$2"
+  local next_skill public_reason
+  next_skill="$(json_field "$resolve_json" "next_skill")"
+  public_reason="$(public_reason_for_resolve "$resolve_json")"
+  case "$display_status" in
+    stale_plan) printf 'superpowers:writing-plans' ;;
+    plan_draft)
+      if contains_reason "$public_reason" "fallback_ambiguity_plan"; then
+        printf 'superpowers:writing-plans'
+      else
+        printf '%s' "$next_skill"
+      fi
+      ;;
+    *) printf '%s' "$next_skill" ;;
+  esac
+}
+
+public_reason_for_resolve() {
+  local resolve_json="$1"
+  local raw_reason status plan_candidates spec_candidates
+  raw_reason="$(json_field "$resolve_json" "reason")"
+  status="$(json_field "$resolve_json" "status")"
+  plan_candidates="$(json_number_field "$resolve_json" "plan_candidate_count")"
+  spec_candidates="$(json_number_field "$resolve_json" "spec_candidate_count")"
+
+  if [ "$status" = "plan_draft" ] &&
+    contains_reason "$raw_reason" "malformed_plan_headers" &&
+    [ "${plan_candidates:-0}" -gt 1 ]; then
+    printf 'fallback_ambiguity_plan'
+    return
+  fi
+
+  if [ "$status" = "spec_draft" ] &&
+    contains_reason "$raw_reason" "malformed_spec_headers" &&
+    [ "${spec_candidates:-0}" -gt 1 ]; then
+    printf 'fallback_ambiguity_spec'
+    return
+  fi
+
+  printf '%s' "$raw_reason"
+}
+
+public_why_text() {
+  local resolve_json="$1"
+  local display_status="$2"
+  local raw_status reason
+  raw_status="$(json_field "$resolve_json" "status")"
+  reason="$(public_reason_for_resolve "$resolve_json")"
+  if [ "$display_status" != "$raw_status" ]; then
+    status_why_text "$display_status"
+    return
+  fi
+  why_text "$raw_status" "$reason"
 }
 
 contains_reason() {
@@ -115,6 +274,10 @@ why_text() {
   fi
 
   status_why_text "$status"
+}
+
+next_reason_text() {
+  status_why_text "$1"
 }
 
 has_diagnostic_reason() {
@@ -220,8 +383,8 @@ contract_failure_json() {
   local failure_class="$1"
   local message="$2"
   printf '{"outcome":"runtime_failure","failure_class":"%s","message":"%s"}\n' \
-    "$failure_class" \
-    "$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    "$(json_escape "$failure_class")" \
+    "$(json_escape "$message")"
 }
 
 render_failure() {
@@ -295,18 +458,101 @@ resolve_or_fail() {
   printf '%s\n' "$resolve_json"
 }
 
+run_helper_json_or_fail() {
+  local debug="$1"
+  local label="$2"
+  shift 2
+  local output=""
+  local status=0
+  local failure_class=""
+  local message=""
+
+  output="$("$@" 2>&1)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    failure_class="$(json_field "$output" "failure_class")"
+    [ -n "$failure_class" ] || failure_class="$(json_field "$output" "error_class")"
+    message="$(json_field "$output" "message")"
+    [ -n "$failure_class" ] || failure_class="HelperExecutionFailed"
+    [ -n "$message" ] || message="Could not run ${label}."
+    render_failure "$(contract_failure_json "$failure_class" "$message")" "$debug"
+    return 1
+  fi
+
+  printf '%s\n' "$output"
+}
+
+analyze_plan_if_available() {
+  local debug="$1"
+  local spec_path="$2"
+  local plan_path="$3"
+  local root="$4"
+
+  if [ -z "$spec_path" ] || [ -z "$plan_path" ]; then
+    printf '\n'
+    return 0
+  fi
+  if [ -n "$root" ] && { [ ! -f "$root/$spec_path" ] || [ ! -f "$root/$plan_path" ]; }; then
+    printf '\n'
+    return 0
+  fi
+
+  run_helper_json_or_fail \
+    "$debug" \
+    "plan contract analysis" \
+    "$PLAN_CONTRACT_BIN" analyze-plan --spec "$spec_path" --plan "$plan_path" --format json
+}
+
+recommend_json_or_blank() {
+  local debug="$1"
+  local plan_path="$2"
+  local output=""
+  local status=0
+  local failure_class=""
+  local message=""
+
+  if [ -z "$plan_path" ]; then
+    printf '\n'
+    return 0
+  fi
+
+  output="$("$PLAN_EXECUTION_BIN" recommend --plan "$plan_path" 2>&1)" || status=$?
+  if [ "$status" -ne 0 ]; then
+    failure_class="$(json_field "$output" "error_class")"
+    if [ "$failure_class" = "RecommendAfterExecutionStart" ]; then
+      printf '\n'
+      return 0
+    fi
+    message="$(json_field "$output" "message")"
+    [ -n "$failure_class" ] || failure_class="HelperExecutionFailed"
+    [ -n "$message" ] || message="Could not determine an execution handoff recommendation."
+    render_failure "$(contract_failure_json "$failure_class" "$message")" "$debug"
+    return 1
+  fi
+
+  printf '%s\n' "$output"
+}
+
+emit_named_object_json() {
+  local name="$1"
+  local payload="$2"
+  if [ -n "$payload" ]; then
+    printf '"%s":%s' "$(json_escape "$name")" "$payload"
+  else
+    printf '"%s":null' "$(json_escape "$name")"
+  fi
+}
+
 render_status() {
   local resolve_json="$1"
   local debug="$2"
-  local status next_skill spec_path plan_path reason
-  status="$(json_field "$resolve_json" "status")"
-  next_skill="$(json_field "$resolve_json" "next_skill")"
+  local status next_skill spec_path plan_path
+  status="$(public_status_for_resolve "$resolve_json")"
+  next_skill="$(public_next_skill_for_status "$status" "$resolve_json")"
   spec_path="$(json_field "$resolve_json" "spec_path")"
   plan_path="$(json_field "$resolve_json" "plan_path")"
-  reason="$(json_field "$resolve_json" "reason")"
 
   printf 'Workflow status: %s\n' "$(human_status "$status")"
-  printf 'Why: %s\n' "$(why_text "$status" "$reason")"
+  printf 'Why: %s\n' "$(public_why_text "$resolve_json" "$status")"
   printf 'Next: %s\n' "$(next_text "$status" "$next_skill" "$plan_path")"
   printf 'Spec: %s\n' "${spec_path:-none}"
   printf 'Plan: %s\n' "${plan_path:-none}"
@@ -318,16 +564,15 @@ render_status() {
 render_next() {
   local resolve_json="$1"
   local debug="$2"
-  local status next_skill spec_path plan_path reason
-  status="$(json_field "$resolve_json" "status")"
-  next_skill="$(json_field "$resolve_json" "next_skill")"
+  local status next_skill spec_path plan_path
+  status="$(public_status_for_resolve "$resolve_json")"
+  next_skill="$(public_next_skill_for_status "$status" "$resolve_json")"
   spec_path="$(json_field "$resolve_json" "spec_path")"
   plan_path="$(json_field "$resolve_json" "plan_path")"
-  reason="$(json_field "$resolve_json" "reason")"
 
   printf 'Next safe step: %s\n' "$(next_text "$status" "$next_skill" "$plan_path")"
   printf 'Reason:\n'
-  printf -- '- %s\n' "$(why_text "$status" "$reason")"
+  printf -- '- %s\n' "$(next_reason_text "$status")"
   if [ -n "$spec_path" ]; then
     printf -- '- Current spec: %s\n' "$spec_path"
   fi
@@ -359,11 +604,11 @@ render_explain() {
   local resolve_json="$1"
   local debug="$2"
   local status next_skill spec_path plan_path reason
-  status="$(json_field "$resolve_json" "status")"
-  next_skill="$(json_field "$resolve_json" "next_skill")"
+  status="$(public_status_for_resolve "$resolve_json")"
+  next_skill="$(public_next_skill_for_status "$status" "$resolve_json")"
   spec_path="$(json_field "$resolve_json" "spec_path")"
   plan_path="$(json_field "$resolve_json" "plan_path")"
-  reason="$(json_field "$resolve_json" "reason")"
+  reason="$(public_reason_for_resolve "$resolve_json")"
 
   printf 'Why Superpowers chose this state\n'
   printf -- '- State: %s\n' "$(human_status "$status")"
@@ -386,24 +631,233 @@ render_explain() {
   fi
 }
 
+render_phase() {
+  local resolve_json="$1"
+  local debug="$2"
+  local status plan_path spec_path next_skill
+  status="$(public_status_for_resolve "$resolve_json")"
+  plan_path="$(json_field "$resolve_json" "plan_path")"
+  spec_path="$(json_field "$resolve_json" "spec_path")"
+  next_skill="$(public_next_skill_for_status "$status" "$resolve_json")"
+
+  printf 'Workflow phase: %s\n' "$(phase_label "$status")"
+  printf 'Route status: %s\n' "$status"
+  printf 'Next: %s\n' "$(next_text "$status" "$next_skill" "$plan_path")"
+  printf 'Spec: %s\n' "${spec_path:-none}"
+  printf 'Plan: %s\n' "${plan_path:-none}"
+  if [ "$debug" -eq 1 ]; then
+    render_debug "$resolve_json"
+  fi
+}
+
+emit_phase_json() {
+  local resolve_json="$1"
+  local status plan_path spec_path next_skill
+  status="$(public_status_for_resolve "$resolve_json")"
+  plan_path="$(json_field "$resolve_json" "plan_path")"
+  spec_path="$(json_field "$resolve_json" "spec_path")"
+  next_skill="$(public_next_skill_for_status "$status" "$resolve_json")"
+
+  printf '{'
+  printf '"phase":"%s",' "$(json_escape "$(phase_id_for_status "$status")")"
+  printf '"route_status":"%s",' "$(json_escape "$status")"
+  printf '"next_skill":"%s",' "$(json_escape "$next_skill")"
+  printf '"spec_path":"%s",' "$(json_escape "$spec_path")"
+  printf '"plan_path":"%s",' "$(json_escape "$plan_path")"
+  emit_named_object_json "route" "$resolve_json"
+  printf '}\n'
+}
+
+render_doctor() {
+  local resolve_json="$1"
+  local contract_json="$2"
+  local preflight_json="$3"
+  local review_json="$4"
+  local finish_json="$5"
+  local debug="$6"
+  local status spec_path plan_path contract_state
+  status="$(public_status_for_resolve "$resolve_json")"
+  spec_path="$(json_field "$resolve_json" "spec_path")"
+  plan_path="$(json_field "$resolve_json" "plan_path")"
+  contract_state="$(json_field "$resolve_json" "contract_state")"
+  if [ -n "$contract_json" ]; then
+    contract_state="$(json_field "$contract_json" "contract_state")"
+  fi
+
+  printf 'Workflow doctor\n'
+  printf 'Phase: %s\n' "$(phase_label "$status")"
+  printf 'Route status: %s\n' "$status"
+  printf 'Contract state: %s\n' "${contract_state:-unknown}"
+  printf 'Spec: %s\n' "${spec_path:-none}"
+  printf 'Plan: %s\n' "${plan_path:-none}"
+  if [ -n "$preflight_json" ]; then
+    printf 'Preflight allowed: %s\n' "$(json_bool_field "$preflight_json" "allowed")"
+  fi
+  if [ -n "$review_json" ]; then
+    printf 'Gate review allowed: %s\n' "$(json_bool_field "$review_json" "allowed")"
+  fi
+  if [ -n "$finish_json" ]; then
+    printf 'Gate finish allowed: %s\n' "$(json_bool_field "$finish_json" "allowed")"
+    if [ -n "$(json_field "$finish_json" "failure_class")" ]; then
+      printf 'Gate finish failure: %s\n' "$(json_field "$finish_json" "failure_class")"
+    fi
+  fi
+  if [ "$debug" -eq 1 ]; then
+    render_debug "$resolve_json"
+  fi
+}
+
+emit_doctor_json() {
+  local resolve_json="$1"
+  local contract_json="$2"
+  local preflight_json="$3"
+  local review_json="$4"
+  local finish_json="$5"
+  local status spec_path plan_path next_skill contract_state
+  status="$(public_status_for_resolve "$resolve_json")"
+  spec_path="$(json_field "$resolve_json" "spec_path")"
+  plan_path="$(json_field "$resolve_json" "plan_path")"
+  next_skill="$(public_next_skill_for_status "$status" "$resolve_json")"
+  contract_state="$(json_field "$resolve_json" "contract_state")"
+  if [ -n "$contract_json" ]; then
+    contract_state="$(json_field "$contract_json" "contract_state")"
+  fi
+
+  printf '{'
+  printf '"phase":"%s",' "$(json_escape "$(phase_id_for_status "$status")")"
+  printf '"route_status":"%s",' "$(json_escape "$status")"
+  printf '"next_skill":"%s",' "$(json_escape "$next_skill")"
+  printf '"spec_path":"%s",' "$(json_escape "$spec_path")"
+  printf '"plan_path":"%s",' "$(json_escape "$plan_path")"
+  printf '"contract_state":"%s",' "$(json_escape "${contract_state:-unknown}")"
+  emit_named_object_json "route" "$resolve_json"
+  printf ','
+  emit_named_object_json "plan_contract" "$contract_json"
+  printf ','
+  emit_named_object_json "preflight" "$preflight_json"
+  printf ','
+  emit_named_object_json "gate_review" "$review_json"
+  printf ','
+  emit_named_object_json "gate_finish" "$finish_json"
+  printf '}\n'
+}
+
+render_handoff() {
+  local resolve_json="$1"
+  local contract_json="$2"
+  local recommend_json="$3"
+  local debug="$4"
+  local status plan_path spec_path recommended_skill recommendation_reason
+  status="$(public_status_for_resolve "$resolve_json")"
+  plan_path="$(json_field "$resolve_json" "plan_path")"
+  spec_path="$(json_field "$resolve_json" "spec_path")"
+  recommended_skill="$(json_field "$recommend_json" "recommended_skill")"
+  recommendation_reason="$(json_field "$recommend_json" "reason")"
+
+  printf 'Execution handoff\n'
+  printf 'Phase: %s\n' "$(phase_label "$status")"
+  printf 'Route status: %s\n' "$status"
+  printf 'Spec: %s\n' "${spec_path:-none}"
+  printf 'Plan: %s\n' "${plan_path:-none}"
+  if [ -n "$recommended_skill" ]; then
+    printf 'Recommended skill: %s\n' "$recommended_skill"
+    if [ -n "$recommendation_reason" ]; then
+      printf 'Recommendation reason: %s\n' "$recommendation_reason"
+    fi
+  else
+    printf 'Recommended skill: unavailable\n'
+  fi
+  if [ -n "$plan_path" ]; then
+    printf 'Next safe step: Use the approved plan for execution handoff: %s\n' "$plan_path"
+  fi
+  if [ "$debug" -eq 1 ]; then
+    render_debug "$resolve_json"
+  fi
+}
+
+emit_handoff_json() {
+  local resolve_json="$1"
+  local contract_json="$2"
+  local recommend_json="$3"
+  local status plan_path spec_path recommended_skill recommendation_reason
+  status="$(public_status_for_resolve "$resolve_json")"
+  plan_path="$(json_field "$resolve_json" "plan_path")"
+  spec_path="$(json_field "$resolve_json" "spec_path")"
+  recommended_skill="$(json_field "$recommend_json" "recommended_skill")"
+  recommendation_reason="$(json_field "$recommend_json" "reason")"
+
+  printf '{'
+  printf '"phase":"%s",' "$(json_escape "$(phase_id_for_status "$status")")"
+  printf '"route_status":"%s",' "$(json_escape "$status")"
+  printf '"spec_path":"%s",' "$(json_escape "$spec_path")"
+  printf '"plan_path":"%s",' "$(json_escape "$plan_path")"
+  printf '"recommended_skill":"%s",' "$(json_escape "$recommended_skill")"
+  printf '"recommendation_reason":"%s",' "$(json_escape "$recommendation_reason")"
+  emit_named_object_json "route" "$resolve_json"
+  printf ','
+  emit_named_object_json "plan_contract" "$contract_json"
+  printf ','
+  emit_named_object_json "recommendation" "$recommend_json"
+  printf '}\n'
+}
+
+render_gate_result() {
+  local title="$1"
+  local gate_json="$2"
+  printf '%s\n' "$title"
+  printf 'Allowed: %s\n' "$(json_bool_field "$gate_json" "allowed")"
+  if [ -n "$(json_field "$gate_json" "failure_class")" ]; then
+    printf 'Failure class: %s\n' "$(json_field "$gate_json" "failure_class")"
+  fi
+}
+
 command="help"
+subcommand=""
 debug=0
+json_mode=0
+plan_arg=""
 
 if [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then
   command="$1"
   shift
+  if [ "$command" = "gate" ] && [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; then
+    subcommand="$1"
+    shift
+  fi
 fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --debug) debug=1 ;;
+    --json) json_mode=1 ;;
+    --plan)
+      shift
+      if [ "$#" -eq 0 ]; then
+        render_failure "$(contract_failure_json "InvalidCommandInput" "--plan requires a path value.")" "$debug"
+        exit 1
+      fi
+      plan_arg="$1"
+      ;;
     *)
-      render_failure "{\"failure_class\":\"InvalidCommandInput\",\"message\":\"Unknown option: $1\"}" "$debug"
+      render_failure "$(contract_failure_json "InvalidCommandInput" "Unknown option: $1")" "$debug"
       exit 1
       ;;
   esac
   shift
 done
+
+case "$command" in
+  gate)
+    case "$subcommand" in
+      review) command="gate-review" ;;
+      finish) command="gate-finish" ;;
+      *)
+        render_failure "$(contract_failure_json "InvalidCommandInput" "gate requires a subcommand of review or finish.")" "$debug"
+        exit 1
+        ;;
+    esac
+    ;;
+esac
 
 case "$command" in
   help)
@@ -413,33 +867,144 @@ Supported commands:
   superpowers-workflow next
   superpowers-workflow artifacts
   superpowers-workflow explain
+  superpowers-workflow phase [--json]
+  superpowers-workflow doctor [--json]
+  superpowers-workflow handoff [--json]
+  superpowers-workflow preflight --plan <approved-plan-path> [--json]
+  superpowers-workflow gate review --plan <approved-plan-path> [--json]
+  superpowers-workflow gate finish --plan <approved-plan-path> [--json]
   superpowers-workflow help
 
 Diagnostics:
   --debug  Show resolver diagnostics without changing workflow state
+  --json   Emit structured output for the expanded read-only operator surface
 
 Internal note:
   superpowers-workflow-status remains the internal helper surface.
 EOF
     ;;
   status)
+    if [ "$json_mode" -eq 1 ]; then
+      render_failure "$(contract_failure_json "InvalidCommandInput" "status does not support --json; use phase or doctor instead.")" "$debug"
+      exit 1
+    fi
     resolve_json="$(resolve_or_fail "$debug")" || exit 1
     render_status "$resolve_json" "$debug"
     ;;
   next)
+    if [ "$json_mode" -eq 1 ]; then
+      render_failure "$(contract_failure_json "InvalidCommandInput" "next does not support --json; use handoff instead.")" "$debug"
+      exit 1
+    fi
     resolve_json="$(resolve_or_fail "$debug")" || exit 1
     render_next "$resolve_json" "$debug"
     ;;
   artifacts)
+    if [ "$json_mode" -eq 1 ]; then
+      render_failure "$(contract_failure_json "InvalidCommandInput" "artifacts does not support --json; use doctor instead.")" "$debug"
+      exit 1
+    fi
     resolve_json="$(resolve_or_fail "$debug")" || exit 1
     render_artifacts "$resolve_json" "$debug"
     ;;
   explain)
+    if [ "$json_mode" -eq 1 ]; then
+      render_failure "$(contract_failure_json "InvalidCommandInput" "explain does not support --json; use doctor instead.")" "$debug"
+      exit 1
+    fi
     resolve_json="$(resolve_or_fail "$debug")" || exit 1
     render_explain "$resolve_json" "$debug"
     ;;
+  phase)
+    resolve_json="$(resolve_or_fail "$debug")" || exit 1
+    if [ "$json_mode" -eq 1 ]; then
+      emit_phase_json "$resolve_json"
+    else
+      render_phase "$resolve_json" "$debug"
+    fi
+    ;;
+  doctor)
+    resolve_json="$(resolve_or_fail "$debug")" || exit 1
+    status="$(json_field "$resolve_json" "status")"
+    spec_path="$(json_field "$resolve_json" "spec_path")"
+    plan_path="$(json_field "$resolve_json" "plan_path")"
+    root="$(json_field "$resolve_json" "root")"
+    contract_json=""
+    if [ "$status" = "implementation_ready" ]; then
+      contract_json="$(analyze_plan_if_available "$debug" "$spec_path" "$plan_path" "$root")" || exit 1
+    fi
+    preflight_json=""
+    review_json=""
+    finish_json=""
+    if [ "$status" = "implementation_ready" ] && [ -n "$plan_path" ]; then
+      preflight_json="$(run_helper_json_or_fail "$debug" "execution preflight" "$PLAN_EXECUTION_BIN" preflight --plan "$plan_path")" || exit 1
+      review_json="$(run_helper_json_or_fail "$debug" "review gate" "$PLAN_EXECUTION_BIN" gate-review --plan "$plan_path")" || exit 1
+      finish_json="$(run_helper_json_or_fail "$debug" "finish gate" "$PLAN_EXECUTION_BIN" gate-finish --plan "$plan_path")" || exit 1
+    fi
+    if [ "$json_mode" -eq 1 ]; then
+      emit_doctor_json "$resolve_json" "$contract_json" "$preflight_json" "$review_json" "$finish_json"
+    else
+      render_doctor "$resolve_json" "$contract_json" "$preflight_json" "$review_json" "$finish_json" "$debug"
+    fi
+    ;;
+  handoff)
+    resolve_json="$(resolve_or_fail "$debug")" || exit 1
+    status="$(json_field "$resolve_json" "status")"
+    spec_path="$(json_field "$resolve_json" "spec_path")"
+    plan_path="$(json_field "$resolve_json" "plan_path")"
+    root="$(json_field "$resolve_json" "root")"
+    contract_json=""
+    if [ "$status" = "implementation_ready" ]; then
+      contract_json="$(analyze_plan_if_available "$debug" "$spec_path" "$plan_path" "$root")" || exit 1
+    fi
+    recommend_json=""
+    if [ "$status" = "implementation_ready" ] && [ -n "$plan_path" ]; then
+      recommend_json="$(recommend_json_or_blank "$debug" "$plan_path")" || exit 1
+    fi
+    if [ "$json_mode" -eq 1 ]; then
+      emit_handoff_json "$resolve_json" "$contract_json" "$recommend_json"
+    else
+      render_handoff "$resolve_json" "$contract_json" "$recommend_json" "$debug"
+    fi
+    ;;
+  preflight)
+    [ -n "$plan_arg" ] || {
+      render_failure "$(contract_failure_json "InvalidCommandInput" "preflight requires --plan.")" "$debug"
+      exit 1
+    }
+    gate_json="$(run_helper_json_or_fail "$debug" "execution preflight" "$PLAN_EXECUTION_BIN" preflight --plan "$plan_arg")" || exit 1
+    if [ "$json_mode" -eq 1 ]; then
+      printf '%s\n' "$gate_json"
+    else
+      render_gate_result "Execution preflight" "$gate_json"
+    fi
+    ;;
+  gate-review)
+    [ -n "$plan_arg" ] || {
+      render_failure "$(contract_failure_json "InvalidCommandInput" "gate review requires --plan.")" "$debug"
+      exit 1
+    }
+    gate_json="$(run_helper_json_or_fail "$debug" "review gate" "$PLAN_EXECUTION_BIN" gate-review --plan "$plan_arg")" || exit 1
+    if [ "$json_mode" -eq 1 ]; then
+      printf '%s\n' "$gate_json"
+    else
+      render_gate_result "Review gate" "$gate_json"
+    fi
+    ;;
+  gate-finish)
+    [ -n "$plan_arg" ] || {
+      render_failure "$(contract_failure_json "InvalidCommandInput" "gate finish requires --plan.")" "$debug"
+      exit 1
+    }
+    gate_json="$(run_helper_json_or_fail "$debug" "finish gate" "$PLAN_EXECUTION_BIN" gate-finish --plan "$plan_arg")" || exit 1
+    if [ "$json_mode" -eq 1 ]; then
+      printf '%s\n' "$gate_json"
+    else
+      render_gate_result "Finish gate" "$gate_json"
+    fi
+    ;;
   *)
-    render_failure "{\"failure_class\":\"InvalidCommandInput\",\"message\":\"Unsupported command: $command\"}" "$debug"
+    render_failure "$(contract_failure_json "InvalidCommandInput" "Unsupported command: $command")" "$debug"
     exit 1
     ;;
 esac

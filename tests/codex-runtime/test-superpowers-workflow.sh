@@ -386,6 +386,34 @@ EOF
   assert_contains "$output" '"contract_state":"invalid"' "doctor invalid contract json"
 }
 
+run_doctor_surfaces_bounded_scan_json() {
+  local repo="$REPO_DIR/doctor-bounded-scan"
+  local older_spec="$repo/docs/superpowers/specs/2026-03-16-approved-design.md"
+  local newest_spec="$repo/docs/superpowers/specs/2026-03-17-newest-draft-design.md"
+  local output
+
+  init_repo "$repo"
+  write_file "$older_spec" <<'EOF'
+# Older Approved Spec
+
+**Workflow State:** CEO Approved
+**Spec Revision:** 1
+**Last Reviewed By:** plan-ceo-review
+EOF
+  sleep 1
+  write_file "$newest_spec" <<'EOF'
+# Newest Draft Spec
+
+**Workflow State:** Draft
+**Spec Revision:** 2
+**Last Reviewed By:** brainstorming
+EOF
+
+  output="$(cd "$repo" && env SUPERPOWERS_WORKFLOW_STATUS_FALLBACK_LIMIT=1 "$WORKFLOW_BIN" doctor --json 2>&1)"
+  assert_contains "$output" '"scan_truncated":true' "doctor bounded scan json"
+  assert_contains "$output" '"spec_candidate_count":' "doctor bounded scan json"
+}
+
 run_handoff_reports_plan_and_recommendation_json() {
   local repo="$REPO_DIR/handoff-implementation-ready"
   init_repo "$repo"
@@ -406,6 +434,16 @@ run_preflight_wraps_execution_helper_json() {
   local output
   output="$(run_workflow "$repo" "workflow preflight json" preflight --plan docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md --json)"
   assert_contains "$output" '"allowed":true' "workflow preflight json"
+}
+
+run_gate_review_wraps_execution_helper_json() {
+  local repo="$REPO_DIR/workflow-gate-review"
+  init_repo "$repo"
+  install_full_contract_ready_artifacts "$repo"
+
+  local output
+  output="$(run_workflow "$repo" "workflow gate review json" gate review --plan docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md --json)"
+  assert_contains "$output" '"allowed":true' "workflow gate review json"
 }
 
 run_gate_finish_blocks_missing_release_artifact_json() {
@@ -818,8 +856,10 @@ run_status_stale_plan
 run_next_implementation_ready
 run_phase_reports_implementation_handoff_json
 run_doctor_surfaces_invalid_contract_json
+run_doctor_surfaces_bounded_scan_json
 run_handoff_reports_plan_and_recommendation_json
 run_preflight_wraps_execution_helper_json
+run_gate_review_wraps_execution_helper_json
 run_gate_finish_blocks_missing_release_artifact_json
 run_artifacts_empty
 run_artifacts_expected_missing_plan

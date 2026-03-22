@@ -100,3 +100,8 @@ test('runtime sequencing coverage points at the fixture directory', () => {
   const content = readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/test-workflow-sequencing.sh'));
   assert.match(content, /WORKFLOW_FIXTURE_DIR="tests\/codex-runtime\/fixtures\/workflow-artifacts"/);
 });
+
+test('public workflow wrapper coverage points at the fixture directory', () => {
+  const content = readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/test-superpowers-workflow.sh'));
+  assert.match(content, /WORKFLOW_FIXTURE_DIR="\$REPO_ROOT\/tests\/codex-runtime\/fixtures\/workflow-artifacts"/);
+});
