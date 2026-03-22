@@ -518,4 +518,4 @@ Helpers enforce and inspect.
 - [x] **Step 3: Run the full targeted shell regression matrix for workflow status, plan contract, plan execution, workflow wrapper, session entry, bypass, sequencing, enhancements, instructions, and parity**
 - [x] **Step 4: Fix any doc drift, command-surface mismatch, or parity regression uncovered by the final verification pass**
 - [x] **Step 5: Re-run the full targeted matrix until everything is green**
-- [ ] **Step 6: Commit the documentation and verification slice**
+- [x] **Step 6: Commit the documentation and verification slice**

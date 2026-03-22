@@ -2173,6 +2173,9 @@ validate_v2_evidence_provenance() {
 
     while IFS=$'\t' read -r path proof; do
       [[ -n "$path" ]] || continue
+      if [[ "$path" == "$PLAN_REL_PATH" || "$path" == "$EVIDENCE_REL_PATH" ]]; then
+        continue
+      fi
       if [[ "$proof" == "sha256:missing" ]]; then
         if [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]]; then
           gate_fail "MissedReopenRequired" "files_proven_drifted" "A file proven as missing is present again after completion." "Reopen the step and rebuild its evidence."

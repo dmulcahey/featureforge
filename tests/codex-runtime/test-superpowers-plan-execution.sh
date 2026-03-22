@@ -870,6 +870,34 @@ run_gate_review_rejects_missed_reopen_after_file_drift() {
   assert_json_equals "$output" "reason_codes.0" "files_proven_drifted" "gate-review missed reopen"
 }
 
+run_gate_review_ignores_current_plan_and_evidence_file_proofs() {
+  local repo_dir="$REPO_DIR/gate-review-ignores-bookkeeping-proofs"
+  local output
+  local evidence_rel
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_plan "$repo_dir" "superpowers:executing-plans"
+  write_v2_completed_attempt "$repo_dir" "packet-fingerprint-from-approved-plan"
+  evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+
+  node - <<'NODE' "$repo_dir/$evidence_rel" "$PLAN_REL" "$evidence_rel"
+const fs = require("fs");
+const [file, planRel, evidenceRel] = process.argv.slice(2);
+const source = fs.readFileSync(file, "utf8");
+  fs.writeFileSync(
+  file,
+  source.replace(
+    /(\*\*Files Proven:\*\*\n- docs\/example-output\.md \| sha256:[^\n]+\n)/,
+    `$1- ${planRel} | sha256:0000000000000000000000000000000000000000000000000000000000000000\n- ${evidenceRel} | sha256:1111111111111111111111111111111111111111111111111111111111111111\n`,
+  ),
+);
+NODE
+
+  output="$(run_json_command "$repo_dir" gate-review --plan "$PLAN_REL")"
+  assert_json_equals "$output" "allowed" "true" "gate-review bookkeeping proofs"
+}
+
 run_gate_finish_blocks_missing_release_artifact() {
   local repo_dir="$REPO_DIR/gate-finish-missing-release"
   local output
@@ -2245,6 +2273,7 @@ run_status_rejects_evidence_history_with_none_mode
 run_gate_review_warns_on_legacy_evidence_format
 run_gate_review_rejects_packet_fingerprint_mismatch
 run_gate_review_rejects_missed_reopen_after_file_drift
+run_gate_review_ignores_current_plan_and_evidence_file_proofs
 run_gate_finish_blocks_missing_release_artifact
 run_gate_finish_blocks_missing_qa_artifact_when_required
 run_gate_finish_blocks_stale_release_artifact_head_mismatch
