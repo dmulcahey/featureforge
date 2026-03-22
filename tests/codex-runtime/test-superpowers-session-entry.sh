@@ -357,6 +357,52 @@ EOF
   fi
 }
 
+run_long_negated_skill_request_does_not_trigger_reentry() {
+  local message_file
+  local decision_path
+  local output
+
+  message_file="$(write_message_file long-negated-skill-request-message.txt <<'EOF'
+Please do not under any circumstances use brainstorming for this task.
+EOF
+)"
+  decision_path="$(decision_path_for_key "long-negated-skill-request")"
+  mkdir -p "$(dirname "$decision_path")"
+  printf 'bypassed\n' > "$decision_path"
+
+  output="$(run_json_command "long negated skill request" resolve --message-file "$message_file" --session-key "long-negated-skill-request")"
+  assert_json_equals "$output" "outcome" "bypassed" "long negated skill request"
+  assert_json_equals "$output" "decision_source" "existing_bypassed" "long negated skill request"
+  assert_json_equals "$output" "persisted" "true" "long negated skill request"
+  if [[ "$(cat "$decision_path")" != "bypassed" ]]; then
+    echo "Expected long negated skill request to keep bypassed decision"
+    exit 1
+  fi
+}
+
+run_long_negated_superpowers_request_does_not_trigger_reentry() {
+  local message_file
+  local decision_path
+  local output
+
+  message_file="$(write_message_file long-negated-superpowers-message.txt <<'EOF'
+Please do not under any circumstances use superpowers for this task.
+EOF
+)"
+  decision_path="$(decision_path_for_key "long-negated-superpowers")"
+  mkdir -p "$(dirname "$decision_path")"
+  printf 'bypassed\n' > "$decision_path"
+
+  output="$(run_json_command "long negated superpowers request" resolve --message-file "$message_file" --session-key "long-negated-superpowers")"
+  assert_json_equals "$output" "outcome" "bypassed" "long negated superpowers request"
+  assert_json_equals "$output" "decision_source" "existing_bypassed" "long negated superpowers request"
+  assert_json_equals "$output" "persisted" "true" "long negated superpowers request"
+  if [[ "$(cat "$decision_path")" != "bypassed" ]]; then
+    echo "Expected long negated superpowers request to keep bypassed decision"
+    exit 1
+  fi
+}
+
 run_explicit_reentry_write_failure_is_unpersisted() {
   local message_file
   local decision_path
@@ -434,6 +480,8 @@ run_negated_skill_request_does_not_trigger_reentry
 run_use_no_skill_request_does_not_trigger_reentry
 run_use_no_superpowers_does_not_trigger_reentry
 run_never_use_skill_request_does_not_trigger_reentry
+run_long_negated_skill_request_does_not_trigger_reentry
+run_long_negated_superpowers_request_does_not_trigger_reentry
 run_explicit_reentry_write_failure_is_unpersisted
 run_record_persists_enabled_choice
 run_record_rejects_invalid_decision

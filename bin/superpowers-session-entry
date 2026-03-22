@@ -130,8 +130,8 @@ build_prompt_json_or_fail() {
 
 message_requests_reentry() {
   local raw_text="$1"
-  local lowered normalized skill_doc skill_name token
-  local prev1="" prev2="" prev3=""
+  local lowered clause normalized skill_doc skill_name token
+  local prev1="" prev2="" saw_negator=""
 
   token_is_negator() {
     case "${1:-}" in
@@ -149,45 +149,52 @@ message_requests_reentry() {
 
   lowered="$(printf '%s' "$raw_text" | tr '[:upper:]' '[:lower:]' | tr -d "'’")"
 
-  normalized="$(normalize_whitespace "$lowered")"
   shopt -s nullglob
-  for skill_doc in "$SCRIPT_DIR"/../skills/*/SKILL.md; do
-    skill_name="$(basename "$(dirname "$skill_doc")")"
-    if [[ "$normalized" == "$skill_name" || "$normalized" == "\$$skill_name" || "$normalized" == "superpowers:$skill_name" ]]; then
-      shopt -u nullglob
-      return 0
-    fi
-  done
-
-  while IFS= read -r token; do
-    if [[ "$token" == "superpowers" ]]; then
-      if ! token_is_negator "$prev1" && ! token_is_negator "$prev2" && ! token_is_negator "$prev3" &&
-         ( token_has_affirmative_context "$prev1" || token_has_affirmative_context "$prev2" ); then
-        shopt -u nullglob
-        return 0
-      fi
-    fi
+  while IFS= read -r clause; do
+    normalized="$(normalize_whitespace "$clause")"
+    [[ -n "$normalized" ]] || continue
 
     for skill_doc in "$SCRIPT_DIR"/../skills/*/SKILL.md; do
       skill_name="$(basename "$(dirname "$skill_doc")")"
-      case "$token" in
-        "$skill_name"|"\$$skill_name"|"superpowers:$skill_name")
-          if ! token_is_negator "$prev1" && ! token_is_negator "$prev2" && ! token_is_negator "$prev3" &&
-             ( token_has_affirmative_context "$prev1" || token_has_affirmative_context "$prev2" ); then
-            shopt -u nullglob
-            return 0
-          fi
-          ;;
-      esac
+      if [[ "$normalized" == "$skill_name" || "$normalized" == "\$$skill_name" || "$normalized" == "superpowers:$skill_name" ]]; then
+        shopt -u nullglob
+        return 0
+      fi
     done
 
-    prev3="$prev2"
-    prev2="$prev1"
-    prev1="$token"
-  done < <(printf '%s\n' "$normalized" | tr -cs '[:alnum:]$:_-' '\n')
+    prev1=""
+    prev2=""
+    saw_negator="false"
+    while IFS= read -r token; do
+      if token_is_negator "$token"; then
+        saw_negator="true"
+      elif [[ "$token" == "superpowers" ]]; then
+        if [[ "$saw_negator" != "true" ]] &&
+           ( token_has_affirmative_context "$prev1" || token_has_affirmative_context "$prev2" ); then
+          shopt -u nullglob
+          return 0
+        fi
+      else
+        for skill_doc in "$SCRIPT_DIR"/../skills/*/SKILL.md; do
+          skill_name="$(basename "$(dirname "$skill_doc")")"
+          case "$token" in
+            "$skill_name"|"\$$skill_name"|"superpowers:$skill_name")
+              if [[ "$saw_negator" != "true" ]] &&
+                 ( token_has_affirmative_context "$prev1" || token_has_affirmative_context "$prev2" ); then
+                shopt -u nullglob
+                return 0
+              fi
+              ;;
+          esac
+        done
+      fi
+
+      prev2="$prev1"
+      prev1="$token"
+    done < <(printf '%s\n' "$normalized" | tr -cs '[:alnum:]$:_-' '\n')
+  done < <(printf '%s\n' "$lowered" | tr '.!?;\n' '\n')
 
   shopt -u nullglob
-
   return 1
 }
 
