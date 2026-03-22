@@ -420,6 +420,9 @@ required_patterns=(
   "skills/plan-eng-review/SKILL.md:docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md"
   "skills/plan-eng-review/SKILL.md:Use when a written Superpowers implementation plan from a CEO-approved spec needs engineering review before execution"
   'skills/plan-eng-review/SKILL.md:**Workflow State:** Draft | Engineering Approved'
+  'skills/plan-eng-review/SKILL.md:superpowers-plan-contract" analyze-plan'
+  'skills/plan-eng-review/SKILL.md:Engineering approval must fail closed unless `contract_state == valid` and `packet_buildable_tasks == task_count`.'
+  'skills/plan-eng-review/SKILL.md:If any task packet is missing, stale, or non-buildable for the approved plan revision, stop and route back to review instead of handing off execution.'
   "skills/plan-eng-review/SKILL.md:_TODOS_FORMAT"
   'skills/plan-eng-review/SKILL.md:If no current plan exists, stop and direct the agent back to `superpowers:writing-plans`.'
   "skills/plan-eng-review/SKILL.md:When the review is resolved and the written plan is approved, present the normal execution handoff."

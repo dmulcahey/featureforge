@@ -177,3 +177,101 @@
 **Verification:**
 - `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh` -> Passed, and manual wrapper next verification reported the approved-plan execution handoff for a full-contract fixture.
 **Invalidation Reason:** N/A
+
+### Task 2 Step 7
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:10:05Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Committed the route-time hardening slice as 19b5db9 with the shared parser, stricter workflow-status contract checks, and wrapper parity updates.
+**Files:**
+- docs/superpowers/execution-evidence/2026-03-22-runtime-integration-hardening-r1-evidence.md
+- docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md
+**Verification:**
+- `git rev-parse HEAD` -> 19b5db9d5a93d609af72b16a95943cf40c66f5cb committed the workflow-status hardening slice.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:29:17Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Added analyze-plan --format json with contract-state, fingerprint, buildability, and diagnostics output in superpowers-plan-contract.
+**Files:**
+- bin/superpowers-plan-contract
+- tests/codex-runtime/test-superpowers-plan-contract.sh
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-plan-contract.sh` -> Plan-contract helper regression test passed.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:29:45Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Standardized task-packet provenance fields and regression coverage for approved plan identity, source spec identity, packet fingerprint, and generation timestamp.
+**Files:**
+- bin/superpowers-plan-contract
+- tests/codex-runtime/test-superpowers-plan-contract.sh
+**Verification:**
+- `bash tests/codex-runtime/test-superpowers-plan-contract.sh` -> Plan-contract helper regression test passed.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:30:12Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Verified the PowerShell wrapper mirrors analyze-plan end to end and emits the same JSON schema for valid plan-contract fixtures.
+**Files:**
+- None (no repo file changed)
+**Verification:**
+- Manual inspection only: Verified via pwsh wrapper analyze-plan output against the valid plan-contract fixture pair.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:31:12Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Tightened plan-eng-review so engineering approval requires analyze-plan validity and full task-packet buildability before handoff.
+**Files:**
+- skills/plan-eng-review/SKILL.md
+- skills/plan-eng-review/SKILL.md.tmpl
+- tests/codex-runtime/skill-doc-contracts.test.mjs
+- tests/codex-runtime/test-runtime-instructions.sh
+- tests/codex-runtime/test-workflow-sequencing.sh
+**Verification:**
+- `bash tests/codex-runtime/test-workflow-sequencing.sh` -> Workflow sequencing and fail-closed routing contracts are present.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:31:39Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Upgraded the engineering review handoff wording so execution is anchored to the exact approved plan path and revision and must reject missing, stale, or non-buildable packets.
+**Files:**
+- skills/plan-eng-review/SKILL.md
+- skills/plan-eng-review/SKILL.md.tmpl
+- tests/codex-runtime/test-runtime-instructions.sh
+- tests/codex-runtime/test-workflow-sequencing.sh
+**Verification:**
+- `bash tests/codex-runtime/test-runtime-instructions.sh` -> TODOS.md reflects the shipped workflow CLI state.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-22T16:32:07Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Regenerated plan-eng-review skill docs and ran the Task 3 helper and contract suites; the remaining shared doc-contract red is the planned compatibility-shim gap in deprecated command docs.
+**Files:**
+- skills/plan-eng-review/SKILL.md
+- tests/codex-runtime/skill-doc-contracts.test.mjs
+- tests/codex-runtime/test-runtime-instructions.sh
+- tests/codex-runtime/test-superpowers-plan-contract.sh
+- tests/codex-runtime/test-workflow-sequencing.sh
+**Verification:**
+- `node --test tests/codex-runtime/skill-doc-contracts.test.mjs` -> 1 failing test remains in deprecated command docs compatibility shims, which is planned under Task 7.
+**Invalidation Reason:** N/A

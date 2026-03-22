@@ -289,12 +289,17 @@ Before moving into the review sections:
 Before `**Workflow State:** Engineering Approved`, run:
 
 ```bash
-"$_SUPERPOWERS_ROOT/bin/superpowers-plan-contract" lint \
+PLAN_ANALYSIS_JSON="$("$_SUPERPOWERS_ROOT/bin/superpowers-plan-contract" analyze-plan \
   --spec <source-spec-path> \
-  --plan <plan-path>
+  --plan <plan-path> \
+  --format json)"
 ```
 
-Engineering approval must fail closed when lint reports:
+Engineering approval must fail closed unless `contract_state == valid` and `packet_buildable_tasks == task_count`.
+
+Treat `reason_codes` and `diagnostics` from `analyze-plan` as the authoritative contract feedback for approval law.
+
+Engineering approval must fail closed when `analyze-plan` reports:
 
 - missing or malformed `Requirement Index`
 - missing or malformed `Requirement Coverage Matrix`
@@ -306,6 +311,8 @@ Engineering approval must fail closed when lint reports:
 - requirement weakening or widening
 - invalid task heading structure
 - invalid `Files:` block structure
+
+If `coverage_complete`, `open_questions_resolved`, `task_structure_valid`, or `files_blocks_valid` is not `true`, keep the plan in `Draft` and continue review or route back to `superpowers:writing-plans`.
 
 In the review itself, answer these questions explicitly before approval:
 
@@ -503,6 +510,10 @@ When the review is resolved and the written plan is approved, present the normal
 During that handoff, call `superpowers-plan-execution recommend --plan <approved-plan-path>` and present the helper's recommended skill first.
 
 The handoff must include the exact approved plan path and must remind the execution skill to reject draft or stale plans.
+
+The handoff must name the exact approved plan path and approved plan revision.
+
+If any task packet is missing, stale, or non-buildable for the approved plan revision, stop and route back to review instead of handing off execution.
 
 * Present the helper-recommended execution skill as the default path with the approved plan path.
 * If isolated-agent workflows are available in the current platform/session, show the other valid execution skill as an explicit override.

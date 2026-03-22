@@ -16,6 +16,7 @@ usage() {
   cat <<'EOF' >&2
 Usage:
   superpowers-plan-contract lint --spec <spec-path> --plan <plan-path>
+  superpowers-plan-contract analyze-plan --spec <spec-path> --plan <plan-path> [--format json]
   superpowers-plan-contract build-task-packet --plan <plan-path> --task <N> [--format json|markdown] [--persist yes|no]
 EOF
 }
@@ -226,11 +227,424 @@ PLAN_SOURCE_SPEC_REVISION=""
 parse_plan_headers() {
   local plan_abs="$1"
 
-  PLAN_REVISION="$(sed -nE 's/^\*\*Plan Revision:\*\* ([0-9]+)$/\1/p' "$plan_abs" | head -n1)"
-  PLAN_SOURCE_SPEC="$(sed -nE 's/^\*\*Source Spec:\*\* \`(.+)\`$/\1/p' "$plan_abs" | head -n1)"
-  PLAN_SOURCE_SPEC_REVISION="$(sed -nE 's/^\*\*Source Spec Revision:\*\* ([0-9]+)$/\1/p' "$plan_abs" | head -n1)"
+  plan_structure_parse_plan_headers "$plan_abs" || return 1
+  PLAN_REVISION="$PLAN_STRUCTURE_PLAN_REVISION"
+  PLAN_SOURCE_SPEC="$PLAN_STRUCTURE_PLAN_SOURCE_SPEC"
+  PLAN_SOURCE_SPEC_REVISION="$PLAN_STRUCTURE_PLAN_SOURCE_SPEC_REVISION"
+  return 0
+}
 
-  [[ -n "$PLAN_REVISION" && -n "$PLAN_SOURCE_SPEC" && -n "$PLAN_SOURCE_SPEC_REVISION" ]]
+camel_to_snake() {
+  printf '%s' "$1" | sed -E 's/([a-z0-9])([A-Z])/\1_\2/g' | tr 'A-Z' 'a-z'
+}
+
+LOOSE_TASK_COUNT=0
+LOOSE_TASK_NUMBERS=()
+LOOSE_TASK_TITLES=()
+LOOSE_TASK_BLOCKS=()
+LOOSE_TASK_SPEC_COVERAGE=()
+LOOSE_TASK_OPEN_QUESTIONS=()
+
+reset_loose_task_state() {
+  LOOSE_TASK_COUNT=0
+  LOOSE_TASK_NUMBERS=()
+  LOOSE_TASK_TITLES=()
+  LOOSE_TASK_BLOCKS=()
+  LOOSE_TASK_SPEC_COVERAGE=()
+  LOOSE_TASK_OPEN_QUESTIONS=()
+}
+
+parse_loose_task_blocks() {
+  local plan_abs="$1"
+  local line
+  local current_task=""
+  local current_title=""
+  local current_block=""
+  local current_spec_coverage=""
+  local current_open_questions=""
+  local task_index=0
+
+  reset_loose_task_state
+
+  finalize_loose_task() {
+    if [[ -z "$current_task" ]]; then
+      return 0
+    fi
+
+    LOOSE_TASK_NUMBERS[$task_index]="$current_task"
+    LOOSE_TASK_TITLES[$task_index]="$current_title"
+    LOOSE_TASK_BLOCKS[$task_index]="${current_block%$'\n'}"
+    LOOSE_TASK_SPEC_COVERAGE[$task_index]="$current_spec_coverage"
+    LOOSE_TASK_OPEN_QUESTIONS[$task_index]="$current_open_questions"
+    task_index=$((task_index + 1))
+    current_task=""
+    current_title=""
+    current_block=""
+    current_spec_coverage=""
+    current_open_questions=""
+  }
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^##\ Task\ ([0-9]+):\ (.+)$ ]]; then
+      finalize_loose_task
+      current_task="${BASH_REMATCH[1]}"
+      current_title="${BASH_REMATCH[2]}"
+    fi
+
+    if [[ -n "$current_task" ]]; then
+      current_block+="$line"$'\n'
+      if [[ "$line" =~ ^\*\*Spec\ Coverage:\*\*\ (.+)$ ]]; then
+        current_spec_coverage="${BASH_REMATCH[1]}"
+      elif [[ "$line" =~ ^\*\*Open\ Questions:\*\*\ (.+)$ ]]; then
+        current_open_questions="${BASH_REMATCH[1]}"
+      fi
+    fi
+  done < "$plan_abs"
+
+  finalize_loose_task
+  LOOSE_TASK_COUNT="$task_index"
+  return 0
+}
+
+loose_task_number_exists() {
+  local task_number="$1"
+  local i
+  for ((i=0; i<LOOSE_TASK_COUNT; i++)); do
+    if [[ "${LOOSE_TASK_NUMBERS[$i]}" == "$task_number" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+ANALYZE_CONTRACT_STATE="invalid"
+ANALYZE_SPEC_PATH=""
+ANALYZE_SPEC_REVISION=""
+ANALYZE_SPEC_FINGERPRINT=""
+ANALYZE_PLAN_PATH=""
+ANALYZE_PLAN_REVISION=""
+ANALYZE_PLAN_FINGERPRINT=""
+ANALYZE_TASK_COUNT=0
+ANALYZE_PACKET_BUILDABLE_TASKS=0
+ANALYZE_COVERAGE_COMPLETE=true
+ANALYZE_OPEN_QUESTIONS_RESOLVED=true
+ANALYZE_TASK_STRUCTURE_VALID=true
+ANALYZE_FILES_BLOCKS_VALID=true
+ANALYZE_REASON_CODES=()
+ANALYZE_DIAGNOSTICS=()
+ANALYZE_OVERLAPPING_WRITE_SCOPES=()
+
+reset_analyze_plan_state() {
+  ANALYZE_CONTRACT_STATE="invalid"
+  ANALYZE_SPEC_PATH=""
+  ANALYZE_SPEC_REVISION=""
+  ANALYZE_SPEC_FINGERPRINT=""
+  ANALYZE_PLAN_PATH=""
+  ANALYZE_PLAN_REVISION=""
+  ANALYZE_PLAN_FINGERPRINT=""
+  ANALYZE_TASK_COUNT=0
+  ANALYZE_PACKET_BUILDABLE_TASKS=0
+  ANALYZE_COVERAGE_COMPLETE=true
+  ANALYZE_OPEN_QUESTIONS_RESOLVED=true
+  ANALYZE_TASK_STRUCTURE_VALID=true
+  ANALYZE_FILES_BLOCKS_VALID=true
+  ANALYZE_REASON_CODES=()
+  ANALYZE_DIAGNOSTICS=()
+  ANALYZE_OVERLAPPING_WRITE_SCOPES=()
+}
+
+analyze_add_reason_code() {
+  local code="$1"
+  local existing
+  [[ -n "$code" ]] || return 0
+  for existing in "${ANALYZE_REASON_CODES[@]:-}"; do
+    [[ "$existing" == "$code" ]] && return 0
+  done
+  ANALYZE_REASON_CODES+=("$code")
+}
+
+analyze_add_diagnostic() {
+  local code="$1"
+  local severity="$2"
+  local artifact="$3"
+  local message="$4"
+  local remediation="$5"
+  local diagnostic
+
+  diagnostic='{"code":"'"$(json_escape "$code")"'","severity":"'"$(json_escape "$severity")"'","artifact":"'"$(json_escape "$artifact")"'","message":"'"$(json_escape "$message")"'","remediation":"'"$(json_escape "$remediation")"'"}'
+  ANALYZE_DIAGNOSTICS+=("$diagnostic")
+}
+
+emit_diagnostics_array_json() {
+  local -a diagnostics=("$@")
+  local i
+  printf '['
+  for ((i=0; i<${#diagnostics[@]}; i++)); do
+    [[ $i -gt 0 ]] && printf ','
+    printf '%s' "${diagnostics[$i]}"
+  done
+  printf ']'
+}
+
+emit_overlapping_scopes_json() {
+  local -a overlaps=("$@")
+  local i
+  printf '['
+  for ((i=0; i<${#overlaps[@]}; i++)); do
+    [[ $i -gt 0 ]] && printf ','
+    printf '%s' "${overlaps[$i]}"
+  done
+  printf ']'
+}
+
+analyze_single_task_block() {
+  local task_block="$1"
+  local tmp_plan
+
+  ANALYZE_SINGLE_TASK_ERROR_CLASS=""
+  ANALYZE_SINGLE_TASK_ERROR_MESSAGE=""
+  ANALYZE_SINGLE_TASK_FILE_SCOPE=""
+
+  tmp_plan="$(mktemp)"
+  {
+    printf '# Analyze Plan Task\n\n'
+    printf '**Workflow State:** Engineering Approved\n'
+    printf '**Plan Revision:** 1\n'
+    printf '**Execution Mode:** none\n'
+    printf '**Source Spec:** `docs/superpowers/specs/placeholder.md`\n'
+    printf '**Source Spec Revision:** 1\n'
+    printf '**Last Reviewed By:** plan-eng-review\n\n'
+    printf '%s\n' "$task_block"
+  } > "$tmp_plan"
+
+  if plan_structure_parse "$tmp_plan"; then
+    ANALYZE_SINGLE_TASK_FILE_SCOPE="${PLAN_STRUCTURE_TASK_FILE_SCOPE[0]:-}"
+    rm -f "$tmp_plan"
+    return 0
+  fi
+
+  ANALYZE_SINGLE_TASK_ERROR_CLASS="${PLAN_STRUCTURE_ERROR_CLASS:-MalformedTaskStructure}"
+  ANALYZE_SINGLE_TASK_ERROR_MESSAGE="${PLAN_STRUCTURE_ERROR_MESSAGE:-Task structure is malformed.}"
+  rm -f "$tmp_plan"
+  return 1
+}
+
+compute_overlapping_write_scopes() {
+  local -a task_numbers=("$@")
+  local task_scope_var_count="$#"
+  local i j path compare seen="|"
+  local scope_i scope_j
+  ANALYZE_OVERLAPPING_WRITE_SCOPES=()
+
+  for ((i=0; i<task_scope_var_count; i+=2)); do
+    :
+  done
+}
+
+emit_boolean_json() {
+  if [[ "$1" == true ]]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
+analyze_plan_contract() {
+  local spec_rel="$1"
+  local plan_rel="$2"
+  local spec_abs="$3"
+  local plan_abs="$4"
+  local spec_index_status=0
+  local matrix_status=0
+  local i requirement_id coverage_ids normalized_open scope_entry path compare overlap_seen="|"
+  local task_index
+  local -a task_scopes=()
+  local -a covered_requirement_ids=()
+  local covered_seen="|"
+  local reason_code
+
+  reset_analyze_plan_state
+  ANALYZE_SPEC_PATH="$spec_rel"
+  ANALYZE_PLAN_PATH="$plan_rel"
+  ANALYZE_SPEC_FINGERPRINT="$(hash_file "$spec_abs" 2>/dev/null || true)"
+  ANALYZE_PLAN_FINGERPRINT="$(hash_file "$plan_abs" 2>/dev/null || true)"
+
+  if parse_spec_headers "$spec_abs"; then
+    ANALYZE_SPEC_REVISION="$SPEC_REVISION"
+  else
+    ANALYZE_COVERAGE_COMPLETE=false
+    analyze_add_reason_code "missing_spec_revision"
+    analyze_add_diagnostic "missing_spec_revision" "error" "$spec_rel" "Spec Revision header is missing or malformed." "Update the source spec before approving execution."
+  fi
+
+  if parse_plan_headers "$plan_abs"; then
+    ANALYZE_PLAN_REVISION="$PLAN_REVISION"
+  else
+    ANALYZE_PLAN_REVISION="$(sed -nE 's/^\*\*Plan Revision:\*\* ([0-9]+)$/\1/p' "$plan_abs" | head -n1)"
+    reason_code="${PLAN_STRUCTURE_HEADER_REASON_CODE:-malformed_plan_headers}"
+    analyze_add_reason_code "$reason_code"
+    analyze_add_diagnostic "$reason_code" "error" "$plan_rel" "${PLAN_STRUCTURE_HEADER_ERROR_MESSAGE:-Plan headers are missing or malformed.}" "Normalize the approved plan headers before execution handoff."
+  fi
+
+  parse_loose_task_blocks "$plan_abs"
+  ANALYZE_TASK_COUNT="$LOOSE_TASK_COUNT"
+
+  parse_requirement_index "$spec_abs"
+  spec_index_status=$?
+  case "$spec_index_status" in
+    0) ;;
+    2)
+      ANALYZE_COVERAGE_COMPLETE=false
+      analyze_add_reason_code "malformed_requirement_index"
+      analyze_add_diagnostic "malformed_requirement_index" "error" "$spec_rel" "Requirement Index is missing entries or contains malformed lines." "Fix the approved spec Requirement Index."
+      ;;
+    3)
+      ANALYZE_COVERAGE_COMPLETE=false
+      analyze_add_reason_code "missing_requirement_index"
+      analyze_add_diagnostic "missing_requirement_index" "error" "$spec_rel" "Spec is missing the required Requirement Index section." "Add the approved Requirement Index before execution handoff."
+      ;;
+    *)
+      ANALYZE_COVERAGE_COMPLETE=false
+      analyze_add_reason_code "unexpected_plan_contract_failure"
+      analyze_add_diagnostic "unexpected_plan_contract_failure" "error" "$spec_rel" "Could not parse the source spec Requirement Index." "Fix the approved spec before approval."
+      ;;
+  esac
+
+  parse_requirement_coverage_matrix "$plan_abs"
+  matrix_status=$?
+  case "$matrix_status" in
+    0) ;;
+    2)
+      ANALYZE_COVERAGE_COMPLETE=false
+      analyze_add_reason_code "coverage_matrix_mismatch"
+      analyze_add_diagnostic "coverage_matrix_mismatch" "error" "$plan_rel" "Requirement Coverage Matrix is malformed." "Fix the Requirement Coverage Matrix."
+      ;;
+    3)
+      ANALYZE_COVERAGE_COMPLETE=false
+      analyze_add_reason_code "missing_requirement_coverage"
+      analyze_add_diagnostic "missing_requirement_coverage" "error" "$plan_rel" "Requirement Coverage Matrix is missing or empty." "Add a complete Requirement Coverage Matrix."
+      ;;
+    *)
+      ANALYZE_COVERAGE_COMPLETE=false
+      analyze_add_reason_code "unexpected_plan_contract_failure"
+      analyze_add_diagnostic "unexpected_plan_contract_failure" "error" "$plan_rel" "Could not parse the Requirement Coverage Matrix." "Fix the approved plan before approval."
+      ;;
+  esac
+
+  for ((i=0; i<LOOSE_TASK_COUNT; i++)); do
+    normalized_open="$(normalize_whitespace "${LOOSE_TASK_OPEN_QUESTIONS[$i]:-}")"
+    if [[ "$normalized_open" != "none" ]]; then
+      ANALYZE_OPEN_QUESTIONS_RESOLVED=false
+      analyze_add_reason_code "task_open_questions_not_resolved"
+      analyze_add_diagnostic "task_open_questions_not_resolved" "error" "$plan_rel" "Task ${LOOSE_TASK_NUMBERS[$i]} has unresolved Open Questions." "Resolve task open questions before approval."
+    fi
+
+    if analyze_single_task_block "${LOOSE_TASK_BLOCKS[$i]}"; then
+      ANALYZE_PACKET_BUILDABLE_TASKS=$((ANALYZE_PACKET_BUILDABLE_TASKS + 1))
+      task_scopes[$i]="$ANALYZE_SINGLE_TASK_FILE_SCOPE"
+    else
+      reason_code="$(camel_to_snake "$ANALYZE_SINGLE_TASK_ERROR_CLASS")"
+      if [[ "$ANALYZE_SINGLE_TASK_ERROR_CLASS" == "MalformedFilesBlock" ]]; then
+        ANALYZE_FILES_BLOCKS_VALID=false
+      else
+        ANALYZE_TASK_STRUCTURE_VALID=false
+      fi
+      analyze_add_reason_code "$reason_code"
+      analyze_add_diagnostic "$reason_code" "error" "$plan_rel" "$ANALYZE_SINGLE_TASK_ERROR_MESSAGE" "Fix the malformed task contract before approval."
+      task_scopes[$i]=""
+    fi
+
+    if (( spec_index_status == 0 && matrix_status == 0 )); then
+      coverage_ids="$(parse_task_coverage_ids "${LOOSE_TASK_SPEC_COVERAGE[$i]:-}")"
+      if [[ -z "$coverage_ids" ]]; then
+        ANALYZE_COVERAGE_COMPLETE=false
+        analyze_add_reason_code "task_missing_spec_coverage"
+        analyze_add_diagnostic "task_missing_spec_coverage" "error" "$plan_rel" "Task ${LOOSE_TASK_NUMBERS[$i]} must include at least one Spec Coverage id." "Add task-level Spec Coverage ids."
+      else
+        while IFS= read -r requirement_id; do
+          [[ -n "$requirement_id" ]] || continue
+          if ! find_spec_requirement_index "$requirement_id" >/dev/null 2>&1; then
+            ANALYZE_COVERAGE_COMPLETE=false
+            analyze_add_reason_code "unknown_requirement_id"
+            analyze_add_diagnostic "unknown_requirement_id" "error" "$plan_rel" "Task ${LOOSE_TASK_NUMBERS[$i]} references unknown requirement id $requirement_id." "Fix the task Spec Coverage ids."
+            continue
+          fi
+          if ! coverage_matrix_contains_task "$requirement_id" "${LOOSE_TASK_NUMBERS[$i]}"; then
+            ANALYZE_COVERAGE_COMPLETE=false
+            analyze_add_reason_code "coverage_matrix_mismatch"
+            analyze_add_diagnostic "coverage_matrix_mismatch" "error" "$plan_rel" "Coverage Matrix does not map $requirement_id to Task ${LOOSE_TASK_NUMBERS[$i]}." "Fix the Requirement Coverage Matrix mapping."
+          fi
+          case "$covered_seen" in
+            *"|$requirement_id|"*) ;;
+            *)
+              covered_seen+="$requirement_id|"
+              covered_requirement_ids+=("$requirement_id")
+              ;;
+          esac
+        done <<< "$coverage_ids"
+
+        if ! detect_ambiguous_task_wording "${LOOSE_TASK_BLOCKS[$i]}" "${LOOSE_TASK_NUMBERS[$i]}"; then
+          analyze_add_reason_code "$(camel_to_snake "$CONTRACT_ERROR_CLASS")"
+          analyze_add_diagnostic "$(camel_to_snake "$CONTRACT_ERROR_CLASS")" "error" "$plan_rel" "$CONTRACT_ERROR_MESSAGE" "Remove ambiguous wording from the task contract."
+        fi
+        if ! detect_requirement_weakening "${LOOSE_TASK_BLOCKS[$i]}" "${LOOSE_TASK_NUMBERS[$i]}" "$coverage_ids"; then
+          analyze_add_reason_code "$(camel_to_snake "$CONTRACT_ERROR_CLASS")"
+          analyze_add_diagnostic "$(camel_to_snake "$CONTRACT_ERROR_CLASS")" "error" "$plan_rel" "$CONTRACT_ERROR_MESSAGE" "Restore the approved requirement force in the task wording."
+        fi
+      fi
+    fi
+  done
+
+  if (( spec_index_status == 0 && matrix_status == 0 )); then
+    for ((task_index=0; task_index<COVERAGE_MATRIX_COUNT; task_index++)); do
+      requirement_id="${COVERAGE_MATRIX_IDS[$task_index]}"
+      if ! find_spec_requirement_index "$requirement_id" >/dev/null 2>&1; then
+        ANALYZE_COVERAGE_COMPLETE=false
+        analyze_add_reason_code "unknown_requirement_id"
+        analyze_add_diagnostic "unknown_requirement_id" "error" "$plan_rel" "Requirement Coverage Matrix references unknown requirement id $requirement_id." "Fix the Requirement Coverage Matrix."
+      fi
+      while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        if ! loose_task_number_exists "$path"; then
+          ANALYZE_COVERAGE_COMPLETE=false
+          analyze_add_reason_code "coverage_matrix_mismatch"
+          analyze_add_diagnostic "coverage_matrix_mismatch" "error" "$plan_rel" "Requirement Coverage Matrix references missing Task $path." "Fix the Requirement Coverage Matrix task mapping."
+        fi
+      done <<< "${COVERAGE_MATRIX_TASKS[$task_index]}"
+    done
+
+    for requirement_id in "${SPEC_REQUIREMENT_IDS[@]}"; do
+      if [[ "$covered_seen" != *"|$requirement_id|"* ]]; then
+        ANALYZE_COVERAGE_COMPLETE=false
+        analyze_add_reason_code "missing_requirement_coverage"
+        analyze_add_diagnostic "missing_requirement_coverage" "error" "$plan_rel" "$requirement_id is not covered by any task." "Cover every approved requirement with at least one task."
+      fi
+      if ! find_coverage_matrix_index "$requirement_id" >/dev/null 2>&1; then
+        ANALYZE_COVERAGE_COMPLETE=false
+        analyze_add_reason_code "missing_requirement_coverage"
+        analyze_add_diagnostic "missing_requirement_coverage" "error" "$plan_rel" "$requirement_id is missing from the Requirement Coverage Matrix." "Add the missing requirement to the matrix."
+      fi
+    done
+  fi
+
+  for ((i=0; i<LOOSE_TASK_COUNT; i++)); do
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      for ((task_index=i+1; task_index<LOOSE_TASK_COUNT; task_index++)); do
+        while IFS= read -r compare; do
+          [[ -n "$compare" ]] || continue
+          if [[ "$path" == "$compare" && "$overlap_seen" != *"|$path|"* ]]; then
+            overlap_seen+="$path|"
+            ANALYZE_OVERLAPPING_WRITE_SCOPES+=('{"path":"'"$(json_escape "$path")"'","tasks":['"${LOOSE_TASK_NUMBERS[$i]}"','"${LOOSE_TASK_NUMBERS[$task_index]}"']}')
+          fi
+        done <<< "${task_scopes[$task_index]:-}"
+      done
+    done <<< "${task_scopes[$i]:-}"
+  done
+
+  if [[ "${#ANALYZE_REASON_CODES[@]:-0}" -eq 0 ]]; then
+    ANALYZE_CONTRACT_STATE="valid"
+  fi
 }
 
 COVERAGE_MATRIX_COUNT=0
@@ -543,6 +957,7 @@ emit_string_array_json() {
   local first=1
   printf '['
   for value in "$@"; do
+    [[ -n "$value" ]] || continue
     if [[ $first -eq 0 ]]; then
       printf ','
     fi
@@ -915,6 +1330,87 @@ cmd_lint() {
   printf '\n'
 }
 
+cmd_analyze_plan() {
+  local spec_rel=""
+  local plan_rel=""
+  local output_format="json"
+  local spec_abs=""
+  local plan_abs=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --spec) spec_rel="${2:-}"; shift 2 ;;
+      --plan) plan_rel="${2:-}"; shift 2 ;;
+      --format)
+        output_format="${2:-}"
+        shift 2
+        ;;
+      *)
+        emit_error "InvalidCommandInput" "Unknown analyze-plan argument '$1'."
+        return 1
+        ;;
+    esac
+  done
+
+  [[ -n "$spec_rel" && -n "$plan_rel" ]] || {
+    emit_error "InvalidCommandInput" "analyze-plan requires --spec and --plan."
+    return 1
+  }
+
+  [[ "$output_format" == "json" ]] || {
+    emit_error "InvalidCommandInput" "analyze-plan format must be json."
+    return 1
+  }
+
+  spec_rel="$(normalize_required_repo_path "$spec_rel" "spec path")" || return 1
+  plan_rel="$(normalize_required_repo_path "$plan_rel" "plan path")" || return 1
+  spec_abs="$(plan_rel_to_abs "$spec_rel")"
+  plan_abs="$(plan_rel_to_abs "$plan_rel")"
+
+  [[ -f "$plan_abs" ]] || {
+    emit_error "PlanContractInvalid" "Plan file does not exist."
+    return 1
+  }
+  [[ -f "$spec_abs" ]] || {
+    emit_error "PlanContractInvalid" "Spec file does not exist."
+    return 1
+  }
+
+  analyze_plan_contract "$spec_rel" "$plan_rel" "$spec_abs" "$plan_abs"
+
+  printf '{'
+  printf '"contract_state":"%s",' "$(json_escape "$ANALYZE_CONTRACT_STATE")"
+  printf '"spec_path":"%s",' "$(json_escape "$ANALYZE_SPEC_PATH")"
+  printf '"spec_revision":"%s",' "$(json_escape "$ANALYZE_SPEC_REVISION")"
+  printf '"spec_fingerprint":"%s",' "$(json_escape "$ANALYZE_SPEC_FINGERPRINT")"
+  printf '"plan_path":"%s",' "$(json_escape "$ANALYZE_PLAN_PATH")"
+  printf '"plan_revision":"%s",' "$(json_escape "$ANALYZE_PLAN_REVISION")"
+  printf '"plan_fingerprint":"%s",' "$(json_escape "$ANALYZE_PLAN_FINGERPRINT")"
+  printf '"task_count":%s,' "$ANALYZE_TASK_COUNT"
+  printf '"packet_buildable_tasks":%s,' "$ANALYZE_PACKET_BUILDABLE_TASKS"
+  printf '"coverage_complete":'
+  emit_boolean_json "$ANALYZE_COVERAGE_COMPLETE"
+  printf ','
+  printf '"open_questions_resolved":'
+  emit_boolean_json "$ANALYZE_OPEN_QUESTIONS_RESOLVED"
+  printf ','
+  printf '"task_structure_valid":'
+  emit_boolean_json "$ANALYZE_TASK_STRUCTURE_VALID"
+  printf ','
+  printf '"files_blocks_valid":'
+  emit_boolean_json "$ANALYZE_FILES_BLOCKS_VALID"
+  printf ','
+  printf '"reason_codes":'
+  emit_string_array_json "${ANALYZE_REASON_CODES[@]:-}"
+  printf ','
+  printf '"diagnostics":'
+  emit_diagnostics_array_json "${ANALYZE_DIAGNOSTICS[@]:-}"
+  printf ','
+  printf '"overlapping_write_scopes":'
+  emit_overlapping_scopes_json "${ANALYZE_OVERLAPPING_WRITE_SCOPES[@]:-}"
+  printf '}\n'
+}
+
 cmd_build_task_packet() {
   local plan_rel=""
   local task_number=""
@@ -1129,6 +1625,7 @@ main() {
 
   case "$command" in
     lint) cmd_lint "$@" ;;
+    analyze-plan) cmd_analyze_plan "$@" ;;
     build-task-packet) cmd_build_task_packet "$@" ;;
     ""|-h|--help|help)
       usage

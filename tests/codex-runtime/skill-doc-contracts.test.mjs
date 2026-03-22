@@ -300,7 +300,10 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(writingPlans, /superpowers-plan-contract" lint/);
 
   const planEngReview = readUtf8(getSkillPath('plan-eng-review'));
-  assert.match(planEngReview, /superpowers-plan-contract" lint/);
+  assert.match(planEngReview, /superpowers-plan-contract" analyze-plan/);
+  assert.match(planEngReview, /contract_state == valid/);
+  assert.match(planEngReview, /packet_buildable_tasks == task_count/);
+  assert.match(planEngReview, /missing, stale, or non-buildable for the approved plan revision/);
   assert.match(planEngReview, /Requirement Index/);
   assert.match(planEngReview, /Requirement Coverage Matrix/);
   assert.match(planEngReview, /tasks with `Open Questions` not equal to `none`/);

@@ -137,15 +137,18 @@ require_pattern skills/plan-eng-review/SKILL.md 'If the plan'"'"'s `**Source Spe
 require_pattern skills/plan-eng-review/SKILL.md 'Only write `**Workflow State:** Engineering Approved` as the last step of a successful review'
 require_pattern skills/plan-eng-review/SKILL.md "The handoff must include the exact approved plan path"
 require_pattern skills/plan-eng-review/SKILL.md 'superpowers-plan-execution recommend --plan <approved-plan-path>'
-require_pattern skills/plan-eng-review/SKILL.md '"$_SUPERPOWERS_ROOT/bin/superpowers-plan-contract" lint \'
+require_pattern skills/plan-eng-review/SKILL.md '"$_SUPERPOWERS_ROOT/bin/superpowers-plan-contract" analyze-plan \'
 require_pattern skills/plan-eng-review/SKILL.md "Requirement Index"
 require_pattern skills/plan-eng-review/SKILL.md "Requirement Coverage Matrix"
 require_pattern skills/plan-eng-review/SKILL.md 'tasks with `Open Questions` not equal to `none`'
 require_pattern skills/plan-eng-review/SKILL.md 'invalid `Files:` block structure'
+require_pattern skills/plan-eng-review/SKILL.md 'Engineering approval must fail closed unless `contract_state == valid` and `packet_buildable_tasks == task_count`.'
+require_pattern skills/plan-eng-review/SKILL.md 'If any task packet is missing, stale, or non-buildable for the approved plan revision, stop and route back to review instead of handing off execution.'
 require_pattern skills/plan-eng-review/SKILL.md 'Does the `Requirement Coverage Matrix` cover every approved requirement without orphaned or over-broad tasks?'
 require_pattern skills/plan-eng-review/SKILL.md 'Do `Files:` blocks stay within the minimum file scope needed for the covered requirements, or do they signal file-scope drift that should be split or reapproved?'
 require_pattern skills/plan-eng-review/SKILL.md 'Present the helper-recommended execution skill as the default path with the approved plan path.'
 require_pattern skills/plan-eng-review/SKILL.md 'If isolated-agent workflows are unavailable, do not present `superpowers:subagent-driven-development` as an available override.'
+require_pattern skills/plan-eng-review/SKILL.md 'The handoff must name the exact approved plan path and approved plan revision.'
 require_pattern skills/plan-eng-review/SKILL.md 'if `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`'
 require_pattern skills/plan-eng-review/SKILL.md 'If the helper returns a non-empty `next_skill`, use that route instead of re-deriving state manually.'
 require_pattern skills/plan-eng-review/SKILL.md 'If the helper returns `status` `implementation_ready`, present the normal execution handoff below.'

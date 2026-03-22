@@ -309,9 +309,7 @@ Helpers enforce and inspect.
 - [x] **Step 4: Add schema-versioned structured diagnostics, bounded-scan visibility, and candidate counts while preserving legacy `reason`**
 - [x] **Step 5: Mirror the behavior and output schema in `bin/superpowers-workflow-status.ps1`**
 - [x] **Step 6: Run the workflow-status, wrapper, and parity tests until the new route-time contract is green**
-- [ ] **Step 7: Commit the route-time hardening slice**
-
-  **Execution Note:** Active - Commit the route-time hardening slice
+- [x] **Step 7: Commit the route-time hardening slice**
 ## Task 3: Promote `superpowers-plan-contract` Into Approval And Handoff Law
 
 **Spec Coverage:** REQ-002, REQ-005, REQ-006, REQ-007, REQ-014, REQ-020, REQ-021, VERIFY-001, NONGOAL-001
@@ -336,13 +334,15 @@ Helpers enforce and inspect.
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Add `analyze-plan --format json` with the required contract-state, fingerprint, buildability, and diagnostics schema**
-- [ ] **Step 2: Standardize task-packet provenance fields so every packet includes the exact approved plan and spec identity it was built from**
-- [ ] **Step 3: Mirror the command surface and JSON schema in `bin/superpowers-plan-contract.ps1`**
-- [ ] **Step 4: Tighten `plan-eng-review` so approval requires `contract_state == valid` and `packet_buildable_tasks == task_count`**
-- [ ] **Step 5: Upgrade the ENG review handoff wording so execution never starts from packets that are missing or stale for the approved revision**
-- [ ] **Step 6: Regenerate skill docs and run the helper plus skill-contract suites**
+- [x] **Step 1: Add `analyze-plan --format json` with the required contract-state, fingerprint, buildability, and diagnostics schema**
+- [x] **Step 2: Standardize task-packet provenance fields so every packet includes the exact approved plan and spec identity it was built from**
+- [x] **Step 3: Mirror the command surface and JSON schema in `bin/superpowers-plan-contract.ps1`**
+- [x] **Step 4: Tighten `plan-eng-review` so approval requires `contract_state == valid` and `packet_buildable_tasks == task_count`**
+- [x] **Step 5: Upgrade the ENG review handoff wording so execution never starts from packets that are missing or stale for the approved revision**
+- [x] **Step 6: Regenerate skill docs and run the helper plus skill-contract suites**
 - [ ] **Step 7: Commit the plan-contract and ENG-gate slice**
+
+  **Execution Note:** Active - Commit the plan-contract and ENG-gate slice
 ## Task 4: Add Execution Preflight, Review And Finish Gates Plus Evidence V2
 
 **Spec Coverage:** REQ-007, REQ-008, REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, REQ-020, VERIFY-001, NONGOAL-003
