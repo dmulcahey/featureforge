@@ -150,6 +150,7 @@ parse_requirement_index() {
   local spec_abs="$1"
   local line
   local in_index=0
+  local in_fence=0
   local saw_index=0
   local normalized=""
   local requirement_id=""
@@ -161,6 +162,18 @@ parse_requirement_index() {
   parse_spec_headers "$spec_abs" || return 1
 
   while IFS= read -r line || [[ -n "$line" ]]; do
+    if (( in_index == 0 )) && [[ "$line" =~ ^[[:space:]]*\`\`\` ]]; then
+      if (( in_fence )); then
+        in_fence=0
+      else
+        in_fence=1
+      fi
+      continue
+    fi
+    if (( in_fence )); then
+      continue
+    fi
+
     if [[ "$line" == "## Requirement Index" ]]; then
       saw_index=1
       in_index=1

@@ -254,6 +254,47 @@ test_lint_succeeds_for_valid_contract() {
   assert_json_equals "$output" "coverage.REQ-003.0" "2" "lint"
 }
 
+test_lint_ignores_fenced_example_requirement_index_blocks() {
+  reset_artifacts
+  install_fixture "valid-plan.md" "$PLAN_REL"
+  write_file "$REPO_DIR/$SPEC_REL" <<'EOF'
+# Plan Contract Fixture Design
+
+**Workflow State:** CEO Approved
+**Spec Revision:** 1
+**Last Reviewed By:** plan-ceo-review
+
+## Summary
+
+Fixture spec for plan-contract helper regression coverage.
+
+## Proposed Design
+
+Example:
+
+```markdown
+## Requirement Index
+
+- [REQ-999][behavior] Example requirement only.
+```
+
+## Requirement Index
+
+- [REQ-001][behavior] Execution-bound specs must include a parseable `Requirement Index`.
+- [REQ-002][behavior] Implementation plans must include a parseable `Requirement Coverage Matrix` mapping every indexed requirement to one or more tasks.
+- [REQ-003][behavior] Superpowers must provide a derived `superpowers-plan-contract` helper that lints traceability and builds canonical task packets.
+- [DEC-001][decision] Markdown artifacts remain authoritative and helper output must preserve exact approved statements rather than paraphrase them.
+- [NONGOAL-001][non-goal] Do not introduce hidden workflow authority outside repo-visible markdown artifacts.
+- [VERIFY-001][verification] Regression coverage must cover missing indexes, missing coverage, unknown IDs, unresolved open questions, malformed task structure, malformed `Files:` blocks, path traversal rejection, and stale packet handling.
+EOF
+
+  local output
+  output="$(run_json_command "$REPO_DIR" lint --spec "$SPEC_REL" --plan "$PLAN_REL")"
+  assert_json_equals "$output" "status" "ok" "lint"
+  assert_json_equals "$output" "spec_requirement_count" "6" "lint"
+  assert_json_equals "$output" "plan_task_count" "2" "lint"
+}
+
 test_build_task_packet_json_preserves_exact_contract_text() {
   reset_artifacts
   install_valid_artifacts
@@ -457,6 +498,7 @@ require_fixtures
 init_repo "$REPO_DIR"
 
 test_lint_succeeds_for_valid_contract
+test_lint_ignores_fenced_example_requirement_index_blocks
 test_build_task_packet_json_preserves_exact_contract_text
 test_build_task_packet_markdown_preserves_exact_contract_text
 test_missing_requirement_index_fails
