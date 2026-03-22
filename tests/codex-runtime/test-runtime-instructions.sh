@@ -276,6 +276,11 @@ require_pattern docs/README.copilot.md 'Accelerated review is an opt-in branch i
 require_pattern docs/README.copilot.md "Only the user can initiate accelerated review, and section approval plus final approval remain human-owned even when the review uses reviewer subagents and persisted section packets."
 require_pattern docs/README.copilot.md 'requires the `document-release` handoff before workflow-routed branch completion'
 require_pattern docs/README.copilot.md 'conditional `qa-only` handoff, requires it when browser interaction or test-plan context warrants it'
+require_pattern skills/plan-eng-review/SKILL.md '**Browser QA Required:** yes'
+require_pattern skills/qa-only/SKILL.md '# QA Result'
+require_pattern skills/qa-only/SKILL.md '**Source Test Plan:** `~/.superpowers/projects/.../test-plan.md`'
+require_pattern skills/document-release/SKILL.md '# Release Readiness Result'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'Run `superpowers-plan-execution gate-finish --plan <approved-plan-path>` before presenting completion options.'
 
 if rg -n -F 'requires a required `document-release` handoff' docs/README.codex.md docs/README.copilot.md >/dev/null; then
   echo "Platform workflow docs should not duplicate the document-release requirement wording."

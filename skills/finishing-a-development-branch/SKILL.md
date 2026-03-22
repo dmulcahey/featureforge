@@ -160,6 +160,8 @@ Before presenting completion options:
 - Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON.
 - If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; branch completion is only valid when all three are `null`.
 - If `evidence_path` is empty or unreadable, stop and return to the current execution flow instead of guessing at execution evidence.
+- Run `superpowers-plan-execution gate-finish --plan <approved-plan-path>` before presenting completion options.
+- If the finish gate returns `allowed` `false`, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
 - If the current work is not governed by an approved Superpowers plan, skip this execution-state gate and continue.
 - rejects branch-completion handoff if the approved plan is execution-dirty or malformed
 - must not allow branch completion while any checked-off plan step still lacks semantic implementation evidence
