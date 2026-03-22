@@ -238,25 +238,25 @@ Helpers enforce and compile; they do not approve.
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Add a red shell harness for the new helper contract**
+- [x] **Step 1: Add a red shell harness for the new helper contract**
   Create `tests/codex-runtime/test-superpowers-plan-contract.sh` with temp-repo setup, fixture loading, and helper-invocation helpers following the existing `test-superpowers-plan-execution.sh` style.
 
-- [ ] **Step 2: Add valid and invalid spec/plan fixture pairs**
+- [x] **Step 2: Add valid and invalid spec/plan fixture pairs**
   Write the new fixture markdown files so the harness can cover valid Requirement Index and Coverage Matrix cases plus missing index, missing coverage, unknown IDs, ambiguity wording, requirement weakening, malformed `Files:` blocks, malformed task structure, path-traversal rejection, and unresolved open-question failures.
 
-- [ ] **Step 3: Add red assertions for canonical plan-contract wording**
+- [x] **Step 3: Add red assertions for canonical plan-contract wording**
   Extend `tests/codex-runtime/test-workflow-sequencing.sh`, `tests/codex-runtime/test-workflow-enhancements.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` so they expect `Requirement Index`, `Requirement Coverage Matrix`, `Spec Coverage`, `Open Questions`, task-packet usage, and fail-closed lint gates in the relevant skills and prompts.
 
-- [ ] **Step 4: Add red runtime-surface and wrapper assertions**
+- [x] **Step 4: Add red runtime-surface and wrapper assertions**
   Extend `tests/codex-runtime/test-runtime-instructions.sh` and `tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh` so they expect the new helper binary, wrapper, and runtime-doc references.
 
-- [ ] **Step 5: Add red stale-packet scenarios to the harness**
+- [x] **Step 5: Add red stale-packet scenarios to the harness**
   Make `tests/codex-runtime/test-superpowers-plan-contract.sh` build from valid fixtures, then mutate plan or spec revision/fingerprint inputs so stale-packet regeneration and stale-cache rejection are covered explicitly without relying on incidental implementation details.
 
-- [ ] **Step 6: Run the new and tightened tests to confirm they fail red**
+- [x] **Step 6: Run the new and tightened tests to confirm they fail red**
   Run the listed test commands and confirm failures point at the missing helper surface and missing workflow wording rather than unrelated repo state.
 
-- [ ] **Step 7: Commit the red contract scaffold**
+- [x] **Step 7: Commit the red contract scaffold**
   Run:
   ```bash
   git add \
@@ -303,22 +303,22 @@ Helpers enforce and compile; they do not approve.
 - Test: `bash tests/codex-runtime/test-superpowers-plan-contract.sh`
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
-- [ ] **Step 1: Implement the shell helper skeleton with explicit subcommands**
+- [x] **Step 1: Implement the shell helper skeleton with explicit subcommands**
   Add `lint` and `build-task-packet` dispatch plus JSON/error emitters in `bin/superpowers-plan-contract`, and wire the helper to reuse the shared runtime/common normalization primitives instead of re-implementing them locally.
 
-- [ ] **Step 2: Implement spec and plan parsing for the new contract**
+- [x] **Step 2: Implement spec and plan parsing for the new contract**
   Add parsing for `Requirement Index`, `Requirement Coverage Matrix`, `Spec Coverage`, `Task Outcome`, `Plan Constraints`, and `Open Questions`, and put canonical `## Task N:` plus `Files:` parsing in `bin/superpowers-plan-structure-common` so both helpers share one structural contract.
 
-- [ ] **Step 3: Implement fail-closed lint output**
+- [x] **Step 3: Implement fail-closed lint output**
   Add coverage validation, unknown-ID detection, open-question enforcement, ambiguity-phrase checks, weakening/widening detection, and JSON failure reporting that matches the approved failure classes.
 
-- [ ] **Step 4: Implement canonical packet generation, stale detection, and retention pruning**
+- [x] **Step 4: Implement canonical packet generation, stale detection, and retention pruning**
   Build packet output with exact task block, exact covered requirements, fingerprints, revisions, optional persistence, helper-owned stale-packet rejection or regeneration behavior, and bounded cache pruning so downstream flows never read cached packet files directly and packet storage cannot grow without limit.
 
-- [ ] **Step 5: Add PowerShell wrapper parity**
+- [x] **Step 5: Add PowerShell wrapper parity**
   Implement `bin/superpowers-plan-contract.ps1` using the existing wrapper pattern so Windows callers can invoke the Bash helper with argument and exit-code parity.
 
-- [ ] **Step 6: Make the helper and retention tests pass**
+- [x] **Step 6: Make the helper and retention tests pass**
   Run:
   ```bash
   bash tests/codex-runtime/test-superpowers-plan-contract.sh
@@ -326,7 +326,7 @@ Helpers enforce and compile; they do not approve.
   ```
   Expected: both pass with the new helper, wrapper, stale-packet handling, and bounded-retention behavior present.
 
-- [ ] **Step 7: Commit the helper slice**
+- [x] **Step 7: Commit the helper slice**
   Run:
   ```bash
   git add \
@@ -368,22 +368,22 @@ Helpers enforce and compile; they do not approve.
 - Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Update the writing-plans template to require the new contract**
+- [x] **Step 1: Update the writing-plans template to require the new contract**
   Change the plan template and guidance to require `Requirement Coverage Matrix`, canonical `## Task N:` headings, `Spec Coverage`, `Task Outcome`, `Plan Constraints`, `Open Questions`, and a pre-handoff `superpowers-plan-contract lint` self-check without weakening the existing protected-branch repo-safety gate.
 
-- [ ] **Step 2: Update the plan-eng-review template to gate approval on lint**
+- [x] **Step 2: Update the plan-eng-review template to gate approval on lint**
   Add the required lint invocation, fail-closed conditions, and explicit review questions around coverage, decisions, non-goals, and file-scope drift while preserving the existing protected-branch approval-header repo-safety preflight.
 
-- [ ] **Step 3: Regenerate the generated skill docs**
+- [x] **Step 3: Regenerate the generated skill docs**
   Run `node scripts/gen-skill-docs.mjs` so the checked-in `SKILL.md` files match the template changes.
 
-- [ ] **Step 4: Align `superpowers-plan-execution` with the canonical task structure**
+- [x] **Step 4: Align `superpowers-plan-execution` with the canonical task structure**
   Make `superpowers-plan-execution` consume `bin/superpowers-plan-structure-common`, reject malformed canonical structure earlier, and surface enough task metadata for downstream review correlation without taking over semantic mapping.
 
-- [ ] **Step 5: Update parser and wording tests**
+- [x] **Step 5: Update parser and wording tests**
   Extend `tests/codex-runtime/test-superpowers-plan-execution.sh`, `tests/codex-runtime/test-workflow-sequencing.sh`, `tests/codex-runtime/test-workflow-enhancements.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` so they pin the new authoring/review and parser interop contract.
 
-- [ ] **Step 6: Run the focused verification**
+- [x] **Step 6: Run the focused verification**
   Run:
   ```bash
   node scripts/gen-skill-docs.mjs --check
@@ -394,7 +394,7 @@ Helpers enforce and compile; they do not approve.
   ```
   Expected: all pass with canonical task syntax and lint-gated plan approval behavior.
 
-- [ ] **Step 7: Commit the planning and parser-interoperability slice**
+- [x] **Step 7: Commit the planning and parser-interoperability slice**
   Run:
   ```bash
   git add \
@@ -443,22 +443,22 @@ Helpers enforce and compile; they do not approve.
 - Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Update same-session execution guidance**
+- [x] **Step 1: Update same-session execution guidance**
   Teach `executing-plans` to invoke `superpowers-plan-contract build-task-packet` before each task, treat the returned packet as the exact execution contract for that slice, rely on the helper for any cache reuse or regeneration, and keep the protected-branch repo-safety checks intact.
 
-- [ ] **Step 2: Update subagent-driven-development guidance**
+- [x] **Step 2: Update subagent-driven-development guidance**
   Replace task-text-plus-context dispatch with helper-built packet-backed dispatch, packet-backed answers to subagent questions, and explicit escalation when the packet does not resolve ambiguity, without weakening the existing execution-task-slice repo-safety contract.
 
-- [ ] **Step 3: Tighten implementer and reviewer prompts**
+- [x] **Step 3: Tighten implementer and reviewer prompts**
   Rewrite `implementer-prompt.md`, `spec-reviewer-prompt.md`, `code-quality-reviewer-prompt.md`, and `skills/requesting-code-review/code-reviewer.md` so they consume task packets, check file-scope and requirement-scope drift, and distinguish `PLAN_DEVIATION_FOUND` from ordinary gaps.
 
-- [ ] **Step 4: Update requesting-code-review for packet-backed final review**
+- [x] **Step 4: Update requesting-code-review for packet-backed final review**
   Add plan-contract lint preflight, helper-built packet context requirements, and fail-closed handling for invalid approved artifacts or stale packet-cache state.
 
-- [ ] **Step 5: Regenerate generated skill docs and update contract tests**
+- [x] **Step 5: Regenerate generated skill docs and update contract tests**
   Run `node scripts/gen-skill-docs.mjs`, then extend `tests/codex-runtime/test-workflow-sequencing.sh`, `tests/codex-runtime/test-workflow-enhancements.sh`, and `tests/codex-runtime/skill-doc-contracts.test.mjs` to pin packet-backed execution and review wording.
 
-- [ ] **Step 6: Run the focused verification**
+- [x] **Step 6: Run the focused verification**
   Run:
   ```bash
   node scripts/gen-skill-docs.mjs --check
@@ -468,7 +468,7 @@ Helpers enforce and compile; they do not approve.
   ```
   Expected: packet-backed execution and review contracts are present and pass.
 
-- [ ] **Step 7: Commit the execution and review consumption slice**
+- [x] **Step 7: Commit the execution and review consumption slice**
   Run:
   ```bash
   git add \
@@ -517,16 +517,16 @@ Helpers enforce and compile; they do not approve.
 - Test: `node scripts/gen-skill-docs.mjs --check`
 - Test: `node --test tests/codex-runtime/*.test.mjs`
 
-- [ ] **Step 1: Update README and platform docs for the new helper contract**
+- [x] **Step 1: Update README and platform docs for the new helper contract**
   Document `superpowers-plan-contract` as an internal runtime helper, explain packet-backed planning and review behavior, restate that `superpowers-workflow` remains the only supported public read-only workflow CLI, and keep the existing `superpowers-session-entry` plus `superpowers-repo-safety` layers visible in the runtime architecture narrative.
 
-- [ ] **Step 2: Update testing and fixture guidance**
+- [x] **Step 2: Update testing and fixture guidance**
   Update `docs/testing.md`, `tests/codex-runtime/test-workflow-enhancements.sh`, `tests/codex-runtime/test-runtime-instructions.sh`, and `tests/codex-runtime/fixtures/workflow-artifacts/README.md` so the new helper suite, packet-backed reviewer wording, fixture family, and runtime-doc references are pinned.
 
-- [ ] **Step 3: Add a release-note entry**
+- [x] **Step 3: Add a release-note entry**
   Summarize the new semantic traceability layer, task-packet-backed execution/review flow, and stricter plan-authoring and engineering-review contracts in `RELEASE-NOTES.md`.
 
-- [ ] **Step 4: Run the full targeted verification matrix**
+- [x] **Step 4: Run the full targeted verification matrix**
   Run:
   ```bash
   node scripts/gen-skill-docs.mjs --check
@@ -540,7 +540,7 @@ Helpers enforce and compile; they do not approve.
   ```
   Expected: all pass and reflect the new helper-backed contract.
 
-- [ ] **Step 5: Commit the docs and verification slice**
+- [x] **Step 5: Commit the docs and verification slice**
   Run:
   ```bash
   git add \
