@@ -287,9 +287,7 @@ Add PowerShell equivalents for the new normalization primitives to `bin/superpow
 Run: `bash tests/codex-runtime/test-superpowers-workflow-status.sh && bash tests/codex-runtime/test-superpowers-plan-execution.sh && bash tests/codex-runtime/test-superpowers-slug.sh`
 Expected: PASS with no externally visible behavior drift.
 
-- [ ] **Step 7: Commit the shared-runtime-library migration**
-
-  **Execution Note:** Active - Commit the shared-runtime-library migration
+- [x] **Step 7: Commit the shared-runtime-library migration**
 ```bash
 git add bin/superpowers-runtime-common.sh bin/superpowers-pwsh-common.ps1 bin/superpowers-workflow-status bin/superpowers-plan-execution tests/codex-runtime/test-superpowers-workflow-status.sh tests/codex-runtime/test-superpowers-plan-execution.sh tests/codex-runtime/test-superpowers-slug.sh
 git commit -m "refactor: share runtime helper primitives"
@@ -305,7 +303,7 @@ git commit -m "refactor: share runtime helper primitives"
 - Test: `bash tests/codex-runtime/test-superpowers-session-entry.sh`
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
-- [ ] **Step 1: Add red helper tests for session-entry outcomes**
+- [x] **Step 1: Add red helper tests for session-entry outcomes**
 ```bash
 expect_json_field outcome needs_user_choice
 expect_json_field decision_source missing
@@ -315,25 +313,27 @@ expect_json_field decision_path "$EXPECTED_DECISION_PATH"
 require_absent_pattern bin/superpowers-session-entry 'find .*session-flags'
 ```
 
-- [ ] **Step 2: Run the red session-entry helper test**
+- [x] **Step 2: Run the red session-entry helper test**
 Run: `bash tests/codex-runtime/test-superpowers-session-entry.sh`
 Expected: FAIL because the helper does not exist yet.
 
-- [ ] **Step 3: Implement the Bash helper**
+- [x] **Step 3: Implement the Bash helper**
 ```bash
 superpowers-session-entry resolve --message-file <path> [--session-key <id>]
 superpowers-session-entry record --decision enabled|bypassed [--session-key <id>]
 ```
 Return JSON with `outcome`, `decision_source`, `session_key`, `decision_path`, `policy_source`, `persisted`, `failure_class`, and `reason`.
 
-- [ ] **Step 4: Implement the PowerShell wrapper**
+- [x] **Step 4: Implement the PowerShell wrapper**
 Use the shared PowerShell helper surface from Task 1 and keep CLI semantics aligned with the Bash helper. Do not add new shared-wrapper primitives in this task unless Task 1 is explicitly reopened.
 
-- [ ] **Step 5: Re-run the helper tests**
+- [x] **Step 5: Re-run the helper tests**
 Run: `bash tests/codex-runtime/test-superpowers-session-entry.sh && bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 Expected: PASS for missing, enabled, bypassed, malformed, explicit re-entry, re-entry write-failure, and the normal-path hot-path guard that proves the helper still uses the derived decision file even when unrelated session state exists.
 
 - [ ] **Step 6: Commit the session-entry helper**
+
+  **Execution Note:** Active - Commit the session-entry helper
 ```bash
 git add bin/superpowers-session-entry bin/superpowers-session-entry.ps1 tests/codex-runtime/test-superpowers-session-entry.sh tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh
 git commit -m "feat: add session-entry runtime helper"
