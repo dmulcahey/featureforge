@@ -14,6 +14,9 @@ usage() {
 Usage:
   superpowers-plan-execution status --plan <approved-plan-path>
   superpowers-plan-execution recommend --plan <approved-plan-path> [--isolated-agents available|unavailable] [--session-intent stay|separate|unknown] [--workspace-prepared yes|no|unknown]
+  superpowers-plan-execution preflight --plan <approved-plan-path>
+  superpowers-plan-execution gate-review --plan <approved-plan-path>
+  superpowers-plan-execution gate-finish --plan <approved-plan-path>
   superpowers-plan-execution begin ...
   superpowers-plan-execution transfer ...
   superpowers-plan-execution complete ...
@@ -49,6 +52,131 @@ hash_stream() {
     return
   fi
   cksum | awk '{print $1}'
+}
+
+hash_file() {
+  local path="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+    return
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+    return
+  fi
+  cksum "$path" | awk '{print $1}'
+}
+
+camel_to_snake() {
+  printf '%s' "$1" | sed -E 's/([a-z0-9])([A-Z])/\1_\2/g' | tr 'A-Z' 'a-z'
+}
+
+emit_string_array_json() {
+  local value
+  local first=1
+  printf '['
+  for value in "$@"; do
+    [[ -n "$value" ]] || continue
+    if [[ $first -eq 0 ]]; then
+      printf ','
+    fi
+    printf '"%s"' "$(json_escape "$value")"
+    first=0
+  done
+  printf ']'
+}
+
+emit_boolean_json() {
+  if [[ "$1" == true ]]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
+emit_diagnostics_json() {
+  local diagnostic
+  local first=1
+  printf '['
+  for diagnostic in "$@"; do
+    [[ -n "$diagnostic" ]] || continue
+    if [[ $first -eq 0 ]]; then
+      printf ','
+    fi
+    printf '%s' "$diagnostic"
+    first=0
+  done
+  printf ']'
+}
+
+GATE_ALLOWED=true
+GATE_FAILURE_CLASS=""
+GATE_REASON_CODES=()
+GATE_WARNING_CODES=()
+GATE_DIAGNOSTICS=()
+
+reset_gate_state() {
+  GATE_ALLOWED=true
+  GATE_FAILURE_CLASS=""
+  GATE_REASON_CODES=()
+  GATE_WARNING_CODES=()
+  GATE_DIAGNOSTICS=()
+}
+
+gate_add_reason_code() {
+  local code="$1"
+  local existing
+  [[ -n "$code" ]] || return 0
+  for existing in "${GATE_REASON_CODES[@]:-}"; do
+    [[ "$existing" == "$code" ]] && return 0
+  done
+  GATE_REASON_CODES+=("$code")
+}
+
+gate_add_warning_code() {
+  local code="$1"
+  local existing
+  [[ -n "$code" ]] || return 0
+  for existing in "${GATE_WARNING_CODES[@]:-}"; do
+    [[ "$existing" == "$code" ]] && return 0
+  done
+  GATE_WARNING_CODES+=("$code")
+}
+
+gate_add_diagnostic() {
+  local code="$1"
+  local severity="$2"
+  local message="$3"
+  local remediation="$4"
+  GATE_DIAGNOSTICS+=('{"code":"'"$(json_escape "$code")"'","severity":"'"$(json_escape "$severity")"'","message":"'"$(json_escape "$message")"'","remediation":"'"$(json_escape "$remediation")"'"}')
+}
+
+gate_fail() {
+  local failure_class="$1"
+  local reason_code="$2"
+  local message="$3"
+  local remediation="$4"
+  GATE_ALLOWED=false
+  [[ -n "$GATE_FAILURE_CLASS" ]] || GATE_FAILURE_CLASS="$failure_class"
+  gate_add_reason_code "$reason_code"
+  gate_add_diagnostic "$reason_code" "error" "$message" "$remediation"
+}
+
+emit_gate_json() {
+  printf '{'
+  printf '"allowed":'
+  emit_boolean_json "$GATE_ALLOWED"
+  printf ','
+  printf '"failure_class":"%s",' "$(json_escape "$GATE_FAILURE_CLASS")"
+  printf '"reason_codes":'
+  emit_string_array_json "${GATE_REASON_CODES[@]:-}"
+  printf ','
+  printf '"warning_codes":'
+  emit_string_array_json "${GATE_WARNING_CODES[@]:-}"
+  printf ','
+  printf '"diagnostics":'
+  emit_diagnostics_json "${GATE_DIAGNOSTICS[@]:-}"
+  printf '}\n'
 }
 
 spec_state=""
@@ -471,12 +599,17 @@ validate_source_spec() {
 reset_evidence_parse_state() {
   EVIDENCE_EXISTS=0
   EVIDENCE_EMPTY_STATE=1
+  EVIDENCE_FORMAT="empty"
   EVIDENCE_ATTEMPT_COUNT=0
   EVIDENCE_SOURCE_COUNT=0
   EVIDENCE_SOURCE_ONE=""
   EVIDENCE_SOURCE_TWO=""
   EVIDENCE_PATH_LINE=""
   EVIDENCE_REVISION_LINE=""
+  EVIDENCE_PLAN_FINGERPRINT=""
+  EVIDENCE_SOURCE_SPEC_PATH=""
+  EVIDENCE_SOURCE_SPEC_REVISION=""
+  EVIDENCE_SOURCE_SPEC_FINGERPRINT=""
 }
 
 parse_evidence_file() {
@@ -484,6 +617,8 @@ parse_evidence_file() {
   local expected_plan_rel="$2"
   local expected_revision="$3"
   local title_count path_count revision_count section_count step_section_count attempt_count
+  local plan_fingerprint_count source_spec_path_count source_spec_revision_count source_spec_fingerprint_count
+  local v2_header_count
 
   reset_evidence_parse_state
   if [[ ! -f "$evidence_abs" ]]; then
@@ -497,9 +632,14 @@ parse_evidence_file() {
   title_count="$(grep -c '^# Execution Evidence:' "$evidence_abs" || true)"
   path_count="$(grep -c '^\*\*Plan Path:\*\* ' "$evidence_abs" || true)"
   revision_count="$(grep -c '^\*\*Plan Revision:\*\* ' "$evidence_abs" || true)"
+  plan_fingerprint_count="$(grep -c '^\*\*Plan Fingerprint:\*\* ' "$evidence_abs" || true)"
+  source_spec_path_count="$(grep -c '^\*\*Source Spec Path:\*\* ' "$evidence_abs" || true)"
+  source_spec_revision_count="$(grep -c '^\*\*Source Spec Revision:\*\* ' "$evidence_abs" || true)"
+  source_spec_fingerprint_count="$(grep -c '^\*\*Source Spec Fingerprint:\*\* ' "$evidence_abs" || true)"
   section_count="$(grep -c '^## Step Evidence$' "$evidence_abs" || true)"
   step_section_count="$(grep -c '^### Task [0-9][0-9]* Step [0-9][0-9]*$' "$evidence_abs" || true)"
   attempt_count="$(grep -c '^#### Attempt [0-9][0-9]*$' "$evidence_abs" || true)"
+  v2_header_count=$(( plan_fingerprint_count + source_spec_path_count + source_spec_revision_count + source_spec_fingerprint_count ))
 
   if [[ "$title_count" != "1" || "$path_count" != "1" || "$revision_count" != "1" || "$section_count" != "1" ]]; then
     set_failure "MalformedExecutionState" "Execution evidence artifact header structure is malformed."
@@ -513,8 +653,23 @@ parse_evidence_file() {
     return 1
   fi
 
+  if (( v2_header_count > 0 )); then
+    if [[ "$plan_fingerprint_count" != "1" || "$source_spec_path_count" != "1" || "$source_spec_revision_count" != "1" || "$source_spec_fingerprint_count" != "1" ]]; then
+      set_failure "MalformedExecutionState" "Execution evidence v2 header metadata is incomplete."
+      return 1
+    fi
+    EVIDENCE_FORMAT="v2"
+    EVIDENCE_PLAN_FINGERPRINT="$(sed -nE 's/^\*\*Plan Fingerprint:\*\* (.+)$/\1/p' "$evidence_abs" | head -n1)"
+    EVIDENCE_SOURCE_SPEC_PATH="$(sed -nE 's/^\*\*Source Spec Path:\*\* (.+)$/\1/p' "$evidence_abs" | head -n1)"
+    EVIDENCE_SOURCE_SPEC_REVISION="$(sed -nE 's/^\*\*Source Spec Revision:\*\* ([0-9]+)$/\1/p' "$evidence_abs" | head -n1)"
+    EVIDENCE_SOURCE_SPEC_FINGERPRINT="$(sed -nE 's/^\*\*Source Spec Fingerprint:\*\* (.+)$/\1/p' "$evidence_abs" | head -n1)"
+  else
+    EVIDENCE_FORMAT="legacy"
+  fi
+
   if [[ "$step_section_count" == "0" && "$attempt_count" == "0" ]]; then
     EVIDENCE_EMPTY_STATE=1
+    EVIDENCE_FORMAT="empty"
     return 0
   fi
 
@@ -716,12 +871,18 @@ reset_attempts_state() {
   ATT_TASKS=()
   ATT_STEPS=()
   ATT_NUMBERS=()
+  ATT_FORMATS=()
   ATT_STATUS=()
   ATT_RECORDED_AT=()
   ATT_SOURCES=()
+  ATT_PACKET_FINGERPRINTS=()
+  ATT_HEAD_SHAS=()
+  ATT_BASE_SHAS=()
   ATT_CLAIMS=()
   ATT_FILES=()
+  ATT_FILE_PROOFS=()
   ATT_VERIFICATION=()
+  ATT_VERIFICATION_SUMMARIES=()
   ATT_INVALIDATION_REASONS=()
 }
 
@@ -732,21 +893,28 @@ push_attempt() {
   ATT_TASKS[$ATT_COUNT]="$task"
   ATT_STEPS[$ATT_COUNT]="$step"
   ATT_NUMBERS[$ATT_COUNT]="$number"
+  ATT_FORMATS[$ATT_COUNT]=""
   ATT_STATUS[$ATT_COUNT]=""
   ATT_RECORDED_AT[$ATT_COUNT]=""
   ATT_SOURCES[$ATT_COUNT]=""
+  ATT_PACKET_FINGERPRINTS[$ATT_COUNT]=""
+  ATT_HEAD_SHAS[$ATT_COUNT]=""
+  ATT_BASE_SHAS[$ATT_COUNT]=""
   ATT_CLAIMS[$ATT_COUNT]=""
   ATT_FILES[$ATT_COUNT]=""
+  ATT_FILE_PROOFS[$ATT_COUNT]=""
   ATT_VERIFICATION[$ATT_COUNT]=""
+  ATT_VERIFICATION_SUMMARIES[$ATT_COUNT]=""
   ATT_INVALIDATION_REASONS[$ATT_COUNT]=""
   ATT_COUNT=$((ATT_COUNT + 1))
 }
 
 parse_evidence_attempts() {
-  local line current_task="" current_step="" current_index=""
+  local line current_task="" current_step="" current_index="" current_format=""
   local queued_line="" have_queued_line=0
   local files_lines=()
-  local expected_stage=0
+  local file_proof_lines=()
+  local expected_stage=""
   local last_task=0
   local last_step=0
   local last_attempt_number=0
@@ -772,7 +940,7 @@ parse_evidence_attempts() {
     fi
 
     if [[ "$line" =~ ^###\ Task\ ([0-9]+)\ Step\ ([0-9]+)$ ]]; then
-      if [[ -n "$current_index" && $expected_stage -ne 8 ]]; then
+      if [[ -n "$current_index" && "$expected_stage" != "done" ]]; then
         exec 3<&-
         set_failure "MalformedExecutionState" "Execution evidence attempt is incomplete."
         return 1
@@ -794,9 +962,10 @@ parse_evidence_attempts() {
       last_task="${BASH_REMATCH[1]}"
       last_step="${BASH_REMATCH[2]}"
       current_index=""
+      current_format=""
       last_attempt_number=0
     elif [[ "$line" =~ ^####\ Attempt\ ([0-9]+)$ ]]; then
-      if [[ -n "$current_index" && $expected_stage -ne 8 ]]; then
+      if [[ -n "$current_index" && "$expected_stage" != "done" ]]; then
         exec 3<&-
         set_failure "MalformedExecutionState" "Execution evidence attempt is incomplete."
         return 1
@@ -810,17 +979,17 @@ parse_evidence_attempts() {
       push_attempt "$current_task" "$current_step" "${BASH_REMATCH[1]}"
       current_index=$((ATT_COUNT - 1))
       last_attempt_number="${BASH_REMATCH[1]}"
-      expected_stage=1
+      expected_stage="status"
     elif [[ -n "$current_index" && "$line" =~ ^\*\*Status:\*\*\ (.+)$ ]]; then
-      [[ $expected_stage -eq 1 ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      [[ "$expected_stage" == "status" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
       ATT_STATUS[$current_index]="${BASH_REMATCH[1]}"
-      expected_stage=2
+      expected_stage="recorded_at"
     elif [[ -n "$current_index" && "$line" =~ ^\*\*Recorded\ At:\*\*\ (.+)$ ]]; then
-      [[ $expected_stage -eq 2 ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      [[ "$expected_stage" == "recorded_at" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
       ATT_RECORDED_AT[$current_index]="${BASH_REMATCH[1]}"
-      expected_stage=3
+      expected_stage="execution_source"
     elif [[ -n "$current_index" && "$line" =~ ^\*\*Execution\ Source:\*\*\ (.+)$ ]]; then
-      [[ $expected_stage -eq 3 ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      [[ "$expected_stage" == "execution_source" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
       validate_persisted_execution_source "${BASH_REMATCH[1]}" || {
         exec 3<&-
         return 1
@@ -836,9 +1005,50 @@ parse_evidence_attempts() {
         set_failure "MalformedExecutionState" "Execution evidence contains multiple distinct persisted execution sources for one revision."
         return 1
       fi
-      expected_stage=4
+      expected_stage="post_source"
+    elif [[ -n "$current_index" && "$line" =~ ^\*\*Task\ Number:\*\*\ ([0-9]+)$ ]]; then
+      [[ "$expected_stage" == "post_source" && "$EVIDENCE_FORMAT" == "v2" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      [[ "${BASH_REMATCH[1]}" == "$current_task" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence Task Number must match its step heading."; return 1; }
+      current_format="v2"
+      ATT_FORMATS[$current_index]="v2"
+      expected_stage="step_number"
+    elif [[ -n "$current_index" && "$line" =~ ^\*\*Step\ Number:\*\*\ ([0-9]+)$ ]]; then
+      [[ "$expected_stage" == "step_number" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      [[ "${BASH_REMATCH[1]}" == "$current_step" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence Step Number must match its step heading."; return 1; }
+      expected_stage="packet_fingerprint"
+    elif [[ -n "$current_index" && "$line" =~ ^\*\*Packet\ Fingerprint:\*\*\ (.+)$ ]]; then
+      [[ "$expected_stage" == "packet_fingerprint" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      validate_persisted_normalized_text "${BASH_REMATCH[1]}" "Execution evidence Packet Fingerprint may not be blank after whitespace normalization." || {
+        exec 3<&-
+        return 1
+      }
+      ATT_PACKET_FINGERPRINTS[$current_index]="$PERSISTED_NORMALIZED_VALUE"
+      expected_stage="head_sha"
+    elif [[ -n "$current_index" && "$line" =~ ^\*\*Head\ SHA:\*\*\ (.+)$ ]]; then
+      [[ "$expected_stage" == "head_sha" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      validate_persisted_normalized_text "${BASH_REMATCH[1]}" "Execution evidence Head SHA may not be blank after whitespace normalization." || {
+        exec 3<&-
+        return 1
+      }
+      ATT_HEAD_SHAS[$current_index]="$PERSISTED_NORMALIZED_VALUE"
+      expected_stage="claim_or_base"
+    elif [[ -n "$current_index" && "$line" =~ ^\*\*Base\ SHA:\*\*\ (.+)$ ]]; then
+      [[ "$expected_stage" == "claim_or_base" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      validate_persisted_normalized_text "${BASH_REMATCH[1]}" "Execution evidence Base SHA may not be blank after whitespace normalization." || {
+        exec 3<&-
+        return 1
+      }
+      ATT_BASE_SHAS[$current_index]="$PERSISTED_NORMALIZED_VALUE"
+      expected_stage="claim"
     elif [[ -n "$current_index" && "$line" =~ ^\*\*Claim:\*\*\ (.+)$ ]]; then
-      [[ $expected_stage -eq 4 ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      if [[ "$expected_stage" == "post_source" ]]; then
+        current_format="legacy"
+        ATT_FORMATS[$current_index]="legacy"
+      elif [[ "$expected_stage" != "claim_or_base" && "$expected_stage" != "claim" ]]; then
+        exec 3<&-
+        set_failure "MalformedExecutionState" "Execution evidence fields are out of order."
+        return 1
+      fi
       validate_persisted_normalized_text \
         "${BASH_REMATCH[1]}" \
         "Execution evidence Claim text may not be blank after whitespace normalization." || {
@@ -846,9 +1056,9 @@ parse_evidence_attempts() {
         return 1
       }
       ATT_CLAIMS[$current_index]="$PERSISTED_NORMALIZED_VALUE"
-      expected_stage=5
+      expected_stage="files"
     elif [[ -n "$current_index" && "$line" == "**Files:**" ]]; then
-      [[ $expected_stage -eq 5 ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      [[ "$expected_stage" == "files" && "$current_format" == "legacy" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
       files_lines=()
       while IFS= read -r line <&3; do
         if [[ "$line" =~ ^-\ (.+)$ ]]; then
@@ -871,9 +1081,38 @@ parse_evidence_attempts() {
         return 1
       fi
       ATT_FILES[$current_index]="$(printf '%s\n' "${files_lines[@]}")"
-      expected_stage=6
+      ATT_FILE_PROOFS[$current_index]="$(for line in "${files_lines[@]}"; do printf '%s\tsha256:unknown\n' "$line"; done)"
+      expected_stage="verification"
+    elif [[ -n "$current_index" && "$line" == "**Files Proven:**" ]]; then
+      [[ "$expected_stage" == "files" && "$current_format" == "v2" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      files_lines=()
+      file_proof_lines=()
+      while IFS= read -r line <&3; do
+        if [[ "$line" =~ ^-\ (.+)\ \|\ (sha256:[A-Za-z0-9]+)$ ]]; then
+          validate_persisted_repo_relative_path \
+            "${BASH_REMATCH[1]}" \
+            "Execution evidence Files Proven bullets must use canonical repo-relative paths." || {
+            exec 3<&-
+            return 1
+          }
+          files_lines+=("$PERSISTED_NORMALIZED_PATH")
+          file_proof_lines+=("$PERSISTED_NORMALIZED_PATH"$'\t'"${BASH_REMATCH[2]}")
+          continue
+        fi
+        queued_line="$line"
+        have_queued_line=1
+        break
+      done
+      if (( ${#files_lines[@]} == 0 )); then
+        exec 3<&-
+        set_failure "MalformedExecutionState" "Execution evidence Files Proven section must contain at least one bullet."
+        return 1
+      fi
+      ATT_FILES[$current_index]="$(printf '%s\n' "${files_lines[@]}")"
+      ATT_FILE_PROOFS[$current_index]="$(printf '%s\n' "${file_proof_lines[@]}")"
+      expected_stage="verification_summary"
     elif [[ -n "$current_index" && "$line" == "**Verification:**" ]]; then
-      [[ $expected_stage -eq 6 ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      [[ "$expected_stage" == "verification" && "$current_format" == "legacy" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
       if ! IFS= read -r line <&3; then
         exec 3<&-
         set_failure "MalformedExecutionState" "Execution evidence Verification section is incomplete."
@@ -887,6 +1126,7 @@ parse_evidence_attempts() {
         return 1
       }
       ATT_VERIFICATION[$current_index]="$PERSISTED_NORMALIZED_VALUE"
+      ATT_VERIFICATION_SUMMARIES[$current_index]="$PERSISTED_NORMALIZED_VALUE"
       if IFS= read -r line <&3; then
         if [[ "$line" =~ ^-\ (.+)$ ]]; then
           exec 3<&-
@@ -896,9 +1136,20 @@ parse_evidence_attempts() {
         queued_line="$line"
         have_queued_line=1
       fi
-      expected_stage=7
+      expected_stage="invalidation_reason"
+    elif [[ -n "$current_index" && "$line" =~ ^\*\*Verification\ Summary:\*\*\ (.+)$ ]]; then
+      [[ "$expected_stage" == "verification_summary" && "$current_format" == "v2" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      validate_persisted_normalized_text \
+        "${BASH_REMATCH[1]}" \
+        "Execution evidence Verification Summary text may not be blank after whitespace normalization." || {
+        exec 3<&-
+        return 1
+      }
+      ATT_VERIFICATION[$current_index]="$PERSISTED_NORMALIZED_VALUE"
+      ATT_VERIFICATION_SUMMARIES[$current_index]="$PERSISTED_NORMALIZED_VALUE"
+      expected_stage="invalidation_reason"
     elif [[ -n "$current_index" && "$line" =~ ^\*\*Invalidation\ Reason:\*\*\ (.+)$ ]]; then
-      [[ $expected_stage -eq 7 ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
+      [[ "$expected_stage" == "invalidation_reason" ]] || { exec 3<&-; set_failure "MalformedExecutionState" "Execution evidence fields are out of order."; return 1; }
       validate_persisted_normalized_text \
         "${BASH_REMATCH[1]}" \
         "Execution evidence Invalidation Reason text may not be blank after whitespace normalization." || {
@@ -906,8 +1157,8 @@ parse_evidence_attempts() {
         return 1
       }
       ATT_INVALIDATION_REASONS[$current_index]="$PERSISTED_NORMALIZED_VALUE"
-      expected_stage=8
-    elif [[ "$line" =~ ^#\ Execution\ Evidence: ]] || [[ "$line" =~ ^\*\*Plan\ Path:\*\* ]] || [[ "$line" =~ ^\*\*Plan\ Revision:\*\* ]] || [[ "$line" == "## Step Evidence" ]]; then
+      expected_stage="done"
+    elif [[ "$line" =~ ^#\ Execution\ Evidence: ]] || [[ "$line" =~ ^\*\*Plan\ Path:\*\* ]] || [[ "$line" =~ ^\*\*Plan\ Revision:\*\* ]] || [[ "$line" =~ ^\*\*Plan\ Fingerprint:\*\* ]] || [[ "$line" =~ ^\*\*Source\ Spec\ Path:\*\* ]] || [[ "$line" =~ ^\*\*Source\ Spec\ Revision:\*\* ]] || [[ "$line" =~ ^\*\*Source\ Spec\ Fingerprint:\*\* ]] || [[ "$line" == "## Step Evidence" ]]; then
       continue
     else
       exec 3<&-
@@ -917,7 +1168,7 @@ parse_evidence_attempts() {
   done
   exec 3<&-
 
-  if [[ -n "$current_index" && $expected_stage -ne 8 ]]; then
+  if [[ -n "$current_index" && "$expected_stage" != "done" ]]; then
     set_failure "MalformedExecutionState" "Execution evidence attempt is incomplete."
     return 1
   fi
@@ -947,6 +1198,13 @@ parse_evidence_attempts() {
       set_failure "MalformedExecutionState" "Execution evidence attempts must contain every required field."
       return 1
     }
+
+    if [[ "${ATT_FORMATS[$i]}" == "v2" ]]; then
+      [[ -n "${ATT_PACKET_FINGERPRINTS[$i]}" && -n "${ATT_HEAD_SHAS[$i]}" && -n "${ATT_FILE_PROOFS[$i]}" && -n "${ATT_VERIFICATION_SUMMARIES[$i]}" ]] || {
+        set_failure "MalformedExecutionState" "Execution evidence v2 attempts must contain every required provenance field."
+        return 1
+      }
+    fi
   done
 
   return 0
@@ -971,6 +1229,20 @@ find_latest_attempt_index() {
   return 1
 }
 
+find_latest_completed_attempt_index() {
+  local latest_index="" i
+  for ((i=0; i<ATT_COUNT; i++)); do
+    if [[ "${ATT_STATUS[$i]}" == "Completed" ]]; then
+      latest_index="$i"
+    fi
+  done
+  if [[ -n "$latest_index" ]]; then
+    printf '%s\n' "$latest_index"
+    return 0
+  fi
+  return 1
+}
+
 next_attempt_number() {
   local task="$1"
   local step="$2"
@@ -982,6 +1254,78 @@ next_attempt_number() {
   fi
 }
 
+compute_execution_packet_fingerprint_from_values() {
+  local plan_path="$1"
+  local plan_revision="$2"
+  local plan_fingerprint="$3"
+  local source_spec_path="$4"
+  local source_spec_revision="$5"
+  local source_spec_fingerprint="$6"
+  local task="$7"
+  local step="$8"
+
+  {
+    printf 'plan_path=%s\n' "$plan_path"
+    printf 'plan_revision=%s\n' "$plan_revision"
+    printf 'plan_fingerprint=%s\n' "$plan_fingerprint"
+    printf 'source_spec_path=%s\n' "$source_spec_path"
+    printf 'source_spec_revision=%s\n' "$source_spec_revision"
+    printf 'source_spec_fingerprint=%s\n' "$source_spec_fingerprint"
+    printf 'task_number=%s\n' "$task"
+    printf 'step_number=%s\n' "$step"
+  } | hash_stream
+}
+
+compute_current_execution_packet_fingerprint() {
+  local task="$1"
+  local step="$2"
+  local plan_fingerprint source_spec_fingerprint source_spec_abs
+
+  plan_fingerprint="$(hash_file "$PLAN_ABS_PATH")" || return 1
+  source_spec_abs="$(plan_rel_to_abs "$PLAN_SOURCE_SPEC")"
+  source_spec_fingerprint="$(hash_file "$source_spec_abs")" || return 1
+
+  compute_execution_packet_fingerprint_from_values \
+    "$PLAN_REL_PATH" \
+    "$PLAN_REVISION" \
+    "$plan_fingerprint" \
+    "$PLAN_SOURCE_SPEC" \
+    "$PLAN_SOURCE_SPEC_REVISION" \
+    "$source_spec_fingerprint" \
+    "$task" \
+    "$step"
+}
+
+current_head_sha() {
+  git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true
+}
+
+current_base_sha() {
+  git -C "$REPO_ROOT" rev-list --max-parents=0 HEAD 2>/dev/null | tail -n1 || true
+}
+
+build_files_proven_entry() {
+  local files_entry="$1"
+  local path digest
+  local entries=()
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    if [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]]; then
+      digest="$(hash_file "$REPO_ROOT/$path")" || {
+        set_failure "EvidenceWriteFailed" "Could not fingerprint a proven file."
+        return 1
+      }
+      entries+=("$path"$'\t'"sha256:$digest")
+    else
+      entries+=("$path"$'\t'"sha256:missing")
+    fi
+  done <<< "$files_entry"
+
+  FILES_PROVEN_ENTRY="$(printf '%s\n' "${entries[@]}")"
+  return 0
+}
+
 append_attempt() {
   local task="$1"
   local step="$2"
@@ -989,17 +1333,27 @@ append_attempt() {
   local claim="$4"
   local files_entry="$5"
   local verification_entry="$6"
+  local packet_fingerprint="$7"
+  local head_sha="$8"
+  local base_sha="$9"
+  local files_proven_entry="${10}"
   local number recorded_at
 
   number="$(next_attempt_number "$task" "$step")"
   recorded_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   push_attempt "$task" "$step" "$number"
+  ATT_FORMATS[$((ATT_COUNT - 1))]="v2"
   ATT_STATUS[$((ATT_COUNT - 1))]="Completed"
   ATT_RECORDED_AT[$((ATT_COUNT - 1))]="$recorded_at"
   ATT_SOURCES[$((ATT_COUNT - 1))]="$source"
+  ATT_PACKET_FINGERPRINTS[$((ATT_COUNT - 1))]="$packet_fingerprint"
+  ATT_HEAD_SHAS[$((ATT_COUNT - 1))]="$head_sha"
+  ATT_BASE_SHAS[$((ATT_COUNT - 1))]="$base_sha"
   ATT_CLAIMS[$((ATT_COUNT - 1))]="$claim"
   ATT_FILES[$((ATT_COUNT - 1))]="$files_entry"
+  ATT_FILE_PROOFS[$((ATT_COUNT - 1))]="$files_proven_entry"
   ATT_VERIFICATION[$((ATT_COUNT - 1))]="$verification_entry"
+  ATT_VERIFICATION_SUMMARIES[$((ATT_COUNT - 1))]="$verification_entry"
   ATT_INVALIDATION_REASONS[$((ATT_COUNT - 1))]="N/A"
 }
 
@@ -1018,6 +1372,8 @@ invalidate_attempt() {
 
 render_evidence_file() {
   local dest="$1"
+  local plan_fingerprint="$2"
+  local source_spec_fingerprint="$3"
   local topic base i j
   local wrote_section=0
   base="$(basename "$PLAN_REL_PATH" .md)"
@@ -1026,7 +1382,11 @@ render_evidence_file() {
   {
     printf '# Execution Evidence: %s\n\n' "$topic"
     printf '**Plan Path:** %s\n' "$PLAN_REL_PATH"
-    printf '**Plan Revision:** %s\n\n' "$PLAN_REVISION"
+    printf '**Plan Revision:** %s\n' "$PLAN_REVISION"
+    printf '**Plan Fingerprint:** %s\n' "$plan_fingerprint"
+    printf '**Source Spec Path:** %s\n' "$PLAN_SOURCE_SPEC"
+    printf '**Source Spec Revision:** %s\n' "$PLAN_SOURCE_SPEC_REVISION"
+    printf '**Source Spec Fingerprint:** %s\n\n' "$source_spec_fingerprint"
     printf '## Step Evidence\n'
 
     if (( ATT_COUNT > 0 )); then
@@ -1054,14 +1414,20 @@ render_evidence_file() {
           printf '**Status:** %s\n' "${ATT_STATUS[$j]}"
           printf '**Recorded At:** %s\n' "${ATT_RECORDED_AT[$j]}"
           printf '**Execution Source:** %s\n' "${ATT_SOURCES[$j]}"
+          printf '**Task Number:** %s\n' "$task"
+          printf '**Step Number:** %s\n' "$step"
+          printf '**Packet Fingerprint:** %s\n' "${ATT_PACKET_FINGERPRINTS[$j]:-unknown}"
+          printf '**Head SHA:** %s\n' "${ATT_HEAD_SHAS[$j]:-unknown}"
+          if [[ -n "${ATT_BASE_SHAS[$j]}" ]]; then
+            printf '**Base SHA:** %s\n' "${ATT_BASE_SHAS[$j]}"
+          fi
           printf '**Claim:** %s\n' "${ATT_CLAIMS[$j]}"
-          printf '**Files:**\n'
-          while IFS= read -r file_entry; do
+          printf '**Files Proven:**\n'
+          while IFS=$'\t' read -r file_entry file_proof; do
             [[ -n "$file_entry" ]] || continue
-            printf -- '- %s\n' "$file_entry"
-          done <<< "${ATT_FILES[$j]}"
-          printf '**Verification:**\n'
-          printf -- '- %s\n' "${ATT_VERIFICATION[$j]}"
+            printf -- '- %s | %s\n' "$file_entry" "${file_proof:-sha256:unknown}"
+          done <<< "${ATT_FILE_PROOFS[$j]}"
+          printf '**Verification Summary:** %s\n' "${ATT_VERIFICATION_SUMMARIES[$j]:-${ATT_VERIFICATION[$j]}}"
           printf '**Invalidation Reason:** %s\n' "${ATT_INVALIDATION_REASONS[$j]}"
           attempt_in_section=$((attempt_in_section + 1))
         fi
@@ -1152,6 +1518,7 @@ commit_plan_only() {
 commit_plan_and_evidence() {
   local operation="$1"
   local plan_tmp plan_backup evidence_tmp evidence_backup=""
+  local plan_fingerprint source_spec_fingerprint source_spec_abs
   mkdir -p "$(dirname "$EVIDENCE_ABS_PATH")"
   plan_tmp="$(mktemp "${PLAN_ABS_PATH}.tmp.XXXXXX")"
   evidence_tmp="$(mktemp "${EVIDENCE_ABS_PATH}.tmp.XXXXXX")"
@@ -1163,7 +1530,18 @@ commit_plan_and_evidence() {
   fi
 
   render_plan_file "$PLAN_ABS_PATH" "$plan_tmp"
-  render_evidence_file "$evidence_tmp"
+  plan_fingerprint="$(hash_file "$plan_tmp")" || {
+    rm -f "$plan_tmp" "$evidence_tmp" "$plan_backup" "$evidence_backup"
+    set_failure "EvidenceWriteFailed" "Could not fingerprint the mutated approved plan."
+    return 1
+  }
+  source_spec_abs="$(plan_rel_to_abs "$PLAN_SOURCE_SPEC")"
+  source_spec_fingerprint="$(hash_file "$source_spec_abs")" || {
+    rm -f "$plan_tmp" "$evidence_tmp" "$plan_backup" "$evidence_backup"
+    set_failure "EvidenceWriteFailed" "Could not fingerprint the approved source spec."
+    return 1
+  }
+  render_evidence_file "$evidence_tmp" "$plan_fingerprint" "$source_spec_fingerprint"
 
   if [[ "${SUPERPOWERS_PLAN_EXECUTION_TEST_FAILPOINT:-}" == "${operation}_after_plan_write" ]]; then
     rm -f "$plan_tmp" "$evidence_tmp" "$plan_backup" "$evidence_backup"
@@ -1284,12 +1662,33 @@ load_execution_state() {
 }
 
 print_status_json() {
+  local latest_completed=""
+  local latest_packet="null"
+  local latest_head="null"
+  local latest_base="null"
+  local -a warning_codes=()
+
+  if [[ "$EVIDENCE_FORMAT" == "legacy" && "$EVIDENCE_ATTEMPT_COUNT" -gt 0 ]]; then
+    warning_codes+=("legacy_evidence_format")
+  fi
+  if latest_completed="$(find_latest_completed_attempt_index 2>/dev/null)"; then
+    [[ -n "${ATT_PACKET_FINGERPRINTS[$latest_completed]:-}" ]] && latest_packet="\"$(json_escape "${ATT_PACKET_FINGERPRINTS[$latest_completed]}")\""
+    [[ -n "${ATT_HEAD_SHAS[$latest_completed]:-}" ]] && latest_head="\"$(json_escape "${ATT_HEAD_SHAS[$latest_completed]}")\""
+    [[ -n "${ATT_BASE_SHAS[$latest_completed]:-}" ]] && latest_base="\"$(json_escape "${ATT_BASE_SHAS[$latest_completed]}")\""
+  fi
+
   printf '{'
   printf '"plan_revision":%s,' "$PLAN_REVISION"
   printf '"execution_mode":"%s",' "$(json_escape "$PLAN_EXECUTION_MODE")"
   printf '"execution_fingerprint":"%s",' "$(json_escape "$EXECUTION_FINGERPRINT")"
   printf '"evidence_path":"%s",' "$(json_escape "$EVIDENCE_REL_PATH")"
   printf '"execution_started":"%s",' "$(json_escape "$EXECUTION_STARTED")"
+  printf '"warning_codes":'
+  emit_string_array_json "${warning_codes[@]:-}"
+  printf ','
+  printf '"latest_packet_fingerprint":%s,' "$latest_packet"
+  printf '"latest_head_sha":%s,' "$latest_head"
+  printf '"latest_base_sha":%s,' "$latest_base"
   printf '"active_task":%s,' "$PLAN_ACTIVE_TASK"
   printf '"active_step":%s,' "$PLAN_ACTIVE_STEP"
   printf '"blocking_task":%s,' "$PLAN_BLOCKING_TASK"
@@ -1306,6 +1705,171 @@ run_status_with_plan() {
     return 1
   }
   print_status_json
+}
+
+git_path_exists() {
+  local git_path=""
+  git_path="$(git -C "$REPO_ROOT" rev-parse --git-path "$1" 2>/dev/null || true)"
+  [[ -n "$git_path" && -e "$git_path" ]]
+}
+
+validate_workspace_safety() {
+  if ! git -C "$REPO_ROOT" symbolic-ref -q HEAD >/dev/null 2>&1; then
+    gate_fail "WorkspaceNotSafe" "detached_head" "Execution preflight requires a branch-based workspace." "Check out a branch before continuing execution."
+  fi
+  if git_path_exists MERGE_HEAD; then
+    gate_fail "WorkspaceNotSafe" "merge_in_progress" "Execution preflight does not allow an in-progress merge." "Resolve or abort the merge before continuing."
+  fi
+  if git_path_exists rebase-merge || git_path_exists rebase-apply; then
+    gate_fail "WorkspaceNotSafe" "rebase_in_progress" "Execution preflight does not allow an in-progress rebase." "Resolve or abort the rebase before continuing."
+  fi
+  if git_path_exists CHERRY_PICK_HEAD; then
+    gate_fail "WorkspaceNotSafe" "cherry_pick_in_progress" "Execution preflight does not allow an in-progress cherry-pick." "Resolve or abort the cherry-pick before continuing."
+  fi
+  if [[ -n "$(git -C "$REPO_ROOT" diff --name-only --diff-filter=U 2>/dev/null || true)" ]]; then
+    gate_fail "WorkspaceNotSafe" "unresolved_index_entries" "Execution preflight does not allow unresolved index entries." "Resolve index conflicts before continuing."
+  fi
+}
+
+load_failure_as_gate_failure() {
+  local fallback_class="$1"
+  local code
+  code="$(camel_to_snake "${LOAD_ERROR_CLASS:-$fallback_class}")"
+  gate_fail "${LOAD_ERROR_CLASS:-$fallback_class}" "$code" "${LOAD_ERROR_MESSAGE:-Execution state could not be loaded.}" "Fix the execution state before continuing."
+}
+
+validate_checked_steps_have_evidence() {
+  local i latest_attempt
+  for ((i=0; i<STEP_COUNT; i++)); do
+    [[ "${STEP_CHECKED[$i]}" == "x" ]] || continue
+    if ! latest_attempt="$(find_latest_attempt_index "${STEP_TASKS[$i]}" "${STEP_NUMBERS[$i]}" 2>/dev/null)"; then
+      gate_fail "StaleExecutionEvidence" "checked_step_missing_evidence" "A checked plan step is missing execution evidence." "Reopen the step or record matching execution evidence."
+      return 1
+    fi
+    if [[ "${ATT_STATUS[$latest_attempt]}" != "Completed" ]]; then
+      gate_fail "StaleExecutionEvidence" "checked_step_missing_evidence" "A checked plan step no longer has a completed evidence attempt." "Reopen the step or complete it again with fresh evidence."
+      return 1
+    fi
+  done
+  return 0
+}
+
+validate_v2_evidence_provenance() {
+  local current_plan_fingerprint current_source_spec_fingerprint source_spec_abs
+  local i latest_attempt expected_packet proof_line path proof actual
+
+  [[ "$EVIDENCE_FORMAT" == "v2" ]] || return 0
+
+  current_plan_fingerprint="$(hash_file "$PLAN_ABS_PATH")" || {
+    gate_fail "StaleExecutionEvidence" "plan_fingerprint_unavailable" "Current plan fingerprint could not be computed." "Re-run after the approved plan is readable."
+    return 1
+  }
+  source_spec_abs="$(plan_rel_to_abs "$PLAN_SOURCE_SPEC")"
+  current_source_spec_fingerprint="$(hash_file "$source_spec_abs")" || {
+    gate_fail "StaleExecutionEvidence" "source_spec_fingerprint_unavailable" "Current source spec fingerprint could not be computed." "Re-run after the approved source spec is readable."
+    return 1
+  }
+
+  if [[ "$EVIDENCE_PLAN_FINGERPRINT" != "$current_plan_fingerprint" ]]; then
+    gate_fail "StaleExecutionEvidence" "plan_fingerprint_mismatch" "Execution evidence no longer matches the current approved plan fingerprint." "Rebuild packets or reopen the affected work."
+    return 1
+  fi
+  if [[ "$EVIDENCE_SOURCE_SPEC_PATH" != "$PLAN_SOURCE_SPEC" || "$EVIDENCE_SOURCE_SPEC_REVISION" != "$PLAN_SOURCE_SPEC_REVISION" || "$EVIDENCE_SOURCE_SPEC_FINGERPRINT" != "$current_source_spec_fingerprint" ]]; then
+    gate_fail "StaleExecutionEvidence" "source_spec_fingerprint_mismatch" "Execution evidence no longer matches the current approved source spec provenance." "Rebuild packets or reopen the affected work."
+    return 1
+  fi
+
+  for ((i=0; i<STEP_COUNT; i++)); do
+    latest_attempt="$(find_latest_attempt_index "${STEP_TASKS[$i]}" "${STEP_NUMBERS[$i]}" 2>/dev/null)" || continue
+    [[ "${ATT_STATUS[$latest_attempt]}" == "Completed" ]] || continue
+    expected_packet="$(compute_current_execution_packet_fingerprint "${STEP_TASKS[$i]}" "${STEP_NUMBERS[$i]}")" || {
+      gate_fail "StaleExecutionEvidence" "packet_fingerprint_unavailable" "Current packet provenance could not be derived." "Rebuild the current task packet before review."
+      return 1
+    }
+    if [[ "${ATT_PACKET_FINGERPRINTS[$latest_attempt]}" != "$expected_packet" ]]; then
+      gate_fail "StaleExecutionEvidence" "packet_fingerprint_mismatch" "Execution evidence packet provenance no longer matches the current approved plan/spec pair." "Rebuild the packet and reopen the affected step."
+      return 1
+    fi
+
+    while IFS=$'\t' read -r path proof; do
+      [[ -n "$path" ]] || continue
+      if [[ "$proof" == "sha256:missing" ]]; then
+        if [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]]; then
+          gate_fail "MissedReopenRequired" "files_proven_drifted" "A file proven as missing is present again after completion." "Reopen the step and rebuild its evidence."
+          return 1
+        fi
+        continue
+      fi
+      if [[ ! -e "$REPO_ROOT/$path" && ! -L "$REPO_ROOT/$path" ]]; then
+        gate_fail "MissedReopenRequired" "files_proven_drifted" "A proven file is now missing after completion." "Reopen the step and rebuild its evidence."
+        return 1
+      fi
+      actual="$(hash_file "$REPO_ROOT/$path")" || {
+        gate_fail "MissedReopenRequired" "files_proven_drifted" "A proven file could not be re-fingerprinted during review gating." "Reopen the step and rebuild its evidence."
+        return 1
+      }
+      if [[ "sha256:$actual" != "$proof" ]]; then
+        gate_fail "MissedReopenRequired" "files_proven_drifted" "A proven file changed after completion without a reopen." "Reopen the step and rebuild its evidence."
+        return 1
+      fi
+    done <<< "${ATT_FILE_PROOFS[$latest_attempt]}"
+  done
+
+  return 0
+}
+
+evaluate_preflight() {
+  local plan_rel="$1"
+  reset_gate_state
+  load_execution_state "$plan_rel" || {
+    load_failure_as_gate_failure "PlanNotExecutionReady"
+    emit_gate_json
+    return 0
+  }
+
+  if [[ "$PLAN_ACTIVE_TASK" != "null" ]]; then
+    gate_fail "ExecutionStateNotReady" "active_step_in_progress" "Execution preflight cannot continue while a step is already active." "Resume or resolve the active step first."
+  fi
+  if [[ "$PLAN_BLOCKING_TASK" != "null" ]]; then
+    gate_fail "ExecutionStateNotReady" "blocked_step" "Execution preflight cannot continue while work is blocked." "Resolve the blocked step first."
+  fi
+  if [[ "$PLAN_RESUME_TASK" != "null" ]]; then
+    gate_fail "ExecutionStateNotReady" "interrupted_work_unresolved" "Execution preflight cannot continue while interrupted work remains parked." "Resume or explicitly resolve the interrupted step first."
+  fi
+
+  validate_workspace_safety
+  emit_gate_json
+}
+
+evaluate_gate_review() {
+  local plan_rel="$1"
+  reset_gate_state
+  load_execution_state "$plan_rel" || {
+    load_failure_as_gate_failure "MalformedExecutionState"
+    emit_gate_json
+    return 0
+  }
+
+  if [[ "$PLAN_ACTIVE_TASK" != "null" ]]; then
+    gate_fail "ExecutionStateNotReady" "active_step_in_progress" "Final review is blocked while a plan step is still active." "Complete, interrupt, or resolve the active step before review."
+  fi
+  if [[ "$PLAN_BLOCKING_TASK" != "null" ]]; then
+    gate_fail "ExecutionStateNotReady" "blocked_step" "Final review is blocked while a plan step is blocked." "Resolve the blocked step before review."
+  fi
+  if [[ "$PLAN_RESUME_TASK" != "null" ]]; then
+    gate_fail "ExecutionStateNotReady" "interrupted_work_unresolved" "Final review is blocked while interrupted work remains unresolved." "Resume or explicitly resolve the interrupted work before review."
+  fi
+
+  validate_checked_steps_have_evidence || true
+  if [[ "$EVIDENCE_FORMAT" == "legacy" && "$EVIDENCE_ATTEMPT_COUNT" -gt 0 ]]; then
+    gate_add_warning_code "legacy_evidence_format"
+  fi
+  validate_v2_evidence_provenance || true
+  emit_gate_json
+}
+
+evaluate_gate_finish() {
+  evaluate_gate_review "$1"
 }
 
 cmd_status() {
@@ -1326,6 +1890,42 @@ cmd_status() {
 
   [[ -n "$plan_rel" ]] || { emit_error "InvalidCommandInput" "status requires --plan."; return 1; }
   run_status_with_plan "$plan_rel"
+}
+
+cmd_preflight() {
+  local plan_rel=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --plan) plan_rel="${2:-}"; shift 2 ;;
+      *) emit_error "InvalidCommandInput" "Unknown preflight argument '$1'."; return 1 ;;
+    esac
+  done
+  [[ -n "$plan_rel" ]] || { emit_error "InvalidCommandInput" "preflight requires --plan."; return 1; }
+  evaluate_preflight "$plan_rel"
+}
+
+cmd_gate_review() {
+  local plan_rel=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --plan) plan_rel="${2:-}"; shift 2 ;;
+      *) emit_error "InvalidCommandInput" "Unknown gate-review argument '$1'."; return 1 ;;
+    esac
+  done
+  [[ -n "$plan_rel" ]] || { emit_error "InvalidCommandInput" "gate-review requires --plan."; return 1; }
+  evaluate_gate_review "$plan_rel"
+}
+
+cmd_gate_finish() {
+  local plan_rel=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --plan) plan_rel="${2:-}"; shift 2 ;;
+      *) emit_error "InvalidCommandInput" "Unknown gate-finish argument '$1'."; return 1 ;;
+    esac
+  done
+  [[ -n "$plan_rel" ]] || { emit_error "InvalidCommandInput" "gate-finish requires --plan."; return 1; }
+  evaluate_gate_finish "$plan_rel"
 }
 
 cmd_recommend() {
@@ -1561,7 +2161,8 @@ cmd_transfer() {
 cmd_complete() {
   local plan_rel="" task="" step="" source="" claim="" verify_command="" verify_result="" manual_summary="" expected_fp=""
   local files=()
-  local step_index verification_entry files_entry normalized_claim="" normalized_verify_command="" normalized_verify_result="" normalized_manual_summary=""
+  local step_index verification_entry files_entry files_proven_entry packet_fingerprint head_sha base_sha
+  local normalized_claim="" normalized_verify_command="" normalized_verify_result="" normalized_manual_summary=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1652,11 +2253,29 @@ cmd_complete() {
     build_files_entry || { emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"; return 1; }
   fi
   files_entry="$FILES_ENTRY"
+  build_files_proven_entry "$files_entry" || { emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"; return 1; }
+  files_proven_entry="$FILES_PROVEN_ENTRY"
+  packet_fingerprint="$(compute_current_execution_packet_fingerprint "$task" "$step")" || {
+    emit_error "EvidenceWriteFailed" "Could not compute the current execution packet fingerprint."
+    return 1
+  }
+  head_sha="$(current_head_sha)"
+  base_sha="$(current_base_sha)"
 
   STEP_CHECKED[$step_index]='x'
   STEP_NOTE_STATES[$step_index]=""
   STEP_NOTE_SUMMARIES[$step_index]=""
-  append_attempt "$task" "$step" "$source" "$normalized_claim" "$files_entry" "$verification_entry"
+  append_attempt \
+    "$task" \
+    "$step" \
+    "$source" \
+    "$normalized_claim" \
+    "$files_entry" \
+    "$verification_entry" \
+    "$packet_fingerprint" \
+    "$head_sha" \
+    "$base_sha" \
+    "$files_proven_entry"
 
   commit_plan_and_evidence "complete" || { emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"; return 1; }
   run_status_with_plan "$PLAN_REL_PATH"
@@ -1771,6 +2390,9 @@ main() {
   case "$command" in
     status) shift; cmd_status "$@" ;;
     recommend) shift; cmd_recommend "$@" ;;
+    preflight) shift; cmd_preflight "$@" ;;
+    gate-review) shift; cmd_gate_review "$@" ;;
+    gate-finish) shift; cmd_gate_finish "$@" ;;
     begin) shift; cmd_begin "$@" ;;
     transfer) shift; cmd_transfer "$@" ;;
     complete) shift; cmd_complete "$@" ;;

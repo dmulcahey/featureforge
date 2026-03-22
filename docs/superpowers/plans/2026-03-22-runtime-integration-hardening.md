@@ -340,9 +340,7 @@ Helpers enforce and inspect.
 - [x] **Step 4: Tighten `plan-eng-review` so approval requires `contract_state == valid` and `packet_buildable_tasks == task_count`**
 - [x] **Step 5: Upgrade the ENG review handoff wording so execution never starts from packets that are missing or stale for the approved revision**
 - [x] **Step 6: Regenerate skill docs and run the helper plus skill-contract suites**
-- [ ] **Step 7: Commit the plan-contract and ENG-gate slice**
-
-  **Execution Note:** Active - Commit the plan-contract and ENG-gate slice
+- [x] **Step 7: Commit the plan-contract and ENG-gate slice**
 ## Task 4: Add Execution Preflight, Review And Finish Gates Plus Evidence V2
 
 **Spec Coverage:** REQ-007, REQ-008, REQ-009, REQ-010, REQ-011, REQ-012, REQ-013, REQ-020, VERIFY-001, NONGOAL-003
@@ -371,12 +369,12 @@ Helpers enforce and inspect.
 - Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
-- [ ] **Step 1: Add read-only `preflight`, `gate-review`, and `gate-finish` command parsing plus fail-closed failure classes and diagnostics**
-- [ ] **Step 2: Implement evidence-v2 parsing and writing, including plan, spec, task, step, packet, head, base, and file-proof provenance**
-- [ ] **Step 3: Bind `begin`, `transfer`, `complete`, and `status` to packet identity so stale or mismatched packets cannot silently pass**
-- [ ] **Step 4: Mirror the new gate behavior and schema in `bin/superpowers-plan-execution.ps1`**
-- [ ] **Step 5: Update `executing-plans`, `subagent-driven-development`, and `requesting-code-review` to call the new preflight and review gates instead of relying on prose-only checks**
-- [ ] **Step 6: Run execution, sequencing, enhancement, and parity tests until stale-evidence and missed-reopen cases are green**
+- [x] **Step 1: Add read-only `preflight`, `gate-review`, and `gate-finish` command parsing plus fail-closed failure classes and diagnostics**
+- [x] **Step 2: Implement evidence-v2 parsing and writing, including plan, spec, task, step, packet, head, base, and file-proof provenance**
+- [x] **Step 3: Bind `begin`, `transfer`, `complete`, and `status` to packet identity so stale or mismatched packets cannot silently pass**
+- [x] **Step 4: Mirror the new gate behavior and schema in `bin/superpowers-plan-execution.ps1`**
+- [x] **Step 5: Update `executing-plans`, `subagent-driven-development`, and `requesting-code-review` to call the new preflight and review gates instead of relying on prose-only checks**
+- [x] **Step 6: Run execution, sequencing, enhancement, and parity tests until stale-evidence and missed-reopen cases are green**
 - [ ] **Step 7: Commit the execution-gates and evidence-v2 slice**
 ## Task 5: Formalize QA And Release-Readiness Artifacts
 

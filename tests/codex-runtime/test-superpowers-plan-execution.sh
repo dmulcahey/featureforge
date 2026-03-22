@@ -383,6 +383,38 @@ hash_file_sha256() {
   cksum "$path" | awk '{print $1}'
 }
 
+hash_text_sha256() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+    return
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+    return
+  fi
+  cksum | awk '{print $1}'
+}
+
+expected_execution_packet_fingerprint() {
+  local repo_dir="$1"
+  local task="$2"
+  local step="$3"
+  local plan_fingerprint spec_fingerprint
+
+  plan_fingerprint="$(hash_file_sha256 "$repo_dir/$PLAN_REL")"
+  spec_fingerprint="$(hash_file_sha256 "$repo_dir/$SPEC_REL")"
+  {
+    printf 'plan_path=%s\n' "$PLAN_REL"
+    printf 'plan_revision=1\n'
+    printf 'plan_fingerprint=%s\n' "$plan_fingerprint"
+    printf 'source_spec_path=%s\n' "$SPEC_REL"
+    printf 'source_spec_revision=1\n'
+    printf 'source_spec_fingerprint=%s\n' "$spec_fingerprint"
+    printf 'task_number=%s\n' "$task"
+    printf 'step_number=%s\n' "$step"
+  } | hash_text_sha256
+}
+
 write_v2_completed_attempt() {
   local repo_dir="$1"
   local packet_fingerprint="$2"
@@ -391,6 +423,9 @@ write_v2_completed_attempt() {
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
   plan_fingerprint="$(hash_file_sha256 "$repo_dir/$PLAN_REL")"
   spec_fingerprint="$(hash_file_sha256 "$repo_dir/$SPEC_REL")"
+  if [[ "$packet_fingerprint" == "packet-fingerprint-from-approved-plan" ]]; then
+    packet_fingerprint="$(expected_execution_packet_fingerprint "$repo_dir" 1 1)"
+  fi
   head_sha="$(git -C "$repo_dir" rev-parse HEAD)"
   base_sha="$(git -C "$repo_dir" rev-list --max-parents=0 HEAD | tail -n1)"
   mkdir -p "$repo_dir/docs"
@@ -1425,7 +1460,8 @@ EOF
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
   evidence_text="$(cat "$repo_dir/$evidence_rel")"
   assert_contains "$evidence_text" "**Claim:** Prepared workspace thoroughly" "whitespace normalization claim"
-  assert_contains "$evidence_text" $'**Verification:**\n- Manual inspection only: Verified by inspection\n' "whitespace normalization verification"
+  assert_contains "$evidence_text" "**Verification Summary:** Manual inspection only: Verified by inspection" "whitespace normalization verification"
+  assert_contains "$evidence_text" "**Packet Fingerprint:** " "whitespace normalization packet fingerprint"
   assert_not_contains "$evidence_text" $'\t' "whitespace normalization evidence tabs"
 }
 
@@ -1451,7 +1487,9 @@ EOF
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
   assert_no_blank_line_at_eof "$repo_dir/$evidence_rel"
   evidence_text="$(cat "$repo_dir/$evidence_rel")"
-  assert_contains "$evidence_text" $'**Files:**\n- docs/alpha.md\n- src/zeta.txt\n**Verification:**' "canonical files evidence"
+  assert_contains "$evidence_text" $'**Files Proven:**\n- docs/alpha.md | sha256:' "canonical files evidence"
+  assert_contains "$evidence_text" $'\n- src/zeta.txt | sha256:' "canonical files evidence"
+  assert_contains "$evidence_text" "**Verification Summary:** Manual inspection only: Verified by inspection" "canonical files verification"
 }
 
 run_complete_accepts_deleted_paths_from_current_change_set() {
@@ -1471,7 +1509,8 @@ run_complete_accepts_deleted_paths_from_current_change_set() {
 
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
   evidence_text="$(cat "$repo_dir/$evidence_rel")"
-  assert_contains "$evidence_text" $'**Files:**\n- docs/deleted-output.md\n**Verification:**' "deleted file evidence"
+  assert_contains "$evidence_text" $'**Files Proven:**\n- docs/deleted-output.md | sha256:missing' "deleted file evidence"
+  assert_contains "$evidence_text" "**Verification Summary:** Manual inspection only: Verified by inspection" "deleted file verification"
 }
 
 run_complete_canonicalizes_rename_backed_paths() {
@@ -1491,7 +1530,8 @@ run_complete_canonicalizes_rename_backed_paths() {
 
   evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
   evidence_text="$(cat "$repo_dir/$evidence_rel")"
-  assert_contains "$evidence_text" $'**Files:**\n- docs/new-output.md\n**Verification:**' "rename-backed file evidence"
+  assert_contains "$evidence_text" $'**Files Proven:**\n- docs/new-output.md | sha256:' "rename-backed file evidence"
+  assert_contains "$evidence_text" "**Verification Summary:** Manual inspection only: Verified by inspection" "rename-backed file verification"
 }
 
 run_complete_rejects_file_path_outside_repo_root() {
