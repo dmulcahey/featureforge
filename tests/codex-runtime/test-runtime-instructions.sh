@@ -71,6 +71,8 @@ FILES=(
   "bin/superpowers-session-entry.ps1"
   "bin/superpowers-plan-execution"
   "bin/superpowers-plan-execution.ps1"
+  "bin/superpowers-plan-contract"
+  "bin/superpowers-plan-contract.ps1"
   "bin/superpowers-update-check"
   "bin/superpowers-update-check.ps1"
   "bin/superpowers-workflow"
@@ -89,6 +91,7 @@ FILES=(
   "tests/codex-runtime/test-superpowers-session-entry.sh"
   "tests/codex-runtime/test-superpowers-session-entry-gate.sh"
   "tests/codex-runtime/test-superpowers-migrate-install.sh"
+  "tests/codex-runtime/test-superpowers-plan-contract.sh"
   "tests/codex-runtime/test-superpowers-plan-execution.sh"
   "tests/codex-runtime/test-superpowers-workflow.sh"
   "tests/codex-runtime/test-superpowers-upgrade-skill.sh"
@@ -244,16 +247,20 @@ require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Escalate 
 require_pattern docs/README.codex.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
 require_pattern README.md 'superpowers-session-entry'
 require_pattern README.md 'superpowers-repo-safety'
+require_pattern README.md 'superpowers-plan-contract'
 require_pattern README.md 'protected branches'
 require_pattern README.md 'bash tests/codex-runtime/test-superpowers-session-entry.sh'
 require_pattern docs/README.codex.md 'superpowers-session-entry'
 require_pattern docs/README.codex.md 'superpowers-repo-safety'
+require_pattern docs/README.codex.md 'superpowers-plan-contract'
 require_pattern docs/README.codex.md 'protected branches'
 require_pattern docs/README.copilot.md 'superpowers-session-entry'
 require_pattern docs/README.copilot.md 'superpowers-repo-safety'
+require_pattern docs/README.copilot.md 'superpowers-plan-contract'
 require_pattern docs/README.copilot.md 'protected branches'
 require_pattern docs/testing.md 'bash tests/codex-runtime/test-superpowers-session-entry-gate.sh'
 require_pattern docs/testing.md 'bash tests/codex-runtime/test-superpowers-session-entry.sh'
+require_pattern docs/testing.md 'bash tests/codex-runtime/test-superpowers-plan-contract.sh'
 require_pattern docs/testing.md 'bash tests/codex-runtime/test-superpowers-repo-safety.sh'
 require_pattern docs/testing.md 'npm ci --prefix tests/brainstorm-server'
 require_pattern docs/testing.md 'protected-branch repo-write guarantees'

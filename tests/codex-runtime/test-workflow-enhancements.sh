@@ -58,9 +58,13 @@ done
 
 require_pattern skills/requesting-code-review/SKILL.md "review checklist"
 require_pattern skills/requesting-code-review/SKILL.md "{BASE_BRANCH}"
+require_pattern skills/requesting-code-review/SKILL.md "coverage matrix"
 require_pattern skills/requesting-code-review/code-reviewer.md "{BASE_BRANCH}"
 require_pattern skills/requesting-code-review/code-reviewer.md "built-in-before-bespoke"
 require_pattern skills/requesting-code-review/code-reviewer.md "known pattern footguns"
+require_pattern skills/requesting-code-review/code-reviewer.md "completed task packets"
+require_pattern skills/requesting-code-review/code-reviewer.md "behavior present in the diff but not covered by any completed task packet"
+require_pattern skills/requesting-code-review/code-reviewer.md 'missing tests for `VERIFY-*` requirements'
 require_pattern skills/requesting-code-review/code-reviewer.md "official documentation"
 require_pattern skills/requesting-code-review/code-reviewer.md "issue trackers or maintainer guidance"
 require_pattern skills/requesting-code-review/code-reviewer.md "primary-source technical references"
@@ -69,6 +73,9 @@ require_pattern skills/requesting-code-review/code-reviewer.md "file:line"
 require_pattern skills/requesting-code-review/code-reviewer.md "Never search secrets, customer data, unsanitized stack traces, private URLs, or internal codenames"
 require_pattern skills/requesting-code-review/code-reviewer.md "If search is unavailable, disallowed, or unsafe, say so and continue the review with the diff, checklist, plan, and repo-local evidence only"
 require_pattern skills/subagent-driven-development/code-quality-reviewer-prompt.md "BASE_BRANCH"
+require_pattern skills/subagent-driven-development/code-quality-reviewer-prompt.md "TASK_PACKET"
+require_pattern skills/subagent-driven-development/code-quality-reviewer-prompt.md "work outside planned file decomposition"
+require_pattern skills/subagent-driven-development/code-quality-reviewer-prompt.md "new files or abstractions outside packet scope"
 
 require_pattern skills/plan-eng-review/SKILL.md '$_SP_STATE_DIR/projects'
 require_pattern skills/plan-eng-review/SKILL.md "test-plan"

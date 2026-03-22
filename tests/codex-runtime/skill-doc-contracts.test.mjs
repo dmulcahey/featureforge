@@ -286,6 +286,47 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(subagentReviewPrompt, /EXECUTION_EVIDENCE_PATH: \[helper-reported evidence path for plan-routed final review, otherwise blank\]/);
 });
 
+test('task-fidelity workflow docs and prompts require packet-backed plan contracts', () => {
+  const writingPlans = readUtf8(getSkillPath('writing-plans'));
+  assert.match(writingPlans, /Requirement Coverage Matrix/);
+  assert.match(writingPlans, /\*\*Spec Coverage:\*\*/);
+  assert.match(writingPlans, /\*\*Task Outcome:\*\*/);
+  assert.match(writingPlans, /\*\*Plan Constraints:\*\*/);
+  assert.match(writingPlans, /\*\*Open Questions:\*\* none/);
+  assert.match(writingPlans, /superpowers-plan-contract" lint/);
+
+  const planEngReview = readUtf8(getSkillPath('plan-eng-review'));
+  assert.match(planEngReview, /superpowers-plan-contract" lint/);
+  assert.match(planEngReview, /Requirement Index/);
+  assert.match(planEngReview, /Requirement Coverage Matrix/);
+  assert.match(planEngReview, /tasks with `Open Questions` not equal to `none`/);
+  assert.match(planEngReview, /invalid `Files:` block structure/);
+
+  const executingPlans = readUtf8(getSkillPath('executing-plans'));
+  assert.match(executingPlans, /build the canonical task packet/);
+  assert.match(executingPlans, /treat it as the exact task contract for that execution segment/);
+
+  const subagentSkill = readUtf8(getSkillPath('subagent-driven-development'));
+  assert.match(subagentSkill, /pass the packet verbatim to implementer and reviewers/);
+  assert.match(subagentSkill, /If the packet does not answer it, the task is ambiguous and execution must stop or route back to review\./);
+
+  const implementerPrompt = readUtf8(path.join(REPO_ROOT, 'skills/subagent-driven-development/implementer-prompt.md'));
+  assert.match(implementerPrompt, /## Task Packet/);
+  assert.match(implementerPrompt, /the packet is the authoritative task contract for that execution slice/);
+  assert.match(implementerPrompt, /do not reinterpret or weaken requirement statements/);
+  assert.match(implementerPrompt, /if the packet says `Open Questions: none` and ambiguity remains, stop and escalate/);
+
+  const specReviewerPrompt = readUtf8(path.join(REPO_ROOT, 'skills/subagent-driven-development/spec-reviewer-prompt.md'));
+  assert.match(specReviewerPrompt, /the exact task packet/);
+  assert.match(specReviewerPrompt, /PLAN_DEVIATION_FOUND/);
+  assert.match(specReviewerPrompt, /AMBIGUITY_ESCALATION_REQUIRED/);
+
+  const codeQualityPrompt = readUtf8(path.join(REPO_ROOT, 'skills/subagent-driven-development/code-quality-reviewer-prompt.md'));
+  assert.match(codeQualityPrompt, /TASK_PACKET/);
+  assert.match(codeQualityPrompt, /work outside planned file decomposition/);
+  assert.match(codeQualityPrompt, /new files or abstractions outside packet scope/);
+});
+
 test('repo-writing workflow skills document the protected-branch repo-safety gate consistently', () => {
   const expectedTargets = {
     brainstorming: /spec-artifact-write/,
