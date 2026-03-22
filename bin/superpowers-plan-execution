@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SP_STATE_DIR="${SUPERPOWERS_STATE_DIR:-$HOME/.superpowers}"
+PLAN_EXECUTION_STATUS_CACHE_SCHEMA=1
 
 usage() {
   cat <<'EOF' >&2
@@ -66,6 +67,82 @@ hash_file() {
     return
   fi
   cksum "$path" | awk '{print $1}'
+}
+
+file_stamp() {
+  local path="$1"
+  local stamp=""
+
+  stamp="$(stat -f '%m:%z' "$path" 2>/dev/null || true)"
+  if [[ -n "$stamp" ]]; then
+    printf '%s\n' "$stamp"
+    return 0
+  fi
+
+  stamp="$(stat -c '%Y:%s' "$path" 2>/dev/null || true)"
+  if [[ -n "$stamp" ]]; then
+    printf '%s\n' "$stamp"
+    return 0
+  fi
+
+  return 1
+}
+
+dir_stamp() {
+  file_stamp "$1"
+}
+
+plan_execution_status_cache_dir() {
+  printf '%s/plan-execution-status-cache\n' "$SP_STATE_DIR"
+}
+
+plan_execution_status_cache_path() {
+  local plan_rel="$1"
+  local plan_abs=""
+  local source_spec_abs=""
+  local evidence_rel=""
+  local evidence_abs=""
+  local plan_stamp=""
+  local source_spec_stamp=""
+  local evidence_stamp="missing"
+  local specs_dir_stamp=""
+  local cache_key=""
+  local cache_hash=""
+
+  plan_abs="$(plan_rel_to_abs "$plan_rel")"
+  [[ -f "$plan_abs" ]] || return 1
+  plan_structure_parse_plan_headers "$plan_abs" || return 1
+  source_spec_abs="$(plan_rel_to_abs "$PLAN_STRUCTURE_PLAN_SOURCE_SPEC")"
+  [[ -f "$source_spec_abs" ]] || return 1
+  evidence_rel="$(derive_evidence_rel_path "$plan_rel" "$PLAN_STRUCTURE_PLAN_REVISION")"
+  evidence_abs="$(plan_rel_to_abs "$evidence_rel")"
+
+  plan_stamp="$(file_stamp "$plan_abs")" || return 1
+  source_spec_stamp="$(file_stamp "$source_spec_abs")" || return 1
+  if [[ -f "$evidence_abs" ]]; then
+    evidence_stamp="$(file_stamp "$evidence_abs")" || return 1
+  fi
+  specs_dir_stamp="$(dir_stamp "$REPO_ROOT/docs/superpowers/specs" 2>/dev/null || printf 'missing')"
+  cache_key="$PLAN_EXECUTION_STATUS_CACHE_SCHEMA|$plan_rel|$plan_stamp|$source_spec_stamp|$evidence_stamp|$specs_dir_stamp"
+  cache_hash="$(printf '%s' "$cache_key" | hash_stream)"
+  printf '%s/%s.json\n' "$(plan_execution_status_cache_dir)" "$cache_hash"
+}
+
+read_cached_status_output() {
+  local cache_path="$1"
+  [[ -f "$cache_path" ]] || return 1
+  cat "$cache_path"
+}
+
+write_cached_status_output() {
+  local cache_path="$1"
+  local payload="$2"
+  local tmp_path
+
+  mkdir -p "$(dirname "$cache_path")"
+  tmp_path="$(mktemp "${cache_path}.tmp.XXXXXX")"
+  printf '%s\n' "$payload" > "$tmp_path"
+  mv "$tmp_path" "$cache_path"
 }
 
 camel_to_snake() {
@@ -186,14 +263,23 @@ spec_reviewer=""
 
 parse_spec_headers() {
   local path="$1"
+  local line
   spec_state=""
   spec_revision=""
   spec_reviewer=""
   [ -f "$path" ] || return 1
 
-  spec_state="$(sed -nE 's/^\*\*Workflow State:\*\* (Draft|CEO Approved)$/\1/p' "$path" | head -n1)"
-  spec_revision="$(sed -nE 's/^\*\*Spec Revision:\*\* ([0-9]+)$/\1/p' "$path" | head -n1)"
-  spec_reviewer="$(sed -nE 's/^\*\*Last Reviewed By:\*\* (brainstorming|plan-ceo-review)$/\1/p' "$path" | head -n1)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -z "$spec_state" && "$line" =~ ^\*\*Workflow\ State:\*\*\ (Draft|CEO\ Approved)$ ]]; then
+      spec_state="${BASH_REMATCH[1]}"
+    elif [[ -z "$spec_revision" && "$line" =~ ^\*\*Spec\ Revision:\*\*\ ([0-9]+)$ ]]; then
+      spec_revision="${BASH_REMATCH[1]}"
+    elif [[ -z "$spec_reviewer" && "$line" =~ ^\*\*Last\ Reviewed\ By:\*\*\ (brainstorming|plan-ceo-review)$ ]]; then
+      spec_reviewer="${BASH_REMATCH[1]}"
+    fi
+
+    [[ -n "$spec_state" && -n "$spec_revision" && -n "$spec_reviewer" ]] && break
+  done < "$path"
 
   [ -n "$spec_state" ] && [ -n "$spec_revision" ] && [ -n "$spec_reviewer" ]
 }
@@ -509,7 +595,7 @@ validate_persisted_repo_relative_path() {
   local message="$2"
   local normalized
 
-  normalized="$(printf '%s' "$raw_value" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  normalized="$(trim_surrounding_whitespace "$raw_value")"
   normalized="$(normalize_repo_relative_path "$normalized")" || {
     set_failure "MalformedExecutionState" "$message"
     return 1
@@ -627,11 +713,23 @@ parse_plan_file() {
   local plan_abs="$1"
   local line line_no=0 current_task="" pending_index="" note_state note_summary
   local active_count=0 blocked_count=0 interrupted_count=0 current_work_count=0
+  local in_files_block=0 task_files_seen=0 task_file_entries_count=0 task_step_count=0
 
   reset_plan_parse_state
-  plan_structure_parse_for_execution "$plan_abs" || {
-    set_failure "MalformedExecutionState" "${PLAN_STRUCTURE_ERROR_MESSAGE:-Approved plan structure is malformed.}"
-    return 1
+
+  finalize_current_task_structure() {
+    if [[ -z "$current_task" ]]; then
+      return 0
+    fi
+    if (( task_files_seen == 0 || task_file_entries_count == 0 )); then
+      set_failure "MalformedExecutionState" "Task $current_task is missing a parseable Files block."
+      return 1
+    fi
+    if (( task_step_count == 0 )); then
+      set_failure "MalformedExecutionState" "Task $current_task must include at least one step."
+      return 1
+    fi
+    return 0
   }
 
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -639,24 +737,69 @@ parse_plan_file() {
 
     if [[ "$line" =~ ^\*\*Workflow\ State:\*\*\ (.+)$ ]]; then
       PLAN_WORKFLOW_STATE="${BASH_REMATCH[1]}"
-    elif [[ "$line" =~ ^\*\*Plan\ Revision:\*\*\ ([0-9]+)$ ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^\*\*Plan\ Revision:\*\*\ ([0-9]+)$ ]]; then
       PLAN_REVISION="${BASH_REMATCH[1]}"
-    elif [[ "$line" =~ ^\*\*Execution\ Mode:\*\*\ (.+)$ ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^\*\*Execution\ Mode:\*\*\ (.+)$ ]]; then
       PLAN_EXECUTION_MODE="${BASH_REMATCH[1]}"
-    elif [[ "$line" =~ ^\*\*Source\ Spec:\*\*\ \`(.+)\`$ ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^\*\*Source\ Spec:\*\*\ \`(.+)\`$ ]]; then
       PLAN_SOURCE_SPEC="${BASH_REMATCH[1]}"
-    elif [[ "$line" =~ ^\*\*Source\ Spec\ Revision:\*\*\ ([0-9]+)$ ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^\*\*Source\ Spec\ Revision:\*\*\ ([0-9]+)$ ]]; then
       PLAN_SOURCE_SPEC_REVISION="${BASH_REMATCH[1]}"
-    elif [[ "$line" =~ ^\*\*Last\ Reviewed\ By:\*\*\ (.+)$ ]]; then
+      continue
+    fi
+    if [[ "$line" =~ ^\*\*Last\ Reviewed\ By:\*\*\ (.+)$ ]]; then
       PLAN_LAST_REVIEWED_BY="${BASH_REMATCH[1]}"
-    elif [[ "$line" =~ ^##\ Task\ ([0-9]+): ]]; then
+      continue
+    fi
+
+    if [[ "$line" =~ ^###\ Task\ ([0-9]+): ]]; then
+      set_failure "MalformedExecutionState" "Task headings must use canonical '## Task N:' form."
+      return 1
+    fi
+    if [[ "$line" =~ ^##\ Task\ ([0-9]+): ]]; then
+      finalize_current_task_structure || return 1
       current_task="${BASH_REMATCH[1]}"
       pending_index=""
-    elif [[ "$line" =~ ^-\ \[([[:space:]x])\]\ \*\*Step\ ([0-9]+):\ (.*)\*\*$ ]]; then
+      in_files_block=0
+      task_files_seen=0
+      task_file_entries_count=0
+      task_step_count=0
+      continue
+    fi
+
+    if [[ -n "$current_task" && "$line" == "**Files:**" ]]; then
+      in_files_block=1
+      task_files_seen=1
+      pending_index=""
+      continue
+    fi
+    if (( in_files_block == 1 )); then
+      if [[ "$line" =~ ^-\ (Create|Modify|Delete|Test):\ .+$ ]]; then
+        task_file_entries_count=$((task_file_entries_count + 1))
+        continue
+      fi
+      if [[ -z "$line" || "$line" =~ ^[[:space:]]+$ ]]; then
+        continue
+      fi
+      in_files_block=0
+    fi
+
+    if [[ "$line" =~ ^-\ \[([[:space:]x])\]\ \*\*Step\ ([0-9]+):\ (.*)\*\*$ ]]; then
       [[ -n "$current_task" ]] || set_failure "MalformedExecutionState" "Found a step outside any task heading in approved plan." || return 1
       add_step "$current_task" "${BASH_REMATCH[2]}" "$([[ "${BASH_REMATCH[1]}" == "x" ]] && printf 'x' || printf ' ')" "${BASH_REMATCH[3]}" || return 1
       pending_index=$((STEP_COUNT - 1))
-    elif [[ "$line" =~ ^[[:space:]]+\*\*Execution\ Note:\*\*\ (.+)$ ]]; then
+      task_step_count=$((task_step_count + 1))
+      continue
+    fi
+    if [[ "$line" =~ ^[[:space:]]+\*\*Execution\ Note:\*\*\ (.+)$ ]]; then
       [[ -n "$pending_index" ]] || set_failure "MalformedExecutionState" "Execution note is not adjacent to an unchecked step." || return 1
       [[ -z "${STEP_NOTE_STATES[$pending_index]}" ]] || set_failure "MalformedExecutionState" "Unchecked steps may not carry more than one execution note." || return 1
       if [[ "${STEP_CHECKED[$pending_index]}" == "x" ]]; then
@@ -680,10 +823,14 @@ parse_plan_file() {
       STEP_NOTE_STATES[$pending_index]="$note_state"
       STEP_NOTE_SUMMARIES[$pending_index]="$PERSISTED_NORMALIZED_VALUE"
       PLAN_NOTE_COUNT=$((PLAN_NOTE_COUNT + 1))
-    elif [[ -n "$pending_index" && -n "$line" && ! "$line" =~ ^[[:space:]]+$ ]]; then
+      continue
+    fi
+    if [[ -n "$pending_index" && -n "$line" && ! "$line" =~ ^[[:space:]]+$ ]]; then
       pending_index=""
     fi
   done < "$plan_abs"
+
+  finalize_current_task_structure || return 1
 
   local i task step
   for ((i=0; i<STEP_COUNT; i++)); do
@@ -794,8 +941,9 @@ parse_evidence_file() {
   local evidence_abs="$1"
   local expected_plan_rel="$2"
   local expected_revision="$3"
-  local title_count path_count revision_count section_count step_section_count attempt_count
-  local plan_fingerprint_count source_spec_path_count source_spec_revision_count source_spec_fingerprint_count
+  local line
+  local title_count=0 path_count=0 revision_count=0 section_count=0 step_section_count=0 attempt_count=0
+  local plan_fingerprint_count=0 source_spec_path_count=0 source_spec_revision_count=0 source_spec_fingerprint_count=0
   local v2_header_count
 
   reset_evidence_parse_state
@@ -807,16 +955,35 @@ parse_evidence_file() {
 
   EVIDENCE_EXISTS=1
 
-  title_count="$(grep -c '^# Execution Evidence:' "$evidence_abs" || true)"
-  path_count="$(grep -c '^\*\*Plan Path:\*\* ' "$evidence_abs" || true)"
-  revision_count="$(grep -c '^\*\*Plan Revision:\*\* ' "$evidence_abs" || true)"
-  plan_fingerprint_count="$(grep -c '^\*\*Plan Fingerprint:\*\* ' "$evidence_abs" || true)"
-  source_spec_path_count="$(grep -c '^\*\*Source Spec Path:\*\* ' "$evidence_abs" || true)"
-  source_spec_revision_count="$(grep -c '^\*\*Source Spec Revision:\*\* ' "$evidence_abs" || true)"
-  source_spec_fingerprint_count="$(grep -c '^\*\*Source Spec Fingerprint:\*\* ' "$evidence_abs" || true)"
-  section_count="$(grep -c '^## Step Evidence$' "$evidence_abs" || true)"
-  step_section_count="$(grep -c '^### Task [0-9][0-9]* Step [0-9][0-9]*$' "$evidence_abs" || true)"
-  attempt_count="$(grep -c '^#### Attempt [0-9][0-9]*$' "$evidence_abs" || true)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^#\ Execution\ Evidence: ]]; then
+      title_count=$((title_count + 1))
+    elif [[ "$line" =~ ^\*\*Plan\ Path:\*\*\ (.+)$ ]]; then
+      path_count=$((path_count + 1))
+      [[ -z "$EVIDENCE_PATH_LINE" ]] && EVIDENCE_PATH_LINE="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^\*\*Plan\ Revision:\*\*\ ([0-9]+)$ ]]; then
+      revision_count=$((revision_count + 1))
+      [[ -z "$EVIDENCE_REVISION_LINE" ]] && EVIDENCE_REVISION_LINE="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^\*\*Plan\ Fingerprint:\*\*\ (.+)$ ]]; then
+      plan_fingerprint_count=$((plan_fingerprint_count + 1))
+      [[ -z "$EVIDENCE_PLAN_FINGERPRINT" ]] && EVIDENCE_PLAN_FINGERPRINT="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^\*\*Source\ Spec\ Path:\*\*\ (.+)$ ]]; then
+      source_spec_path_count=$((source_spec_path_count + 1))
+      [[ -z "$EVIDENCE_SOURCE_SPEC_PATH" ]] && EVIDENCE_SOURCE_SPEC_PATH="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^\*\*Source\ Spec\ Revision:\*\*\ ([0-9]+)$ ]]; then
+      source_spec_revision_count=$((source_spec_revision_count + 1))
+      [[ -z "$EVIDENCE_SOURCE_SPEC_REVISION" ]] && EVIDENCE_SOURCE_SPEC_REVISION="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^\*\*Source\ Spec\ Fingerprint:\*\*\ (.+)$ ]]; then
+      source_spec_fingerprint_count=$((source_spec_fingerprint_count + 1))
+      [[ -z "$EVIDENCE_SOURCE_SPEC_FINGERPRINT" ]] && EVIDENCE_SOURCE_SPEC_FINGERPRINT="${BASH_REMATCH[1]}"
+    elif [[ "$line" == "## Step Evidence" ]]; then
+      section_count=$((section_count + 1))
+    elif [[ "$line" =~ ^###\ Task\ [0-9][0-9]*\ Step\ [0-9][0-9]*$ ]]; then
+      step_section_count=$((step_section_count + 1))
+    elif [[ "$line" =~ ^####\ Attempt\ [0-9][0-9]*$ ]]; then
+      attempt_count=$((attempt_count + 1))
+    fi
+  done < "$evidence_abs"
   v2_header_count=$(( plan_fingerprint_count + source_spec_path_count + source_spec_revision_count + source_spec_fingerprint_count ))
 
   if [[ "$title_count" != "1" || "$path_count" != "1" || "$revision_count" != "1" || "$section_count" != "1" ]]; then
@@ -824,8 +991,6 @@ parse_evidence_file() {
     return 1
   fi
 
-  EVIDENCE_PATH_LINE="$(sed -nE 's/^\*\*Plan Path:\*\* (.+)$/\1/p' "$evidence_abs" | head -n1)"
-  EVIDENCE_REVISION_LINE="$(sed -nE 's/^\*\*Plan Revision:\*\* ([0-9]+)$/\1/p' "$evidence_abs" | head -n1)"
   if [[ "$EVIDENCE_PATH_LINE" != "$expected_plan_rel" || "$EVIDENCE_REVISION_LINE" != "$expected_revision" ]]; then
     set_failure "MalformedExecutionState" "Execution evidence artifact does not match the current approved plan revision."
     return 1
@@ -837,10 +1002,6 @@ parse_evidence_file() {
       return 1
     fi
     EVIDENCE_FORMAT="v2"
-    EVIDENCE_PLAN_FINGERPRINT="$(sed -nE 's/^\*\*Plan Fingerprint:\*\* (.+)$/\1/p' "$evidence_abs" | head -n1)"
-    EVIDENCE_SOURCE_SPEC_PATH="$(sed -nE 's/^\*\*Source Spec Path:\*\* (.+)$/\1/p' "$evidence_abs" | head -n1)"
-    EVIDENCE_SOURCE_SPEC_REVISION="$(sed -nE 's/^\*\*Source Spec Revision:\*\* ([0-9]+)$/\1/p' "$evidence_abs" | head -n1)"
-    EVIDENCE_SOURCE_SPEC_FINGERPRINT="$(sed -nE 's/^\*\*Source Spec Fingerprint:\*\* (.+)$/\1/p' "$evidence_abs" | head -n1)"
   else
     EVIDENCE_FORMAT="legacy"
   fi
@@ -1878,11 +2039,22 @@ print_status_json() {
 
 run_status_with_plan() {
   local plan_rel="$1"
+  local cache_path=""
+  local output=""
+
+  cache_path="$(plan_execution_status_cache_path "$plan_rel" 2>/dev/null || true)"
+  if [[ -n "$cache_path" ]] && output="$(read_cached_status_output "$cache_path" 2>/dev/null)"; then
+    printf '%s\n' "$output"
+    return 0
+  fi
+
   load_execution_state "$plan_rel" || {
     emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"
     return 1
   }
-  print_status_json
+  output="$(print_status_json)"
+  [[ -n "$cache_path" ]] && write_cached_status_output "$cache_path" "$output"
+  printf '%s\n' "$output"
 }
 
 git_path_exists() {

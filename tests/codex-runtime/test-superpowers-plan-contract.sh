@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HELPER_BIN="$REPO_ROOT/bin/superpowers-plan-contract"
 FIXTURE_DIR="$REPO_ROOT/tests/codex-runtime/fixtures/plan-contract"
+WORKFLOW_FIXTURE_DIR="$REPO_ROOT/tests/codex-runtime/fixtures/workflow-artifacts"
 STATE_DIR="$(mktemp -d)"
 REPO_DIR="$(mktemp -d)"
 trap 'rm -rf "$STATE_DIR" "$REPO_DIR"' EXIT
@@ -165,6 +166,44 @@ run_json_command_with_env() {
   printf '%s\n' "$output"
 }
 
+run_json_command_with_timeout() {
+  local repo_dir="$1"
+  local timeout_seconds="$2"
+  shift 2
+
+  python3 - "$repo_dir" "$timeout_seconds" "$HELPER_BIN" "$@" <<'PY'
+import subprocess
+import sys
+
+repo_dir = sys.argv[1]
+timeout_seconds = float(sys.argv[2])
+cmd = sys.argv[3:]
+
+try:
+    proc = subprocess.run(
+        cmd,
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+except subprocess.TimeoutExpired:
+    print(f"Command timed out after {timeout_seconds:g}s: {' '.join(cmd)}")
+    sys.exit(124)
+
+if proc.returncode != 0:
+    print(f"Expected command to succeed: {' '.join(cmd)}")
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="")
+    sys.exit(proc.returncode)
+
+sys.stdout.write(proc.stdout)
+PY
+}
+
 run_command_fails() {
   local repo_dir="$1"
   local expected_class="$2"
@@ -210,6 +249,29 @@ install_fixture() {
 install_valid_artifacts() {
   install_fixture "valid-spec.md" "$SPEC_REL"
   install_fixture "valid-plan.md" "$PLAN_REL"
+}
+
+install_runtime_integration_artifacts() {
+  mkdir -p "$(dirname "$REPO_DIR/docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md")"
+  mkdir -p "$(dirname "$REPO_DIR/docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md")"
+  cp \
+    "$WORKFLOW_FIXTURE_DIR/specs/2026-03-22-runtime-integration-hardening-design.md" \
+    "$REPO_DIR/docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md"
+  cp \
+    "$WORKFLOW_FIXTURE_DIR/plans/2026-03-22-runtime-integration-hardening.md" \
+    "$REPO_DIR/docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md"
+  node - <<'NODE' "$REPO_DIR/docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md"
+const fs = require("fs");
+const file = process.argv[2];
+const source = fs.readFileSync(file, "utf8");
+fs.writeFileSync(
+  file,
+  source.replace(
+    "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
+    "docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md",
+  ),
+);
+NODE
 }
 
 reset_artifacts() {
@@ -570,6 +632,32 @@ test_real_approved_task_fidelity_packet_builds() {
   assert_contains "$output" "## Task 4: Switch Execution And Review Consumers To Task Packets" "real task-fidelity packet"
 }
 
+test_runtime_integration_repo_lint_stays_fast() {
+  local output
+
+  run_json_command "$REPO_ROOT" lint --spec docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md --plan docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md >/dev/null
+  output="$(run_json_command_with_timeout "$REPO_ROOT" 1 lint --spec docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md --plan docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md)"
+  assert_json_equals "$output" "status" "ok" "runtime integration repo lint"
+}
+
+test_runtime_integration_repo_analyze_plan_stays_fast() {
+  local output
+
+  run_json_command "$REPO_ROOT" analyze-plan --spec docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md --plan docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md --format json >/dev/null
+  output="$(run_json_command_with_timeout "$REPO_ROOT" 1 analyze-plan --spec docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md --plan docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md --format json)"
+  assert_json_equals "$output" "contract_state" "valid" "runtime integration repo analyze-plan"
+}
+
+test_lint_cache_invalidates_after_plan_change() {
+  reset_artifacts
+  install_valid_artifacts
+
+  run_json_command "$REPO_DIR" lint --spec "$SPEC_REL" --plan "$PLAN_REL" >/dev/null
+  replace_in_file "$PLAN_REL" "- REQ-003 -> Task 2" "- REQ-003 -> Task 1"
+
+  run_command_fails "$REPO_DIR" CoverageMatrixMismatch lint --spec "$SPEC_REL" --plan "$PLAN_REL" >/dev/null
+}
+
 test_persisted_packet_cache_prunes_old_entries() {
   reset_artifacts
   install_valid_artifacts
@@ -627,6 +715,9 @@ test_build_task_packet_detects_stale_plan_revision_and_regenerates
 test_build_task_packet_detects_tampered_cache_and_regenerates
 test_real_approved_task_fidelity_artifacts_lint_clean
 test_real_approved_task_fidelity_packet_builds
+test_runtime_integration_repo_lint_stays_fast
+test_runtime_integration_repo_analyze_plan_stays_fast
+test_lint_cache_invalidates_after_plan_change
 test_persisted_packet_cache_prunes_old_entries
 
 echo "Plan-contract helper regression test passed."

@@ -461,6 +461,136 @@ write_v2_completed_attempt() {
 EOF
 }
 
+write_large_checked_plan() {
+  local repo_dir="$1"
+  local execution_mode="$2"
+  local task_count="${3:-20}"
+  local step_count="${4:-3}"
+  local task step
+
+  mkdir -p "$(dirname "$repo_dir/$PLAN_REL")"
+  {
+    cat <<EOF
+# Example Execution Plan
+
+**Workflow State:** Engineering Approved
+**Plan Revision:** 1
+**Execution Mode:** ${execution_mode}
+**Source Spec:** \`${SPEC_REL}\`
+**Source Spec Revision:** 1
+**Last Reviewed By:** plan-eng-review
+
+EOF
+
+    for ((task=1; task<=task_count; task++)); do
+      printf '## Task %s: Bulk execution slice %s\n\n' "$task" "$task"
+      cat <<EOF
+**Files:**
+- Modify: \`docs/output-${task}.md\`
+- Test: \`bash tests/codex-runtime/test-superpowers-plan-execution.sh\`
+
+EOF
+      for ((step=1; step<=step_count; step++)); do
+        printf -- '- [x] **Step %s: Complete bulk step %s.%s**\n' "$step" "$task" "$step"
+      done
+      printf '\n'
+    done
+  } > "$repo_dir/$PLAN_REL"
+}
+
+write_large_v2_evidence_fixture() {
+  local repo_dir="$1"
+  local task_count="${2:-20}"
+  local step_count="${3:-3}"
+  local evidence_rel plan_fingerprint spec_fingerprint head_sha base_sha
+  local task step packet_fingerprint
+
+  evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+  mkdir -p "$(dirname "$repo_dir/$evidence_rel")"
+  plan_fingerprint="$(hash_file_sha256 "$repo_dir/$PLAN_REL")"
+  spec_fingerprint="$(hash_file_sha256 "$repo_dir/$SPEC_REL")"
+  head_sha="$(git -C "$repo_dir" rev-parse HEAD)"
+  base_sha="$(git -C "$repo_dir" rev-list --max-parents=0 HEAD | tail -n1)"
+
+  {
+    cat <<EOF
+# Execution Evidence: 2026-03-17-example-execution-plan
+
+**Plan Path:** ${PLAN_REL}
+**Plan Revision:** 1
+**Plan Fingerprint:** ${plan_fingerprint}
+**Source Spec Path:** ${SPEC_REL}
+**Source Spec Revision:** 1
+**Source Spec Fingerprint:** ${spec_fingerprint}
+
+## Step Evidence
+
+EOF
+
+    for ((task=1; task<=task_count; task++)); do
+      for ((step=1; step<=step_count; step++)); do
+        packet_fingerprint="$(expected_execution_packet_fingerprint "$repo_dir" "$task" "$step")"
+        cat <<EOF
+### Task ${task} Step ${step}
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-17T14:22:31Z
+**Execution Source:** superpowers:executing-plans
+**Task Number:** ${task}
+**Step Number:** ${step}
+**Packet Fingerprint:** ${packet_fingerprint}
+**Head SHA:** ${head_sha}
+**Base SHA:** ${base_sha}
+**Claim:** Completed bulk execution step ${task}.${step}.
+**Files Proven:**
+- docs/output-${task}-${step}.md | sha256:fixture${task}${step}
+**Verification Summary:** Manual inspection only: Verified by bulk fixture setup.
+**Invalidation Reason:** N/A
+
+EOF
+      done
+    done
+  } > "$repo_dir/$evidence_rel"
+}
+
+run_json_command_with_timeout() {
+  local repo_dir="$1"
+  local timeout_seconds="$2"
+  shift 2
+
+  python3 - "$repo_dir" "$timeout_seconds" "$EXEC_BIN" "$@" <<'PY'
+import subprocess
+import sys
+
+repo_dir = sys.argv[1]
+timeout_seconds = float(sys.argv[2])
+cmd = sys.argv[3:]
+
+try:
+    proc = subprocess.run(
+        cmd,
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+except subprocess.TimeoutExpired:
+    print(f"Command timed out after {timeout_seconds:g}s: {' '.join(cmd)}")
+    sys.exit(124)
+
+if proc.returncode != 0:
+    print(f"Expected command to succeed: {' '.join(cmd)}")
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="")
+    sys.exit(proc.returncode)
+
+sys.stdout.write(proc.stdout)
+PY
+}
+
 load_slug_context() {
   local repo_dir="$1"
   local slug_env
@@ -597,6 +727,22 @@ run_status_reports_bounded_schema_for_clean_plan() {
   assert_json_nonempty "$status_output" "execution_fingerprint" "clean status"
 }
 
+run_status_completes_quickly_for_large_v2_evidence_fixture() {
+  local repo_dir="$REPO_DIR/large-v2-evidence"
+  local status_output
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_large_checked_plan "$repo_dir" "superpowers:executing-plans" 40 3
+  write_large_v2_evidence_fixture "$repo_dir" 40 3
+
+  run_json_command "$repo_dir" status --plan "$PLAN_REL" >/dev/null
+  status_output="$(run_json_command_with_timeout "$repo_dir" 1 status --plan "$PLAN_REL")"
+  assert_json_equals "$status_output" "execution_mode" "superpowers:executing-plans" "large evidence status"
+  assert_json_equals "$status_output" "active_task" "null" "large evidence status"
+  assert_json_equals "$status_output" "resume_task" "null" "large evidence status"
+}
+
 run_status_treats_header_only_stub_as_same_empty_state() {
   local repo_dir
   local without_stub
@@ -612,6 +758,26 @@ run_status_treats_header_only_stub_as_same_empty_state() {
     "execution_fingerprint" \
     "$(json_value "$without_stub" "execution_fingerprint")" \
     "header-only stub status"
+}
+
+run_status_cache_invalidates_after_plan_change() {
+  local repo_dir
+  local first_status
+  local second_status
+  repo_dir="$(create_base_repo cache-invalidates)"
+
+  first_status="$(run_json_command "$repo_dir" status --plan "$PLAN_REL")"
+  assert_json_equals "$first_status" "execution_mode" "none" "cache invalidation status"
+
+  node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    const text = fs.readFileSync(path, "utf8");
+    fs.writeFileSync(path, text.replace("**Execution Mode:** none", "**Execution Mode:** superpowers:executing-plans"));
+  ' "$repo_dir/$PLAN_REL"
+
+  second_status="$(run_json_command "$repo_dir" status --plan "$PLAN_REL")"
+  assert_json_equals "$second_status" "execution_mode" "superpowers:executing-plans" "cache invalidation status"
 }
 
 run_status_rejects_missing_execution_mode() {
@@ -2050,7 +2216,9 @@ EOF
 
 require_helper
 run_status_reports_bounded_schema_for_clean_plan
+run_status_completes_quickly_for_large_v2_evidence_fixture
 run_status_treats_header_only_stub_as_same_empty_state
+run_status_cache_invalidates_after_plan_change
 run_status_rejects_missing_execution_mode
 run_preflight_reports_allowed_for_clean_plan
 run_preflight_rejects_detached_head

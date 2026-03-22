@@ -13,25 +13,61 @@ PLAN_EXECUTION_BIN="$SCRIPT_DIR/superpowers-plan-execution"
 json_field() {
   local json="$1"
   local key="$2"
-  printf '%s\n' "$json" | sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p" | head -n1
+  local value
+
+  value="${json#*"\"$key\":\""}"
+  if [[ "$value" == "$json" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  value="${value%%\"*}"
+  printf '%s' "$value"
 }
 
 json_bool_field() {
   local json="$1"
   local key="$2"
-  printf '%s\n' "$json" | sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*(true|false|null).*/\\1/p" | head -n1
+  local value
+
+  value="${json#*"\"$key\":"}"
+  if [[ "$value" == "$json" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  case "$value" in
+    true*) printf 'true' ;;
+    false*) printf 'false' ;;
+    null*) printf 'null' ;;
+    *) printf '%s' "" ;;
+  esac
 }
 
 json_number_field() {
   local json="$1"
   local key="$2"
-  printf '%s\n' "$json" | sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*([0-9]+).*/\\1/p" | head -n1
+  local value
+  local number=""
+  local i char
+
+  value="${json#*"\"$key\":"}"
+  if [[ "$value" == "$json" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  for ((i=0; i<${#value}; i++)); do
+    char="${value:i:1}"
+    case "$char" in
+      [0-9]) number+="$char" ;;
+      *) break ;;
+    esac
+  done
+  printf '%s' "$number"
 }
 
 json_has_key() {
   local json="$1"
   local key="$2"
-  printf '%s\n' "$json" | grep -q "\"$key\"[[:space:]]*:"
+  [[ "$json" == *"\"$key\":"* ]]
 }
 
 json_escape() {
@@ -99,8 +135,18 @@ phase_label() {
 extract_header_value() {
   local path="$1"
   local key="$2"
+  local line
+  local prefix="**$key:** "
   [ -f "$path" ] || return 0
-  sed -nE "s/^\\*\\*$key:\\*\\*[[:space:]]*(.*)$/\\1/p" "$path" | head -n1 | sed -E 's/^`//; s/`$//'
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$prefix"* ]]; then
+      line="${line#$prefix}"
+      line="${line#\`}"
+      line="${line%\`}"
+      printf '%s' "$line"
+      return 0
+    fi
+  done < "$path"
 }
 
 public_status_for_resolve() {

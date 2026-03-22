@@ -209,7 +209,13 @@ manifest_get_string() {
   local json="$1"
   local key="$2"
   local value
-  value="$(printf '%s\n' "$json" | sed -nE "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p" | head -n1)"
+
+  value="${json#*"\"$key\":\""}"
+  if [[ "$value" == "$json" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  value="${value%%\"*}"
   printf '%s' "$value"
 }
 
@@ -242,12 +248,18 @@ read_manifest_file() {
   fi
 
   local json
-  json="$(cat "$path" 2>/dev/null || true)"
-  if [ -z "$json" ] || ! printf '%s\n' "$json" | grep -qE '^[[:space:]]*\{.*\}[[:space:]]*$'; then
+  local trimmed
+  json="$(<"$path")"
+  if [ -z "$json" ]; then
     MANIFEST_CORRUPT=1
     return 2
   fi
-  if ! printf '%s\n' "$json" | grep -q '"version"[[:space:]]*:[[:space:]]*1'; then
+  trimmed="$(trim_surrounding_whitespace "$json")"
+  [[ "$trimmed" == \{*\} ]] || {
+    MANIFEST_CORRUPT=1
+    return 2
+  }
+  if [[ "$json" != *'"version":1'* && "$json" != *'"version" :1'* && "$json" != *'"version": 1'* && "$json" != *'"version" : 1'* ]]; then
     MANIFEST_CORRUPT=1
     return 2
   fi
@@ -331,14 +343,23 @@ spec_reviewer=""
 
 parse_spec_headers() {
   local path="$1"
+  local line
   spec_state=""
   spec_revision=""
   spec_reviewer=""
   [ -f "$path" ] || return 1
 
-  spec_state="$(sed -nE 's/^\*\*Workflow State:\*\* (Draft|CEO Approved)$/\1/p' "$path" | head -n1)"
-  spec_revision="$(sed -nE 's/^\*\*Spec Revision:\*\* ([0-9]+)$/\1/p' "$path" | head -n1)"
-  spec_reviewer="$(sed -nE 's/^\*\*Last Reviewed By:\*\* (brainstorming|plan-ceo-review)$/\1/p' "$path" | head -n1)"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -z "$spec_state" && "$line" =~ ^\*\*Workflow\ State:\*\*\ (Draft|CEO\ Approved)$ ]]; then
+      spec_state="${BASH_REMATCH[1]}"
+    elif [[ -z "$spec_revision" && "$line" =~ ^\*\*Spec\ Revision:\*\*\ ([0-9]+)$ ]]; then
+      spec_revision="${BASH_REMATCH[1]}"
+    elif [[ -z "$spec_reviewer" && "$line" =~ ^\*\*Last\ Reviewed\ By:\*\*\ (brainstorming|plan-ceo-review)$ ]]; then
+      spec_reviewer="${BASH_REMATCH[1]}"
+    fi
+
+    [[ -n "$spec_state" && -n "$spec_revision" && -n "$spec_reviewer" ]] && break
+  done < "$path"
 
   [ -n "$spec_state" ] && [ -n "$spec_revision" ] && [ -n "$spec_reviewer" ]
 }
@@ -527,7 +548,15 @@ camel_to_snake() {
 json_field_string() {
   local json="$1"
   local key="$2"
-  printf '%s\n' "$json" | sed -nE 's/.*"'"$key"'":"([^"]*)".*/\1/p' | head -n1
+  local value
+
+  value="${json#*"\"$key\":\""}"
+  if [[ "$value" == "$json" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  value="${value%%\"*}"
+  printf '%s' "$value"
 }
 
 record_contract_header_failure() {
@@ -1002,6 +1031,17 @@ manifest_paths_for_write() {
   printf '%s\n%s\n' "$write_spec" "$write_plan"
 }
 
+split_manifest_paths() {
+  local payload="$1"
+
+  SPLIT_MANIFEST_SPEC="${payload%%$'\n'*}"
+  if [[ "$payload" == *$'\n'* ]]; then
+    SPLIT_MANIFEST_PLAN="${payload#*$'\n'}"
+  else
+    SPLIT_MANIFEST_PLAN=""
+  fi
+}
+
 write_and_emit_result() {
   local spec_path="$1"
   local plan_path="$2"
@@ -1059,7 +1099,7 @@ apply_resolution_diagnostics() {
 
 cmd_status() {
   local refresh=0 summary=0 arg corrupted=0
-  local persisted_paths persisted_spec persisted_plan
+  local persisted_paths persisted_spec="" persisted_plan=""
 
   while [ "$#" -gt 0 ]; do
     arg="$1"
@@ -1105,8 +1145,9 @@ cmd_status() {
   apply_resolution_diagnostics mutating "$corrupted"
 
   persisted_paths="$(manifest_paths_for_write)"
-  persisted_spec="$(printf '%s\n' "$persisted_paths" | sed -n '1p')"
-  persisted_plan="$(printf '%s\n' "$persisted_paths" | sed -n '2p')"
+  split_manifest_paths "$persisted_paths"
+  persisted_spec="$SPLIT_MANIFEST_SPEC"
+  persisted_plan="$SPLIT_MANIFEST_PLAN"
 
   if [ "$summary" -eq 1 ]; then
     write_and_emit_result "$persisted_spec" "$persisted_plan" summary
@@ -1164,7 +1205,7 @@ cmd_resolve() {
 
 cmd_expect() {
   local artifact="" path="" arg normalized
-  local persisted_paths persisted_spec persisted_plan
+  local persisted_paths persisted_spec="" persisted_plan=""
 
   while [ "$#" -gt 0 ]; do
     arg="$1"
@@ -1213,15 +1254,16 @@ cmd_expect() {
   append_status_note "expect_set"
 
   persisted_paths="$(manifest_paths_for_write)"
-  persisted_spec="$(printf '%s\n' "$persisted_paths" | sed -n '1p')"
-  persisted_plan="$(printf '%s\n' "$persisted_paths" | sed -n '2p')"
+  split_manifest_paths "$persisted_paths"
+  persisted_spec="$SPLIT_MANIFEST_SPEC"
+  persisted_plan="$SPLIT_MANIFEST_PLAN"
 
   write_and_emit_result "$persisted_spec" "$persisted_plan"
 }
 
 cmd_sync() {
   local artifact="" path="" arg
-  local normalized target_path persisted_paths persisted_spec persisted_plan
+  local normalized target_path persisted_paths persisted_spec="" persisted_plan=""
   local missing_artifact=0
 
   while [ "$#" -gt 0 ]; do
@@ -1293,8 +1335,9 @@ cmd_sync() {
   fi
 
   persisted_paths="$(manifest_paths_for_write)"
-  persisted_spec="$(printf '%s\n' "$persisted_paths" | sed -n '1p')"
-  persisted_plan="$(printf '%s\n' "$persisted_paths" | sed -n '2p')"
+  split_manifest_paths "$persisted_paths"
+  persisted_spec="$SPLIT_MANIFEST_SPEC"
+  persisted_plan="$SPLIT_MANIFEST_PLAN"
 
   write_and_emit_result "$persisted_spec" "$persisted_plan"
 }

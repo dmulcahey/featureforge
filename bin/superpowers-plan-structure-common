@@ -129,7 +129,14 @@ plan_structure_set_error() {
 }
 
 plan_structure_strip_file_reference_suffix() {
-  printf '%s' "$1" | sed -E 's/:[0-9]+([:-][0-9]+)*$//'
+  local value="$1"
+
+  if [[ "$value" =~ ^(.*):[0-9]+([:-][0-9]+)*$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  printf '%s' "$value"
 }
 
 plan_structure_normalize_scope_path() {

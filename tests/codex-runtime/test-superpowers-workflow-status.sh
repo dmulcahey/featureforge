@@ -198,6 +198,47 @@ run_command_succeeds() {
   printf '%s\n' "$output"
 }
 
+run_command_succeeds_with_timeout() {
+  local repo_dir="$1"
+  local label="$2"
+  local timeout_seconds="$3"
+  shift 3
+
+  python3 - "$repo_dir" "$label" "$timeout_seconds" "$STATUS_BIN" "$@" <<'PY'
+import subprocess
+import sys
+
+repo_dir = sys.argv[1]
+label = sys.argv[2]
+timeout_seconds = float(sys.argv[3])
+cmd = sys.argv[4:]
+
+try:
+    proc = subprocess.run(
+        cmd,
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+except subprocess.TimeoutExpired:
+    print(f"Expected command to stay under {timeout_seconds:g}s for: {label}")
+    print(f"Command timed out: {' '.join(cmd)}")
+    sys.exit(124)
+
+if proc.returncode != 0:
+    print(f"Expected command to succeed for: {label}")
+    if proc.stdout:
+      print(proc.stdout, end="")
+    if proc.stderr:
+      print(proc.stderr, end="")
+    sys.exit(proc.returncode)
+
+sys.stdout.write(proc.stdout)
+PY
+}
+
 run_resolve_succeeds() {
   local repo_dir="$1"
   local label="$2"
@@ -1410,6 +1451,47 @@ NODE
   assert_contains "$output" '"reason":"implementation_ready"' "full contract implementation-ready compatibility reason"
 }
 
+run_full_contract_implementation_ready_stays_fast() {
+  local repo="$REPO_DIR/full-contract-implementation-ready-fast"
+  local spec_path="$repo/docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md"
+  local plan_path="$repo/docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md"
+  local output
+
+  init_repo "$repo"
+  copy_fixture \
+    "$WORKFLOW_FIXTURE_DIR/specs/2026-03-22-runtime-integration-hardening-design.md" \
+    "$spec_path"
+  copy_fixture \
+    "$WORKFLOW_FIXTURE_DIR/plans/2026-03-22-runtime-integration-hardening.md" \
+    "$plan_path"
+  node - "$plan_path" <<'NODE'
+const fs = require("fs");
+const file = process.argv[2];
+const source = fs.readFileSync(file, "utf8");
+fs.writeFileSync(
+  file,
+  source.replace(
+    "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
+    "docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md",
+  ),
+);
+NODE
+
+  run_command_succeeds "$repo" "full contract implementation-ready status warmup" status --refresh >/dev/null
+  output="$(run_command_succeeds_with_timeout "$repo" "full contract implementation-ready status stays fast" 1 status --refresh)"
+  assert_json_equals "$output" "status" "implementation_ready" "full contract implementation-ready fast status"
+}
+
+run_repo_runtime_integration_status_stays_fast() {
+  local output
+
+  run_command_succeeds "$REPO_ROOT" "repo runtime expect spec" expect --artifact spec --path docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md >/dev/null
+  run_command_succeeds "$REPO_ROOT" "repo runtime expect plan" expect --artifact plan --path docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md >/dev/null
+  run_command_succeeds "$REPO_ROOT" "repo runtime integration status warmup" status --refresh >/dev/null
+  output="$(run_command_succeeds_with_timeout "$REPO_ROOT" "repo runtime integration status stays fast" 1 status --refresh)"
+  assert_json_equals "$output" "status" "implementation_ready" "repo runtime integration fast status"
+}
+
 require_helper
 
 run_bootstrap_no_docs
@@ -1450,5 +1532,7 @@ run_read_only_resolve_avoids_manifest_mutation
 run_read_only_resolve_preserves_missing_expected_paths
 run_implementation_ready
 run_full_contract_implementation_ready_exposes_structured_diagnostics
+run_full_contract_implementation_ready_stays_fast
+run_repo_runtime_integration_status_stays_fast
 
 echo "superpowers-workflow-status regression scaffold passed."

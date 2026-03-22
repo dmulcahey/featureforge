@@ -290,7 +290,7 @@ Superpowers also ships a supported public workflow inspection CLI:
 - `bin/superpowers-workflow` (Bash)
 - `bin/superpowers-workflow.ps1` (PowerShell wrapper)
 
-Use `status`, `next`, `artifacts`, `explain`, `phase`, `doctor`, `handoff`, `preflight`, `gate review`, `gate finish`, or `help` to inspect workflow state without mutating repo docs or repairing local manifests. `phase`, `doctor`, `handoff`, and the execution-gate commands support `--json` for operator tooling. At `implementation_ready`, `next` still stops at the execution handoff boundary and does not call `superpowers-plan-execution recommend`; `handoff` is the read-only surface that reports the recommended execution skill.
+Use `status`, `next`, `artifacts`, `explain`, or `help` for the baseline read-only workflow inspection surfaces. The same public CLI also exposes `phase`, `doctor`, `handoff`, `preflight`, `gate review`, and `gate finish` for deeper operator inspection without mutating repo docs or repairing local manifests. `phase`, `doctor`, `handoff`, and the execution-gate commands support `--json` for operator tooling. At `implementation_ready`, `next` still stops at the execution handoff boundary and does not call `superpowers-plan-execution recommend`; `handoff` is the read-only surface that reports the recommended execution skill.
 
 All 18 checked-in `skills/*/SKILL.md` files are generated from adjacent `SKILL.md.tmpl` sources. Regenerate them with `node scripts/gen-skill-docs.mjs` and validate freshness with `node scripts/gen-skill-docs.mjs --check`.
 

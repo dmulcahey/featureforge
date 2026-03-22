@@ -166,6 +166,47 @@ run_workflow() {
   printf '%s\n' "$output"
 }
 
+run_workflow_with_timeout() {
+  local repo_dir="$1"
+  local label="$2"
+  local timeout_seconds="$3"
+  shift 3
+
+  python3 - "$repo_dir" "$label" "$timeout_seconds" "$WORKFLOW_BIN" "$@" <<'PY'
+import subprocess
+import sys
+
+repo_dir = sys.argv[1]
+label = sys.argv[2]
+timeout_seconds = float(sys.argv[3])
+cmd = sys.argv[4:]
+
+try:
+    proc = subprocess.run(
+        cmd,
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+except subprocess.TimeoutExpired:
+    print(f"Expected command to stay under {timeout_seconds:g}s for: {label}")
+    print(f"Command timed out: {' '.join(cmd)}")
+    sys.exit(124)
+
+if proc.returncode != 0:
+    print(f"Expected command to succeed for: {label}")
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="")
+    sys.exit(proc.returncode)
+
+sys.stdout.write(proc.stdout)
+PY
+}
+
 run_workflow_fails() {
   local repo_dir="$1"
   local label="$2"
@@ -845,6 +886,28 @@ EOF
   assert_same_bytes "$spec_snapshot" "$spec_path" "repo-tracked spec"
 }
 
+run_phase_json_stays_fast() {
+  local repo="$REPO_DIR/phase-fast"
+  local output
+
+  init_repo "$repo"
+  install_full_contract_ready_artifacts "$repo"
+
+  run_workflow "$repo" "phase json warmup" phase --json >/dev/null
+  output="$(run_workflow_with_timeout "$repo" "phase json stays fast" 1 phase --json)"
+  assert_contains "$output" '"status":"implementation_ready"' "phase json fast output"
+}
+
+run_repo_phase_json_stays_fast() {
+  local output
+
+  (cd "$REPO_ROOT" && "$STATUS_BIN" expect --artifact spec --path docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md >/dev/null 2>&1)
+  (cd "$REPO_ROOT" && "$STATUS_BIN" expect --artifact plan --path docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md >/dev/null 2>&1)
+  run_workflow "$REPO_ROOT" "repo phase json warmup" phase --json >/dev/null
+  output="$(run_workflow_with_timeout "$REPO_ROOT" "repo phase json stays fast" 1 phase --json)"
+  assert_contains "$output" '"status":"implementation_ready"' "repo phase json fast output"
+}
+
 require_helpers
 
 run_help_outside_repo
@@ -882,5 +945,7 @@ run_no_manifest_creation
 run_corrupt_manifest_no_backup
 run_existing_manifest_unchanged
 run_repo_docs_unchanged
+run_phase_json_stays_fast
+run_repo_phase_json_stays_fast
 
 echo "superpowers-workflow regression scaffold passed."

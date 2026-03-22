@@ -375,7 +375,7 @@ Helpers enforce and inspect.
 - [x] **Step 4: Mirror the new gate behavior and schema in `bin/superpowers-plan-execution.ps1`**
 - [x] **Step 5: Update `executing-plans`, `subagent-driven-development`, and `requesting-code-review` to call the new preflight and review gates instead of relying on prose-only checks**
 - [x] **Step 6: Run execution, sequencing, enhancement, and parity tests until stale-evidence and missed-reopen cases are green**
-- [ ] **Step 7: Commit the execution-gates and evidence-v2 slice**
+- [x] **Step 7: Commit the execution-gates and evidence-v2 slice**
 ## Task 5: Formalize QA And Release-Readiness Artifacts
 
 **Spec Coverage:** REQ-011, REQ-014, REQ-015, REQ-020, VERIFY-001, NONGOAL-002, NONGOAL-003
@@ -403,13 +403,13 @@ Helpers enforce and inspect.
 - Test: `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 
-- [ ] **Step 1: Upgrade the ENG review test-plan artifact metadata so source plan, revision, branch, repo, QA requirement, and generation provenance are explicit**
-- [ ] **Step 2: Make `qa-only` write structured QA result artifacts with stable result values and source-plan linkage**
-- [ ] **Step 3: Make `document-release` write structured release-readiness artifacts with branch, base, head, and result provenance**
-- [ ] **Step 4: Wire `gate-finish` freshness checks for QA and release artifacts, including branch, head, plan-path, and plan-revision validation**
-- [ ] **Step 5: Update `finishing-a-development-branch` to rely on helper-backed finish readiness instead of prose-only late-stage checks**
-- [ ] **Step 6: Regenerate skill docs and run finish-gate, workflow-enhancement, and runtime-instruction tests**
-- [ ] **Step 7: Commit the structured-artifact slice**
+- [x] **Step 1: Upgrade the ENG review test-plan artifact metadata so source plan, revision, branch, repo, QA requirement, and generation provenance are explicit**
+- [x] **Step 2: Make `qa-only` write structured QA result artifacts with stable result values and source-plan linkage**
+- [x] **Step 3: Make `document-release` write structured release-readiness artifacts with branch, base, head, and result provenance**
+- [x] **Step 4: Wire `gate-finish` freshness checks for QA and release artifacts, including branch, head, plan-path, and plan-revision validation**
+- [x] **Step 5: Update `finishing-a-development-branch` to rely on helper-backed finish readiness instead of prose-only late-stage checks**
+- [x] **Step 6: Regenerate skill docs and run finish-gate, workflow-enhancement, and runtime-instruction tests**
+- [x] **Step 7: Commit the structured-artifact slice**
 ## Task 6: Expand `superpowers-workflow` Into The Full Read-Only Operator Surface
 
 **Spec Coverage:** REQ-004, REQ-016, REQ-017, REQ-020, VERIFY-001, NONGOAL-001, NONGOAL-002, NONGOAL-003
@@ -433,13 +433,13 @@ Helpers enforce and inspect.
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 - Test: `node --test tests/codex-runtime/workflow-fixtures.test.mjs`
 
-- [ ] **Step 1: Add `phase`, `doctor`, `handoff`, `preflight`, `gate review`, and `gate finish` command routing to the Bash wrapper**
-- [ ] **Step 2: Compose route-time status, plan-contract analysis, execution-gate state, late-stage artifact freshness, and manifest diagnostics into stable human-readable and JSON output**
-- [ ] **Step 3: Mirror the command surface and output semantics in `bin/superpowers-workflow.ps1`**
-- [ ] **Step 4: Extend wrapper tests and fixtures to cover the new operator surfaces and bounded-scan diagnostics**
-- [ ] **Step 5: Update operator-facing README docs so the supported public CLI reflects the expanded read-only surface**
-- [ ] **Step 6: Run wrapper, fixture, and parity tests until the public CLI contract is green**
-- [ ] **Step 7: Commit the public-CLI expansion slice**
+- [x] **Step 1: Add `phase`, `doctor`, `handoff`, `preflight`, `gate review`, and `gate finish` command routing to the Bash wrapper**
+- [x] **Step 2: Compose route-time status, plan-contract analysis, execution-gate state, late-stage artifact freshness, and manifest diagnostics into stable human-readable and JSON output**
+- [x] **Step 3: Mirror the command surface and output semantics in `bin/superpowers-workflow.ps1`**
+- [x] **Step 4: Extend wrapper tests and fixtures to cover the new operator surfaces and bounded-scan diagnostics**
+- [x] **Step 5: Update operator-facing README docs so the supported public CLI reflects the expanded read-only surface**
+- [x] **Step 6: Run wrapper, fixture, and parity tests until the public CLI contract is green**
+- [x] **Step 7: Commit the public-CLI expansion slice**
 ## Task 7: Make `using-superpowers` Session-Entry First And Replace Dead-End Command Docs
 
 **Spec Coverage:** REQ-018, REQ-019, REQ-022, REQ-020, VERIFY-001, NONGOAL-002
@@ -467,12 +467,12 @@ Helpers enforce and inspect.
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Make session-entry resolution the explicit first step in `using-superpowers` before `_SESSIONS`, artifact inspection, or normal routing**
-- [ ] **Step 2: Remove thin-header readiness inference from fallback and limit helper-unavailable behavior to conservative backward routing**
-- [ ] **Step 3: Replace dead-end command docs with compatibility shims that report current phase and route to the correct supported next surface**
-- [ ] **Step 4: Regenerate skill docs and update wording-contract tests for the new Step 1 gate and shim behavior**
-- [ ] **Step 5: Run bypass, session-entry, sequencing, and runtime-instruction tests until the fallback path cannot produce false-positive readiness**
-- [ ] **Step 6: Commit the routing-hardening and compatibility-shim slice**
+- [x] **Step 1: Make session-entry resolution the explicit first step in `using-superpowers` before `_SESSIONS`, artifact inspection, or normal routing**
+- [x] **Step 2: Remove thin-header readiness inference from fallback and limit helper-unavailable behavior to conservative backward routing**
+- [x] **Step 3: Replace dead-end command docs with compatibility shims that report current phase and route to the correct supported next surface**
+- [x] **Step 4: Regenerate skill docs and update wording-contract tests for the new Step 1 gate and shim behavior**
+- [x] **Step 5: Run bypass, session-entry, sequencing, and runtime-instruction tests until the fallback path cannot produce false-positive readiness**
+- [x] **Step 6: Commit the routing-hardening and compatibility-shim slice**
 ## Task 8: Align Docs, Release Notes, And Run Full Verification
 
 **Spec Coverage:** REQ-020, VERIFY-001
@@ -513,9 +513,9 @@ Helpers enforce and inspect.
 - Test: `bash tests/codex-runtime/test-runtime-instructions.sh`
 - Test: `bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
-- [ ] **Step 1: Regenerate skill docs and update README, platform docs, testing docs, and release notes to match the implemented helper-owned contract**
-- [ ] **Step 2: Run `node scripts/gen-skill-docs.mjs --check` and the Node contract suites**
-- [ ] **Step 3: Run the full targeted shell regression matrix for workflow status, plan contract, plan execution, workflow wrapper, session entry, bypass, sequencing, enhancements, instructions, and parity**
-- [ ] **Step 4: Fix any doc drift, command-surface mismatch, or parity regression uncovered by the final verification pass**
-- [ ] **Step 5: Re-run the full targeted matrix until everything is green**
+- [x] **Step 1: Regenerate skill docs and update README, platform docs, testing docs, and release notes to match the implemented helper-owned contract**
+- [x] **Step 2: Run `node scripts/gen-skill-docs.mjs --check` and the Node contract suites**
+- [x] **Step 3: Run the full targeted shell regression matrix for workflow status, plan contract, plan execution, workflow wrapper, session entry, bypass, sequencing, enhancements, instructions, and parity**
+- [x] **Step 4: Fix any doc drift, command-surface mismatch, or parity regression uncovered by the final verification pass**
+- [x] **Step 5: Re-run the full targeted matrix until everything is green**
 - [ ] **Step 6: Commit the documentation and verification slice**

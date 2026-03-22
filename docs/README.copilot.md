@@ -161,7 +161,7 @@ Superpowers ships a supported public workflow inspection surface:
 - `bin/superpowers-workflow` (Bash)
 - `bin/superpowers-workflow.ps1` (PowerShell wrapper)
 
-Use `status`, `next`, `artifacts`, `explain`, `phase`, `doctor`, `handoff`, `preflight`, `gate review`, `gate finish`, or `help` when you want to inspect workflow state directly from the terminal. These commands stay read-only: they do not create, repair, or rewrite branch-scoped manifests. `phase`, `doctor`, `handoff`, `preflight`, `gate review`, and `gate finish` support `--json` for operator tooling, while `next` still stops at the execution handoff boundary instead of calling `superpowers-plan-execution recommend`.
+Use `status`, `next`, `artifacts`, `explain`, or `help` for the baseline read-only workflow inspection surfaces. The same public CLI also exposes `phase`, `doctor`, `handoff`, `preflight`, `gate review`, and `gate finish` when you need deeper operator inspection directly from the terminal. These commands stay read-only: they do not create, repair, or rewrite branch-scoped manifests. `phase`, `doctor`, `handoff`, `preflight`, `gate review`, and `gate finish` support `--json` for operator tooling, while `next` still stops at the execution handoff boundary instead of calling `superpowers-plan-execution recommend`.
 
 Superpowers also ships workflow-status runtime helpers:
 - `bin/superpowers-workflow-status` (Bash)
