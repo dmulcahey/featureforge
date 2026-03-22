@@ -131,12 +131,13 @@ Load plan, review critically, execute all tasks in a separate session, request f
    - to `superpowers:plan-eng-review` if the plan is draft or malformed
    - to `superpowers:writing-plans` if the source spec path or revision is stale
 6. Verify workspace readiness before starting:
-   - stop on `main` or `master` unless the user explicitly approves in-place execution
+   - stop on a default protected branch (`main`, `master`, `dev`, or `develop`) unless the user explicitly approves in-place execution
    - stop on detached HEAD
    - stop if merge conflicts, unresolved index entries, rebase, or cherry-pick state is present
    - if the working tree is dirty, stop and ask the user to confirm the workspace is intentionally prepared
 7. Do not auto-clean the workspace and do not auto-create a worktree.
-8. If preflight passes, review the plan critically for execution concerns and use the approved plan checklist as the execution progress record.
+8. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
+9. If preflight passes, review the plan critically for execution concerns and use the approved plan checklist as the execution progress record.
 
 ## Helper-Owned Execution State
 
@@ -217,7 +218,7 @@ After the final review is resolved:
 - Don't skip verifications
 - Reference skills when plan says to
 - Stop when blocked, don't guess
-- Never start implementation on main/master branch without explicit user consent
+- Never start implementation on a default protected branch (`main`, `master`, `dev`, or `develop`) without explicit user consent
 - Workspace preparation is the user's responsibility; `superpowers:using-git-worktrees` is optional, not automatic
 
 ## Integration

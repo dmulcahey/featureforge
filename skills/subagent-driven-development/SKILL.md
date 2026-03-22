@@ -204,11 +204,12 @@ Before dispatching any implementation subagent:
    - to `superpowers:plan-eng-review` if the plan is draft or malformed
    - to `superpowers:writing-plans` if the source spec path or revision is stale
 5. Verify workspace readiness before dispatching subagents:
-   - stop on `main` or `master` unless the user explicitly approves in-place execution
+   - stop on a default protected branch (`main`, `master`, `dev`, or `develop`) unless the user explicitly approves in-place execution
    - stop on detached HEAD
    - stop if merge conflicts, unresolved index entries, rebase, or cherry-pick state is present
    - if the working tree is dirty, stop and ask the user to confirm the workspace is intentionally prepared
 6. Do not auto-clean the workspace and do not auto-create a worktree.
+7. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
 
 ## Helper-Owned Execution State
 
@@ -403,7 +404,7 @@ Code reviewer: ✅ Approved
 ## Red Flags
 
 **Never:**
-- Start implementation on main/master branch without explicit user consent
+- Start implementation on a default protected branch (`main`, `master`, `dev`, or `develop`) without explicit user consent
 - Skip reviews (spec compliance OR code quality)
 - Proceed with unfixed issues
 - Dispatch multiple implementation subagents in parallel (conflicts)

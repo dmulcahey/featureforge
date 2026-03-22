@@ -205,6 +205,10 @@ load_instruction_branches_or_fail() {
             emit_failure "InstructionParseFailed" "Protected-branch instruction entries may not be blank after normalization." "$INTENT" "$BRANCH_NAME" "$PROTECTED" "$PROTECTED_BY" "$TASK_ID" "$APPROVAL_FINGERPRINT" "$APPROVAL_PATH"
             return 1
           fi
+          if [[ "$raw_branch_name" != "$normalized_branch_name" ]]; then
+            emit_failure "InstructionParseFailed" "Protected-branch instruction entries must already use normalized exact branch names." "$INTENT" "$BRANCH_NAME" "$PROTECTED" "$PROTECTED_BY" "$TASK_ID" "$APPROVAL_FINGERPRINT" "$APPROVAL_PATH"
+            return 1
+          fi
           INSTRUCTION_PROTECTED_BRANCHES+=("$normalized_branch_name")
         done
       done < "$file"

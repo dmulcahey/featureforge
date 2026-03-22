@@ -278,6 +278,16 @@ EOF
   assert_json_equals "$output" "protected_by" "instructions" "nested AGENTS.override branch protection"
 }
 
+run_invalid_instruction_branch_entry_fails_closed() {
+  local repo="$REPO_DIR/invalid-instruction-branch-entry"
+
+  init_repo "$repo" "release" "https://example.com/acme/repo-safety.git"
+  write_file "$repo/AGENTS.override.md" <<'EOF'
+Superpowers protected branches: release/*
+EOF
+  run_command_fails "$repo" "invalid instruction branch entry" "InstructionParseFailed" check --intent write --stage superpowers:brainstorming --task-id release-task --path docs/superpowers/specs/release-spec.md --write-target spec-artifact-write >/dev/null
+}
+
 run_matching_approval_allows_write() {
   local repo="$REPO_DIR/matching-approval"
   local approval
@@ -348,6 +358,20 @@ run_invalid_write_target_fails_closed() {
   run_command_fails "$repo" "invalid write target" "InvalidWriteTarget" check --intent write --stage superpowers:brainstorming --task-id spec-task --write-target totally-unknown-target >/dev/null
 }
 
+run_whitespace_only_task_id_fails_closed() {
+  local repo="$REPO_DIR/whitespace-task-id"
+
+  init_repo "$repo" "main" "https://example.com/acme/repo-safety.git"
+  run_command_fails "$repo" "whitespace-only task id" "InvalidCommandInput" check --intent write --stage superpowers:brainstorming --task-id "   " --path docs/superpowers/specs/new-spec.md --write-target spec-artifact-write >/dev/null
+}
+
+run_windows_absolute_path_fails_closed() {
+  local repo="$REPO_DIR/windows-absolute-path"
+
+  init_repo "$repo" "main" "https://example.com/acme/repo-safety.git"
+  run_command_fails "$repo" "windows absolute path" "InvalidCommandInput" check --intent write --stage superpowers:brainstorming --task-id spec-task --path 'C:\repo\docs\superpowers\specs\new-spec.md' --write-target spec-artifact-write >/dev/null
+}
+
 run_hot_path_uses_deterministic_approval_file() {
   local repo="$REPO_DIR/hot-path-approval"
   local output
@@ -368,12 +392,15 @@ run_write_blocked_on_protected_branch_by_default
 run_feature_branch_write_allowed
 run_root_agents_override_protects_branch
 run_nested_agents_override_protects_branch
+run_invalid_instruction_branch_entry_fails_closed
 run_matching_approval_allows_write
 run_full_scope_approval_allows_follow_on_git_phase
 run_mismatched_path_blocks_with_fingerprint_mismatch
 run_mismatched_target_blocks_with_fingerprint_mismatch
 run_malformed_scope_record_blocks
 run_invalid_write_target_fails_closed
+run_whitespace_only_task_id_fails_closed
+run_windows_absolute_path_fails_closed
 run_hot_path_uses_deterministic_approval_file
 require_absent_pattern "$HELPER_BIN" 'find .*repo-safety'
 

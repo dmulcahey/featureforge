@@ -3,7 +3,16 @@ normalize_repo_relative_path() {
   case "$input" in
     ''|/*) return 1 ;;
   esac
+  if [[ "$input" =~ ^([A-Za-z]:|\\\\) ]]; then
+    return 1
+  fi
   input="${input//\\//}"
+  case "$input" in
+    ''|/*|//*) return 1 ;;
+  esac
+  if [[ "$input" =~ ^[A-Za-z]:/ ]]; then
+    return 1
+  fi
   while IFS= read -r part; do
     case "$part" in
       ''|'.') continue ;;
@@ -34,7 +43,21 @@ normalize_whitespace_bounded() {
 }
 
 normalize_identifier_token() {
-  printf '%s\n' "${1:-}" | sed 's/[^[:alnum:]._-]/-/g'
+  local value normalized
+
+  value="$(normalize_whitespace "${1:-}")"
+  if [[ -z "$value" ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  normalized="$(printf '%s\n' "$value" | sed 's/[^[:alnum:]._-]/-/g')"
+  if [[ "$normalized" =~ ^-+$ ]]; then
+    printf '\n'
+    return 0
+  fi
+
+  printf '%s\n' "$normalized"
 }
 
 collect_active_instruction_files() {

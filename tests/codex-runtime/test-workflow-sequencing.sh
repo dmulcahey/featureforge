@@ -187,7 +187,9 @@ require_pattern skills/using-superpowers/SKILL.md 'Plan is `Engineering Approved
 require_pattern skills/using-superpowers/SKILL.md 'Plan is `Engineering Approved` and its `Source Spec:` path plus `Source Spec Revision:` match the latest approved spec: proceed to implementation through the normal execution handoff for that approved plan path.'
 
 require_pattern skills/executing-plans/SKILL.md "Require the exact approved plan path as input."
+require_pattern skills/executing-plans/SKILL.md 'default protected branch (`main`, `master`, `dev`, or `develop`)'
 require_pattern skills/executing-plans/SKILL.md "Do not auto-clean the workspace and do not auto-create a worktree."
+require_pattern skills/executing-plans/SKILL.md "The later repo-safety checks still govern any additional protected branches declared through repo or user instructions."
 require_pattern skills/executing-plans/SKILL.md 'Workspace preparation is the user'"'"'s responsibility; `superpowers:using-git-worktrees` is optional, not automatic'
 require_pattern skills/subagent-driven-development/SKILL.md 'calls `status --plan ...` during preflight'
 require_pattern skills/subagent-driven-development/SKILL.md 'calls `begin` before starting work on a plan step'
@@ -225,6 +227,8 @@ require_pattern skills/plan-eng-review/SKILL.md 'Do not start implementation ins
 require_pattern skills/subagent-driven-development/SKILL.md "## Implementation Preflight"
 require_pattern skills/subagent-driven-development/SKILL.md "Have engineering-approved implementation plan?"
 require_pattern skills/subagent-driven-development/SKILL.md "Return to using-superpowers artifact-state routing"
+require_pattern skills/subagent-driven-development/SKILL.md 'default protected branch (`main`, `master`, `dev`, or `develop`)'
+require_pattern skills/subagent-driven-development/SKILL.md "The later repo-safety checks still govern any additional protected branches declared through repo or user instructions."
 require_pattern skills/subagent-driven-development/SKILL.md 'Tasks mostly independent?" -> "executing-plans" [label="no - tightly coupled or better handled in one coordinator session"]'
 require_pattern skills/subagent-driven-development/SKILL.md "Do not auto-clean the workspace and do not auto-create a worktree."
 require_pattern skills/subagent-driven-development/SKILL.md '"More tasks remain?" -> "Use superpowers:requesting-code-review for final review gate" [label="no"];'

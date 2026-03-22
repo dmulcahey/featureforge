@@ -495,6 +495,16 @@ run_record_rejects_invalid_decision() {
   run_command_fails "record invalid decision" "InvalidCommandInput" record --decision maybe --session-key "record-invalid" >/dev/null
 }
 
+run_whitespace_only_session_key_fails_closed() {
+  local message_file
+
+  message_file="$(write_message_file whitespace-session-key-message.txt <<'EOF'
+Please keep the gate deterministic.
+EOF
+)"
+  run_command_fails "whitespace-only session key" "InvalidCommandInput" resolve --message-file "$message_file" --session-key "   " >/dev/null
+}
+
 run_hot_path_uses_derived_decision_file() {
   local message_file
   local output
@@ -533,6 +543,7 @@ run_contrastive_skill_clause_triggers_reentry
 run_explicit_reentry_write_failure_is_unpersisted
 run_record_persists_enabled_choice
 run_record_rejects_invalid_decision
+run_whitespace_only_session_key_fails_closed
 run_hot_path_uses_derived_decision_file
 require_absent_pattern "$HELPER_BIN" 'find .*session-flags'
 
