@@ -694,8 +694,8 @@
 **Invalidation Reason:** The final session-entry negation hardening changed shipped behavior after the previous completion-gate attempt, so the pre-commit verification step must be replayed.
 
 #### Attempt 4
-**Status:** Completed
-**Recorded At:** 2026-03-22T03:28:45Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T03:38:47Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Re-ran the completion gate after the final session-entry negation hardening so the generated docs and runtime regressions are freshly verified before the final commit.
 **Files:**
@@ -703,6 +703,18 @@
 - docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
 **Verification:**
 - Manual inspection only: Fresh checks passed for generated agent docs, generated skill docs, the Node codex-runtime suite, runtime-instructions, using-superpowers bypass, session-entry, supported-entry gate, repo-safety, workflow enhancement/sequencing, plan-execution, workflow-status, and slug. The PowerShell wrapper bash-resolution check also ran and skipped cleanly because no pwsh or powershell binary is installed in this environment.
+**Invalidation Reason:** The final clause-level session-entry negation fix changed shipped behavior after the last recorded completion gate, so the pre-commit verification and handoff steps must be refreshed on the new head.
+
+#### Attempt 5
+**Status:** Completed
+**Recorded At:** 2026-03-22T03:39:02Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Re-ran the targeted completion gate after the final clause-level session-entry negation fix so the trust-boundary regressions are freshly verified on the current head.
+**Files:**
+- docs/superpowers/execution-evidence/2026-03-21-bootstrap-and-branch-safety-hardening-r1-evidence.md
+- docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
+**Verification:**
+- Manual inspection only: Fresh targeted checks passed for using-superpowers bypass wording, the session-entry helper regression suite, and the supported-entry gate after the clause-level negation hardening. Commands run: bash tests/codex-runtime/test-using-superpowers-bypass.sh, bash tests/codex-runtime/test-superpowers-session-entry.sh, and bash tests/codex-runtime/test-superpowers-session-entry-gate.sh.
 **Invalidation Reason:** N/A
 
 ### Task 6 Step 4
@@ -748,8 +760,8 @@
 **Invalidation Reason:** The final session-entry negation hardening and refreshed execution evidence changed the final commit boundary after the previous post-review repair commit.
 
 #### Attempt 4
-**Status:** Completed
-**Recorded At:** 2026-03-22T03:29:28Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T03:39:23Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Committed the final session-entry negation hardening and refreshed execution artifacts as fb77ec4.
 **Files:**
@@ -757,6 +769,18 @@
 - docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
 **Verification:**
 - Manual inspection only: Verified HEAD is commit fb77ec4 immediately after staging the final negation hardening and refreshed execution artifacts, and git status --short was clean before recording this step.
+**Invalidation Reason:** The final clause-level session-entry negation fix changed the final verified commit boundary after the previous recorded handoff commit.
+
+#### Attempt 5
+**Status:** Completed
+**Recorded At:** 2026-03-22T03:39:36Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Confirmed the final verified implementation boundary at commit 46f0e62 after the clause-level session-entry negation fix.
+**Files:**
+- docs/superpowers/execution-evidence/2026-03-21-bootstrap-and-branch-safety-hardening-r1-evidence.md
+- docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
+**Verification:**
+- Manual inspection only: Verified HEAD is commit 46f0e62 immediately after the clause-level session-entry negation fix landed, and git status --short was clean before refreshing this execution evidence.
 **Invalidation Reason:** N/A
 
 ### Task 6 Step 5
@@ -785,8 +809,8 @@
 **Invalidation Reason:** The final session-entry negation hardening expanded the trust-boundary fix after the previous post-review handoff, so the verification and handoff chain must be refreshed again.
 
 #### Attempt 3
-**Status:** Completed
-**Recorded At:** 2026-03-22T03:29:54Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T03:38:24Z
 **Execution Source:** superpowers:executing-plans
 **Claim:** Re-synced the approved plan artifact after the final session-entry negation hardening so workflow state reflects the latest verified implementation.
 **Files:**
@@ -794,4 +818,16 @@
 - docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
 **Verification:**
 - Manual inspection only: bin/superpowers-workflow-status sync --artifact plan --path docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md returned implementation_ready with the expected spec and plan paths in the workflow manifest after the final session-entry negation hardening.
+**Invalidation Reason:** The final clause-level session-entry negation fix changed the shipped helper behavior after the last recorded handoff commit, so the end-of-task verification and handoff evidence must be refreshed on the new head.
+
+#### Attempt 4
+**Status:** Completed
+**Recorded At:** 2026-03-22T03:40:07Z
+**Execution Source:** superpowers:executing-plans
+**Claim:** Re-synced the approved plan artifact after the clause-level session-entry negation fix so workflow state reflects the latest verified implementation boundary.
+**Files:**
+- docs/superpowers/execution-evidence/2026-03-21-bootstrap-and-branch-safety-hardening-r1-evidence.md
+- docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md
+**Verification:**
+- Manual inspection only: bin/superpowers-workflow-status sync --artifact plan --path docs/superpowers/plans/2026-03-21-bootstrap-and-branch-safety-hardening.md returned implementation_ready with the expected spec and plan paths in the workflow manifest after the clause-level negation fix.
 **Invalidation Reason:** N/A
