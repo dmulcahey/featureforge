@@ -73,19 +73,23 @@ fi
 
 assert_wrapper_behavior() {
   local wrapper_path="$1"
-  local helper_basename="$2"
-  local command_name="$3"
+  local command_name="$2"
+  local output_payload="$3"
+  local expected_output_fragment="$4"
+  local expected_args_spec="$5"
   local bash_log="$tmp_root/${command_name}-wrapper-bash.log"
   local wrapper_output
-  local first_arg
-  local second_arg
-  local third_arg
   local wrapper_exit
+  local expected_args=()
+  local actual_arg
+  local index
 
   if [[ ! -f "$wrapper_path" ]]; then
     echo "Expected ${command_name} PowerShell wrapper to exist: $wrapper_path"
     exit 1
   fi
+
+  IFS='|' read -r -a expected_args <<< "$expected_args_spec"
 
   cat > "$git_bin_dir/bash.exe" <<'SH'
 #!/bin/bash
@@ -97,39 +101,42 @@ for arg in "$@"; do
   printf '%s\n' "$arg" >> "$log_file"
 done
 
-if [[ "${1:-}" == *"superpowers-workflow-status" ]]; then
-  printf '{"status":"needs_brainstorming","next_skill":"superpowers:brainstorming","root":"/c/tmp/workspace"}\n'
-else
-  printf '{"execution_mode":"none","execution_started":"no","root":"/c/tmp/workspace"}\n'
-fi
+printf '%s\n' "${SUPERPOWERS_TEST_OUTPUT:?}"
 SH
   chmod +x "$git_bin_dir/bash.exe"
 
   wrapper_output="$(
     PATH="$generic_dir:$git_cmd_dir:$PATH" \
       SUPERPOWERS_TEST_BASH_LOG="$bash_log" \
+      SUPERPOWERS_TEST_OUTPUT="$output_payload" \
       "$pwsh_bin" -NoLogo -NoProfile -Command "& '$wrapper_path' status --plan docs/superpowers/plans/example.md"
   )"
-  if [[ "$wrapper_output" != *'"root":"C:\\tmp\\workspace"'* ]]; then
-    echo "Expected ${command_name} wrapper to convert JSON root field to Windows path"
+  if [[ "$wrapper_output" != *"$expected_output_fragment"* ]]; then
+    echo "Expected ${command_name} wrapper to preserve raw transport output"
+    echo "Actual output: $wrapper_output"
+    exit 1
+  fi
+  if [[ "$wrapper_output" == *'C:\\tmp\\workspace'* ]]; then
+    echo "Expected ${command_name} wrapper to avoid rewriting JSON paths"
     echo "Actual output: $wrapper_output"
     exit 1
   fi
 
-  first_arg="$(sed -n '1p' "$bash_log")"
-  second_arg="$(sed -n '2p' "$bash_log")"
-  third_arg="$(sed -n '3p' "$bash_log")"
-  if [[ "$first_arg" != *"/bin/${helper_basename}" ]]; then
-    echo "Expected wrapper to invoke Git Bash with the ${helper_basename} bash script"
-    echo "Actual first arg: $first_arg"
-    exit 1
-  fi
-  if [[ "$second_arg" != "status" || "$third_arg" != "--plan" ]]; then
-    echo "Expected ${command_name} wrapper to forward CLI arguments to bash script"
-    echo "Actual args:"
-    cat "$bash_log"
-    exit 1
-  fi
+  for index in "${!expected_args[@]}"; do
+    actual_arg="$(sed -n "$((index + 1))p" "$bash_log")"
+    if [[ $index -eq 0 ]]; then
+      if [[ "$actual_arg" != *"${expected_args[$index]}" ]]; then
+        echo "Expected ${command_name} wrapper to invoke the canonical compat launcher"
+        echo "Actual first arg: $actual_arg"
+        exit 1
+      fi
+    elif [[ "$actual_arg" != "${expected_args[$index]}" ]]; then
+      echo "Expected ${command_name} wrapper to forward canonical subcommands unchanged"
+      echo "Actual args:"
+      cat "$bash_log"
+      exit 1
+    fi
+  done
 
   cat > "$git_bin_dir/bash.exe" <<'SH'
 #!/bin/bash
@@ -157,6 +164,7 @@ assert_public_workflow_wrapper_behavior() {
   local wrapper_output
   local first_arg
   local second_arg
+  local third_arg
   local wrapper_exit
 
   if [[ ! -f "$wrapper_path" ]]; then
@@ -198,13 +206,14 @@ SH
 
   first_arg="$(sed -n '1p' "$bash_log")"
   second_arg="$(sed -n '2p' "$bash_log")"
-  if [[ "$first_arg" != *"/bin/superpowers-workflow" ]]; then
-    echo "Expected public workflow wrapper to invoke Git Bash with the superpowers-workflow bash script"
+  third_arg="$(sed -n '3p' "$bash_log")"
+  if [[ "$first_arg" != *"/compat/bash/superpowers" ]]; then
+    echo "Expected public workflow wrapper to invoke Git Bash with the canonical compat launcher"
     echo "Actual first arg: $first_arg"
     exit 1
   fi
-  if [[ "$second_arg" != "status" ]]; then
-    echo "Expected public workflow wrapper to forward the status command"
+  if [[ "$second_arg" != "workflow" || "$third_arg" != "status" ]]; then
+    echo "Expected public workflow wrapper to forward the canonical workflow status command"
     echo "Actual args:"
     cat "$bash_log"
     exit 1
@@ -250,6 +259,7 @@ assert_update_check_wrapper_behavior() {
   local wrapper_exit
   local first_arg
   local second_arg
+  local third_arg
 
   if [[ ! -f "$wrapper_path" ]]; then
     echo "Expected update-check PowerShell wrapper to exist: $wrapper_path"
@@ -283,13 +293,14 @@ SH
 
   first_arg="$(sed -n '1p' "$bash_log")"
   second_arg="$(sed -n '2p' "$bash_log")"
-  if [[ "$first_arg" != *"/bin/superpowers-update-check" ]]; then
-    echo "Expected update-check wrapper to invoke Git Bash with the update-check bash script"
+  third_arg="$(sed -n '3p' "$bash_log")"
+  if [[ "$first_arg" != *"/compat/bash/superpowers" ]]; then
+    echo "Expected update-check wrapper to invoke Git Bash with the canonical compat launcher"
     echo "Actual first arg: $first_arg"
     exit 1
   fi
-  if [[ "$second_arg" != "--force" ]]; then
-    echo "Expected update-check wrapper to forward --force to bash"
+  if [[ "$second_arg" != "update-check" || "$third_arg" != "--force" ]]; then
+    echo "Expected update-check wrapper to forward the canonical update-check command"
     echo "Actual args:"
     cat "$bash_log"
     exit 1
@@ -303,6 +314,7 @@ assert_session_entry_wrapper_behavior() {
   local first_arg
   local second_arg
   local third_arg
+  local fourth_arg
   local wrapper_exit
 
   if [[ ! -f "$wrapper_path" ]]; then
@@ -329,8 +341,8 @@ SH
       SUPERPOWERS_TEST_BASH_LOG="$bash_log" \
       "$pwsh_bin" -NoLogo -NoProfile -Command "& '$wrapper_path' resolve --message-file transcript.md"
   )"
-  if [[ "$wrapper_output" != *'"decision_path":"C:\\tmp\\state\\session-flags\\using-superpowers\\session-123"'* ]]; then
-    echo "Expected session-entry wrapper to convert decision_path field to Windows path"
+  if [[ "$wrapper_output" != *'"/c/tmp/state/session-flags/using-superpowers/session-123"'* ]]; then
+    echo "Expected session-entry wrapper to preserve raw JSON paths"
     echo "Actual output: $wrapper_output"
     exit 1
   fi
@@ -338,13 +350,14 @@ SH
   first_arg="$(sed -n '1p' "$bash_log")"
   second_arg="$(sed -n '2p' "$bash_log")"
   third_arg="$(sed -n '3p' "$bash_log")"
-  if [[ "$first_arg" != *"/bin/superpowers-session-entry" ]]; then
-    echo "Expected session-entry wrapper to invoke Git Bash with the session-entry bash script"
+  fourth_arg="$(sed -n '4p' "$bash_log")"
+  if [[ "$first_arg" != *"/compat/bash/superpowers" ]]; then
+    echo "Expected session-entry wrapper to invoke Git Bash with the canonical compat launcher"
     echo "Actual first arg: $first_arg"
     exit 1
   fi
-  if [[ "$second_arg" != "resolve" || "$third_arg" != "--message-file" ]]; then
-    echo "Expected session-entry wrapper to forward CLI arguments to bash script"
+  if [[ "$second_arg" != "session-entry" || "$third_arg" != "resolve" || "$fourth_arg" != "--message-file" ]]; then
+    echo "Expected session-entry wrapper to forward canonical subcommands to the compat launcher"
     echo "Actual args:"
     cat "$bash_log"
     exit 1
@@ -377,6 +390,7 @@ assert_repo_safety_wrapper_behavior() {
   local first_arg
   local second_arg
   local third_arg
+  local fourth_arg
   local wrapper_exit
 
   if [[ ! -f "$wrapper_path" ]]; then
@@ -403,8 +417,8 @@ SH
       SUPERPOWERS_TEST_BASH_LOG="$bash_log" \
       "$pwsh_bin" -NoLogo -NoProfile -Command "& '$wrapper_path' check --intent write --stage superpowers:brainstorming --task-id spec-task --path docs/spec.md --write-target spec-artifact-write"
   )"
-  if [[ "$wrapper_output" != *'"approval_path":"C:\\tmp\\state\\projects\\repo-safety\\approval.json"'* ]]; then
-    echo "Expected repo-safety wrapper to convert approval_path field to Windows path"
+  if [[ "$wrapper_output" != *'"/c/tmp/state/projects/repo-safety/approval.json"'* ]]; then
+    echo "Expected repo-safety wrapper to preserve raw JSON paths"
     echo "Actual output: $wrapper_output"
     exit 1
   fi
@@ -412,13 +426,14 @@ SH
   first_arg="$(sed -n '1p' "$bash_log")"
   second_arg="$(sed -n '2p' "$bash_log")"
   third_arg="$(sed -n '3p' "$bash_log")"
-  if [[ "$first_arg" != *"/bin/superpowers-repo-safety" ]]; then
-    echo "Expected repo-safety wrapper to invoke Git Bash with the repo-safety bash script"
+  fourth_arg="$(sed -n '4p' "$bash_log")"
+  if [[ "$first_arg" != *"/compat/bash/superpowers" ]]; then
+    echo "Expected repo-safety wrapper to invoke Git Bash with the canonical compat launcher"
     echo "Actual first arg: $first_arg"
     exit 1
   fi
-  if [[ "$second_arg" != "check" || "$third_arg" != "--intent" ]]; then
-    echo "Expected repo-safety wrapper to forward CLI arguments to bash script"
+  if [[ "$second_arg" != "repo-safety" || "$third_arg" != "check" || "$fourth_arg" != "--intent" ]]; then
+    echo "Expected repo-safety wrapper to forward canonical subcommands to the compat launcher"
     echo "Actual args:"
     cat "$bash_log"
     exit 1
@@ -444,10 +459,89 @@ SH
   fi
 }
 
+assert_plan_contract_wrapper_behavior() {
+  local bash_log="$tmp_root/plan-contract-wrapper-bash.log"
+  local wrapper_output
+  local first_arg
+  local second_arg
+  local third_arg
+  local fourth_arg
+  local fifth_arg
+  local sixth_arg
+  local wrapper_exit
+
+  cat > "$git_bin_dir/bash.exe" <<'SH'
+#!/bin/bash
+set -euo pipefail
+
+log_file="${SUPERPOWERS_TEST_BASH_LOG:?}"
+: > "$log_file"
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$log_file"
+done
+
+printf '{"plan_path":"docs/superpowers/plans/example.md","root":"/c/tmp/workspace"}\n'
+SH
+  chmod +x "$git_bin_dir/bash.exe"
+
+  wrapper_output="$(
+    PATH="$generic_dir:$git_cmd_dir:$PATH" \
+      SUPERPOWERS_TEST_BASH_LOG="$bash_log" \
+      "$pwsh_bin" -NoLogo -NoProfile -Command "& '$PLAN_CONTRACT_WRAPPER' analyze-plan --spec docs/superpowers/specs/example.md --plan docs/superpowers/plans/example.md"
+  )"
+  if [[ "$wrapper_output" != *'"/c/tmp/workspace"'* ]]; then
+    echo "Expected plan-contract wrapper to preserve raw transport JSON"
+    echo "Actual output: $wrapper_output"
+    exit 1
+  fi
+  if [[ "$wrapper_output" == *'C:\\tmp\\workspace'* ]]; then
+    echo "Expected plan-contract wrapper to avoid rewriting JSON paths"
+    echo "Actual output: $wrapper_output"
+    exit 1
+  fi
+
+  first_arg="$(sed -n '1p' "$bash_log")"
+  second_arg="$(sed -n '2p' "$bash_log")"
+  third_arg="$(sed -n '3p' "$bash_log")"
+  fourth_arg="$(sed -n '4p' "$bash_log")"
+  fifth_arg="$(sed -n '5p' "$bash_log")"
+  sixth_arg="$(sed -n '6p' "$bash_log")"
+  if [[ "$first_arg" != *"/compat/bash/superpowers" ]]; then
+    echo "Expected plan-contract wrapper to invoke the canonical compat launcher"
+    echo "Actual first arg: $first_arg"
+    exit 1
+  fi
+  if [[ "$second_arg" != "plan" || "$third_arg" != "contract" || "$fourth_arg" != "analyze-plan" || "$fifth_arg" != "--spec" || "$sixth_arg" != "docs/superpowers/specs/example.md" ]]; then
+    echo "Expected plan-contract wrapper to forward canonical plan contract subcommands"
+    echo "Actual args:"
+    cat "$bash_log"
+    exit 1
+  fi
+
+  cat > "$git_bin_dir/bash.exe" <<'SH'
+#!/bin/bash
+exit 8
+SH
+  chmod +x "$git_bin_dir/bash.exe"
+
+  set +e
+  PATH="$generic_dir:$git_cmd_dir:$PATH" \
+    "$pwsh_bin" -NoLogo -NoProfile -Command "& '$PLAN_CONTRACT_WRAPPER' analyze-plan --spec docs/superpowers/specs/example.md --plan docs/superpowers/plans/example.md"
+  wrapper_exit=$?
+  set -e
+
+  if [[ $wrapper_exit -ne 8 ]]; then
+    echo "Expected plan-contract wrapper to preserve nonzero bash exit code"
+    echo "Expected: 8"
+    echo "Actual:   $wrapper_exit"
+    exit 1
+  fi
+}
+
 assert_public_workflow_wrapper_behavior "$PUBLIC_WORKFLOW_WRAPPER"
-assert_wrapper_behavior "$WORKFLOW_WRAPPER" "superpowers-workflow-status" "workflow-status"
-assert_wrapper_behavior "$PLAN_EXEC_WRAPPER" "superpowers-plan-execution" "plan-execution"
-assert_wrapper_behavior "$PLAN_CONTRACT_WRAPPER" "superpowers-plan-contract" "plan-contract"
+assert_wrapper_behavior "$WORKFLOW_WRAPPER" "workflow-status" '{"status":"needs_brainstorming","next_skill":"superpowers:brainstorming","root":"/c/tmp/workspace"}' '"/c/tmp/workspace"' "/compat/bash/superpowers|workflow|status|--plan"
+assert_wrapper_behavior "$PLAN_EXEC_WRAPPER" "plan-execution" '{"execution_mode":"none","execution_started":"no","root":"/c/tmp/workspace"}' '"/c/tmp/workspace"' "/compat/bash/superpowers|plan|execution|status|--plan"
+assert_plan_contract_wrapper_behavior
 assert_session_entry_wrapper_behavior "$SESSION_ENTRY_WRAPPER"
 assert_repo_safety_wrapper_behavior "$REPO_SAFETY_WRAPPER"
 assert_update_check_wrapper_behavior "$UPDATE_CHECK_WRAPPER"
