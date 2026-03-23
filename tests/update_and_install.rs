@@ -1,5 +1,5 @@
 use assert_cmd::cargo::CommandCargoExt;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
@@ -55,6 +55,16 @@ fn write_file(path: &Path, contents: &str) {
     }
     fs::write(path, contents).expect("file should be writable");
 }
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+        .expect("path should be executable");
+}
+
+#[cfg(not(unix))]
+fn make_executable(_: &Path) {}
 
 fn run_shell_update_check(
     state_dir: &Path,
@@ -267,6 +277,42 @@ fn create_source_install_repo(dir: &Path) {
     let mut git_commit = Command::new("git");
     git_commit.args(["commit", "-m", "init"]).current_dir(dir);
     run_checked(git_commit, "source git commit");
+}
+
+fn write_prebuilt_runtime_fixture(
+    source_repo: &Path,
+    targets: &[(&str, &str, &str)],
+    runtime_revision: &str,
+) {
+    let mut manifest_targets = serde_json::Map::new();
+    for (target, binary_name, contents) in targets {
+        let binary_path = source_repo
+            .join("bin/prebuilt")
+            .join(target)
+            .join(binary_name);
+        write_file(&binary_path, contents);
+        make_executable(&binary_path);
+        let checksum_path = binary_path.with_file_name(format!("{binary_name}.sha256"));
+        let checksum = format!("{:x}", Sha256::digest(contents.as_bytes()));
+        write_file(&checksum_path, &format!("{checksum}  {binary_name}\n"));
+
+        manifest_targets.insert(
+            (*target).to_owned(),
+            json!({
+                "binary_path": format!("bin/prebuilt/{target}/{binary_name}"),
+                "checksum_path": format!("bin/prebuilt/{target}/{binary_name}.sha256"),
+            }),
+        );
+    }
+
+    write_file(
+        &source_repo.join("bin/prebuilt/manifest.json"),
+        &serde_json::to_string_pretty(&json!({
+            "runtime_revision": runtime_revision,
+            "targets": manifest_targets,
+        }))
+        .expect("manifest json should serialize"),
+    );
 }
 
 fn make_legacy_install(dir: &Path, version: &str) {
@@ -535,6 +581,15 @@ fn install_migrate_rewrites_config_and_legacy_approvals_with_backup_reporting() 
     let source_repo = home_dir.path().join("source");
     fs::create_dir_all(&source_repo).expect("source repo dir should exist");
     create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
 
     let shared_root = home_dir.path().join(".superpowers/install");
     let codex_root = home_dir.path().join(".codex/superpowers");
@@ -600,6 +655,7 @@ fn install_migrate_rewrites_config_and_legacy_approvals_with_backup_reporting() 
                 "SUPERPOWERS_REPO_URL",
                 source_repo.to_string_lossy().as_ref(),
             ),
+            ("SUPERPOWERS_HOST_TARGET", "darwin-arm64"),
             ("SUPERPOWERS_MIGRATE_STAMP", "20260323-140000"),
         ],
         &["install", "migrate"],
@@ -645,5 +701,234 @@ fn install_migrate_rewrites_config_and_legacy_approvals_with_backup_reporting() 
     assert!(
         canonical_approval.exists(),
         "install migrate should rewrite legacy approval state into the canonical subtree"
+    );
+}
+
+#[test]
+fn install_migrate_provisions_host_runtime_from_checked_in_manifest() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0-test",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+
+    let migrate_output = run_rust_superpowers(
+        None,
+        Some(&home_dir.path().join(".superpowers")),
+        Some(home_dir.path()),
+        &[
+            (
+                "SUPERPOWERS_SHARED_ROOT",
+                shared_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_CODEX_ROOT",
+                codex_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_COPILOT_ROOT",
+                copilot_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_REPO_URL",
+                source_repo.to_string_lossy().as_ref(),
+            ),
+            ("SUPERPOWERS_HOST_TARGET", "darwin-arm64"),
+            ("SUPERPOWERS_MIGRATE_STAMP", "20260323-150000"),
+        ],
+        &["install", "migrate"],
+        "install migrate with manifest provisioning",
+    );
+    assert!(
+        migrate_output.status.success(),
+        "install migrate should succeed when the checked-in manifest resolves the host binary, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        migrate_output.status,
+        String::from_utf8_lossy(&migrate_output.stdout),
+        String::from_utf8_lossy(&migrate_output.stderr)
+    );
+    let installed_binary = shared_root.join("bin/superpowers");
+    assert!(
+        installed_binary.is_file(),
+        "install migrate should provision the manifest-selected runtime into install/bin/superpowers"
+    );
+    assert_eq!(
+        fs::read_to_string(&installed_binary).expect("installed runtime should exist"),
+        "#!/bin/sh\necho darwin-runtime\n"
+    );
+    assert!(
+        String::from_utf8_lossy(&migrate_output.stdout).contains("Provisioned checked-in runtime"),
+        "install migrate should report manifest-driven provisioning"
+    );
+}
+
+#[test]
+fn install_migrate_fails_when_prebuilt_manifest_is_missing() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+
+    let migrate_output = run_rust_superpowers(
+        None,
+        Some(&home_dir.path().join(".superpowers")),
+        Some(home_dir.path()),
+        &[
+            (
+                "SUPERPOWERS_SHARED_ROOT",
+                shared_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_CODEX_ROOT",
+                codex_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_COPILOT_ROOT",
+                copilot_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_REPO_URL",
+                source_repo.to_string_lossy().as_ref(),
+            ),
+            ("SUPERPOWERS_HOST_TARGET", "darwin-arm64"),
+        ],
+        &["install", "migrate"],
+        "install migrate without prebuilt manifest",
+    );
+    assert!(
+        !migrate_output.status.success(),
+        "install migrate should fail closed when bin/prebuilt/manifest.json is missing"
+    );
+    assert!(
+        String::from_utf8_lossy(&migrate_output.stderr).contains("manifest"),
+        "missing-manifest failure should name the manifest contract"
+    );
+}
+
+#[test]
+fn install_migrate_fails_when_manifest_target_is_missing() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[("windows-x64", "superpowers.exe", "windows runtime\r\n")],
+        "1.0.0-test",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+
+    let migrate_output = run_rust_superpowers(
+        None,
+        Some(&home_dir.path().join(".superpowers")),
+        Some(home_dir.path()),
+        &[
+            (
+                "SUPERPOWERS_SHARED_ROOT",
+                shared_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_CODEX_ROOT",
+                codex_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_COPILOT_ROOT",
+                copilot_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_REPO_URL",
+                source_repo.to_string_lossy().as_ref(),
+            ),
+            ("SUPERPOWERS_HOST_TARGET", "darwin-arm64"),
+        ],
+        &["install", "migrate"],
+        "install migrate with missing manifest target",
+    );
+    assert!(
+        !migrate_output.status.success(),
+        "install migrate should fail when the manifest does not map the requested host target"
+    );
+    let stderr = String::from_utf8_lossy(&migrate_output.stderr);
+    assert!(
+        stderr.contains("darwin-arm64") || stderr.contains("target"),
+        "missing target failure should name the host-target lookup"
+    );
+}
+
+#[test]
+fn install_migrate_fails_when_manifest_checksum_is_stale() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho stale-checksum\n",
+        )],
+        "1.0.0-test",
+    );
+    write_file(
+        &source_repo.join("bin/prebuilt/darwin-arm64/superpowers.sha256"),
+        "deadbeef  superpowers\n",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+
+    let migrate_output = run_rust_superpowers(
+        None,
+        Some(&home_dir.path().join(".superpowers")),
+        Some(home_dir.path()),
+        &[
+            (
+                "SUPERPOWERS_SHARED_ROOT",
+                shared_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_CODEX_ROOT",
+                codex_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_COPILOT_ROOT",
+                copilot_root.to_string_lossy().as_ref(),
+            ),
+            (
+                "SUPERPOWERS_REPO_URL",
+                source_repo.to_string_lossy().as_ref(),
+            ),
+            ("SUPERPOWERS_HOST_TARGET", "darwin-arm64"),
+        ],
+        &["install", "migrate"],
+        "install migrate with stale checksum",
+    );
+    assert!(
+        !migrate_output.status.success(),
+        "install migrate should fail when the manifest checksum does not match the checked-in runtime"
+    );
+    assert!(
+        String::from_utf8_lossy(&migrate_output.stderr).contains("checksum"),
+        "stale checksum failure should name checksum verification"
     );
 }

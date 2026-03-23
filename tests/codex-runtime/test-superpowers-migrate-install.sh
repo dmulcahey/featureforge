@@ -24,6 +24,33 @@ make_source_repo() {
   git -C "$dir" commit -m "init" >/dev/null 2>&1
 }
 
+add_prebuilt_runtime_fixture() {
+  local dir="$1"
+  local target="$2"
+  local binary_name="$3"
+  local revision="$4"
+  local contents="$5"
+  local binary_path="$dir/bin/prebuilt/$target/$binary_name"
+  local checksum
+
+  mkdir -p "$(dirname "$binary_path")"
+  printf '%s' "$contents" > "$binary_path"
+  chmod +x "$binary_path"
+  checksum="$(shasum -a 256 "$binary_path" | awk '{print $1}')"
+  printf '%s  %s\n' "$checksum" "$binary_name" > "$dir/bin/prebuilt/$target/$binary_name.sha256"
+  cat > "$dir/bin/prebuilt/manifest.json" <<EOF
+{
+  "runtime_revision": "$revision",
+  "targets": {
+    "$target": {
+      "binary_path": "bin/prebuilt/$target/$binary_name",
+      "checksum_path": "bin/prebuilt/$target/$binary_name.sha256"
+    }
+  }
+}
+EOF
+}
+
 make_state_repo() {
   local dir="$1"
   local remote_url="$2"
@@ -88,6 +115,7 @@ run_rust_migrate() {
   local codex_root="$3"
   local copilot_root="$4"
   local repo_url="$5"
+  local host_target="${6:-}"
 
   ensure_rust_superpowers_bin
   HOME="$home_dir" \
@@ -97,6 +125,7 @@ run_rust_migrate() {
     SUPERPOWERS_COPILOT_ROOT="$copilot_root" \
     SUPERPOWERS_REPO_URL="$repo_url" \
     SUPERPOWERS_MIGRATE_STAMP="20260323-140000" \
+    SUPERPOWERS_HOST_TARGET="$host_target" \
     "$RUST_SUPERPOWERS_BIN" install migrate
 }
 
@@ -240,6 +269,7 @@ trap 'rm -rf "$tmp_root"' EXIT
 
 source_repo="$tmp_root/source.git"
 make_source_repo "$source_repo"
+add_prebuilt_runtime_fixture "$source_repo" "darwin-arm64" "superpowers" "1.0.0-test" $'#!/bin/sh\necho darwin-runtime\n'
 
 home_dir="$tmp_root/fresh-home"
 shared_root="$home_dir/.superpowers/install"
@@ -394,9 +424,17 @@ state_repo="$tmp_root/install-state-repo"
 remote_url="https://example.com/acme/install-migrate.git"
 make_state_repo "$state_repo" "$remote_url" "main"
 seed_legacy_approval "$state_repo" "$state_dir" "superpowers:executing-plans" "task-7"
-canonical_output="$(run_rust_migrate "$home_dir" "$shared_root" "$codex_root" "$copilot_root" "$source_repo")"
+canonical_output="$(run_rust_migrate "$home_dir" "$shared_root" "$codex_root" "$copilot_root" "$source_repo" "darwin-arm64")"
 require_valid_install "$shared_root"
 require_link_target "$codex_root" "$shared_root"
+if [[ ! -f "$shared_root/bin/superpowers" ]]; then
+  echo "Expected canonical Rust install migrate to provision $shared_root/bin/superpowers from the checked-in manifest"
+  exit 1
+fi
+if [[ "$(cat "$shared_root/bin/superpowers")" != $'#!/bin/sh\necho darwin-runtime' ]]; then
+  echo "Expected canonical Rust install migrate to copy the manifest-selected runtime contents into $shared_root/bin/superpowers"
+  exit 1
+fi
 if [[ ! -f "$state_dir/config/config.yaml" ]]; then
   echo "Expected canonical Rust install migrate to create $state_dir/config/config.yaml"
   exit 1
@@ -413,5 +451,6 @@ fi
 require_contains "$canonical_output" "Migrated config"
 require_contains "$canonical_output" "Migrated repo-safety approval"
 require_contains "$canonical_output" "Shared install ready"
+require_contains "$canonical_output" "Provisioned checked-in runtime"
 
 echo "superpowers-migrate-install canonical Rust contract passed."
