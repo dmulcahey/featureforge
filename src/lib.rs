@@ -1,12 +1,14 @@
 use std::ffi::OsString;
 
 use clap::Parser;
-use cli::Command;
+use cli::{Command, PlanCommand};
+use diagnostics::JsonFailure;
 
 pub mod cli;
 pub mod compat;
 pub mod contracts;
 pub mod diagnostics;
+pub mod execution;
 pub mod git;
 pub mod instructions;
 pub mod output;
@@ -18,6 +20,38 @@ pub fn run() -> std::process::ExitCode {
     let cli = cli::Cli::parse_from(args);
 
     match cli.command {
+        Some(Command::Plan(plan_cli)) => match plan_cli.command {
+            PlanCommand::Execution(plan_execution_cli) => {
+                match execution::state::ExecutionRuntime::discover(
+                    &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                ) {
+                    Ok(runtime) => match plan_execution_cli.command {
+                        cli::plan_execution::PlanExecutionCommand::Status(args) => {
+                            emit_json(runtime.status(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::Recommend(args) => {
+                            emit_json(runtime.recommend(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::Preflight(args) => {
+                            emit_json(runtime.preflight(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::GateReview(args) => {
+                            emit_json(runtime.gate_review(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::GateFinish(args) => {
+                            emit_json(runtime.gate_finish(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::Begin(args) => {
+                            emit_json(execution::mutate::begin(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::Complete(args) => {
+                            emit_json(execution::mutate::complete(&runtime, &args))
+                        }
+                    },
+                    Err(error) => emit_json::<serde_json::Value, _>(Err(error)),
+                }
+            }
+        },
         Some(Command::Workflow(workflow_cli)) => match workflow::status::WorkflowRuntime::discover(
             &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
         ) {
@@ -32,10 +66,7 @@ pub fn run() -> std::process::ExitCode {
                 }
                 cli::workflow::WorkflowCommand::Phase(_) => emit_json(runtime.phase()),
             },
-            Err(error) => {
-                eprintln!("{error}");
-                std::process::ExitCode::from(1)
-            }
+            Err(error) => emit_json::<serde_json::Value, JsonFailure>(Err(error.into())),
         },
         None => std::process::ExitCode::SUCCESS,
     }
@@ -54,9 +85,10 @@ fn canonicalized_args() -> Vec<OsString> {
     canonicalized
 }
 
-fn emit_json<T>(result: Result<T, diagnostics::DiagnosticError>) -> std::process::ExitCode
+fn emit_json<T, E>(result: Result<T, E>) -> std::process::ExitCode
 where
     T: serde::Serialize,
+    E: Into<JsonFailure>,
 {
     match result {
         Ok(value) => match serde_json::to_string(&value) {
@@ -69,9 +101,15 @@ where
                 std::process::ExitCode::from(1)
             }
         },
-        Err(error) => {
-            eprintln!("{error}");
-            std::process::ExitCode::from(1)
-        }
+        Err(error) => match serde_json::to_string(&error.into()) {
+            Ok(json) => {
+                println!("{json}");
+                std::process::ExitCode::from(1)
+            }
+            Err(serialize_error) => {
+                eprintln!("Could not serialize error output: {serialize_error}");
+                std::process::ExitCode::from(1)
+            }
+        },
     }
 }

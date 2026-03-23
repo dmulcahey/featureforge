@@ -1956,6 +1956,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "gix",
+ "jiff",
  "schemars",
  "serde",
  "serde_json",

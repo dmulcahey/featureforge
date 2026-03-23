@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 EXEC_BIN="$REPO_ROOT/bin/superpowers-plan-execution"
+RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
 STATE_DIR="$(mktemp -d)"
 REPO_DIR="$(mktemp -d)"
 trap 'rm -rf "$STATE_DIR" "$REPO_DIR"' EXIT
@@ -17,6 +18,15 @@ require_helper() {
     echo "Expected plan-execution helper to exist and be executable: $EXEC_BIN"
     exit 1
   fi
+}
+
+ensure_rust_superpowers_bin() {
+  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
+    return 0
+  fi
+
+  source "$HOME/.cargo/env"
+  (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
 }
 
 assert_contains() {
@@ -157,6 +167,41 @@ run_command_fails_with_env() {
     exit 1
   fi
   assert_contains "$output" "\"error_class\":\"$expected_class\"" "failure"
+  printf '%s\n' "$output"
+}
+
+run_rust_plan_execution_command() {
+  local repo_dir="$1"
+  local label="$2"
+  shift 2
+  local output
+  local status=0
+
+  ensure_rust_superpowers_bin
+  output="$(cd "$repo_dir" && "$RUST_SUPERPOWERS_BIN" plan execution "$@" 2>&1)" || status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "Expected canonical Rust plan execution command to succeed for: $label"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+  printf '%s\n' "$output"
+}
+
+run_rust_plan_execution_fails() {
+  local repo_dir="$1"
+  local expected_class="$2"
+  shift 2
+  local output
+  local status=0
+
+  ensure_rust_superpowers_bin
+  output="$(cd "$repo_dir" && "$RUST_SUPERPOWERS_BIN" plan execution "$@" 2>&1)" || status=$?
+  if [[ $status -eq 0 ]]; then
+    echo "Expected canonical Rust plan execution command to fail: $*"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+  assert_contains "$output" "\"error_class\":\"$expected_class\"" "canonical rust failure"
   printf '%s\n' "$output"
 }
 
@@ -2529,6 +2574,130 @@ run_gate_finish_allows_master_default_branch_without_origin_head() {
   assert_json_equals "$output" "failure_class" "" "gate-finish master default"
 }
 
+run_canonical_rust_status_matches_helper_for_clean_plan() {
+  local repo_dir
+  local helper_output
+  local rust_output
+
+  repo_dir="$(create_base_repo rust-clean-status)"
+  helper_output="$(run_json_command "$repo_dir" status --plan "$PLAN_REL")"
+  rust_output="$(run_rust_plan_execution_command "$repo_dir" "canonical rust clean status" status --plan "$PLAN_REL")"
+
+  assert_json_equals "$rust_output" "plan_revision" "$(json_value "$helper_output" "plan_revision")" "canonical rust clean status"
+  assert_json_equals "$rust_output" "execution_mode" "$(json_value "$helper_output" "execution_mode")" "canonical rust clean status"
+  assert_json_equals "$rust_output" "execution_started" "$(json_value "$helper_output" "execution_started")" "canonical rust clean status"
+  assert_json_equals "$rust_output" "evidence_path" "$(json_value "$helper_output" "evidence_path")" "canonical rust clean status"
+  assert_json_equals "$rust_output" "active_task" "$(json_value "$helper_output" "active_task")" "canonical rust clean status"
+  assert_json_nonempty "$rust_output" "execution_fingerprint" "canonical rust clean status"
+}
+
+run_canonical_rust_recommend_matches_helper_for_independent_plan() {
+  local repo_dir="$REPO_DIR/rust-recommend-independent"
+  local helper_output
+  local rust_output
+
+  init_repo "$repo_dir"
+  write_approved_spec "$repo_dir"
+  write_independent_plan "$repo_dir" "none"
+
+  helper_output="$(run_json_command "$repo_dir" recommend --plan "$PLAN_REL" --isolated-agents available --session-intent stay --workspace-prepared yes)"
+  rust_output="$(run_rust_plan_execution_command "$repo_dir" "canonical rust recommend" recommend --plan "$PLAN_REL" --isolated-agents available --session-intent stay --workspace-prepared yes)"
+
+  assert_json_equals "$rust_output" "recommended_skill" "$(json_value "$helper_output" "recommended_skill")" "canonical rust recommend"
+  assert_json_equals "$rust_output" "decision_flags.tasks_independent" "$(json_value "$helper_output" "decision_flags.tasks_independent")" "canonical rust recommend"
+  assert_json_equals "$rust_output" "decision_flags.same_session_viable" "$(json_value "$helper_output" "decision_flags.same_session_viable")" "canonical rust recommend"
+}
+
+run_canonical_rust_preflight_matches_helper_for_clean_plan() {
+  local repo_dir
+  local helper_output
+  local rust_output
+
+  repo_dir="$(create_base_repo rust-preflight-clean)"
+  helper_output="$(run_json_command "$repo_dir" preflight --plan "$PLAN_REL")"
+  rust_output="$(run_rust_plan_execution_command "$repo_dir" "canonical rust preflight" preflight --plan "$PLAN_REL")"
+
+  assert_json_equals "$rust_output" "allowed" "$(json_value "$helper_output" "allowed")" "canonical rust preflight"
+  assert_json_equals "$rust_output" "failure_class" "$(json_value "$helper_output" "failure_class")" "canonical rust preflight"
+  assert_json_equals "$rust_output" "reason_codes" "$(json_value "$helper_output" "reason_codes")" "canonical rust preflight"
+}
+
+run_canonical_rust_gate_review_and_finish_match_helper() {
+  local review_repo="$REPO_DIR/rust-gate-review"
+  local finish_repo="$REPO_DIR/rust-gate-finish"
+  local before
+  local active
+  local helper_review
+  local rust_review
+  local helper_finish
+  local rust_finish
+  local test_plan_path
+
+  init_repo "$review_repo"
+  write_approved_spec "$review_repo"
+  write_single_step_plan "$review_repo" "none"
+  write_file "$review_repo/docs/output.md" <<'EOF'
+fresh output
+EOF
+
+  before="$(run_json_command "$review_repo" status --plan "$PLAN_REL")"
+  active="$(run_json_command "$review_repo" begin --plan "$PLAN_REL" --task 1 --step 1 --execution-mode superpowers:executing-plans --expect-execution-fingerprint "$(json_value "$before" "execution_fingerprint")")"
+  run_json_command "$review_repo" complete --plan "$PLAN_REL" --task 1 --step 1 --source superpowers:executing-plans --claim "Prepared the workspace" --file docs/output.md --manual-verify-summary "Verified by inspection" --expect-execution-fingerprint "$(json_value "$active" "execution_fingerprint")" >/dev/null
+
+  helper_review="$(run_json_command "$review_repo" gate-review --plan "$PLAN_REL")"
+  rust_review="$(run_rust_plan_execution_command "$review_repo" "canonical rust gate-review" gate-review --plan "$PLAN_REL")"
+  assert_json_equals "$rust_review" "allowed" "$(json_value "$helper_review" "allowed")" "canonical rust gate-review"
+  assert_json_equals "$rust_review" "failure_class" "$(json_value "$helper_review" "failure_class")" "canonical rust gate-review"
+
+  init_repo "$finish_repo"
+  write_approved_spec "$finish_repo"
+  write_plan "$finish_repo" "superpowers:executing-plans"
+  mark_all_plan_steps_checked "$finish_repo"
+  write_v2_completed_attempts_for_finished_plan "$finish_repo"
+  test_plan_path="$(write_test_plan_artifact "$finish_repo" "yes")"
+  write_qa_result_artifact "$finish_repo" "$test_plan_path" "pass" >/dev/null
+  write_release_readiness_artifact "$finish_repo" "pass" >/dev/null
+
+  helper_finish="$(run_json_command "$finish_repo" gate-finish --plan "$PLAN_REL")"
+  rust_finish="$(run_rust_plan_execution_command "$finish_repo" "canonical rust gate-finish" gate-finish --plan "$PLAN_REL")"
+  assert_json_equals "$rust_finish" "allowed" "$(json_value "$helper_finish" "allowed")" "canonical rust gate-finish"
+  assert_json_equals "$rust_finish" "failure_class" "$(json_value "$helper_finish" "failure_class")" "canonical rust gate-finish"
+}
+
+run_canonical_rust_complete_preserves_stale_fingerprint_and_deterministic_evidence() {
+  local stale_repo
+  local normalize_repo
+  local before
+  local active
+  local evidence_rel
+  local evidence_text
+
+  stale_repo="$(create_base_repo rust-stale-complete)"
+  before="$(run_json_command "$stale_repo" status --plan "$PLAN_REL")"
+  run_rust_plan_execution_command "$stale_repo" "canonical rust begin for stale complete" begin --plan "$PLAN_REL" --task 1 --step 1 --execution-mode superpowers:executing-plans --expect-execution-fingerprint "$(json_value "$before" "execution_fingerprint")" >/dev/null
+  run_rust_plan_execution_fails "$stale_repo" StaleMutation complete --plan "$PLAN_REL" --task 1 --step 1 --source superpowers:executing-plans --claim "Prepared the workspace" --manual-verify-summary "Verified by inspection" --expect-execution-fingerprint "$(json_value "$before" "execution_fingerprint")" >/dev/null
+
+  normalize_repo="$(create_base_repo rust-deterministic-complete)"
+  write_file "$normalize_repo/src/zeta.txt" <<'EOF'
+zeta
+EOF
+  write_file "$normalize_repo/docs/alpha.md" <<'EOF'
+alpha
+EOF
+
+  before="$(run_json_command "$normalize_repo" status --plan "$PLAN_REL")"
+  active="$(run_rust_plan_execution_command "$normalize_repo" "canonical rust begin for deterministic evidence" begin --plan "$PLAN_REL" --task 1 --step 1 --execution-mode superpowers:executing-plans --expect-execution-fingerprint "$(json_value "$before" "execution_fingerprint")")"
+  run_rust_plan_execution_command "$normalize_repo" "canonical rust deterministic complete" complete --plan "$PLAN_REL" --task 1 --step 1 --source superpowers:executing-plans --claim $'  Prepared\tworkspace \n thoroughly  ' --file src/zeta.txt --file docs/alpha.md --file src/zeta.txt --manual-verify-summary $'  Verified\tby \n inspection  ' --expect-execution-fingerprint "$(json_value "$active" "execution_fingerprint")" >/dev/null
+
+  evidence_rel="$(evidence_rel_path "$PLAN_REL" 1)"
+  evidence_text="$(cat "$normalize_repo/$evidence_rel")"
+  assert_contains "$evidence_text" "**Claim:** Prepared workspace thoroughly" "canonical rust deterministic complete"
+  assert_contains "$evidence_text" "**Verification Summary:** Manual inspection only: Verified by inspection" "canonical rust deterministic complete"
+  assert_contains "$evidence_text" $'**Files Proven:**\n- docs/alpha.md | sha256:' "canonical rust deterministic complete"
+  assert_contains "$evidence_text" $'\n- src/zeta.txt | sha256:' "canonical rust deterministic complete"
+  assert_not_contains "$evidence_text" $'\t' "canonical rust deterministic complete"
+}
+
 run_status_rejects_malformed_note_structure() {
   local repo_dir="$REPO_DIR/malformed-note-state"
   init_repo "$repo_dir"
@@ -3958,6 +4127,7 @@ run_status_treats_header_only_stub_as_same_empty_state
 run_status_cache_invalidates_after_plan_change
 run_status_cache_invalidates_after_same_size_same_mtime_plan_change
 run_status_cache_invalidates_after_sibling_approved_spec_change
+run_canonical_rust_status_matches_helper_for_clean_plan
 run_status_rejects_missing_execution_mode
 run_status_rejects_missing_task_outcome_in_approved_plan
 run_preflight_reports_allowed_for_clean_plan
@@ -3969,6 +4139,7 @@ run_preflight_rejects_unresolved_index_entries
 run_preflight_rejects_repo_safety_runtime_failure
 run_preflight_rejects_blocked_step
 run_preflight_rejects_interrupted_work
+run_canonical_rust_preflight_matches_helper_for_clean_plan
 run_status_rejects_evidence_history_with_none_mode
 run_gate_review_warns_on_legacy_evidence_format
 run_gate_review_warns_on_legacy_packet_provenance
@@ -4013,6 +4184,7 @@ run_gate_finish_blocks_release_artifact_base_branch_mismatch
 run_gate_finish_blocks_release_artifact_base_branch_unresolved
 run_gate_finish_allows_fresh_structured_artifacts
 run_gate_finish_allows_master_default_branch_without_origin_head
+run_canonical_rust_gate_review_and_finish_match_helper
 run_status_rejects_malformed_note_structure
 run_status_rejects_task_without_parseable_files_block
 run_status_rejects_malformed_evidence_attempt_fields
@@ -4040,6 +4212,7 @@ run_recommend_returns_bounded_decision_flags
 run_recommend_prefers_subagent_for_independent_plan
 run_recommend_defaults_to_executing_plans_for_coupled_plan
 run_recommend_rejects_post_start_calls
+run_canonical_rust_recommend_matches_helper_for_independent_plan
 run_begin_is_idempotent_for_same_step
 run_begin_rejects_bypass_of_interrupted_step
 run_note_rejects_overlong_summary
@@ -4055,6 +4228,7 @@ run_gate_review_accepts_fresh_packet_provenance_after_complete
 run_complete_accepts_deleted_paths_from_current_change_set
 run_complete_canonicalizes_rename_backed_paths
 run_complete_rejects_file_path_outside_repo_root
+run_canonical_rust_complete_preserves_stale_fingerprint_and_deterministic_evidence
 run_reopen_rejects_blank_reason_without_mutating_state
 run_reopen_rejects_second_parked_step_without_mutating_state
 run_transfer_rejects_blank_reason_without_mutating_state

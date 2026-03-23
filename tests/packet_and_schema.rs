@@ -6,6 +6,7 @@ use superpowers::contracts::evidence::read_execution_evidence;
 use superpowers::contracts::packet::{build_task_packet_with_timestamp, write_contract_schemas};
 use superpowers::contracts::plan::parse_plan_file;
 use superpowers::contracts::spec::parse_spec_file;
+use superpowers::execution::state::write_plan_execution_schema;
 
 const SPEC_REL: &str = "docs/superpowers/specs/2026-03-22-plan-contract-fixture-design.md";
 const PLAN_REL: &str = "docs/superpowers/plans/2026-03-22-plan-contract-fixture.md";
@@ -30,7 +31,9 @@ fn install_fixture(repo_root: &Path, fixture_name: &str, destination_rel: &str) 
         fs::create_dir_all(parent).expect("fixture parent directories should exist");
     }
     fs::copy(
-        repo_fixture_path(&format!("tests/codex-runtime/fixtures/plan-contract/{fixture_name}")),
+        repo_fixture_path(&format!(
+            "tests/codex-runtime/fixtures/plan-contract/{fixture_name}"
+        )),
         destination,
     )
     .expect("fixture should copy");
@@ -57,9 +60,11 @@ fn task_packet_build_is_deterministic_for_fixed_timestamp() {
     assert_eq!(first.packet_fingerprint, second.packet_fingerprint);
     assert_eq!(first.markdown, second.markdown);
     assert_eq!(first.task_title, "Establish the plan contract");
-    assert!(first
-        .markdown
-        .contains("Execution-bound specs must include a parseable `Requirement Index`"));
+    assert!(
+        first
+            .markdown
+            .contains("Execution-bound specs must include a parseable `Requirement Index`")
+    );
 }
 
 #[test]
@@ -74,6 +79,21 @@ fn contract_schema_files_are_generated_with_expected_titles() {
 
     assert!(analyze_schema.contains("\"title\": \"AnalyzePlanReport\""));
     assert!(packet_schema.contains("\"title\": \"TaskPacket\""));
+}
+
+#[test]
+fn checked_in_plan_execution_schema_matches_generated_output() {
+    let schemas_dir = unique_temp_dir("plan-execution-schema");
+    write_plan_execution_schema(&schemas_dir).expect("plan execution schema should write");
+
+    let generated = fs::read_to_string(schemas_dir.join("plan-execution-status.schema.json"))
+        .expect("generated plan execution schema should read");
+    let checked_in = fs::read_to_string(repo_fixture_path(
+        "schemas/plan-execution-status.schema.json",
+    ))
+    .expect("checked-in plan execution schema should read");
+
+    assert_eq!(generated.trim_end(), checked_in.trim_end());
 }
 
 #[test]
@@ -92,5 +112,9 @@ fn legacy_execution_evidence_remains_readable() {
     assert_eq!(evidence.steps[0].task_number, 1);
     assert_eq!(evidence.steps[0].step_number, 1);
     assert_eq!(evidence.steps[0].status, "Completed");
-    assert!(evidence.steps[0].claim.contains("Added route-time red fixtures"));
+    assert!(
+        evidence.steps[0]
+            .claim
+            .contains("Added route-time red fixtures")
+    );
 }
