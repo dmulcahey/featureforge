@@ -79,21 +79,19 @@ timestamp_utc() {
 
 file_stamp() {
   local path="$1"
-  local stamp=""
+  local metadata=""
+  local digest=""
 
-  stamp="$(stat -f '%m:%z' "$path" 2>/dev/null || true)"
-  if [[ -n "$stamp" ]]; then
-    printf '%s\n' "$stamp"
-    return 0
+  metadata="$(stat -f '%m:%c:%z:%i' "$path" 2>/dev/null || true)"
+  if [[ -z "$metadata" ]]; then
+    metadata="$(stat -c '%Y:%Z:%s:%i' "$path" 2>/dev/null || true)"
   fi
+  [[ -n "$metadata" ]] || return 1
 
-  stamp="$(stat -c '%Y:%s' "$path" 2>/dev/null || true)"
-  if [[ -n "$stamp" ]]; then
-    printf '%s\n' "$stamp"
-    return 0
-  fi
+  digest="$(hash_file "$path" 2>/dev/null || true)"
+  [[ -n "$digest" ]] || return 1
 
-  return 1
+  printf '%s:%s\n' "$metadata" "$digest"
 }
 
 plan_contract_cache_dir() {
@@ -548,6 +546,7 @@ analyze_plan_contract() {
   local -a covered_requirement_ids=()
   local covered_seen="|"
   local reason_code
+  local parse_failure_remediation=""
   local structured_plan_valid=0
 
   reset_analyze_plan_state
@@ -566,11 +565,19 @@ analyze_plan_contract() {
 
   if parse_plan_headers "$plan_abs"; then
     ANALYZE_PLAN_REVISION="$PLAN_REVISION"
+    if [[ "$PLAN_SOURCE_SPEC" != "$spec_rel" ]]; then
+      analyze_add_reason_code "stale_spec_plan_linkage"
+      analyze_add_diagnostic "stale_spec_plan_linkage" "error" "$plan_rel" "Plan Source Spec does not match the provided approved spec path." "Update the plan so its Source Spec matches the approved spec used for handoff."
+    fi
+    if [[ -n "$ANALYZE_SPEC_REVISION" && "$PLAN_SOURCE_SPEC_REVISION" != "$ANALYZE_SPEC_REVISION" ]]; then
+      analyze_add_reason_code "stale_spec_plan_linkage"
+      analyze_add_diagnostic "stale_spec_plan_linkage" "error" "$plan_rel" "Plan Source Spec Revision does not match the provided approved spec revision." "Update the plan so its Source Spec Revision matches the approved spec used for handoff."
+    fi
   else
     ANALYZE_PLAN_REVISION="${PLAN_STRUCTURE_PLAN_REVISION:-}"
     reason_code="${PLAN_STRUCTURE_HEADER_REASON_CODE:-malformed_plan_headers}"
     analyze_add_reason_code "$reason_code"
-    analyze_add_diagnostic "$reason_code" "error" "$plan_rel" "${PLAN_STRUCTURE_HEADER_ERROR_MESSAGE:-Plan headers are missing or malformed.}" "Normalize the approved plan headers before execution handoff."
+    analyze_add_diagnostic "$reason_code" "error" "$plan_rel" "${PLAN_STRUCTURE_HEADER_ERROR_MESSAGE:-Plan headers are missing or malformed.}" "Normalize the approved plan headers before execution preflight."
   fi
 
   if plan_structure_parse "$plan_abs"; then
@@ -587,13 +594,29 @@ analyze_plan_contract() {
     ANALYZE_TASK_COUNT="$PLAN_STRUCTURE_TASK_COUNT"
     ANALYZE_PACKET_BUILDABLE_TASKS="$PLAN_STRUCTURE_TASK_COUNT"
   else
+    reason_code="$(camel_to_snake "${PLAN_STRUCTURE_ERROR_CLASS:-MalformedTaskStructure}")"
+    if [[ "${PLAN_STRUCTURE_ERROR_CLASS:-}" == "MalformedFilesBlock" ]]; then
+      ANALYZE_FILES_BLOCKS_VALID=false
+      parse_failure_remediation="Fix the malformed Files block before approval."
+    else
+      ANALYZE_TASK_STRUCTURE_VALID=false
+      parse_failure_remediation="Fix the malformed task structure before approval."
+    fi
+    analyze_add_reason_code "$reason_code"
+    analyze_add_diagnostic "$reason_code" "error" "$plan_rel" "${PLAN_STRUCTURE_ERROR_MESSAGE:-Plan task structure is malformed.}" "$parse_failure_remediation"
     reset_loose_task_state
     parse_loose_task_blocks "$plan_abs"
     ANALYZE_TASK_COUNT="$LOOSE_TASK_COUNT"
   fi
 
-  parse_requirement_index "$spec_abs"
-  spec_index_status=$?
+  if parse_requirement_index "$spec_abs"; then
+    spec_index_status=0
+  else
+    spec_index_status=$?
+  fi
+  case "${SUPERPOWERS_PLAN_CONTRACT_TEST_FAILPOINT:-}" in
+    requirement_index_unexpected_failure) spec_index_status=1 ;;
+  esac
   case "$spec_index_status" in
     0) ;;
     2)
@@ -604,7 +627,7 @@ analyze_plan_contract() {
     3)
       ANALYZE_COVERAGE_COMPLETE=false
       analyze_add_reason_code "missing_requirement_index"
-      analyze_add_diagnostic "missing_requirement_index" "error" "$spec_rel" "Spec is missing the required Requirement Index section." "Add the approved Requirement Index before execution handoff."
+      analyze_add_diagnostic "missing_requirement_index" "error" "$spec_rel" "Spec is missing the required Requirement Index section." "Add the approved Requirement Index before execution preflight."
       ;;
     *)
       ANALYZE_COVERAGE_COMPLETE=false
@@ -613,8 +636,14 @@ analyze_plan_contract() {
       ;;
   esac
 
-  parse_requirement_coverage_matrix "$plan_abs"
-  matrix_status=$?
+  if parse_requirement_coverage_matrix "$plan_abs"; then
+    matrix_status=0
+  else
+    matrix_status=$?
+  fi
+  case "${SUPERPOWERS_PLAN_CONTRACT_TEST_FAILPOINT:-}" in
+    coverage_matrix_unexpected_failure) matrix_status=1 ;;
+  esac
   case "$matrix_status" in
     0) ;;
     2)
@@ -842,8 +871,9 @@ parse_requirement_coverage_matrix() {
         task_numbers=""
         tasks_seen="|"
         tasks_set="|"
+        raw_tasks=()
         IFS=',' read -r -a raw_tasks <<< "$task_list"
-        for raw_task in "${raw_tasks[@]}"; do
+        for raw_task in "${raw_tasks[@]:-}"; do
           normalized_task="$(normalize_whitespace "$raw_task")"
           [[ "$normalized_task" =~ ^Task\ ([0-9]+)$ ]] || return 2
           task_number="${BASH_REMATCH[1]}"
@@ -876,13 +906,14 @@ parse_requirement_coverage_matrix() {
 
 parse_task_coverage_ids() {
   local raw_ids="$1"
+  local -a raw_items=()
   local raw_item=""
   local normalized_item=""
   local result=""
   local seen="|"
 
   IFS=',' read -r -a raw_items <<< "$raw_ids"
-  for raw_item in "${raw_items[@]}"; do
+  for raw_item in "${raw_items[@]:-}"; do
     normalized_item="$(normalize_whitespace "$raw_item")"
     [[ -n "$normalized_item" ]] || continue
     case "$seen" in
@@ -1006,6 +1037,8 @@ set_contract_error() {
 validate_plan_contract() {
   local spec_abs="$1"
   local plan_abs="$2"
+  local spec_index_status=0
+  local matrix_status=0
   local task_index
   local task_number
   local coverage_ids
@@ -1018,8 +1051,12 @@ validate_plan_contract() {
   CONTRACT_ERROR_CLASS=""
   CONTRACT_ERROR_MESSAGE=""
 
-  parse_requirement_index "$spec_abs"
-  case $? in
+  if parse_requirement_index "$spec_abs"; then
+    spec_index_status=0
+  else
+    spec_index_status=$?
+  fi
+  case "$spec_index_status" in
     0) ;;
     2) set_contract_error "MalformedRequirementIndex" "Requirement Index is missing entries or contains malformed lines." || return 1 ;;
     3) set_contract_error "MissingRequirementIndex" "Spec is missing the required Requirement Index section." || return 1 ;;
@@ -1030,8 +1067,12 @@ validate_plan_contract() {
     set_contract_error "${PLAN_STRUCTURE_ERROR_CLASS:-MalformedTaskStructure}" "${PLAN_STRUCTURE_ERROR_MESSAGE:-Plan task structure is malformed.}" || return 1
   }
 
-  parse_requirement_coverage_matrix "$plan_abs"
-  case $? in
+  if parse_requirement_coverage_matrix "$plan_abs"; then
+    matrix_status=0
+  else
+    matrix_status=$?
+  fi
+  case "$matrix_status" in
     0) ;;
     2) set_contract_error "CoverageMatrixMismatch" "Requirement Coverage Matrix is malformed." || return 1 ;;
     3) set_contract_error "MissingRequirementCoverage" "Requirement Coverage Matrix is missing or empty." || return 1 ;;

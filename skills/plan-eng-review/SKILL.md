@@ -156,10 +156,10 @@ superpowers-repo-safety check --intent write --stage superpowers:plan-eng-review
 - Repeat the same approve -> re-check pattern for `approval-header-write` before flipping `**Workflow State:**` or any other approval header on a protected branch.
 - Keep the plan in `Draft` while review issues remain open or while the source spec path or revision is stale.
 - Only write `**Workflow State:** Engineering Approved` as the last step of a successful review, and set `**Last Reviewed By:** plan-eng-review` at the same time.
-- When the review is resolved and the written plan is approved, present the normal execution handoff.
+- When the review is resolved and the written plan is approved, present the normal execution preflight handoff.
 - `superpowers:subagent-driven-development` and `superpowers:executing-plans` own implementation. Do not start implementation inside `plan-eng-review`.
 
-**The terminal state is presenting the execution handoff with the approved plan path.**
+**The terminal state is presenting the execution preflight handoff with the approved plan path.**
 
 # Plan Review Mode
 
@@ -195,11 +195,11 @@ If the source artifact fingerprint changes, treat saved accelerated ENG packets 
 
 Accelerator artifacts must use bounded retention rather than accumulate indefinitely.
 
-Accelerated engineering review must preserve QA handoff generation, TODO flow, failure-mode output, and the normal execution handoff.
+Accelerated engineering review must preserve QA handoff generation, TODO flow, failure-mode output, and the normal execution preflight handoff.
 
 Only the main review agent may write authoritative artifacts, apply approved patches, or change approval headers in accelerated engineering review.
 
-Final explicit human approval remains unchanged. Accelerated review may speed up section handling, but it may not bypass approval authority or the normal execution handoff boundary.
+Final explicit human approval remains unchanged. Accelerated review may speed up section handling, but it may not bypass approval authority or the normal execution preflight boundary.
 
 ## Priority hierarchy
 
@@ -505,13 +505,13 @@ Check the git log for this branch. If there are prior commits suggesting a previ
 
 ## Execution handoff
 
-Before presenting the final execution handoff, if `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`.
+Before presenting the final execution preflight handoff, if `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers-workflow-status status --refresh`.
 
 - If the helper returns a non-empty `next_skill`, use that route instead of re-deriving state manually.
-- If the helper returns `status` `implementation_ready`, present the normal execution handoff below.
+- If the helper returns `status` `implementation_ready`, present the normal execution preflight handoff below.
 - Only fall back to manual artifact inspection if the helper is unavailable or fails.
 
-When the review is resolved and the written plan is approved, present the normal execution handoff.
+When the review is resolved and the written plan is approved, present the normal execution preflight handoff.
 
 During that handoff, call `superpowers-plan-execution recommend --plan <approved-plan-path>` and present the helper's recommended skill first.
 

@@ -30,9 +30,9 @@ In Codex, Superpowers installs the `code-reviewer` custom agent alongside the sh
 
 **1. If this review is for plan-routed work, capture execution state first:**
 
-- For plan-routed final review, require the exact approved plan path from the current execution handoff or session context.
-- Run `superpowers-plan-contract lint --spec ... --plan ...` before dispatching the reviewer.
-- If lint fails, stop and return to the current execution flow; do not review stale or malformed approved artifacts.
+- For plan-routed final review, require the exact approved plan path and exact approved spec path from the current execution preflight handoff or session context.
+- Run `superpowers-plan-contract analyze-plan --spec <approved-spec-path> --plan <approved-plan-path> --format json` before dispatching the reviewer.
+- If `contract_state != valid` or `packet_buildable_tasks != task_count`, stop and return to the current execution flow; do not review stale or malformed approved artifacts.
 - Run `superpowers-plan-execution status --plan <approved-plan-path>` before dispatching the reviewer.
 - If helper status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state.
 - Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON.
@@ -91,7 +91,7 @@ APPROVED_PLAN_PATH=docs/superpowers/plans/deployment-plan.md
 SOURCE_SPEC_PATH=docs/superpowers/specs/deployment-plan-design.md
 "$_SUPERPOWERS_ROOT/bin/superpowers-plan-contract" lint --spec "$SOURCE_SPEC_PATH" --plan "$APPROVED_PLAN_PATH"
 STATUS_JSON=$("$_SUPERPOWERS_ROOT/bin/superpowers-plan-execution" status --plan "$APPROVED_PLAN_PATH")
-EXECUTION_EVIDENCE_PATH=$(printf '%s\n' "$STATUS_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["evidence_path"])')
+EXECUTION_EVIDENCE_PATH=$(printf '%s\n' "$STATUS_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.evidence_path || "")')
 TASK_PACKET_CONTEXT=$("$_SUPERPOWERS_ROOT/bin/superpowers-plan-contract" build-task-packet --plan "$APPROVED_PLAN_PATH" --task 2 --format markdown --persist yes)
 BASE_BRANCH=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
 BASE_SHA=$(git merge-base HEAD "origin/$BASE_BRANCH" 2>/dev/null || git merge-base HEAD "$BASE_BRANCH" 2>/dev/null || git log --oneline | grep "Task 1" | head -1 | awk '{print $1}')

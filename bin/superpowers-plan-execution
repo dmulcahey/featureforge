@@ -10,6 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SP_STATE_DIR="${SUPERPOWERS_STATE_DIR:-$HOME/.superpowers}"
 PLAN_EXECUTION_STATUS_CACHE_SCHEMA=1
+PLAN_EXECUTION_GATE_CACHE_SCHEMA=1
+NO_REPO_FILES_MARKER="__superpowers__/no-repo-files"
 
 usage() {
   cat <<'EOF' >&2
@@ -88,8 +90,108 @@ file_stamp() {
   return 1
 }
 
+cache_file_stamp() {
+  local path="$1"
+  local metadata=""
+  local digest=""
+
+  metadata="$(stat -f '%m:%c:%z:%i' "$path" 2>/dev/null || true)"
+  if [[ -z "$metadata" ]]; then
+    metadata="$(stat -c '%Y:%Z:%s:%i' "$path" 2>/dev/null || true)"
+  fi
+  [[ -n "$metadata" ]] || return 1
+
+  digest="$(hash_file "$path" 2>/dev/null || true)"
+  [[ -n "$digest" ]] || return 1
+
+  printf '%s:%s\n' "$metadata" "$digest"
+}
+
+batch_file_hashes() {
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$@" | awk '{print $1}'
+    return 0
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$@" | awk '{print $1}'
+    return 0
+  fi
+
+  cksum "$@" | awk '{print $1}'
+}
+
+batch_cache_file_stamps() {
+  local -a metadata_lines=()
+  local -a digest_lines=()
+  local line=""
+  local i
+
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+
+  if stat -f '%m:%c:%z:%i' "$@" 2>/dev/null >/tmp/superpowers-plan-execution-stat.$$; then
+    :
+  else
+    stat -c '%Y:%Z:%s:%i' "$@" 2>/dev/null >/tmp/superpowers-plan-execution-stat.$$ || {
+      rm -f /tmp/superpowers-plan-execution-stat.$$
+      return 1
+    }
+  fi
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    metadata_lines+=("$line")
+  done < /tmp/superpowers-plan-execution-stat.$$
+  rm -f /tmp/superpowers-plan-execution-stat.$$
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    digest_lines+=("$line")
+  done < <(batch_file_hashes "$@" 2>/dev/null || true)
+
+  (( ${#metadata_lines[@]} == $# )) || return 1
+  (( ${#digest_lines[@]} == $# )) || return 1
+
+  for ((i=0; i<$#; i++)); do
+    printf '%s:%s\n' "${metadata_lines[$i]}" "${digest_lines[$i]}"
+  done
+}
+
 dir_stamp() {
-  file_stamp "$1"
+  cache_file_stamp "$1"
+}
+
+spec_catalog_cache_stamp() {
+  local specs_dir="$REPO_ROOT/docs/superpowers/specs"
+  local file stamp rel
+
+  [[ -d "$specs_dir" ]] || {
+    printf 'missing\n'
+    return 0
+  }
+
+  # Execution-state freshness only depends on the latest approved spec, so the
+  # cache key tracks that artifact instead of hashing every spec on every call.
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    parse_spec_headers "$file" || continue
+    [[ "$spec_state" == "CEO Approved" ]] || continue
+    stamp="$(cache_file_stamp "$file" 2>/dev/null || true)"
+    [[ -n "$stamp" ]] || return 1
+    rel="$(rel_from_root "$file" 2>/dev/null || true)"
+    [[ -n "$rel" ]] || return 1
+    printf '%s|%s|%s\n' "$rel" "$spec_revision" "$stamp"
+    return 0
+  done < <(ls -1t "$specs_dir"/*.md 2>/dev/null || true)
+
+  printf 'none\n'
+  return 0
 }
 
 plan_execution_status_cache_dir() {
@@ -105,7 +207,7 @@ plan_execution_status_cache_path() {
   local plan_stamp=""
   local source_spec_stamp=""
   local evidence_stamp="missing"
-  local specs_dir_stamp=""
+  local spec_catalog_stamp=""
   local cache_key=""
   local cache_hash=""
 
@@ -117,13 +219,14 @@ plan_execution_status_cache_path() {
   evidence_rel="$(derive_evidence_rel_path "$plan_rel" "$PLAN_STRUCTURE_PLAN_REVISION")"
   evidence_abs="$(plan_rel_to_abs "$evidence_rel")"
 
-  plan_stamp="$(file_stamp "$plan_abs")" || return 1
-  source_spec_stamp="$(file_stamp "$source_spec_abs")" || return 1
+  plan_stamp="$(cache_file_stamp "$plan_abs")" || return 1
+  source_spec_stamp="$(cache_file_stamp "$source_spec_abs")" || return 1
   if [[ -f "$evidence_abs" ]]; then
-    evidence_stamp="$(file_stamp "$evidence_abs")" || return 1
+    evidence_stamp="$(cache_file_stamp "$evidence_abs")" || return 1
   fi
-  specs_dir_stamp="$(dir_stamp "$REPO_ROOT/docs/superpowers/specs" 2>/dev/null || printf 'missing')"
-  cache_key="$PLAN_EXECUTION_STATUS_CACHE_SCHEMA|$plan_rel|$plan_stamp|$source_spec_stamp|$evidence_stamp|$specs_dir_stamp"
+  spec_catalog_stamp="$(spec_catalog_cache_stamp 2>/dev/null || true)"
+  [[ -n "$spec_catalog_stamp" ]] || return 1
+  cache_key="$PLAN_EXECUTION_STATUS_CACHE_SCHEMA|$plan_rel|$plan_stamp|$source_spec_stamp|$evidence_stamp|$spec_catalog_stamp"
   cache_hash="$(printf '%s' "$cache_key" | hash_stream)"
   printf '%s/%s.json\n' "$(plan_execution_status_cache_dir)" "$cache_hash"
 }
@@ -143,6 +246,149 @@ write_cached_status_output() {
   tmp_path="$(mktemp "${cache_path}.tmp.XXXXXX")"
   printf '%s\n' "$payload" > "$tmp_path"
   mv "$tmp_path" "$cache_path"
+}
+
+plan_execution_gate_cache_dir() {
+  printf '%s/plan-execution-gate-cache\n' "$SP_STATE_DIR"
+}
+
+plan_execution_gate_cache_path() {
+  local gate_name="$1"
+  local plan_rel="$2"
+  local plan_abs=""
+  local source_spec_abs=""
+  local evidence_rel=""
+  local evidence_abs=""
+  local plan_stamp=""
+  local source_spec_stamp=""
+  local spec_catalog_stamp=""
+  local cache_key=""
+  local cache_hash=""
+
+  plan_abs="$(plan_rel_to_abs "$plan_rel")"
+  [[ -f "$plan_abs" ]] || return 1
+  plan_structure_parse_plan_headers "$plan_abs" || return 1
+  source_spec_abs="$(plan_rel_to_abs "$PLAN_STRUCTURE_PLAN_SOURCE_SPEC")"
+  [[ -f "$source_spec_abs" ]] || return 1
+  evidence_rel="$(derive_evidence_rel_path "$plan_rel" "$PLAN_STRUCTURE_PLAN_REVISION")"
+  evidence_abs="$(plan_rel_to_abs "$evidence_rel")"
+
+  plan_stamp="$(cache_file_stamp "$plan_abs" 2>/dev/null || true)"
+  source_spec_stamp="$(cache_file_stamp "$source_spec_abs" 2>/dev/null || true)"
+  [[ -n "$plan_stamp" && -n "$source_spec_stamp" ]] || return 1
+  if [[ -f "$evidence_abs" ]]; then
+    evidence_abs="$(cache_file_stamp "$evidence_abs" 2>/dev/null || true)"
+  else
+    evidence_abs="missing"
+  fi
+  [[ -n "$evidence_abs" ]] || return 1
+  spec_catalog_stamp="$(spec_catalog_cache_stamp 2>/dev/null || true)"
+  [[ -n "$spec_catalog_stamp" ]] || return 1
+
+  cache_key="$PLAN_EXECUTION_GATE_CACHE_SCHEMA|$gate_name|$plan_rel|$plan_stamp|$source_spec_stamp|$evidence_abs|$spec_catalog_stamp"
+  cache_hash="$(printf '%s' "$cache_key" | hash_stream)"
+  printf '%s/%s.json\n' "$(plan_execution_gate_cache_dir)" "$cache_hash"
+}
+
+gate_cache_meta_path() {
+  local cache_path="$1"
+  printf '%s.meta\n' "${cache_path%.json}"
+}
+
+build_gate_cache_metadata() {
+  local i path
+  local -a lines=()
+  local -a existing_paths=()
+  local -a existing_abs_paths=()
+  local -a stamps=()
+  local stat_output=""
+
+  for ((i=0; i<LATEST_COMPLETED_FILE_PROOF_COUNT; i++)); do
+    path="${LATEST_COMPLETED_FILE_PROOF_PATHS[$i]}"
+    if [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]]; then
+      existing_paths+=("$path")
+      existing_abs_paths+=("$REPO_ROOT/$path")
+    else
+      lines+=("$path|missing")
+    fi
+  done
+
+  if (( ${#existing_abs_paths[@]} > 0 )); then
+    stat_output="$(batch_cache_file_stamps "${existing_abs_paths[@]}" 2>/dev/null || true)"
+    [[ -n "$stat_output" ]] || return 1
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      stamps+=("$path")
+    done <<< "$stat_output"
+    (( ${#stamps[@]} == ${#existing_paths[@]} )) || return 1
+    for ((i=0; i<${#existing_paths[@]}; i++)); do
+      lines+=("${existing_paths[$i]}|${stamps[$i]}")
+    done
+  fi
+
+  if (( ${#lines[@]} == 0 )); then
+    GATE_CACHE_METADATA=""
+    return 0
+  fi
+
+  GATE_CACHE_METADATA="$(printf '%s\n' "${lines[@]}" | LC_ALL=C sort)"
+  return 0
+}
+
+read_cached_gate_output() {
+  local cache_path="$1"
+  local meta_path="$2"
+  local payload="" path="" cached_stamp="" current_stamp=""
+  local -a existing_paths=()
+  local -a existing_abs_paths=()
+  local -a cached_stamps=()
+  local -a current_stamps=()
+  local stat_output=""
+  local i
+
+  [[ -f "$cache_path" && -f "$meta_path" ]] || return 1
+  while IFS='|' read -r path cached_stamp; do
+    [[ -n "$path" ]] || continue
+    if [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]]; then
+      existing_paths+=("$path")
+      existing_abs_paths+=("$REPO_ROOT/$path")
+      cached_stamps+=("$cached_stamp")
+    else
+      current_stamp="missing"
+      [[ "$current_stamp" == "$cached_stamp" ]] || return 1
+    fi
+  done < "$meta_path"
+
+  if (( ${#existing_abs_paths[@]} > 0 )); then
+    stat_output="$(batch_cache_file_stamps "${existing_abs_paths[@]}" 2>/dev/null || true)"
+    [[ -n "$stat_output" ]] || return 1
+    while IFS= read -r current_stamp; do
+      [[ -n "$current_stamp" ]] || continue
+      current_stamps+=("$current_stamp")
+    done <<< "$stat_output"
+    (( ${#current_stamps[@]} == ${#cached_stamps[@]} )) || return 1
+    for ((i=0; i<${#cached_stamps[@]}; i++)); do
+      [[ "${current_stamps[$i]}" == "${cached_stamps[$i]}" ]] || return 1
+    done
+  fi
+
+  payload="$(read_cached_status_output "$cache_path" 2>/dev/null || true)"
+  [[ -n "$payload" ]] || return 1
+  printf '%s\n' "$payload"
+}
+
+write_cached_gate_output() {
+  local cache_path="$1"
+  local meta_path="$2"
+  local payload="$3"
+  local metadata="$4"
+  local meta_tmp=""
+
+  write_cached_status_output "$cache_path" "$payload"
+  mkdir -p "$(dirname "$meta_path")"
+  meta_tmp="$(mktemp "${meta_path}.tmp.XXXXXX")"
+  printf '%s\n' "$metadata" > "$meta_tmp"
+  mv "$meta_tmp" "$meta_path"
 }
 
 camel_to_snake() {
@@ -346,6 +592,18 @@ latest_project_artifact_path() {
   printf '%s\n' "$candidate"
 }
 
+latest_branch_artifact_path() {
+  local kind="$1"
+  local candidate=""
+
+  load_project_artifact_context
+  [[ -d "$PROJECT_ARTIFACT_DIR" ]] || return 1
+
+  candidate="$(ls -t "$PROJECT_ARTIFACT_DIR"/*-"$PROJECT_ARTIFACT_SAFE_BRANCH"-"$kind"-*.md 2>/dev/null | head -n1)"
+  [[ -n "$candidate" ]] || return 1
+  printf '%s\n' "$candidate"
+}
+
 expand_leading_tilde() {
   local raw="$1"
   case "$raw" in
@@ -489,6 +747,50 @@ find_latest_approved_spec() {
   return 1
 }
 
+current_base_branch_name() {
+  local branch=""
+  local current_branch=""
+  local candidate=""
+  local local_branch_count=0
+
+  if command -v gh >/dev/null 2>&1; then
+    branch="$(cd "$REPO_ROOT" && gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)"
+    [[ -n "$branch" ]] || branch="$(cd "$REPO_ROOT" && gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)"
+  fi
+
+  current_branch="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ -n "$current_branch" && "$current_branch" != "HEAD" ]]; then
+    [[ -n "$branch" ]] || branch="$(git -C "$REPO_ROOT" config --get "branch.$current_branch.gh-merge-base" 2>/dev/null || true)"
+  fi
+  [[ -n "$branch" ]] || branch="$(git -C "$REPO_ROOT" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)"
+
+  if [[ -z "$branch" ]]; then
+    for candidate in main master develop dev trunk; do
+      if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$candidate" ||
+         git -C "$REPO_ROOT" show-ref --verify --quiet "refs/remotes/origin/$candidate"; then
+        branch="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "$branch" ]]; then
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" ]] || continue
+      candidate="${candidate#refs/heads/}"
+      branch="$candidate"
+      local_branch_count=$((local_branch_count + 1))
+      if (( local_branch_count > 1 )); then
+        branch=""
+        break
+      fi
+    done < <(git -C "$REPO_ROOT" for-each-ref --format='%(refname)' refs/heads 2>/dev/null || true)
+  fi
+
+  [[ -n "$branch" ]] || return 1
+  printf '%s\n' "$branch"
+}
+
 derive_tasks_independent_from_plan() {
   local plan_abs="$1"
   local tasks_independent="unknown"
@@ -596,6 +898,10 @@ validate_persisted_repo_relative_path() {
   local normalized
 
   normalized="$(trim_surrounding_whitespace "$raw_value")"
+  if [[ "$normalized" == "$NO_REPO_FILES_MARKER" ]]; then
+    PERSISTED_NORMALIZED_PATH="$NO_REPO_FILES_MARKER"
+    return 0
+  fi
   normalized="$(normalize_repo_relative_path "$normalized")" || {
     set_failure "MalformedExecutionState" "$message"
     return 1
@@ -644,6 +950,20 @@ set_failure() {
   LOAD_ERROR_CLASS="$1"
   LOAD_ERROR_MESSAGE="$2"
   return 1
+}
+
+json_string_field() {
+  local json="$1"
+  local key="$2"
+  local value
+
+  value="${json#*"\"$key\":\""}"
+  if [[ "$value" == "$json" ]]; then
+    printf '%s' ""
+    return 0
+  fi
+  value="${value%%\"*}"
+  printf '%s' "$value"
 }
 
 reset_plan_parse_state() {
@@ -714,6 +1034,11 @@ parse_plan_file() {
   local line line_no=0 current_task="" pending_index="" note_state note_summary
   local active_count=0 blocked_count=0 interrupted_count=0 current_work_count=0
   local in_files_block=0 task_files_seen=0 task_file_entries_count=0 task_step_count=0
+
+  plan_structure_parse "$plan_abs" || {
+    set_failure "PlanNotExecutionReady" "${PLAN_STRUCTURE_ERROR_MESSAGE:-Approved plan task structure is malformed.}"
+    return 1
+  }
 
   reset_plan_parse_state
 
@@ -1173,17 +1498,56 @@ resolve_path_from_current_change_set() {
   return 1
 }
 
+build_no_repo_files_entry() {
+  FILES_ENTRY="$NO_REPO_FILES_MARKER"
+  return 0
+}
+
+build_default_files_entry_for_task() {
+  local task="$1"
+  local task_index entries action normalized_path resolved
+  local collected=()
+
+  if plan_structure_parse_for_execution "$PLAN_ABS_PATH" 2>/dev/null; then
+    task_index="$(plan_structure_find_task_index "$task" 2>/dev/null || true)"
+    if [[ -n "$task_index" ]]; then
+      entries="${PLAN_STRUCTURE_TASK_FILE_ENTRIES[$task_index]:-}"
+      while IFS=$'\t' read -r action _ normalized_path; do
+        [[ -n "$action" && -n "$normalized_path" ]] || continue
+        if [[ -e "$REPO_ROOT/$normalized_path" || -L "$REPO_ROOT/$normalized_path" ]]; then
+          collected+=("$normalized_path")
+          continue
+        fi
+        resolved="$(resolve_path_from_current_change_set "$normalized_path" 2>/dev/null || true)"
+        [[ -n "$resolved" ]] || continue
+        collected+=("$resolved")
+      done <<< "$entries"
+    fi
+  fi
+
+  if (( ${#collected[@]} == 0 )); then
+    build_no_repo_files_entry
+    return 0
+  fi
+
+  build_files_entry "${collected[@]}"
+}
+
 build_files_entry() {
   local inputs=("$@")
   local input normalized resolved
   local collected=()
 
   if (( ${#inputs[@]} == 0 )); then
-    FILES_ENTRY="None (no repo file changed)"
+    build_no_repo_files_entry
     return 0
   fi
 
   for input in "${inputs[@]}"; do
+    if [[ "$input" == "$NO_REPO_FILES_MARKER" ]]; then
+      set_failure "InvalidCommandInput" "Evidence file paths may not use the reserved no-file marker."
+      return 1
+    fi
     normalized="$(normalize_repo_relative_path "$input")" || {
       set_failure "InvalidCommandInput" "Evidence file paths must be normalized repo-relative paths inside the repo root."
       return 1
@@ -1298,6 +1662,11 @@ parse_evidence_attempts() {
       seen_sections+="$section_key"
       current_task="${BASH_REMATCH[1]}"
       current_step="${BASH_REMATCH[2]}"
+      if ! find_step_index "$current_task" "$current_step" >/dev/null 2>&1; then
+        exec 3<&-
+        set_failure "MalformedExecutionState" "Execution evidence may not reference steps that do not exist in the current approved plan."
+        return 1
+      fi
       last_task="${BASH_REMATCH[1]}"
       last_step="${BASH_REMATCH[2]}"
       current_index=""
@@ -1593,6 +1962,59 @@ next_attempt_number() {
   fi
 }
 
+render_execution_contract_plan() {
+  local src="$1"
+  local dest="$2"
+  local line current_task="" suppress_adjacent=0 step_index title
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if (( suppress_adjacent == 1 )); then
+      if [[ -z "$line" || "$line" =~ ^[[:space:]]+\*\*Execution\ Note:\*\* ]]; then
+        continue
+      fi
+      suppress_adjacent=0
+    fi
+
+    if [[ "$line" =~ ^\*\*Execution\ Mode:\*\*\ (.+)$ ]]; then
+      printf '**Execution Mode:** none\n' >> "$dest"
+      continue
+    fi
+
+    if [[ "$line" =~ ^##\ Task\ ([0-9]+): ]]; then
+      current_task="${BASH_REMATCH[1]}"
+      printf '%s\n' "$line" >> "$dest"
+      continue
+    fi
+
+    if [[ "$line" =~ ^-\ \[([[:space:]x])\]\ \*\*Step\ ([0-9]+):\ (.*)\*\*$ ]]; then
+      step_index="$(find_step_index "$current_task" "${BASH_REMATCH[2]}")"
+      title="${STEP_TITLES[$step_index]}"
+      printf -- '- [ ] **Step %s: %s**\n' "${STEP_NUMBERS[$step_index]}" "$title" >> "$dest"
+      suppress_adjacent=1
+      continue
+    fi
+
+    printf '%s\n' "$line" >> "$dest"
+  done < "$src"
+}
+
+hash_execution_contract_plan() {
+  local src="$1"
+  local tmp="" plan_fingerprint=""
+
+  tmp="$(mktemp "${src}.contract.XXXXXX")" || return 1
+  render_execution_contract_plan "$src" "$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  plan_fingerprint="$(hash_file "$tmp")" || {
+    rm -f "$tmp"
+    return 1
+  }
+  rm -f "$tmp"
+  printf '%s\n' "$plan_fingerprint"
+}
+
 compute_execution_packet_fingerprint_from_values() {
   local plan_path="$1"
   local plan_revision="$2"
@@ -1620,7 +2042,7 @@ compute_current_execution_packet_fingerprint() {
   local step="$2"
   local plan_fingerprint source_spec_fingerprint source_spec_abs
 
-  plan_fingerprint="$(hash_file "$PLAN_ABS_PATH")" || return 1
+  plan_fingerprint="$(hash_execution_contract_plan "$PLAN_ABS_PATH")" || return 1
   source_spec_abs="$(plan_rel_to_abs "$PLAN_SOURCE_SPEC")"
   source_spec_fingerprint="$(hash_file "$source_spec_abs")" || return 1
 
@@ -1638,31 +2060,7 @@ compute_current_execution_packet_fingerprint() {
 compute_pending_execution_packet_fingerprint() {
   local task="$1"
   local step="$2"
-  local plan_tmp="" plan_fingerprint="" source_spec_fingerprint="" source_spec_abs=""
-
-  plan_tmp="$(mktemp "${PLAN_ABS_PATH}.packet.XXXXXX")" || return 1
-  render_plan_file "$PLAN_ABS_PATH" "$plan_tmp" || {
-    rm -f "$plan_tmp"
-    return 1
-  }
-  plan_fingerprint="$(hash_file "$plan_tmp")" || {
-    rm -f "$plan_tmp"
-    return 1
-  }
-  rm -f "$plan_tmp"
-
-  source_spec_abs="$(plan_rel_to_abs "$PLAN_SOURCE_SPEC")"
-  source_spec_fingerprint="$(hash_file "$source_spec_abs")" || return 1
-
-  compute_execution_packet_fingerprint_from_values \
-    "$PLAN_REL_PATH" \
-    "$PLAN_REVISION" \
-    "$plan_fingerprint" \
-    "$PLAN_SOURCE_SPEC" \
-    "$PLAN_SOURCE_SPEC_REVISION" \
-    "$source_spec_fingerprint" \
-    "$task" \
-    "$step"
+  compute_current_execution_packet_fingerprint "$task" "$step"
 }
 
 current_head_sha() {
@@ -1680,6 +2078,10 @@ build_files_proven_entry() {
 
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
+    if [[ "$path" == "$NO_REPO_FILES_MARKER" ]]; then
+      entries+=("$path"$'\t'"sha256:none")
+      continue
+    fi
     if [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]]; then
       digest="$(hash_file "$REPO_ROOT/$path")" || {
         set_failure "EvidenceWriteFailed" "Could not fingerprint a proven file."
@@ -2111,6 +2513,43 @@ validate_workspace_safety() {
   fi
 }
 
+validate_repo_safety_applicability() {
+  local stage="superpowers:plan-execution-preflight"
+  local output=""
+  local status=0
+  local outcome=""
+
+  if [[ "$PLAN_EXECUTION_MODE" != "none" ]]; then
+    stage="$PLAN_EXECUTION_MODE"
+  fi
+
+  output="$(
+    cd "$REPO_ROOT" &&
+      "$SCRIPT_DIR/superpowers-repo-safety" check \
+        --intent write \
+        --stage "$stage" \
+        --task-id "plan-execution-preflight-r${PLAN_REVISION}" \
+        --path "$PLAN_REL_PATH" \
+        --write-target execution-task-slice
+  )" || status=$?
+
+  if [[ "$status" -ne 0 || -z "$output" ]]; then
+    gate_fail "WorkspaceNotSafe" "repo_safety_unavailable" "Execution preflight could not evaluate repo-safety applicability." "Restore repo-safety helper availability before continuing execution."
+    return 1
+  fi
+
+  outcome="$(json_string_field "$output" "outcome")"
+  case "$outcome" in
+    allowed|blocked)
+      return 0
+      ;;
+    *)
+      gate_fail "WorkspaceNotSafe" "repo_safety_unavailable" "Execution preflight could not parse repo-safety applicability." "Restore repo-safety helper availability before continuing execution."
+      return 1
+      ;;
+  esac
+}
+
 load_failure_as_gate_failure() {
   local fallback_class="$1"
   local code
@@ -2134,9 +2573,139 @@ validate_checked_steps_have_evidence() {
   return 0
 }
 
+validate_all_steps_completed_for_review() {
+  local i
+  local task=""
+  local step=""
+
+  for ((i=0; i<STEP_COUNT; i++)); do
+    [[ "${STEP_CHECKED[$i]}" == "x" ]] && continue
+    task="${STEP_TASKS[$i]}"
+    step="${STEP_NUMBERS[$i]}"
+    gate_fail "ExecutionStateNotReady" "unfinished_steps_remaining" "Final review is blocked while Task ${task} Step ${step} remains unchecked." "Finish all approved plan steps before final review or branch completion."
+    return 1
+  done
+
+  return 0
+}
+
+proof_path_is_execution_bookkeeping() {
+  local path="$1"
+  [[ "$path" == "$PLAN_REL_PATH" || "$path" == "$EVIDENCE_REL_PATH" || "$path" == "$NO_REPO_FILES_MARKER" ]]
+}
+
+reset_latest_completed_step_attempts() {
+  LATEST_COMPLETED_STEP_ATTEMPT_COUNT=0
+  LATEST_COMPLETED_STEP_ATTEMPTS=()
+}
+
+collect_latest_completed_step_attempts() {
+  local i latest_attempt
+
+  reset_latest_completed_step_attempts
+  for ((i=0; i<STEP_COUNT; i++)); do
+    latest_attempt="$(find_latest_attempt_index "${STEP_TASKS[$i]}" "${STEP_NUMBERS[$i]}" 2>/dev/null)" || continue
+    [[ "${ATT_STATUS[$latest_attempt]}" == "Completed" ]] || continue
+    LATEST_COMPLETED_STEP_ATTEMPTS[$LATEST_COMPLETED_STEP_ATTEMPT_COUNT]="$latest_attempt"
+    LATEST_COMPLETED_STEP_ATTEMPT_COUNT=$((LATEST_COMPLETED_STEP_ATTEMPT_COUNT + 1))
+  done
+}
+
+reset_latest_completed_file_proofs() {
+  LATEST_COMPLETED_FILE_PROOF_COUNT=0
+  LATEST_COMPLETED_FILE_PROOF_PATHS=()
+  LATEST_COMPLETED_FILE_PROOF_VALUES=()
+  LATEST_COMPLETED_FILE_PROOF_RECORDED_AT=()
+  LATEST_COMPLETED_FILE_PROOF_ORDERS=()
+}
+
+remember_latest_completed_file_proof() {
+  local path="$1"
+  local proof="$2"
+  local recorded_at="$3"
+  local order="$4"
+  local i
+
+  for ((i=0; i<LATEST_COMPLETED_FILE_PROOF_COUNT; i++)); do
+    [[ "${LATEST_COMPLETED_FILE_PROOF_PATHS[$i]}" == "$path" ]] || continue
+    if [[ "$recorded_at" > "${LATEST_COMPLETED_FILE_PROOF_RECORDED_AT[$i]}" ]] || [[ "$recorded_at" == "${LATEST_COMPLETED_FILE_PROOF_RECORDED_AT[$i]}" && "$order" -gt "${LATEST_COMPLETED_FILE_PROOF_ORDERS[$i]}" ]]; then
+      LATEST_COMPLETED_FILE_PROOF_VALUES[$i]="$proof"
+      LATEST_COMPLETED_FILE_PROOF_RECORDED_AT[$i]="$recorded_at"
+      LATEST_COMPLETED_FILE_PROOF_ORDERS[$i]="$order"
+    fi
+    return 0
+  done
+
+  LATEST_COMPLETED_FILE_PROOF_PATHS[$LATEST_COMPLETED_FILE_PROOF_COUNT]="$path"
+  LATEST_COMPLETED_FILE_PROOF_VALUES[$LATEST_COMPLETED_FILE_PROOF_COUNT]="$proof"
+  LATEST_COMPLETED_FILE_PROOF_RECORDED_AT[$LATEST_COMPLETED_FILE_PROOF_COUNT]="$recorded_at"
+  LATEST_COMPLETED_FILE_PROOF_ORDERS[$LATEST_COMPLETED_FILE_PROOF_COUNT]="$order"
+  LATEST_COMPLETED_FILE_PROOF_COUNT=$((LATEST_COMPLETED_FILE_PROOF_COUNT + 1))
+}
+
+collect_latest_completed_file_proofs() {
+  local i latest_attempt path proof
+
+  reset_latest_completed_file_proofs
+  for ((i=0; i<LATEST_COMPLETED_STEP_ATTEMPT_COUNT; i++)); do
+    latest_attempt="${LATEST_COMPLETED_STEP_ATTEMPTS[$i]}"
+    while IFS=$'\t' read -r path proof; do
+      [[ -n "$path" ]] || continue
+      proof_path_is_execution_bookkeeping "$path" && continue
+      remember_latest_completed_file_proof "$path" "$proof" "${ATT_RECORDED_AT[$latest_attempt]}" "$latest_attempt"
+    done <<< "${ATT_FILE_PROOFS[$latest_attempt]}"
+  done
+}
+
+reset_current_file_proof_cache() {
+  CURRENT_FILE_PROOF_CACHE_COUNT=0
+  CURRENT_FILE_PROOF_CACHE_PATHS=()
+  CURRENT_FILE_PROOF_CACHE_VALUES=()
+}
+
+lookup_current_file_proof_cache() {
+  local path="$1"
+  local i
+
+  for ((i=0; i<CURRENT_FILE_PROOF_CACHE_COUNT; i++)); do
+    if [[ "${CURRENT_FILE_PROOF_CACHE_PATHS[$i]}" == "$path" ]]; then
+      CURRENT_FILE_PROOF="${CURRENT_FILE_PROOF_CACHE_VALUES[$i]}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+cache_current_file_proof() {
+  local path="$1"
+  local proof="$2"
+
+  CURRENT_FILE_PROOF_CACHE_PATHS[$CURRENT_FILE_PROOF_CACHE_COUNT]="$path"
+  CURRENT_FILE_PROOF_CACHE_VALUES[$CURRENT_FILE_PROOF_CACHE_COUNT]="$proof"
+  CURRENT_FILE_PROOF_CACHE_COUNT=$((CURRENT_FILE_PROOF_CACHE_COUNT + 1))
+}
+
+current_file_proof_for_path() {
+  local path="$1"
+  local actual=""
+
+  if lookup_current_file_proof_cache "$path"; then
+    return 0
+  fi
+
+  if [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]]; then
+    actual="$(hash_file "$REPO_ROOT/$path")" || return 1
+    CURRENT_FILE_PROOF="sha256:$actual"
+  else
+    CURRENT_FILE_PROOF="sha256:missing"
+  fi
+  cache_current_file_proof "$path" "$CURRENT_FILE_PROOF"
+  return 0
+}
+
 validate_v2_evidence_provenance() {
-  local current_plan_fingerprint current_source_spec_fingerprint source_spec_abs
-  local i latest_attempt expected_packet proof_line path proof actual
+  local current_plan_fingerprint current_contract_plan_fingerprint current_source_spec_fingerprint source_spec_abs
+  local i latest_attempt expected_packet legacy_expected_packet path proof
 
   [[ "$EVIDENCE_FORMAT" == "v2" ]] || return 0
 
@@ -2149,6 +2718,11 @@ validate_v2_evidence_provenance() {
     gate_fail "StaleExecutionEvidence" "source_spec_fingerprint_unavailable" "Current source spec fingerprint could not be computed." "Re-run after the approved source spec is readable."
     return 1
   }
+  current_contract_plan_fingerprint="$(hash_execution_contract_plan "$PLAN_ABS_PATH")" || {
+    gate_fail "StaleExecutionEvidence" "packet_fingerprint_unavailable" "Current packet provenance could not be derived." "Rebuild the current task packet before review."
+    return 1
+  }
+  CURRENT_SOURCE_SPEC_FINGERPRINT_FOR_GATE="$current_source_spec_fingerprint"
 
   if [[ "$EVIDENCE_PLAN_FINGERPRINT" != "$current_plan_fingerprint" ]]; then
     gate_fail "StaleExecutionEvidence" "plan_fingerprint_mismatch" "Execution evidence no longer matches the current approved plan fingerprint." "Rebuild packets or reopen the affected work."
@@ -2159,71 +2733,95 @@ validate_v2_evidence_provenance() {
     return 1
   fi
 
-  for ((i=0; i<STEP_COUNT; i++)); do
-    latest_attempt="$(find_latest_attempt_index "${STEP_TASKS[$i]}" "${STEP_NUMBERS[$i]}" 2>/dev/null)" || continue
-    [[ "${ATT_STATUS[$latest_attempt]}" == "Completed" ]] || continue
-    expected_packet="$(compute_current_execution_packet_fingerprint "${STEP_TASKS[$i]}" "${STEP_NUMBERS[$i]}")" || {
-      gate_fail "StaleExecutionEvidence" "packet_fingerprint_unavailable" "Current packet provenance could not be derived." "Rebuild the current task packet before review."
-      return 1
-    }
-    if [[ "${ATT_PACKET_FINGERPRINTS[$latest_attempt]}" != "$expected_packet" ]]; then
+  collect_latest_completed_step_attempts
+  for ((i=0; i<LATEST_COMPLETED_STEP_ATTEMPT_COUNT; i++)); do
+    latest_attempt="${LATEST_COMPLETED_STEP_ATTEMPTS[$i]}"
+    expected_packet="$(compute_execution_packet_fingerprint_from_values \
+      "$PLAN_REL_PATH" \
+      "$PLAN_REVISION" \
+      "$current_contract_plan_fingerprint" \
+      "$PLAN_SOURCE_SPEC" \
+      "$PLAN_SOURCE_SPEC_REVISION" \
+      "$current_source_spec_fingerprint" \
+      "${ATT_TASKS[$latest_attempt]}" \
+      "${ATT_STEPS[$latest_attempt]}")"
+    if [[ "${ATT_PACKET_FINGERPRINTS[$latest_attempt]}" == "$expected_packet" ]]; then
+      continue
+    fi
+    legacy_expected_packet="$(compute_execution_packet_fingerprint_from_values \
+      "$PLAN_REL_PATH" \
+      "$PLAN_REVISION" \
+      "$current_plan_fingerprint" \
+      "$PLAN_SOURCE_SPEC" \
+      "$PLAN_SOURCE_SPEC_REVISION" \
+      "$current_source_spec_fingerprint" \
+      "${ATT_TASKS[$latest_attempt]}" \
+      "${ATT_STEPS[$latest_attempt]}")"
+    if [[ -n "$legacy_expected_packet" && "${ATT_PACKET_FINGERPRINTS[$latest_attempt]}" == "$legacy_expected_packet" ]]; then
+      gate_add_warning_code "legacy_packet_provenance"
+      continue
+    fi
       gate_fail "StaleExecutionEvidence" "packet_fingerprint_mismatch" "Execution evidence packet provenance no longer matches the current approved plan/spec pair." "Rebuild the packet and reopen the affected step."
       return 1
-    fi
+  done
 
-    while IFS=$'\t' read -r path proof; do
-      [[ -n "$path" ]] || continue
-      if [[ "$path" == "$PLAN_REL_PATH" || "$path" == "$EVIDENCE_REL_PATH" ]]; then
-        continue
-      fi
-      if [[ "$proof" == "sha256:missing" ]]; then
-        if [[ -e "$REPO_ROOT/$path" || -L "$REPO_ROOT/$path" ]]; then
-          gate_fail "MissedReopenRequired" "files_proven_drifted" "A file proven as missing is present again after completion." "Reopen the step and rebuild its evidence."
-          return 1
-        fi
-        continue
-      fi
-      if [[ ! -e "$REPO_ROOT/$path" && ! -L "$REPO_ROOT/$path" ]]; then
-        gate_fail "MissedReopenRequired" "files_proven_drifted" "A proven file is now missing after completion." "Reopen the step and rebuild its evidence."
-        return 1
-      fi
-      actual="$(hash_file "$REPO_ROOT/$path")" || {
+  collect_latest_completed_file_proofs
+  reset_current_file_proof_cache
+  for ((i=0; i<LATEST_COMPLETED_FILE_PROOF_COUNT; i++)); do
+    path="${LATEST_COMPLETED_FILE_PROOF_PATHS[$i]}"
+    proof="${LATEST_COMPLETED_FILE_PROOF_VALUES[$i]}"
+    current_file_proof_for_path "$path" || {
         gate_fail "MissedReopenRequired" "files_proven_drifted" "A proven file could not be re-fingerprinted during review gating." "Reopen the step and rebuild its evidence."
         return 1
       }
-      if [[ "sha256:$actual" != "$proof" ]]; then
-        gate_fail "MissedReopenRequired" "files_proven_drifted" "A proven file changed after completion without a reopen." "Reopen the step and rebuild its evidence."
-        return 1
-      fi
-    done <<< "${ATT_FILE_PROOFS[$latest_attempt]}"
+    if [[ "$CURRENT_FILE_PROOF" == "$proof" ]]; then
+      continue
+    fi
+    if [[ "$proof" == "sha256:missing" ]]; then
+      gate_fail "MissedReopenRequired" "files_proven_drifted" "A file proven as missing is present again after completion." "Reopen the step and rebuild its evidence."
+      return 1
+    fi
+    if [[ "$CURRENT_FILE_PROOF" == "sha256:missing" ]]; then
+      gate_fail "MissedReopenRequired" "files_proven_drifted" "A proven file is now missing after completion." "Reopen the step and rebuild its evidence."
+      return 1
+    fi
+    gate_fail "MissedReopenRequired" "files_proven_drifted" "A proven file changed after completion without a later completed proof." "Reopen the step and rebuild its evidence."
+    return 1
   done
 
   return 0
 }
 
 validate_finish_artifacts() {
-  local current_head release_artifact_path qa_artifact_path test_plan_artifact_path expected_test_plan_path
+  local current_head current_base_branch release_artifact_path qa_artifact_path test_plan_artifact_path expected_test_plan_path
   local test_plan_required="no"
 
   load_project_artifact_context
   current_head="$(current_head_sha)"
-
-  if test_plan_artifact_path="$(latest_project_artifact_path "test-plan" 2>/dev/null)"; then
-    if ! parse_test_plan_artifact "$test_plan_artifact_path"; then
-      gate_fail "QaArtifactNotFresh" "test_plan_artifact_malformed" "The latest test-plan artifact is malformed and cannot drive finish readiness." "Regenerate the test-plan artifact from plan-eng-review before finishing."
-    else
-      if [[ "$TEST_PLAN_SOURCE_PLAN" != "$PLAN_REL_PATH" || "$TEST_PLAN_SOURCE_PLAN_REVISION" != "$PLAN_REVISION" ]]; then
-        gate_fail "QaArtifactNotFresh" "test_plan_artifact_stale" "The latest test-plan artifact does not match the current approved plan path and revision." "Regenerate the test-plan artifact for the current approved plan."
-      fi
-      if [[ "$TEST_PLAN_BRANCH" != "$PROJECT_ARTIFACT_BRANCH_RAW" || "$TEST_PLAN_REPO" != "$PROJECT_ARTIFACT_SLUG" ]]; then
-        gate_fail "QaArtifactNotFresh" "test_plan_artifact_stale" "The latest test-plan artifact does not match the current branch or repo." "Regenerate the test-plan artifact on the current branch."
-      fi
-      test_plan_required="$TEST_PLAN_BROWSER_QA_REQUIRED"
-    fi
+  current_base_branch="$(current_base_branch_name 2>/dev/null || true)"
+  if [[ -z "$current_base_branch" ]]; then
+    gate_fail "ReleaseArtifactNotFresh" "release_artifact_base_branch_unresolved" "Finish readiness could not determine the current landing branch target." "Resolve the base branch target locally, then re-run document-release."
+    return 0
   fi
 
+  if ! test_plan_artifact_path="$(latest_branch_artifact_path "test-plan" 2>/dev/null)"; then
+    gate_fail "QaArtifactNotFresh" "test_plan_artifact_missing" "Finish readiness requires the current branch test-plan artifact, but none was found." "Regenerate the test-plan artifact for the current approved plan revision."
+    return 0
+  fi
+  if ! parse_test_plan_artifact "$test_plan_artifact_path"; then
+    gate_fail "QaArtifactNotFresh" "test_plan_artifact_malformed" "The latest test-plan artifact is malformed and cannot drive finish readiness." "Regenerate the test-plan artifact from plan-eng-review before finishing."
+    return 0
+  fi
+  if [[ "$TEST_PLAN_SOURCE_PLAN" != "$PLAN_REL_PATH" || "$TEST_PLAN_SOURCE_PLAN_REVISION" != "$PLAN_REVISION" ]]; then
+    gate_fail "QaArtifactNotFresh" "test_plan_artifact_stale" "The latest test-plan artifact does not match the current approved plan path and revision." "Regenerate the test-plan artifact for the current approved plan."
+  fi
+  if [[ "$TEST_PLAN_BRANCH" != "$PROJECT_ARTIFACT_BRANCH_RAW" || "$TEST_PLAN_REPO" != "$PROJECT_ARTIFACT_SLUG" ]]; then
+    gate_fail "QaArtifactNotFresh" "test_plan_artifact_stale" "The latest test-plan artifact does not match the current branch or repo." "Regenerate the test-plan artifact on the current branch."
+  fi
+  test_plan_required="$TEST_PLAN_BROWSER_QA_REQUIRED"
+
   if [[ "$test_plan_required" == "yes" ]]; then
-    if ! qa_artifact_path="$(latest_project_artifact_path "test-outcome" 2>/dev/null)"; then
+    if ! qa_artifact_path="$(latest_branch_artifact_path "test-outcome" 2>/dev/null)"; then
       gate_fail "QaArtifactNotFresh" "qa_artifact_missing" "Finish readiness requires a fresh QA result artifact, but none was found." "Run qa-only and return with a fresh QA result artifact."
     elif ! parse_qa_result_artifact "$qa_artifact_path"; then
       gate_fail "QaArtifactNotFresh" "qa_artifact_malformed" "The latest QA result artifact is malformed." "Re-run qa-only so it writes a valid structured QA result artifact."
@@ -2247,7 +2845,7 @@ validate_finish_artifacts() {
     fi
   fi
 
-  if ! release_artifact_path="$(latest_project_artifact_path "release-readiness" 2>/dev/null)"; then
+  if ! release_artifact_path="$(latest_branch_artifact_path "release-readiness" 2>/dev/null)"; then
     gate_fail "ReleaseArtifactNotFresh" "release_artifact_missing" "Finish readiness requires a fresh release-readiness artifact, but none was found." "Run document-release and return with a fresh release-readiness artifact."
     return 0
   fi
@@ -2262,6 +2860,9 @@ validate_finish_artifacts() {
   fi
   if [[ "$RELEASE_BRANCH" != "$PROJECT_ARTIFACT_BRANCH_RAW" || "$RELEASE_REPO" != "$PROJECT_ARTIFACT_SLUG" ]]; then
     gate_fail "ReleaseArtifactNotFresh" "release_artifact_branch_mismatch" "The latest release-readiness artifact does not match the current branch or repo." "Re-run document-release on the current branch."
+  fi
+  if [[ "$RELEASE_BASE_BRANCH" != "$current_base_branch" ]]; then
+    gate_fail "ReleaseArtifactNotFresh" "release_artifact_base_branch_mismatch" "The latest release-readiness artifact does not match the current base branch target." "Re-run document-release for the current landing branch."
   fi
   if [[ "$RELEASE_HEAD_SHA" != "$current_head" ]]; then
     gate_fail "ReleaseArtifactNotFresh" "release_artifact_head_mismatch" "The latest release-readiness artifact does not match the current HEAD commit." "Re-run document-release after the latest repo changes."
@@ -2284,6 +2885,7 @@ apply_gate_review_checks() {
     gate_fail "ExecutionStateNotReady" "interrupted_work_unresolved" "Final review is blocked while interrupted work remains unresolved." "Resume or explicitly resolve the interrupted work before review."
   fi
 
+  validate_all_steps_completed_for_review || true
   validate_checked_steps_have_evidence || true
   if [[ "$EVIDENCE_FORMAT" == "legacy" && "$EVIDENCE_ATTEMPT_COUNT" -gt 0 ]]; then
     gate_add_warning_code "legacy_evidence_format"
@@ -2311,11 +2913,25 @@ evaluate_preflight() {
   fi
 
   validate_workspace_safety
+  validate_repo_safety_applicability || true
   emit_gate_json
 }
 
 evaluate_gate_review() {
   local plan_rel="$1"
+  local cache_path=""
+  local meta_path=""
+  local output=""
+
+  cache_path="$(plan_execution_gate_cache_path "gate-review" "$plan_rel" 2>/dev/null || true)"
+  if [[ -n "$cache_path" ]]; then
+    meta_path="$(gate_cache_meta_path "$cache_path")"
+    if output="$(read_cached_gate_output "$cache_path" "$meta_path" 2>/dev/null)"; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+  fi
+
   reset_gate_state
   load_execution_state "$plan_rel" || {
     load_failure_as_gate_failure "MalformedExecutionState"
@@ -2323,8 +2939,16 @@ evaluate_gate_review() {
     return 0
   }
 
+  collect_latest_completed_step_attempts
+  collect_latest_completed_file_proofs
+  [[ -n "$cache_path" && -z "$meta_path" ]] && meta_path="$(gate_cache_meta_path "$cache_path")"
+
   apply_gate_review_checks
-  emit_gate_json
+  output="$(emit_gate_json)"
+  if [[ -n "$cache_path" ]] && build_gate_cache_metadata; then
+    write_cached_gate_output "$cache_path" "$meta_path" "$output" "$GATE_CACHE_METADATA"
+  fi
+  printf '%s\n' "$output"
 }
 
 evaluate_gate_finish() {
@@ -2719,7 +3343,7 @@ cmd_complete() {
   if (( ${#files[@]} > 0 )); then
     build_files_entry "${files[@]}" || { emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"; return 1; }
   else
-    build_files_entry || { emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"; return 1; }
+    build_default_files_entry_for_task "$task" || { emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"; return 1; }
   fi
   files_entry="$FILES_ENTRY"
   build_files_proven_entry "$files_entry" || { emit_error "$LOAD_ERROR_CLASS" "$LOAD_ERROR_MESSAGE"; return 1; }
@@ -2837,6 +3461,10 @@ cmd_reopen() {
 
   if [[ "${STEP_CHECKED[$step_index]}" != "x" ]]; then
     emit_error "InvalidStepTransition" "reopen may target only a currently completed step."
+    return 1
+  fi
+  if [[ "$PLAN_RESUME_TASK" != "null" ]]; then
+    emit_error "InvalidStepTransition" "reopen may not create a second parked interrupted step while one already exists."
     return 1
   fi
   if ! latest_attempt="$(find_latest_attempt_index "$task" "$step" 2>/dev/null)"; then

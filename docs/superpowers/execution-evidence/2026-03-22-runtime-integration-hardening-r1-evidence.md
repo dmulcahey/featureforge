@@ -966,8 +966,8 @@
 **Invalidation Reason:** Fixed gate-review packet provenance after the prior completion.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-22T19:32:46Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T20:08:47Z
 **Execution Source:** superpowers:executing-plans
 **Task Number:** 8
 **Step Number:** 6
@@ -979,4 +979,84 @@
 - bin/superpowers-plan-execution | sha256:668c918abf3f2bfafc199678ce4671acdbaeff2626809179795e923a645d5442
 - tests/codex-runtime/test-superpowers-plan-execution.sh | sha256:fb379424eac1398de07eaf8443480caf37c825287b77a6c2ad5c7bc5504c56af
 **Verification Summary:** `git rev-parse HEAD` -> ca1f6fa48a0b7836539d7b476918a79bcf4a4df4 committed the execution packet-provenance fix.
+**Invalidation Reason:** Latest helper fixes changed the final proven files after the prior completion
+
+#### Attempt 3
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T20:17:32Z
+**Execution Source:** superpowers:executing-plans
+**Task Number:** 8
+**Step Number:** 6
+**Packet Fingerprint:** 300e5aa779f2bd8cdca459012af7a8058cbec9987784fb8b00f96a33ea8dfc7f
+**Head SHA:** fc3f444cf0997b2f9022ee7cf6d4b9423ba54083
+**Base SHA:** dd013f6c1d70e6b3486244be70ccb1b44f7979d4
+**Claim:** Replayed the final plan-execution helper slice after fixing gate-review proof supersession, legacy packet compatibility, and warm-path caching for the updated helper/test files.
+**Files Proven:**
+- bin/superpowers-plan-execution | sha256:2596fe4a8eb8bebddc7705199cabc28f489d441cb97d5fbcf122a8784b5c065e
+- tests/codex-runtime/test-superpowers-plan-execution.sh | sha256:4e8712a56b5c08c1c664970eb0f7c28fcdaf3e154669441b1cfc9d33a9c0e9ea
+**Verification Summary:** Manual inspection only: Ran focused plan-execution regressions covering later-step reproval, large-fixture hash reuse, warm gate-review timeout, and cache invalidation after proof drift.
+**Invalidation Reason:** Final helper compatibility changes landed after the prior replayed completion
+
+#### Attempt 4
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T20:32:18Z
+**Execution Source:** superpowers:executing-plans
+**Task Number:** 8
+**Step Number:** 6
+**Packet Fingerprint:** 300e5aa779f2bd8cdca459012af7a8058cbec9987784fb8b00f96a33ea8dfc7f
+**Head SHA:** fc3f444cf0997b2f9022ee7cf6d4b9423ba54083
+**Base SHA:** dd013f6c1d70e6b3486244be70ccb1b44f7979d4
+**Claim:** Replayed the final plan-execution helper slice after fixing gate-review proof supersession, mixed legacy packet compatibility, and warm-path caching for the updated helper/test files.
+**Files Proven:**
+- bin/superpowers-plan-execution | sha256:5c585ba0ee9f30918e1ea16f30f33d7036a717863e8838d3f9343583e4434b1d
+- tests/codex-runtime/test-superpowers-plan-execution.sh | sha256:4e8712a56b5c08c1c664970eb0f7c28fcdaf3e154669441b1cfc9d33a9c0e9ea
+**Verification Summary:** Manual inspection only: Ran focused plan-execution regressions covering later-step reproval, large-fixture hash reuse, warm gate-review timeout, and cache invalidation after proof drift.
+**Invalidation Reason:** High-resolution cache stamps changed the plan-execution helper after the prior completion.
+
+#### Attempt 5
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T20:37:27Z
+**Execution Source:** superpowers:executing-plans
+**Task Number:** 8
+**Step Number:** 6
+**Packet Fingerprint:** 300e5aa779f2bd8cdca459012af7a8058cbec9987784fb8b00f96a33ea8dfc7f
+**Head SHA:** fc3f444cf0997b2f9022ee7cf6d4b9423ba54083
+**Base SHA:** dd013f6c1d70e6b3486244be70ccb1b44f7979d4
+**Claim:** Replayed the final helper slice after strengthening plan-execution cache invalidation against same-size rewrites.
+**Files Proven:**
+- bin/superpowers-plan-execution | sha256:734bceecba04427b15792176e2e20d4b7414130fb26cfe92e72038fc62769a3d
+- tests/codex-runtime/test-superpowers-plan-execution.sh | sha256:4677b7aa05cd4108637f1fd3d257e416f707ff034bf285109913e2206e7ab1c1
+**Verification Summary:** Manual inspection only: Ran focused cache regressions covering same-size same-mtime plan drift, same-size same-mtime proof drift, and ordinary proof drift.
+**Invalidation Reason:** Per-attempt legacy packet validation changed the plan-execution helper after the prior completion.
+
+#### Attempt 6
+**Status:** Invalidated
+**Recorded At:** 2026-03-22T20:40:25Z
+**Execution Source:** superpowers:executing-plans
+**Task Number:** 8
+**Step Number:** 6
+**Packet Fingerprint:** 300e5aa779f2bd8cdca459012af7a8058cbec9987784fb8b00f96a33ea8dfc7f
+**Head SHA:** fc3f444cf0997b2f9022ee7cf6d4b9423ba54083
+**Base SHA:** dd013f6c1d70e6b3486244be70ccb1b44f7979d4
+**Claim:** Replayed the final helper slice after validating legacy packet provenance per completed attempt.
+**Files Proven:**
+- bin/superpowers-plan-execution | sha256:494ec5cbd6cd098bf126841f252dca4711a128fad2d821b5c5b719cb987ad26d
+- tests/codex-runtime/test-superpowers-plan-execution.sh | sha256:59870abcb9fe78b76871b54025fe5315119cdc871ec9067c65b4281ed6602c34
+**Verification Summary:** Manual inspection only: Ran focused regressions covering corrupted older packet provenance, same-size same-mtime plan drift, and same-size same-mtime proof drift.
+**Invalidation Reason:** Final packet-provenance validator changes updated the proven helper files after the prior completion.
+
+#### Attempt 7
+**Status:** Completed
+**Recorded At:** 2026-03-22T20:40:48Z
+**Execution Source:** superpowers:executing-plans
+**Task Number:** 8
+**Step Number:** 6
+**Packet Fingerprint:** 300e5aa779f2bd8cdca459012af7a8058cbec9987784fb8b00f96a33ea8dfc7f
+**Head SHA:** fc3f444cf0997b2f9022ee7cf6d4b9423ba54083
+**Base SHA:** dd013f6c1d70e6b3486244be70ccb1b44f7979d4
+**Claim:** Replayed the final helper slice after hardening cache invalidation and validating legacy packet provenance per completed attempt.
+**Files Proven:**
+- bin/superpowers-plan-execution | sha256:cdab9e96f406bd537dafff78976fba422a0f5a8919a3205d287e02eb385f69ad
+- tests/codex-runtime/test-superpowers-plan-execution.sh | sha256:59870abcb9fe78b76871b54025fe5315119cdc871ec9067c65b4281ed6602c34
+**Verification Summary:** Manual inspection only: Ran focused regressions covering corrupted older packet provenance, same-size same-mtime plan drift, and same-size same-mtime proof drift.
 **Invalidation Reason:** N/A

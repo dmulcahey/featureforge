@@ -21,7 +21,7 @@ For release history before `v5.1.0 (2026-03-16)`, see the upstream README: https
 
 ### Runtime Integration Hardening
 
-- Expanded `bin/superpowers-workflow` and `bin/superpowers-workflow.ps1` from the original inspection subset into the full read-only operator surface for `phase`, `doctor`, `handoff`, `preflight`, `gate review`, and `gate finish`, while keeping `next` at the execution handoff boundary
+- Expanded `bin/superpowers-workflow` and `bin/superpowers-workflow.ps1` from the original inspection subset into the full read-only operator surface for `phase`, `doctor`, `handoff`, `preflight`, `gate review`, and `gate finish`, while keeping `next` at the execution preflight boundary
 - Added helper-owned execution `preflight`, `gate-review`, and `gate-finish` checks plus evidence-v2 provenance in `bin/superpowers-plan-execution` and `bin/superpowers-plan-execution.ps1`
 - Added structured QA-result and release-readiness artifacts so `qa-only`, `document-release`, and `finishing-a-development-branch` can fail closed on stale or mismatched late-stage evidence instead of relying on prose-only assertions
 - Moved `using-superpowers` to the runtime-owned session-entry gate first and turned legacy brainstorming, plan-writing, and execute-plan command docs into compatibility shims that route through the supported workflow surfaces
@@ -86,7 +86,7 @@ For release history before `v5.1.0 (2026-03-16)`, see the upstream README: https
 ### Execution Workflow Testing
 
 - Added `tests/codex-runtime/test-superpowers-plan-execution.sh` covering execution-state parsing, evidence canonicalization, recommendation routing, malformed-state rejection, and rollback behavior for failed plan/evidence writes
-- Expanded workflow sequencing and skill-doc contract coverage so the helper-backed execution handoff, final review gate, and branch-finish gate stay aligned across generated skills and reviewer artifacts
+- Expanded workflow sequencing and skill-doc contract coverage so the helper-backed execution preflight handoff, final review gate, and branch-finish gate stay aligned across generated skills and reviewer artifacts
 
 ## v5.2.0 (2026-03-16)
 
