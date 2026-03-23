@@ -105,3 +105,17 @@ test('public workflow wrapper coverage points at the fixture directory', () => {
   const content = readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/test-superpowers-workflow.sh'));
   assert.match(content, /WORKFLOW_FIXTURE_DIR="\$REPO_ROOT\/tests\/codex-runtime\/fixtures\/workflow-artifacts"/);
 });
+
+test('workflow-status shell coverage includes canonical rust workflow parity', () => {
+  const content = readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/test-superpowers-workflow-status.sh'));
+  assert.match(content, /run_rust_workflow_command/);
+  assert.match(content, /run_canonical_rust_status_matches_helper_for_manifest_backed_state/);
+  assert.match(content, /run_canonical_rust_expect_and_sync_preserve_missing_expectation/);
+});
+
+test('public workflow shell coverage includes canonical rust phase dispatch', () => {
+  const content = readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/test-superpowers-workflow.sh'));
+  assert.match(content, /run_rust_workflow/);
+  assert.match(content, /run_canonical_rust_phase_matches_public_wrapper/);
+  assert.match(content, /phase --json/);
+});

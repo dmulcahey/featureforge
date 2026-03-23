@@ -8,8 +8,8 @@ pub fn canonical_command_from_argv0(argv0: &str) -> &'static [&'static str] {
     let normalized = file_name.strip_suffix(".exe").unwrap_or(file_name);
 
     match normalized {
-        "superpowers" | "superpowers-workflow" => &[],
-        "superpowers-workflow-status" => &["workflow", "status"],
+        "superpowers" => &[],
+        "superpowers-workflow" | "superpowers-workflow-status" => &["workflow"],
         "superpowers-plan-contract" => &["plan", "contract"],
         "superpowers-plan-execution" => &["plan", "execution"],
         "superpowers-repo-safety" => &["repo-safety"],

@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 STATUS_BIN="$REPO_ROOT/bin/superpowers-workflow-status"
+RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
 STATE_DIR="$(mktemp -d)"
 REPO_DIR="$(mktemp -d)"
 trap 'rm -rf "$STATE_DIR" "$REPO_DIR"' EXIT
@@ -41,6 +42,16 @@ require_helper() {
     echo "Expected workflow helper to exist and be executable: $STATUS_BIN"
     exit 1
   fi
+}
+
+ensure_rust_superpowers_bin() {
+  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
+    return 0
+  fi
+
+  # Build the Rust runtime once so shell parity can exercise the canonical CLI.
+  source "$HOME/.cargo/env"
+  (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
 }
 
 slug_identity_for_repo() {
@@ -219,6 +230,44 @@ run_command_succeeds() {
   output="$(cd "$repo_dir" && "$STATUS_BIN" "$@" 2>&1)" || status=$?
   if [[ $status -ne 0 ]]; then
     echo "Expected command to succeed for: $label"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+  printf '%s\n' "$output"
+}
+
+run_rust_workflow_command() {
+  local repo_dir="$1"
+  local label="$2"
+  local output
+  local status=0
+  shift 2
+
+  ensure_rust_superpowers_bin
+  output="$(cd "$repo_dir" && "$RUST_SUPERPOWERS_BIN" workflow "$@" 2>&1)" || status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "Expected canonical rust workflow command to succeed for: $label"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+  printf '%s\n' "$output"
+}
+
+run_rust_workflow_status_alias() {
+  local repo_dir="$1"
+  local label="$2"
+  local output
+  local status=0
+  local tool_dir
+  shift 2
+
+  ensure_rust_superpowers_bin
+  tool_dir="$(mktemp -d "$STATE_DIR/rust-workflow-status.XXXXXX")"
+  ln -s "$RUST_SUPERPOWERS_BIN" "$tool_dir/superpowers-workflow-status"
+  output="$(cd "$repo_dir" && "$tool_dir/superpowers-workflow-status" "$@" 2>&1)" || status=$?
+  rm -rf "$tool_dir"
+  if [[ $status -ne 0 ]]; then
+    echo "Expected rust workflow-status argv0 alias to succeed for: $label"
     printf '%s\n' "$output"
     exit 1
   fi
@@ -1654,6 +1703,54 @@ run_repo_runtime_integration_status_stays_fast() {
   assert_json_equals "$output" "status" "implementation_ready" "repo runtime integration fast status"
 }
 
+run_canonical_rust_status_matches_helper_for_manifest_backed_state() {
+  local repo="$REPO_DIR/rust-canonical-status"
+  local missing_spec="docs/superpowers/specs/2026-03-24-rust-missing-spec-design.md"
+  local helper_output
+  local rust_output
+  local alias_output
+
+  init_repo "$repo"
+  run_command_succeeds "$repo" "helper expect manifest-backed missing spec" \
+    expect --artifact spec --path "$missing_spec" >/dev/null
+  helper_output="$(run_status_refresh "$repo" "helper manifest-backed missing spec" "superpowers:brainstorming")"
+
+  rust_output="$(run_rust_workflow_command "$repo" "canonical rust manifest-backed status" status --refresh)"
+  assert_json_equals "$rust_output" "status" "$(json_value "$helper_output" "status")" "canonical rust manifest-backed status"
+  assert_json_equals "$rust_output" "next_skill" "$(json_value "$helper_output" "next_skill")" "canonical rust manifest-backed next skill"
+  assert_json_equals "$rust_output" "spec_path" "$(json_value "$helper_output" "spec_path")" "canonical rust manifest-backed spec path"
+  assert_json_equals "$rust_output" "reason" "$(json_value "$helper_output" "reason")" "canonical rust manifest-backed compatibility reason"
+  assert_json_equals "$rust_output" "reason_codes.0" "$(json_value "$helper_output" "reason_codes.0")" "canonical rust manifest-backed reason code"
+  assert_json_nonempty "$rust_output" "manifest_path" "canonical rust manifest-backed manifest path"
+
+  alias_output="$(run_rust_workflow_status_alias "$repo" "rust workflow-status argv0 alias" status --refresh)"
+  assert_json_equals "$alias_output" "status" "$(json_value "$helper_output" "status")" "rust workflow-status argv0 alias status"
+  assert_json_equals "$alias_output" "reason" "$(json_value "$helper_output" "reason")" "rust workflow-status argv0 alias compatibility reason"
+  assert_json_equals "$alias_output" "reason_codes.0" "$(json_value "$helper_output" "reason_codes.0")" "rust workflow-status argv0 alias reason code"
+}
+
+run_canonical_rust_expect_and_sync_preserve_missing_expectation() {
+  local repo="$REPO_DIR/rust-canonical-expect-sync"
+  local missing_spec="docs/superpowers/specs/2026-03-24-rust-sync-missing-spec.md"
+  local sync_output
+  local status_output
+
+  init_repo "$repo"
+
+  run_rust_workflow_command "$repo" "canonical rust expect missing spec" \
+    expect --artifact spec --path "$missing_spec" >/dev/null
+  sync_output="$(run_rust_workflow_command "$repo" "canonical rust sync missing spec" sync --artifact spec)"
+  assert_contains "$sync_output" "missing_artifact" "canonical rust sync missing spec note"
+  assert_contains "$sync_output" "$missing_spec" "canonical rust sync missing spec path"
+  assert_contains "$sync_output" "superpowers:brainstorming" "canonical rust sync missing spec next skill"
+
+  status_output="$(run_rust_workflow_command "$repo" "canonical rust status after sync missing spec" status --refresh)"
+  assert_json_equals "$status_output" "status" "needs_brainstorming" "canonical rust status after sync missing spec"
+  assert_json_equals "$status_output" "spec_path" "$missing_spec" "canonical rust status after sync missing spec path"
+  assert_json_equals "$status_output" "reason" "missing_expected_spec" "canonical rust status after sync missing spec compatibility reason"
+  assert_json_equals "$status_output" "reason_codes.0" "missing_expected_spec" "canonical rust status after sync missing spec reason code"
+}
+
 require_helper
 
 run_bootstrap_no_docs
@@ -1699,5 +1796,7 @@ run_implementation_ready
 run_full_contract_implementation_ready_exposes_structured_diagnostics
 run_full_contract_implementation_ready_stays_fast
 run_repo_runtime_integration_status_stays_fast
+run_canonical_rust_status_matches_helper_for_manifest_backed_state
+run_canonical_rust_expect_and_sync_preserve_missing_expectation
 
 echo "superpowers-workflow-status regression scaffold passed."

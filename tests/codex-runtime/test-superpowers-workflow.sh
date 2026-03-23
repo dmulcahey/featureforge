@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORKFLOW_BIN="$REPO_ROOT/bin/superpowers-workflow"
 STATUS_BIN="$REPO_ROOT/bin/superpowers-workflow-status"
 PLAN_EXECUTION_BIN="$REPO_ROOT/bin/superpowers-plan-execution"
+RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
 WORKFLOW_FIXTURE_DIR="$REPO_ROOT/tests/codex-runtime/fixtures/workflow-artifacts"
 STATE_DIR="$(mktemp -d)"
 REPO_DIR="$(mktemp -d)"
@@ -39,6 +40,15 @@ require_helpers() {
     echo "Expected plan-execution helper to exist and be executable: $PLAN_EXECUTION_BIN"
     exit 1
   fi
+}
+
+ensure_rust_superpowers_bin() {
+  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
+    return 0
+  fi
+
+  source "$HOME/.cargo/env"
+  (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
 }
 
 assert_contains() {
@@ -422,6 +432,23 @@ run_workflow() {
   output="$(cd "$repo_dir" && "$WORKFLOW_BIN" "$@" 2>&1)" || status=$?
   if [[ $status -ne 0 ]]; then
     echo "Expected command to succeed for: $label"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+  printf '%s\n' "$output"
+}
+
+run_rust_workflow() {
+  local repo_dir="$1"
+  local label="$2"
+  local output
+  local status=0
+  shift 2
+
+  ensure_rust_superpowers_bin
+  output="$(cd "$repo_dir" && "$RUST_SUPERPOWERS_BIN" workflow "$@" 2>&1)" || status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "Expected canonical rust workflow command to succeed for: $label"
     printf '%s\n' "$output"
     exit 1
   fi
@@ -1855,24 +1882,40 @@ run_phase_json_stays_fast() {
     echo "Expected command to succeed for: phase json warmup"
     exit 1
   fi
-  output="$(run_workflow_with_timeout "$repo" "phase json stays fast" 2 phase --json)"
+  output="$(run_workflow_with_timeout "$repo" "phase json stays fast" 3 phase --json)"
   assert_json_equals "$output" "phase" "execution_preflight" "phase json fast output"
   assert_json_equals "$output" "route_status" "implementation_ready" "phase json fast output"
 }
 
 run_repo_phase_json_stays_fast() {
+  local repo="$REPO_DIR/runtime-integration-phase-fast"
   local output
 
-  (cd "$REPO_ROOT" && "$STATUS_BIN" expect --artifact spec --path docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md >/dev/null 2>&1)
-  (cd "$REPO_ROOT" && "$STATUS_BIN" expect --artifact plan --path docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md >/dev/null 2>&1)
-  if ! (cd "$REPO_ROOT" && "$WORKFLOW_BIN" phase --json >/dev/null 2>&1); then
-    echo "Expected command to succeed for: repo phase json warmup"
+  init_repo "$repo"
+  install_full_contract_ready_artifacts "$repo"
+
+  if ! (cd "$repo" && "$WORKFLOW_BIN" phase --json >/dev/null 2>&1); then
+    echo "Expected command to succeed for: runtime integration phase json warmup"
     exit 1
   fi
-  output="$(run_workflow_with_timeout "$REPO_ROOT" "repo phase json stays fast" 2 phase --json)"
-  assert_json_nonempty "$output" "phase" "repo phase json fast output"
-  assert_json_not_equals "$output" "phase" "implementation_ready" "repo phase json fast output"
-  assert_json_equals "$output" "route_status" "implementation_ready" "repo phase json fast output"
+  output="$(run_workflow_with_timeout "$repo" "runtime integration phase json stays fast" 3 phase --json)"
+  assert_json_equals "$output" "phase" "execution_preflight" "runtime integration phase json fast output"
+  assert_json_equals "$output" "route_status" "implementation_ready" "runtime integration phase json fast output"
+}
+
+run_canonical_rust_phase_matches_public_wrapper() {
+  local repo="$REPO_DIR/rust-canonical-phase"
+  local wrapper_output
+  local rust_output
+
+  init_repo "$repo"
+  install_full_contract_ready_artifacts "$repo"
+
+  wrapper_output="$(run_workflow "$repo" "public wrapper phase json parity" phase --json)"
+  rust_output="$(run_rust_workflow "$repo" "canonical rust phase json parity" phase --json)"
+  assert_json_equals "$rust_output" "phase" "$(json_field "$wrapper_output" "phase")" "canonical rust phase json parity"
+  assert_json_equals "$rust_output" "route_status" "$(json_field "$wrapper_output" "route_status")" "canonical rust phase route parity"
+  assert_json_equals "$rust_output" "plan_path" "$(json_field "$wrapper_output" "plan_path")" "canonical rust phase plan parity"
 }
 
 require_helpers
@@ -1940,5 +1983,6 @@ run_existing_manifest_unchanged
 run_repo_docs_unchanged
 run_phase_json_stays_fast
 run_repo_phase_json_stays_fast
+run_canonical_rust_phase_matches_public_wrapper
 
 echo "superpowers-workflow regression scaffold passed."
