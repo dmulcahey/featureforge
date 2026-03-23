@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HELPER_BIN="$REPO_ROOT/bin/superpowers-session-entry"
+RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
 STATE_DIR="$(mktemp -d)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$STATE_DIR" "$TMP_DIR"' EXIT
@@ -14,6 +15,15 @@ require_helper() {
     echo "Expected helper to exist and be executable: $HELPER_BIN"
     exit 1
   fi
+}
+
+ensure_rust_superpowers_bin() {
+  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
+    return 0
+  fi
+
+  source "$HOME/.cargo/env"
+  (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
 }
 
 json_value() {
@@ -115,6 +125,22 @@ run_command_fails() {
   printf '%s\n' "$output"
 }
 
+run_rust_session_entry_command() {
+  local label="$1"
+  shift
+  local output
+  local status=0
+
+  ensure_rust_superpowers_bin
+  output="$("$RUST_SUPERPOWERS_BIN" session-entry "$@" 2>&1)" || status=$?
+  if [[ $status -ne 0 ]]; then
+    echo "Expected canonical Rust session-entry command to succeed for: $label"
+    printf '%s\n' "$output"
+    exit 1
+  fi
+  printf '%s\n' "$output"
+}
+
 write_message_file() {
   local name="$1"
   local path="$TMP_DIR/$name"
@@ -125,6 +151,11 @@ write_message_file() {
 decision_path_for_key() {
   local session_key="$1"
   printf '%s\n' "$STATE_DIR/session-flags/using-superpowers/$session_key"
+}
+
+canonical_decision_path_for_key() {
+  local session_key="$1"
+  printf '%s\n' "$STATE_DIR/session-entry/using-superpowers/$session_key"
 }
 
 populate_decoy_state_tree() {
@@ -575,6 +606,52 @@ EOF
   assert_json_equals "$output" "decision_path" "$expected_path" "hot path derived decision file"
 }
 
+run_canonical_rust_missing_decision_uses_canonical_path() {
+  local message_file
+  local helper_output
+  local rust_output
+  local expected_path
+
+  message_file="$(write_message_file rust-missing-decision-message.txt <<'EOF'
+Can you help with this task?
+EOF
+)"
+  expected_path="$(canonical_decision_path_for_key "rust-missing-session")"
+  helper_output="$(run_json_command "helper missing decision for canonical rust" resolve --message-file "$message_file" --session-key "rust-missing-session")"
+  rust_output="$(run_rust_session_entry_command "canonical rust missing decision" resolve --message-file "$message_file" --session-key "rust-missing-session")"
+
+  assert_json_equals "$rust_output" "outcome" "$(json_value "$helper_output" "outcome")" "canonical rust missing decision"
+  assert_json_equals "$rust_output" "decision_source" "$(json_value "$helper_output" "decision_source")" "canonical rust missing decision"
+  assert_json_equals "$rust_output" "persisted" "$(json_value "$helper_output" "persisted")" "canonical rust missing decision"
+  assert_json_equals "$rust_output" "prompt.question" "$(json_value "$helper_output" "prompt.question")" "canonical rust missing decision"
+  assert_json_equals "$rust_output" "decision_path" "$expected_path" "canonical rust missing decision"
+}
+
+run_canonical_rust_explicit_reentry_persists_enabled_to_canonical_path() {
+  local message_file
+  local legacy_path
+  local canonical_path
+  local output
+
+  message_file="$(write_message_file rust-explicit-reentry-message.txt <<'EOF'
+Please use superpowers for this task.
+EOF
+)"
+  legacy_path="$(decision_path_for_key "rust-explicit-reentry")"
+  canonical_path="$(canonical_decision_path_for_key "rust-explicit-reentry")"
+  mkdir -p "$(dirname "$legacy_path")"
+  printf 'bypassed\n' > "$legacy_path"
+
+  output="$(run_rust_session_entry_command "canonical rust explicit re-entry" resolve --message-file "$message_file" --session-key "rust-explicit-reentry")"
+  assert_json_equals "$output" "outcome" "enabled" "canonical rust explicit re-entry"
+  assert_json_equals "$output" "decision_source" "explicit_reentry" "canonical rust explicit re-entry"
+  assert_json_equals "$output" "decision_path" "$canonical_path" "canonical rust explicit re-entry"
+  if [[ ! -f "$canonical_path" || "$(cat "$canonical_path")" != "enabled" ]]; then
+    echo "Expected canonical Rust explicit re-entry to persist enabled decision at $canonical_path"
+    exit 1
+  fi
+}
+
 require_helper
 run_missing_decision_needs_user_choice
 run_existing_enabled_decision
@@ -598,6 +675,8 @@ run_record_rejects_invalid_decision
 run_record_rejects_whitespace_only_session_key
 run_whitespace_only_session_key_fails_closed
 run_hot_path_uses_derived_decision_file
+run_canonical_rust_missing_decision_uses_canonical_path
+run_canonical_rust_explicit_reentry_persists_enabled_to_canonical_path
 require_absent_pattern "$HELPER_BIN" 'find .*session-flags'
 
 echo "session-entry helper regression test passed."

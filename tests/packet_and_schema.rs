@@ -7,6 +7,8 @@ use superpowers::contracts::packet::{build_task_packet_with_timestamp, write_con
 use superpowers::contracts::plan::parse_plan_file;
 use superpowers::contracts::spec::parse_spec_file;
 use superpowers::execution::state::write_plan_execution_schema;
+use superpowers::repo_safety::write_repo_safety_schema;
+use superpowers::session_entry::write_session_entry_schema;
 
 const SPEC_REL: &str = "docs/superpowers/specs/2026-03-22-plan-contract-fixture-design.md";
 const PLAN_REL: &str = "docs/superpowers/plans/2026-03-22-plan-contract-fixture.md";
@@ -94,6 +96,36 @@ fn checked_in_plan_execution_schema_matches_generated_output() {
     .expect("checked-in plan execution schema should read");
 
     assert_eq!(generated.trim_end(), checked_in.trim_end());
+}
+
+#[test]
+fn checked_in_repo_safety_and_session_entry_schemas_match_generated_output() {
+    let schemas_dir = unique_temp_dir("policy-schemas");
+    write_repo_safety_schema(&schemas_dir).expect("repo-safety schema should write");
+    write_session_entry_schema(&schemas_dir).expect("session-entry schema should write");
+
+    let generated_repo_safety =
+        fs::read_to_string(schemas_dir.join("repo-safety-check.schema.json"))
+            .expect("generated repo-safety schema should read");
+    let checked_in_repo_safety =
+        fs::read_to_string(repo_fixture_path("schemas/repo-safety-check.schema.json"))
+            .expect("checked-in repo-safety schema should read");
+    assert_eq!(
+        generated_repo_safety.trim_end(),
+        checked_in_repo_safety.trim_end()
+    );
+
+    let generated_session_entry =
+        fs::read_to_string(schemas_dir.join("session-entry-resolve.schema.json"))
+            .expect("generated session-entry schema should read");
+    let checked_in_session_entry = fs::read_to_string(repo_fixture_path(
+        "schemas/session-entry-resolve.schema.json",
+    ))
+    .expect("checked-in session-entry schema should read");
+    assert_eq!(
+        generated_session_entry.trim_end(),
+        checked_in_session_entry.trim_end()
+    );
 }
 
 #[test]

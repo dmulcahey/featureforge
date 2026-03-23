@@ -1,11 +1,13 @@
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 use clap::Parser;
-use cli::{Command, PlanCommand};
-use diagnostics::JsonFailure;
+use cli::{Command, PlanCommand, RepoCommand};
+use diagnostics::{DiagnosticError, JsonFailure};
 
 pub mod cli;
 pub mod compat;
+pub mod config;
 pub mod contracts;
 pub mod diagnostics;
 pub mod execution;
@@ -13,6 +15,8 @@ pub mod git;
 pub mod instructions;
 pub mod output;
 pub mod paths;
+pub mod repo_safety;
+pub mod session_entry;
 pub mod workflow;
 
 pub fn run() -> std::process::ExitCode {
@@ -20,10 +24,15 @@ pub fn run() -> std::process::ExitCode {
     let cli = cli::Cli::parse_from(args);
 
     match cli.command {
+        Some(Command::Config(config_cli)) => match config_cli.command {
+            cli::config::ConfigCommand::Get(args) => emit_text(config::get(&args)),
+            cli::config::ConfigCommand::Set(args) => emit_text(config::set(&args)),
+            cli::config::ConfigCommand::List => emit_text(config::list()),
+        },
         Some(Command::Plan(plan_cli)) => match plan_cli.command {
             PlanCommand::Execution(plan_execution_cli) => {
                 match execution::state::ExecutionRuntime::discover(
-                    &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                    &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
                 ) {
                     Ok(runtime) => match plan_execution_cli.command {
                         cli::plan_execution::PlanExecutionCommand::Status(args) => {
@@ -52,8 +61,36 @@ pub fn run() -> std::process::ExitCode {
                 }
             }
         },
+        Some(Command::Repo(repo_cli)) => match repo_cli.command {
+            RepoCommand::Slug(_) => emit_text(render_slug_output(
+                &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            )),
+        },
+        Some(Command::RepoSafety(repo_safety_cli)) => {
+            match repo_safety::RepoSafetyRuntime::discover(
+                &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            ) {
+                Ok(runtime) => match repo_safety_cli.command {
+                    cli::repo_safety::RepoSafetyCommand::Check(args) => {
+                        emit_json(runtime.check(&args))
+                    }
+                    cli::repo_safety::RepoSafetyCommand::Approve(args) => {
+                        emit_json(runtime.approve(&args))
+                    }
+                },
+                Err(error) => emit_json::<serde_json::Value, JsonFailure>(Err(error.into())),
+            }
+        }
+        Some(Command::SessionEntry(session_entry_cli)) => match session_entry_cli.command {
+            cli::session_entry::SessionEntryCommand::Resolve(args) => {
+                emit_json(session_entry::resolve(&args))
+            }
+            cli::session_entry::SessionEntryCommand::Record(args) => {
+                emit_json(session_entry::record(&args))
+            }
+        },
         Some(Command::Workflow(workflow_cli)) => match workflow::status::WorkflowRuntime::discover(
-            &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         ) {
             Ok(mut runtime) => match workflow_cli.command {
                 cli::workflow::WorkflowCommand::Status(_) => emit_json(runtime.status()),
@@ -111,5 +148,40 @@ where
                 std::process::ExitCode::from(1)
             }
         },
+    }
+}
+
+fn emit_text(result: Result<String, DiagnosticError>) -> std::process::ExitCode {
+    match result {
+        Ok(text) => {
+            if !text.is_empty() {
+                print!("{text}");
+            }
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{}: {}", error.failure_class(), error.message());
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+fn render_slug_output(current_dir: &std::path::Path) -> Result<String, DiagnosticError> {
+    let identity = git::discover_slug_identity(current_dir);
+    Ok(format!(
+        "SLUG={}\nBRANCH={}\n",
+        shell_quote(&identity.repo_slug),
+        shell_quote(&identity.safe_branch)
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\"'\"'"))
     }
 }

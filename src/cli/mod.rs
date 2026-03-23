@@ -1,6 +1,10 @@
 use clap::{Args, Parser, Subcommand};
 
+pub mod config;
 pub mod plan_execution;
+pub mod repo_safety;
+pub mod session_entry;
+pub mod slug;
 pub mod workflow;
 
 #[derive(Debug, Parser)]
@@ -17,7 +21,13 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    Config(config::ConfigCli),
     Plan(PlanCli),
+    Repo(RepoCli),
+    #[command(name = "repo-safety")]
+    RepoSafety(repo_safety::RepoSafetyCli),
+    #[command(name = "session-entry")]
+    SessionEntry(session_entry::SessionEntryCli),
     Workflow(workflow::WorkflowCli),
 }
 
@@ -30,4 +40,15 @@ pub struct PlanCli {
 #[derive(Debug, Subcommand)]
 pub enum PlanCommand {
     Execution(plan_execution::PlanExecutionCli),
+}
+
+#[derive(Debug, Args)]
+pub struct RepoCli {
+    #[command(subcommand)]
+    pub command: RepoCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RepoCommand {
+    Slug(slug::SlugCli),
 }
