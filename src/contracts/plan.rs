@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::contracts::spec::{parse_spec_file, repo_relative_string, SpecDocument};
+use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::paths::RepoPath;
 
@@ -114,7 +114,8 @@ pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePla
         );
     }
 
-    let spec_requirement_ids: BTreeSet<_> = spec.requirements.iter().map(|req| req.id.clone()).collect();
+    let spec_requirement_ids: BTreeSet<_> =
+        spec.requirements.iter().map(|req| req.id.clone()).collect();
     let coverage_complete = spec_requirement_ids
         .iter()
         .all(|requirement_id| plan.coverage_matrix.contains_key(requirement_id));
@@ -130,9 +131,17 @@ pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePla
     let open_questions_resolved = plan.tasks.iter().all(|task| task.open_questions == "none");
     let task_structure_valid = true;
     let files_blocks_valid = plan.tasks.iter().all(|task| !task.files.is_empty());
-    let packet_buildable_tasks = plan.tasks.iter().filter(|task| !task.files.is_empty()).count();
+    let packet_buildable_tasks = plan
+        .tasks
+        .iter()
+        .filter(|task| !task.files.is_empty())
+        .count();
     let overlapping_write_scopes = detect_overlapping_write_scopes(&plan.tasks);
-    let contract_state = if diagnostics.is_empty() { "valid" } else { "invalid" };
+    let contract_state = if diagnostics.is_empty() {
+        "valid"
+    } else {
+        "invalid"
+    };
 
     AnalyzePlanReport {
         contract_state: contract_state.to_owned(),
@@ -255,8 +264,12 @@ fn parse_tasks(source: &str) -> Result<Vec<PlanTask>, DiagnosticError> {
 fn parse_task_chunk(chunk: &str) -> Result<PlanTask, DiagnosticError> {
     let mut lines = chunk.lines();
     let heading = lines.next().ok_or_else(|| missing_header("Task heading"))?;
-    let heading = heading.strip_prefix("## Task ").ok_or_else(|| missing_header("Task heading"))?;
-    let (number, title) = heading.split_once(": ").ok_or_else(|| missing_header("Task heading"))?;
+    let heading = heading
+        .strip_prefix("## Task ")
+        .ok_or_else(|| missing_header("Task heading"))?;
+    let (number, title) = heading
+        .split_once(": ")
+        .ok_or_else(|| missing_header("Task heading"))?;
 
     let block = lines.collect::<Vec<_>>();
     let spec_coverage = parse_csv_field(&block, "Spec Coverage")?;
@@ -267,7 +280,9 @@ fn parse_task_chunk(chunk: &str) -> Result<PlanTask, DiagnosticError> {
     let steps = parse_steps(&block)?;
 
     Ok(PlanTask {
-        number: number.parse::<u32>().map_err(|_| missing_header("Task number"))?,
+        number: number
+            .parse::<u32>()
+            .map_err(|_| missing_header("Task number"))?,
         title: title.to_owned(),
         spec_coverage,
         task_outcome,
@@ -280,7 +295,8 @@ fn parse_task_chunk(chunk: &str) -> Result<PlanTask, DiagnosticError> {
 
 fn parse_scalar_field(lines: &[&str], field: &str) -> Result<String, DiagnosticError> {
     let prefix = format!("**{field}:** ");
-    lines.iter()
+    lines
+        .iter()
         .find_map(|line| line.strip_prefix(&prefix))
         .map(ToOwned::to_owned)
         .ok_or_else(|| missing_header(field))
@@ -373,7 +389,9 @@ fn parse_steps(lines: &[&str]) -> Result<Vec<PlanStep>, DiagnosticError> {
             )
         })?;
         steps.push(PlanStep {
-            number: number.parse::<u32>().map_err(|_| missing_header("Step number"))?,
+            number: number
+                .parse::<u32>()
+                .map_err(|_| missing_header("Step number"))?,
             text: text.trim_end_matches("**").to_owned(),
         });
     }
@@ -387,10 +405,14 @@ fn detect_overlapping_write_scopes(tasks: &[PlanTask]) -> Vec<OverlappingWriteSc
             if file.action == "Test" {
                 continue;
             }
-            index.entry(file.path.clone()).or_default().push(task.number);
+            index
+                .entry(file.path.clone())
+                .or_default()
+                .push(task.number);
         }
     }
-    index.into_iter()
+    index
+        .into_iter()
         .filter_map(|(path, mut tasks)| {
             tasks.sort_unstable();
             tasks.dedup();

@@ -54,11 +54,15 @@ fn instruction_chain_respects_root_then_nested_order() {
         "# extra instruction\n",
     );
     write_file(repo_root.join("apps/AGENTS.md"), "# nested agents\n");
-    write_file(repo_root.join("apps/AGENTS.override.md"), "# nested override\n");
+    write_file(
+        repo_root.join("apps/AGENTS.override.md"),
+        "# nested override\n",
+    );
 
     let canonical_repo_root = fs::canonicalize(&repo_root).expect("repo root should canonicalize");
     let files =
-        collect_active_instruction_files(canonical_repo_root.as_path(), start_dir.as_path()).unwrap();
+        collect_active_instruction_files(canonical_repo_root.as_path(), start_dir.as_path())
+            .unwrap();
     let rel_files: Vec<_> = files
         .iter()
         .map(|path: &std::path::PathBuf| {
@@ -118,7 +122,11 @@ fn detached_head_uses_current_branch_name() {
 #[test]
 fn source_files_reject_git_cli_and_shell_eval_shortcuts() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for relative in ["src/git/mod.rs", "src/instructions/mod.rs", "src/compat/argv0.rs"] {
+    for relative in [
+        "src/git/mod.rs",
+        "src/instructions/mod.rs",
+        "src/compat/argv0.rs",
+    ] {
         let contents = fs::read_to_string(manifest_dir.join(relative))
             .expect("foundation source file should exist");
         for forbidden in [

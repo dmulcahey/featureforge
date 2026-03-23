@@ -19,7 +19,10 @@ pub fn collect_active_instruction_files(
 
     push_if_file(&mut files, repo_root.join("AGENTS.md"));
     push_if_file(&mut files, repo_root.join("AGENTS.override.md"));
-    push_if_file(&mut files, repo_root.join(".github/copilot-instructions.md"));
+    push_if_file(
+        &mut files,
+        repo_root.join(".github/copilot-instructions.md"),
+    );
 
     let instructions_dir = repo_root.join(".github/instructions");
     if instructions_dir.is_dir() {

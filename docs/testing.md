@@ -4,6 +4,7 @@ This repository has three primary automated validation surfaces plus opt-in or c
 
 - `tests/codex-runtime/*.test.mjs` for deterministic generated-skill, template, and fixture contracts
 - `tests/codex-runtime/` for install docs, generated skill preambles, helper binaries, and upgrade/migration behavior
+- `tests/differential/` for legacy-vs-canonical runtime smoke comparisons during command-surface cutovers
 - `tests/brainstorm-server/` for the brainstorming visual companion server
 
 ## Recommended Validation Order
@@ -31,6 +32,7 @@ bash tests/codex-runtime/test-superpowers-migrate-install.sh
 bash tests/codex-runtime/test-superpowers-update-check.sh
 bash tests/codex-runtime/test-superpowers-upgrade-skill.sh
 bash tests/codex-runtime/test-superpowers-slug.sh
+bash tests/differential/run_legacy_vs_rust.sh
 bash tests/brainstorm-server/test-launch-wrappers.sh
 npm ci --prefix tests/brainstorm-server
 node --test tests/brainstorm-server/server.test.js tests/brainstorm-server/ws-protocol.test.js
@@ -65,6 +67,12 @@ Run the helper timing suites sequentially. The workflow, workflow-status, plan-c
 - Required support files such as `VERSION`, `review/TODOS-format.md`, `review/checklist.md`, the shared QA assets, and `superpowers-upgrade/SKILL.md`
 - Dedicated workflow-artifact fixtures under `tests/codex-runtime/fixtures/workflow-artifacts/` cover most sequencing-contract cases, while a small number of assertions still intentionally pin checked-in repo docs
 
+### `tests/differential/`
+
+- Legacy-vs-canonical runtime smoke comparisons for the command families being cut over
+- Checked-in normalized fixture expectations for canonical workflow status output
+- Mismatch triage guidance so output differences are reviewed instead of silently blessed
+
 ### `tests/brainstorm-server/`
 
 - WebSocket protocol behavior for the brainstorming visual companion
@@ -74,6 +82,7 @@ Run the helper timing suites sequentially. The workflow, workflow-status, plan-c
 ## When To Run What
 
 - Editing any `SKILL.md.tmpl`, runtime helper, or install/readme doc: run `node --test tests/codex-runtime/*.test.mjs` plus the full `tests/codex-runtime/` shell suite
+- Editing canonical command vocabulary, workflow routing docs, or runtime wrapper references: include `bash tests/differential/run_legacy_vs_rust.sh`
 - Editing task-fidelity helpers, packet-backed execution/review prompts, or plan traceability docs: include `bash tests/codex-runtime/test-superpowers-plan-contract.sh`, `bash tests/codex-runtime/test-superpowers-plan-execution.sh`, `bash tests/codex-runtime/test-workflow-sequencing.sh`, and `bash tests/codex-runtime/test-workflow-enhancements.sh`
 - Editing `skills/using-superpowers/*`, `scripts/gen-skill-docs.mjs`, or entry-routing docs: include `bash tests/codex-runtime/test-using-superpowers-bypass.sh`, `bash tests/codex-runtime/test-superpowers-session-entry.sh`, `bash tests/codex-runtime/test-superpowers-session-entry-gate.sh`, and review the routing-gate notes below
 - Editing protected-branch repo-write guarantees, repo-writing workflow skill docs, or the repo-safety helper: include `bash tests/codex-runtime/test-superpowers-repo-safety.sh`, `bash tests/codex-runtime/test-workflow-enhancements.sh`, and `bash tests/codex-runtime/test-workflow-sequencing.sh`
@@ -124,5 +133,6 @@ That gate uses fresh runner and judge subagents against the checked-in scenario 
 - `test-superpowers-update-check.sh` covers semver comparison, snooze handling, and just-upgraded markers
 - `test-superpowers-upgrade-skill.sh` covers install-root resolution and direct upgrade-flow version resolution
 - `test-superpowers-slug.sh` covers the shared slug helper, including missing-remote fallback, detached HEAD handling, and shell-safe escaped output
+- `tests/differential/run_legacy_vs_rust.sh` covers normalized legacy-vs-canonical workflow status parity and checked-in fixture freshness for the command-surface cutover
 - `test-launch-wrappers.sh` covers the brainstorm launcher wrappers for Bash and PowerShell, including documented `C:\...` project paths
 - `tests/brainstorm-server/server.test.js` and `tests/brainstorm-server/ws-protocol.test.js` cover the brainstorming server's HTTP behavior and websocket protocol semantics

@@ -78,7 +78,10 @@ pub fn write_contract_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
     fs::create_dir_all(output_dir).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not create schema directory {}: {err}", output_dir.display()),
+            format!(
+                "Could not create schema directory {}: {err}",
+                output_dir.display()
+            ),
         )
     })?;
 
@@ -120,8 +123,14 @@ fn render_packet_markdown(
     markdown.push_str(&format!("**Plan Path:** `{}`\n", plan.path));
     markdown.push_str(&format!("**Plan Revision:** {}\n", plan.plan_revision));
     markdown.push_str(&format!("**Plan Fingerprint:** `{plan_fingerprint}`\n"));
-    markdown.push_str(&format!("**Source Spec Path:** `{}`\n", plan.source_spec_path));
-    markdown.push_str(&format!("**Source Spec Revision:** {}\n", plan.source_spec_revision));
+    markdown.push_str(&format!(
+        "**Source Spec Path:** `{}`\n",
+        plan.source_spec_path
+    ));
+    markdown.push_str(&format!(
+        "**Source Spec Revision:** {}\n",
+        plan.source_spec_revision
+    ));
     markdown.push_str(&format!(
         "**Source Spec Fingerprint:** `{source_spec_fingerprint}`\n"
     ));

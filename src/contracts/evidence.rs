@@ -23,12 +23,17 @@ pub struct ExecutionEvidence {
     pub steps: Vec<EvidenceStep>,
 }
 
-pub fn read_execution_evidence(path: impl AsRef<Path>) -> Result<ExecutionEvidence, DiagnosticError> {
+pub fn read_execution_evidence(
+    path: impl AsRef<Path>,
+) -> Result<ExecutionEvidence, DiagnosticError> {
     let path = path.as_ref();
     let source = fs::read_to_string(path).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not read execution evidence {}: {err}", path.display()),
+            format!(
+                "Could not read execution evidence {}: {err}",
+                path.display()
+            ),
         )
     })?;
     parse_execution_evidence(&source)
@@ -69,12 +74,17 @@ fn parse_steps(source: &str) -> Result<Vec<EvidenceStep>, DiagnosticError> {
         .skip(1)
         .map(|chunk| format!("### Task {chunk}"))
         .collect::<Vec<_>>();
-    chunks.into_iter().map(|chunk| parse_step_chunk(&chunk)).collect()
+    chunks
+        .into_iter()
+        .map(|chunk| parse_step_chunk(&chunk))
+        .collect()
 }
 
 fn parse_step_chunk(chunk: &str) -> Result<EvidenceStep, DiagnosticError> {
     let mut lines = chunk.lines();
-    let heading = lines.next().ok_or_else(|| missing_header("Evidence step heading"))?;
+    let heading = lines
+        .next()
+        .ok_or_else(|| missing_header("Evidence step heading"))?;
     let heading = heading
         .strip_prefix("### Task ")
         .ok_or_else(|| missing_header("Evidence step heading"))?;
@@ -97,7 +107,8 @@ fn parse_step_chunk(chunk: &str) -> Result<EvidenceStep, DiagnosticError> {
 
 fn parse_scalar_field(lines: &[&str], field: &str) -> Result<String, DiagnosticError> {
     let prefix = format!("**{field}:** ");
-    lines.iter()
+    lines
+        .iter()
         .find_map(|line| line.strip_prefix(&prefix))
         .map(ToOwned::to_owned)
         .ok_or_else(|| missing_header(field))

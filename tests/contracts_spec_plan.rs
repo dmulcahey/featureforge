@@ -28,7 +28,9 @@ fn install_fixture(repo_root: &Path, fixture_name: &str, destination_rel: &str) 
         fs::create_dir_all(parent).expect("fixture parent directories should exist");
     }
     fs::copy(
-        repo_fixture_path(&format!("tests/codex-runtime/fixtures/plan-contract/{fixture_name}")),
+        repo_fixture_path(&format!(
+            "tests/codex-runtime/fixtures/plan-contract/{fixture_name}"
+        )),
         destination,
     )
     .expect("fixture should copy");
@@ -41,8 +43,10 @@ fn install_valid_artifacts(repo_root: &Path) {
 
 #[test]
 fn parse_spec_headers_and_index_exactly() {
-    let spec = parse_spec_file(repo_fixture_path("tests/codex-runtime/fixtures/plan-contract/valid-spec.md"))
-        .expect("valid spec fixture should parse");
+    let spec = parse_spec_file(repo_fixture_path(
+        "tests/codex-runtime/fixtures/plan-contract/valid-spec.md",
+    ))
+    .expect("valid spec fixture should parse");
 
     assert_eq!(spec.workflow_state, "CEO Approved");
     assert_eq!(spec.spec_revision, 1);
@@ -89,8 +93,12 @@ fn analyze_plan_detects_stale_source_spec_linkage() {
     )
     .expect("stale plan fixture should write");
 
-    let report = analyze_plan(repo_root.join(SPEC_REL), plan_path).expect("analysis should succeed");
+    let report =
+        analyze_plan(repo_root.join(SPEC_REL), plan_path).expect("analysis should succeed");
     assert_eq!(report.contract_state, "invalid");
-    assert_eq!(report.reason_codes, vec![String::from("stale_spec_plan_linkage")]);
+    assert_eq!(
+        report.reason_codes,
+        vec![String::from("stale_spec_plan_linkage")]
+    );
     assert!(report.coverage_complete);
 }

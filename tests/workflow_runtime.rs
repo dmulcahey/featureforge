@@ -156,7 +156,10 @@ fn canonical_workflow_status_matches_helper_for_manifest_backed_missing_spec() {
         &["workflow", "status", "--refresh"],
         "rust canonical workflow status refresh for missing spec",
     );
-    let rust_json = parse_json(&rust_output, "rust canonical workflow status refresh for missing spec");
+    let rust_json = parse_json(
+        &rust_output,
+        "rust canonical workflow status refresh for missing spec",
+    );
 
     assert_eq!(rust_json["status"], helper_json["status"]);
     assert_eq!(rust_json["next_skill"], helper_json["next_skill"]);
@@ -198,13 +201,19 @@ fn canonical_workflow_status_matches_helper_for_ambiguous_specs() {
         &["workflow", "status", "--refresh"],
         "rust canonical workflow status refresh for ambiguous specs",
     );
-    let rust_json = parse_json(&rust_output, "rust canonical workflow status refresh for ambiguous specs");
+    let rust_json = parse_json(
+        &rust_output,
+        "rust canonical workflow status refresh for ambiguous specs",
+    );
 
     assert_eq!(rust_json["status"], helper_json["status"]);
     assert_eq!(rust_json["next_skill"], helper_json["next_skill"]);
     assert_eq!(rust_json["reason"], helper_json["reason"]);
     assert_eq!(rust_json["reason_codes"], helper_json["reason_codes"]);
-    assert_eq!(rust_json["spec_candidate_count"], helper_json["spec_candidate_count"]);
+    assert_eq!(
+        rust_json["spec_candidate_count"],
+        helper_json["spec_candidate_count"]
+    );
 }
 
 #[test]
@@ -217,7 +226,14 @@ fn canonical_workflow_expect_and_sync_preserve_missing_spec_semantics() {
     let expect_output = run_rust_superpowers(
         repo,
         state,
-        &["workflow", "expect", "--artifact", "spec", "--path", missing_spec],
+        &[
+            "workflow",
+            "expect",
+            "--artifact",
+            "spec",
+            "--path",
+            missing_spec,
+        ],
         "rust canonical workflow expect missing spec",
     );
     assert!(
@@ -285,7 +301,8 @@ fn workflow_status_argv0_alias_dispatches_to_canonical_tree() {
 
     let alias_dir = TempDir::new().expect("alias tempdir should be available");
     let alias_path = alias_dir.path().join("superpowers-workflow-status");
-    symlink(cargo_bin("superpowers"), &alias_path).expect("argv0 alias symlink should be creatable");
+    symlink(cargo_bin("superpowers"), &alias_path)
+        .expect("argv0 alias symlink should be creatable");
 
     let alias_output = run(
         {

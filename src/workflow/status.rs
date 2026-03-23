@@ -2,8 +2,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use schemars::schema_for;
 use schemars::JsonSchema;
+use schemars::schema_for;
 use serde::Serialize;
 
 use crate::cli::workflow::ArtifactKind;
@@ -266,7 +266,11 @@ fn resolve_route(
 
     if let Some(manifest) = &runtime.manifest {
         if !manifest.expected_spec_path.is_empty()
-            && !runtime.identity.repo_root.join(&manifest.expected_spec_path).is_file()
+            && !runtime
+                .identity
+                .repo_root
+                .join(&manifest.expected_spec_path)
+                .is_file()
         {
             return Ok(WorkflowRoute {
                 schema_version: 2,
@@ -366,7 +370,8 @@ fn resolve_route(
         .find(|plan| plan.source_spec_path == approved_spec.path);
 
     if let Some(plan) = matching_plan {
-        let report = analyze_full_contract(runtime.identity.repo_root.as_path(), approved_spec, plan);
+        let report =
+            analyze_full_contract(runtime.identity.repo_root.as_path(), approved_spec, plan);
         if plan.workflow_state == "Engineering Approved"
             && report
                 .as_ref()
@@ -381,9 +386,10 @@ fn resolve_route(
                 next_skill: String::new(),
                 spec_path: approved_spec.path.clone(),
                 plan_path: plan.path.clone(),
-                contract_state: report
-                    .as_ref()
-                    .map_or_else(|| String::from("unknown"), |report| report.contract_state.clone()),
+                contract_state: report.as_ref().map_or_else(
+                    || String::from("unknown"),
+                    |report| report.contract_state.clone(),
+                ),
                 reason_codes: vec![String::from("implementation_ready")],
                 diagnostics: Vec::new(),
                 scan_truncated: false,
@@ -521,16 +527,20 @@ pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
     fs::create_dir_all(output_dir).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not create workflow schema directory {}: {err}", output_dir.display()),
+            format!(
+                "Could not create workflow schema directory {}: {err}",
+                output_dir.display()
+            ),
         )
     })?;
 
-    let status_schema = serde_json::to_string_pretty(&schema_for!(WorkflowRoute)).map_err(|err| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            format!("Could not serialize workflow status schema: {err}"),
-        )
-    })?;
+    let status_schema =
+        serde_json::to_string_pretty(&schema_for!(WorkflowRoute)).map_err(|err| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("Could not serialize workflow status schema: {err}"),
+            )
+        })?;
     let resolve_schema =
         serde_json::to_string_pretty(&schema_for!(WorkflowRoute)).map_err(|err| {
             DiagnosticError::new(
@@ -539,13 +549,21 @@ pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
             )
         })?;
 
-    fs::write(output_dir.join("workflow-status.schema.json"), status_schema).map_err(|err| {
+    fs::write(
+        output_dir.join("workflow-status.schema.json"),
+        status_schema,
+    )
+    .map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
             format!("Could not write workflow-status schema: {err}"),
         )
     })?;
-    fs::write(output_dir.join("workflow-resolve.schema.json"), resolve_schema).map_err(|err| {
+    fs::write(
+        output_dir.join("workflow-resolve.schema.json"),
+        resolve_schema,
+    )
+    .map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
             format!("Could not write workflow-resolve schema: {err}"),
@@ -577,7 +595,9 @@ fn parse_workflow_plan_candidate(path: &Path) -> Result<WorkflowPlanCandidate, D
         )
     })?;
     let workflow_state = parse_header_value(&source, "Workflow State")?;
-    let source_spec_path = parse_header_value(&source, "Source Spec")?.trim_matches('`').to_owned();
+    let source_spec_path = parse_header_value(&source, "Source Spec")?
+        .trim_matches('`')
+        .to_owned();
     Ok(WorkflowPlanCandidate {
         path: repo_relative_path(path),
         workflow_state,

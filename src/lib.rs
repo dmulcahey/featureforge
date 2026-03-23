@@ -35,6 +35,17 @@ pub fn run() -> std::process::ExitCode {
             InstallCommand::Migrate(args) => emit_text(install::migrate(&args)),
         },
         Some(Command::Plan(plan_cli)) => match plan_cli.command {
+            PlanCommand::Contract(plan_contract_cli) => match plan_contract_cli.command {
+                cli::plan_contract::PlanContractCommand::Lint(args) => {
+                    contracts::runtime::run_lint(&args)
+                }
+                cli::plan_contract::PlanContractCommand::AnalyzePlan(args) => {
+                    contracts::runtime::run_analyze_plan(&args)
+                }
+                cli::plan_contract::PlanContractCommand::BuildTaskPacket(args) => {
+                    contracts::runtime::run_build_task_packet(&args)
+                }
+            },
             PlanCommand::Execution(plan_execution_cli) => {
                 match execution::state::ExecutionRuntime::discover(
                     &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),

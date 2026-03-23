@@ -2,6 +2,7 @@ use clap::{Args, Parser, Subcommand};
 
 pub mod config;
 pub mod install;
+pub mod plan_contract;
 pub mod plan_execution;
 pub mod repo_safety;
 pub mod session_entry;
@@ -55,6 +56,7 @@ pub struct PlanCli {
 
 #[derive(Debug, Subcommand)]
 pub enum PlanCommand {
+    Contract(plan_contract::PlanContractCli),
     Execution(plan_execution::PlanExecutionCli),
 }
 
