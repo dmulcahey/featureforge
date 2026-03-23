@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 UPDATE_BIN="$REPO_ROOT/bin/superpowers-update-check"
 CONFIG_BIN="$REPO_ROOT/bin/superpowers-config"
+RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
 
 make_install_dir() {
   local dir
@@ -20,6 +21,16 @@ make_remote_file() {
   file="$(mktemp)"
   printf '%s\n' "$1" > "$file"
   echo "$file"
+}
+
+ensure_rust_superpowers_bin() {
+  source "$HOME/.cargo/env"
+  (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
+}
+
+run_rust_update_check() {
+  ensure_rust_superpowers_bin
+  "$RUST_SUPERPOWERS_BIN" update-check "$@"
 }
 
 reset_state() {
@@ -220,3 +231,49 @@ output="$("$UPDATE_BIN")"
 assert_output "" "$output" "snoozed true upgrade"
 
 echo "superpowers-update-check smoke test passed."
+
+reset_state
+local_dir="$(make_install_dir 5.1.0)"
+remote_file="$(make_remote_file 5.2.0)"
+export SUPERPOWERS_DIR="$local_dir"
+export SUPERPOWERS_REMOTE_URL="file://$remote_file"
+output="$(run_rust_update_check)"
+assert_output "UPGRADE_AVAILABLE 5.1.0 5.2.0" "$output" "canonical rust update-check"
+canonical_cache="$STATE_DIR/update-check/last-update-check"
+if [[ ! -f "$canonical_cache" ]]; then
+  echo "Expected canonical Rust update-check to write $canonical_cache"
+  exit 1
+fi
+if [[ "$(cat "$canonical_cache")" != "UPGRADE_AVAILABLE 5.1.0 5.2.0" ]]; then
+  echo "Expected canonical Rust update-check cache to preserve helper status-line format"
+  cat "$canonical_cache"
+  exit 1
+fi
+if [[ -e "$STATE_DIR/last-update-check" ]]; then
+  echo "Expected canonical Rust update-check to stop writing the legacy root cache path"
+  cat "$STATE_DIR/last-update-check"
+  exit 1
+fi
+rm -rf "$local_dir"
+rm -f "$remote_file"
+reset_state
+
+printf '%s\n' "5.0.0" > "$STATE_DIR/just-upgraded-from"
+local_dir="$(make_install_dir 5.1.0)"
+export SUPERPOWERS_DIR="$local_dir"
+output="$(run_rust_update_check)"
+assert_output "JUST_UPGRADED 5.0.0 5.1.0" "$output" "canonical rust just-upgraded marker"
+canonical_cache="$STATE_DIR/update-check/last-update-check"
+if [[ "$(cat "$canonical_cache")" != "UP_TO_DATE 5.1.0" ]]; then
+  echo "Expected canonical Rust update-check to normalize just-upgraded cache under update-check/"
+  cat "$canonical_cache"
+  exit 1
+fi
+if [[ -e "$STATE_DIR/just-upgraded-from" ]]; then
+  echo "Expected canonical Rust update-check to consume the legacy just-upgraded marker"
+  exit 1
+fi
+rm -rf "$local_dir"
+reset_state
+
+echo "superpowers-update-check canonical Rust contract passed."

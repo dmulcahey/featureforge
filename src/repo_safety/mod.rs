@@ -44,6 +44,12 @@ pub struct RepoSafetyResult {
     pub suggested_next_skill: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalMigrationSummary {
+    pub migrated: Vec<(PathBuf, PathBuf)>,
+    pub invalidated_backups: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ApprovalRecord {
     repo_root: String,
@@ -102,6 +108,7 @@ impl RepoSafetyRuntime {
     }
 
     pub fn check(&self, args: &RepoSafetyCheckArgs) -> Result<RepoSafetyResult, DiagnosticError> {
+        let pending_migration = pending_explicit_migration(&self.state_dir);
         let intent = match args.intent.as_str() {
             "read" | "write" => args.intent.as_str(),
             _ => {
@@ -119,9 +126,11 @@ impl RepoSafetyRuntime {
         )?;
 
         if intent == "read" {
+            warn_if_pending(pending_migration);
             return Ok(self.result("allowed", intent, &scope, "", "read_allowed", ""));
         }
         if !self.protected {
+            warn_if_pending(pending_migration);
             return Ok(self.result("allowed", intent, &scope, "", "branch_not_protected", ""));
         }
 
@@ -164,11 +173,7 @@ impl RepoSafetyRuntime {
                         "superpowers:using-git-worktrees",
                     ));
                 }
-
-                if !scope.canonical_approval_path.is_file() {
-                    self.write_approval_record(&scope.canonical_approval_path, &record)?;
-                }
-
+                warn_if_pending(pending_migration);
                 Ok(self.result("allowed", intent, &scope, "", "approval_matched", ""))
             }
         }
@@ -178,6 +183,12 @@ impl RepoSafetyRuntime {
         &self,
         args: &RepoSafetyApproveArgs,
     ) -> Result<RepoSafetyResult, DiagnosticError> {
+        if pending_explicit_migration(&self.state_dir) {
+            return Err(DiagnosticError::new(
+                FailureClass::PendingMigration,
+                "Legacy repo-safety approvals must be migrated before recording new approvals. Run `superpowers install migrate`.",
+            ));
+        }
         let scope = self.prepare_scope(
             &args.stage,
             args.task_id.as_deref(),
@@ -361,6 +372,47 @@ pub fn write_repo_safety_schema(output_dir: &Path) -> Result<(), DiagnosticError
     Ok(())
 }
 
+pub fn pending_explicit_migration(state_dir: &Path) -> bool {
+    !legacy_approval_files(state_dir).is_empty()
+}
+
+pub fn migrate_legacy_approvals(
+    state_dir: &Path,
+) -> Result<ApprovalMigrationSummary, DiagnosticError> {
+    let mut migrated = Vec::new();
+    let mut invalidated_backups = Vec::new();
+
+    for legacy_path in legacy_approval_files(state_dir) {
+        let canonical_path = canonical_path_for_legacy(state_dir, &legacy_path)?;
+        if let Some(record) = read_approval_record(&legacy_path)? {
+            if let Some(parent) = canonical_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    DiagnosticError::new(
+                        FailureClass::ApprovalWriteFailed,
+                        format!(
+                            "Could not create approval directory {}: {error}",
+                            parent.display()
+                        ),
+                    )
+                })?;
+            }
+            write_json_atomic(&canonical_path, &record)?;
+            let backup_path = backup_legacy_path(state_dir, &legacy_path)?;
+            move_file(&legacy_path, &backup_path)?;
+            migrated.push((backup_path, canonical_path));
+        } else {
+            let backup_path = backup_legacy_path(state_dir, &legacy_path)?;
+            move_file(&legacy_path, &backup_path)?;
+            invalidated_backups.push(backup_path);
+        }
+    }
+
+    Ok(ApprovalMigrationSummary {
+        migrated,
+        invalidated_backups,
+    })
+}
+
 enum ApprovalLookup {
     Missing,
     Malformed,
@@ -515,6 +567,177 @@ fn read_approval_record(path: &Path) -> Result<Option<ApprovalRecord>, Diagnosti
     serde_json::from_str(&source).map(Some).or(Ok(None))
 }
 
+fn legacy_approval_files(state_dir: &Path) -> Vec<PathBuf> {
+    let root = state_dir.join("projects");
+    let mut files = Vec::new();
+    collect_json_files(&root, &mut files);
+    files.sort();
+    files
+}
+
+fn collect_json_files(path: &Path, files: &mut Vec<PathBuf>) {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_json_files(&path, files);
+        } else if path.extension().and_then(std::ffi::OsStr::to_str) == Some("json") {
+            files.push(path);
+        }
+    }
+}
+
+fn canonical_path_for_legacy(
+    state_dir: &Path,
+    legacy_path: &Path,
+) -> Result<PathBuf, DiagnosticError> {
+    let relative = legacy_path
+        .strip_prefix(state_dir.join("projects"))
+        .map_err(|_| {
+            DiagnosticError::new(
+                FailureClass::ApprovalWriteFailed,
+                format!(
+                    "Legacy approval path {} does not live under the expected projects root.",
+                    legacy_path.display()
+                ),
+            )
+        })?;
+    let mut components = relative.components();
+    let repo_slug = components
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::ApprovalWriteFailed,
+                format!(
+                    "Legacy approval path {} is missing its repo slug.",
+                    legacy_path.display()
+                ),
+            )
+        })?;
+    let user_branch = components
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::ApprovalWriteFailed,
+                format!(
+                    "Legacy approval path {} is missing its user-branch segment.",
+                    legacy_path.display()
+                ),
+            )
+        })?;
+    let user_branch = user_branch.strip_suffix("-repo-safety").ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::ApprovalWriteFailed,
+            format!(
+                "Legacy approval path {} has an invalid user-branch segment.",
+                legacy_path.display()
+            ),
+        )
+    })?;
+    let file_name = legacy_path.file_name().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::ApprovalWriteFailed,
+            format!(
+                "Legacy approval path {} is missing a file name.",
+                legacy_path.display()
+            ),
+        )
+    })?;
+
+    Ok(state_dir
+        .join("repo-safety")
+        .join("approvals")
+        .join(repo_slug)
+        .join(user_branch)
+        .join(file_name))
+}
+
+fn backup_legacy_path(state_dir: &Path, legacy_path: &Path) -> Result<PathBuf, DiagnosticError> {
+    let relative = legacy_path.strip_prefix(state_dir).map_err(|_| {
+        DiagnosticError::new(
+            FailureClass::ApprovalWriteFailed,
+            format!(
+                "Legacy approval path {} does not live under the runtime state root.",
+                legacy_path.display()
+            ),
+        )
+    })?;
+    Ok(state_dir
+        .join("install")
+        .join("backups")
+        .join(relative)
+        .with_extension("json.bak"))
+}
+
+fn move_file(source: &Path, destination: &Path) -> Result<(), DiagnosticError> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            DiagnosticError::new(
+                FailureClass::ApprovalWriteFailed,
+                format!(
+                    "Could not create backup directory {}: {error}",
+                    parent.display()
+                ),
+            )
+        })?;
+    }
+    fs::rename(source, destination).map_err(|error| {
+        DiagnosticError::new(
+            FailureClass::ApprovalWriteFailed,
+            format!(
+                "Could not move legacy approval {} to {}: {error}",
+                source.display(),
+                destination.display()
+            ),
+        )
+    })
+}
+
+fn write_json_atomic(path: &Path, record: &ApprovalRecord) -> Result<(), DiagnosticError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            DiagnosticError::new(
+                FailureClass::ApprovalWriteFailed,
+                format!(
+                    "Could not create approval directory {}: {error}",
+                    parent.display()
+                ),
+            )
+        })?;
+    }
+    let tmp_path = path.with_extension("tmp");
+    let payload = serde_json::to_string(record).map_err(|error| {
+        DiagnosticError::new(
+            FailureClass::ApprovalWriteFailed,
+            format!("Could not serialize approval record: {error}"),
+        )
+    })?;
+    fs::write(&tmp_path, payload).map_err(|error| {
+        DiagnosticError::new(
+            FailureClass::ApprovalWriteFailed,
+            format!(
+                "Could not write approval temp file {}: {error}",
+                tmp_path.display()
+            ),
+        )
+    })?;
+    fs::rename(&tmp_path, path).map_err(|error| {
+        DiagnosticError::new(
+            FailureClass::ApprovalWriteFailed,
+            format!(
+                "Could not move approval record into place {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    Ok(())
+}
+
 fn normalize_reason(raw_reason: &str) -> Result<String, DiagnosticError> {
     let normalized = normalize_whitespace(raw_reason);
     if normalized.is_empty() || normalized.len() > MAX_REASON_LENGTH {
@@ -530,6 +753,14 @@ fn current_user_name() -> String {
     env::var("USER")
         .or_else(|_| env::var("USERNAME"))
         .unwrap_or_else(|_| String::from("user"))
+}
+
+fn warn_if_pending(pending: bool) {
+    if pending {
+        eprintln!(
+            "PendingMigration: Using legacy repo-safety approvals in read-only mode. Run `superpowers install migrate` to rewrite non-rebuildable runtime state."
+        );
+    }
 }
 
 fn state_dir() -> PathBuf {

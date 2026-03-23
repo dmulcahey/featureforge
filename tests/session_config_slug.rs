@@ -248,7 +248,7 @@ fn canonical_session_entry_explicit_reentry_migrates_legacy_state_to_canonical_p
 }
 
 #[test]
-fn canonical_config_migrates_legacy_yaml_to_canonical_path() {
+fn canonical_config_reads_legacy_yaml_in_read_only_mode_until_install_migrate_runs() {
     let (_repo_dir, state_dir) = init_repo("config-migration");
     let state = state_dir.path();
     let legacy_config = state.join("config.yaml");
@@ -274,8 +274,12 @@ fn canonical_config_migrates_legacy_yaml_to_canonical_path() {
     );
     assert_eq!(String::from_utf8_lossy(&rust_get.stdout).trim(), "false");
     assert!(
-        canonical_config.is_file(),
-        "canonical config migration should create the stable config path"
+        String::from_utf8_lossy(&rust_get.stderr).contains("PendingMigration"),
+        "canonical config get should warn when explicit migration is still pending"
+    );
+    assert!(
+        !canonical_config.exists(),
+        "read-only config access should not silently rewrite legacy config state"
     );
 
     let rust_list = run_rust_superpowers(None, state, &["config", "list"], "canonical config list");
@@ -286,6 +290,10 @@ fn canonical_config_migrates_legacy_yaml_to_canonical_path() {
     let listing = String::from_utf8_lossy(&rust_list.stdout);
     assert!(listing.contains("update_check: false"));
     assert!(listing.contains("superpowers_contributor: true"));
+    assert!(
+        String::from_utf8_lossy(&rust_list.stderr).contains("PendingMigration"),
+        "canonical config list should warn when explicit migration is still pending"
+    );
 }
 
 #[test]

@@ -230,7 +230,7 @@ fn canonical_repo_safety_check_matches_helper_for_protected_branch_block() {
 }
 
 #[test]
-fn canonical_repo_safety_migrates_legacy_approval_record_to_canonical_path() {
+fn canonical_repo_safety_reads_legacy_approval_with_warning_until_install_migrate_runs() {
     let remote_url = "https://example.com/acme/repo-safety.git";
     let (repo_dir, state_dir) = init_repo("repo-safety-migration", "main", remote_url);
     let repo = repo_dir.path();
@@ -308,8 +308,12 @@ fn canonical_repo_safety_migrates_legacy_approval_record_to_canonical_path() {
         Some(canonical_path.to_string_lossy().as_ref())
     );
     assert!(
-        canonical_path.is_file(),
-        "canonical repo-safety check should materialize migrated approval state"
+        !canonical_path.exists(),
+        "repo-safety check should not silently rewrite legacy approvals"
+    );
+    assert!(
+        String::from_utf8_lossy(&rust_output.stderr).contains("PendingMigration"),
+        "repo-safety check should warn when legacy approvals still need explicit migration"
     );
 }
 

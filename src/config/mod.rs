@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use crate::cli::config::{ConfigGetArgs, ConfigSetArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 
-const LEGACY_CONFIG_FILE: &str = "config.yaml";
-const CANONICAL_CONFIG_FILE: &str = "config/config.yaml";
-const CONFIG_BACKUP_FILE: &str = "config.yaml.bak";
+pub const LEGACY_CONFIG_FILE: &str = "config.yaml";
+pub const CANONICAL_CONFIG_FILE: &str = "config/config.yaml";
+pub const CONFIG_BACKUP_FILE: &str = "config.yaml.bak";
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct ConfigValues {
@@ -15,12 +15,33 @@ struct ConfigValues {
     superpowers_contributor: Option<bool>,
 }
 
+#[derive(Debug, Clone)]
+struct ConfigAccess {
+    values: ConfigValues,
+    pending_migration: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccessMode {
+    ReadOnly,
+    Mutating,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigMigration {
+    pub migrated: bool,
+    pub backup_created: bool,
+    pub canonical_path: PathBuf,
+    pub backup_path: PathBuf,
+}
+
 pub fn get(args: &ConfigGetArgs) -> Result<String, DiagnosticError> {
     let state_dir = state_dir();
-    let config = load_config(&state_dir)?;
+    let access = load_config(&state_dir, AccessMode::ReadOnly)?;
+    warn_if_pending(&access);
     let value = match normalize_key(&args.key)?.as_str() {
-        "update_check" => config.update_check.map(render_bool),
-        "superpowers_contributor" => config.superpowers_contributor.map(render_bool),
+        "update_check" => access.values.update_check.map(render_bool),
+        "superpowers_contributor" => access.values.superpowers_contributor.map(render_bool),
         _ => None,
     };
     Ok(value.unwrap_or_default())
@@ -28,42 +49,49 @@ pub fn get(args: &ConfigGetArgs) -> Result<String, DiagnosticError> {
 
 pub fn set(args: &ConfigSetArgs) -> Result<String, DiagnosticError> {
     let state_dir = state_dir();
-    let mut config = load_config(&state_dir)?;
+    let mut access = load_config(&state_dir, AccessMode::Mutating)?;
     let key = normalize_key(&args.key)?;
     let value = parse_bool(&args.value)?;
 
     match key.as_str() {
-        "update_check" => config.update_check = Some(value),
-        "superpowers_contributor" => config.superpowers_contributor = Some(value),
+        "update_check" => access.values.update_check = Some(value),
+        "superpowers_contributor" => access.values.superpowers_contributor = Some(value),
         _ => {}
     }
 
-    write_config(&state_dir.join(CANONICAL_CONFIG_FILE), &config)?;
+    write_config(&state_dir.join(CANONICAL_CONFIG_FILE), &access.values)?;
     Ok(String::new())
 }
 
 pub fn list() -> Result<String, DiagnosticError> {
     let state_dir = state_dir();
-    let config = load_config(&state_dir)?;
-    Ok(render_config(&config))
+    let access = load_config(&state_dir, AccessMode::ReadOnly)?;
+    warn_if_pending(&access);
+    Ok(render_config(&access.values))
 }
 
-fn state_dir() -> PathBuf {
-    env::var_os("SUPERPOWERS_STATE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
-        .unwrap_or_else(|| PathBuf::from(".superpowers"))
+pub fn read_update_check_preference(state_dir: &Path) -> Result<Option<bool>, DiagnosticError> {
+    let access = load_config(state_dir, AccessMode::ReadOnly)?;
+    warn_if_pending(&access);
+    Ok(access.values.update_check)
 }
 
-fn load_config(state_dir: &Path) -> Result<ConfigValues, DiagnosticError> {
+pub fn pending_explicit_migration(state_dir: &Path) -> bool {
+    state_dir.join(LEGACY_CONFIG_FILE).is_file() && !state_dir.join(CANONICAL_CONFIG_FILE).is_file()
+}
+
+pub fn migrate_explicit(state_dir: &Path) -> Result<ConfigMigration, DiagnosticError> {
     let canonical_path = state_dir.join(CANONICAL_CONFIG_FILE);
-    if canonical_path.is_file() {
-        return parse_config_file(&canonical_path);
-    }
-
+    let backup_path = state_dir.join(CONFIG_BACKUP_FILE);
     let legacy_path = state_dir.join(LEGACY_CONFIG_FILE);
+
     if !legacy_path.is_file() {
-        return Ok(ConfigValues::default());
+        return Ok(ConfigMigration {
+            migrated: false,
+            backup_created: false,
+            canonical_path,
+            backup_path,
+        });
     }
 
     let contents = fs::read_to_string(&legacy_path).map_err(|error| {
@@ -76,14 +104,86 @@ fn load_config(state_dir: &Path) -> Result<ConfigValues, DiagnosticError> {
         )
     })?;
     let parsed = parse_config_source(&contents)?;
-
-    let backup_path = state_dir.join(CONFIG_BACKUP_FILE);
-    if !backup_path.exists() {
-        write_atomic(&backup_path, &contents)?;
-    }
+    let backup_created = ensure_backup(&backup_path, &contents)?;
     write_config(&canonical_path, &parsed)?;
+    fs::remove_file(&legacy_path).map_err(|error| {
+        DiagnosticError::new(
+            FailureClass::InvalidConfigFormat,
+            format!(
+                "Could not remove the legacy config file {} after migration: {error}",
+                legacy_path.display()
+            ),
+        )
+    })?;
 
-    Ok(parsed)
+    Ok(ConfigMigration {
+        migrated: true,
+        backup_created,
+        canonical_path,
+        backup_path,
+    })
+}
+
+pub fn state_dir() -> PathBuf {
+    env::var_os("SUPERPOWERS_STATE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
+        .unwrap_or_else(|| PathBuf::from(".superpowers"))
+}
+
+fn load_config(state_dir: &Path, access_mode: AccessMode) -> Result<ConfigAccess, DiagnosticError> {
+    let canonical_path = state_dir.join(CANONICAL_CONFIG_FILE);
+    if canonical_path.is_file() {
+        return Ok(ConfigAccess {
+            values: parse_config_file(&canonical_path)?,
+            pending_migration: false,
+        });
+    }
+
+    let legacy_path = state_dir.join(LEGACY_CONFIG_FILE);
+    if !legacy_path.is_file() {
+        return Ok(ConfigAccess {
+            values: ConfigValues::default(),
+            pending_migration: false,
+        });
+    }
+
+    if access_mode == AccessMode::Mutating {
+        return Err(pending_migration_error(
+            "Legacy config must be migrated before mutating config state. Run `superpowers install migrate`.",
+        ));
+    }
+
+    let contents = fs::read_to_string(&legacy_path).map_err(|error| {
+        DiagnosticError::new(
+            FailureClass::InvalidConfigFormat,
+            format!(
+                "Could not read the legacy config file {}: {error}",
+                legacy_path.display()
+            ),
+        )
+    })?;
+
+    Ok(ConfigAccess {
+        values: parse_config_source(&contents)?,
+        pending_migration: true,
+    })
+}
+
+fn warn_if_pending(access: &ConfigAccess) {
+    if access.pending_migration {
+        eprintln!(
+            "PendingMigration: Using legacy config in read-only mode. Run `superpowers install migrate` to rewrite non-rebuildable runtime state."
+        );
+    }
+}
+
+fn ensure_backup(path: &Path, contents: &str) -> Result<bool, DiagnosticError> {
+    if path.exists() {
+        return Ok(false);
+    }
+    write_atomic(path, contents)?;
+    Ok(true)
 }
 
 fn parse_config_file(path: &Path) -> Result<ConfigValues, DiagnosticError> {
@@ -211,4 +311,8 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), DiagnosticError> {
 
 fn invalid_config(message: &str) -> DiagnosticError {
     DiagnosticError::new(FailureClass::InvalidConfigFormat, message)
+}
+
+fn pending_migration_error(message: &str) -> DiagnosticError {
+    DiagnosticError::new(FailureClass::PendingMigration, message)
 }

@@ -1,10 +1,12 @@
 use clap::{Args, Parser, Subcommand};
 
 pub mod config;
+pub mod install;
 pub mod plan_execution;
 pub mod repo_safety;
 pub mod session_entry;
 pub mod slug;
+pub mod update_check;
 pub mod workflow;
 
 #[derive(Debug, Parser)]
@@ -22,13 +24,27 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Config(config::ConfigCli),
+    Install(InstallCli),
     Plan(PlanCli),
     Repo(RepoCli),
     #[command(name = "repo-safety")]
     RepoSafety(repo_safety::RepoSafetyCli),
     #[command(name = "session-entry")]
     SessionEntry(session_entry::SessionEntryCli),
+    #[command(name = "update-check")]
+    UpdateCheck(update_check::UpdateCheckCli),
     Workflow(workflow::WorkflowCli),
+}
+
+#[derive(Debug, Args)]
+pub struct InstallCli {
+    #[command(subcommand)]
+    pub command: InstallCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InstallCommand {
+    Migrate(install::InstallMigrateArgs),
 }
 
 #[derive(Debug, Args)]

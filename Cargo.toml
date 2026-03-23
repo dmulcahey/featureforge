@@ -19,7 +19,7 @@ gix = "0.81.0"
 insta = "1"
 jiff = "0.2.23"
 proptest = "1.10.0"
-reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "json", "rustls"] }
 schemars = "1.2.1"
 semver = "1"
 serde = { version = "1", features = ["derive"] }
@@ -32,6 +32,7 @@ thiserror = "2.0.18"
 clap = { workspace = true }
 gix = { workspace = true }
 jiff = { workspace = true }
+reqwest = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

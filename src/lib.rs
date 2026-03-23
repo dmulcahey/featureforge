@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::Parser;
-use cli::{Command, PlanCommand, RepoCommand};
+use cli::{Command, InstallCommand, PlanCommand, RepoCommand};
 use diagnostics::{DiagnosticError, JsonFailure};
 
 pub mod cli;
@@ -12,11 +12,13 @@ pub mod contracts;
 pub mod diagnostics;
 pub mod execution;
 pub mod git;
+pub mod install;
 pub mod instructions;
 pub mod output;
 pub mod paths;
 pub mod repo_safety;
 pub mod session_entry;
+pub mod update_check;
 pub mod workflow;
 
 pub fn run() -> std::process::ExitCode {
@@ -28,6 +30,9 @@ pub fn run() -> std::process::ExitCode {
             cli::config::ConfigCommand::Get(args) => emit_text(config::get(&args)),
             cli::config::ConfigCommand::Set(args) => emit_text(config::set(&args)),
             cli::config::ConfigCommand::List => emit_text(config::list()),
+        },
+        Some(Command::Install(install_cli)) => match install_cli.command {
+            InstallCommand::Migrate(args) => emit_text(install::migrate(&args)),
         },
         Some(Command::Plan(plan_cli)) => match plan_cli.command {
             PlanCommand::Execution(plan_execution_cli) => {
@@ -89,6 +94,7 @@ pub fn run() -> std::process::ExitCode {
                 emit_json(session_entry::record(&args))
             }
         },
+        Some(Command::UpdateCheck(args)) => emit_text(update_check::check(&args)),
         Some(Command::Workflow(workflow_cli)) => match workflow::status::WorkflowRuntime::discover(
             &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         ) {
@@ -140,7 +146,7 @@ where
         },
         Err(error) => match serde_json::to_string(&error.into()) {
             Ok(json) => {
-                println!("{json}");
+                eprintln!("{json}");
                 std::process::ExitCode::from(1)
             }
             Err(serialize_error) => {

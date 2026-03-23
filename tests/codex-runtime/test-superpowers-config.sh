@@ -11,10 +11,6 @@ trap 'rm -rf "$STATE_DIR"' EXIT
 export SUPERPOWERS_STATE_DIR="$STATE_DIR"
 
 ensure_rust_superpowers_bin() {
-  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
-    return 0
-  fi
-
   source "$HOME/.cargo/env"
   (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
 }
@@ -22,6 +18,19 @@ ensure_rust_superpowers_bin() {
 run_rust_config() {
   ensure_rust_superpowers_bin
   "$RUST_SUPERPOWERS_BIN" config "$@"
+}
+
+run_rust_config_with_stderr() {
+  local stdout_file stderr_file status=0
+  stdout_file="$(mktemp)"
+  stderr_file="$(mktemp)"
+  ensure_rust_superpowers_bin
+  "$RUST_SUPERPOWERS_BIN" config "$@" >"$stdout_file" 2>"$stderr_file" || status=$?
+  printf '%s\n' "$status"
+  cat "$stdout_file"
+  printf '__STDERR__\n'
+  cat "$stderr_file"
+  rm -f "$stdout_file" "$stderr_file"
 }
 
 run_rust_config_fails() {
@@ -89,10 +98,14 @@ if [[ "$value" != "false" ]]; then
   echo "Expected canonical config migration to preserve update_check=false, got: $value"
   exit 1
 fi
+if [[ ! "$(run_rust_config_with_stderr get update_check)" == *"PendingMigration"* ]]; then
+  echo "Expected canonical Rust config get to warn about pending explicit migration"
+  exit 1
+fi
 
 canonical_config="$STATE_DIR/config/config.yaml"
-if [[ ! -f "$canonical_config" ]]; then
-  echo "Expected canonical config migration to create $canonical_config"
+if [[ -f "$canonical_config" ]]; then
+  echo "Expected canonical Rust config get to avoid rewriting legacy config state"
   exit 1
 fi
 
@@ -101,6 +114,7 @@ if ! printf '%s\n' "$listing" | rg -q '^superpowers_contributor: true$'; then
   echo "Expected canonical config listing to preserve migrated superpowers_contributor: true"
   exit 1
 fi
+run_rust_config_fails PendingMigration set update_check true
 
 cat > "$legacy_config" <<'EOF'
 update_check:

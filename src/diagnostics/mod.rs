@@ -18,13 +18,16 @@ pub enum FailureClass {
     InvalidStepTransition,
     MalformedExecutionState,
     MissedReopenRequired,
+    PendingMigration,
     PlanNotExecutionReady,
     PromptPayloadBuildFailed,
     QaArtifactNotFresh,
     RecommendAfterExecutionStart,
     ReleaseArtifactNotFresh,
+    InstallMigrationFailed,
     StaleExecutionEvidence,
     StaleMutation,
+    UpdateCheckStateFailed,
     WorkspaceNotSafe,
 }
 
@@ -46,13 +49,16 @@ impl FailureClass {
             Self::InvalidStepTransition => "InvalidStepTransition",
             Self::MalformedExecutionState => "MalformedExecutionState",
             Self::MissedReopenRequired => "MissedReopenRequired",
+            Self::PendingMigration => "PendingMigration",
             Self::PlanNotExecutionReady => "PlanNotExecutionReady",
             Self::PromptPayloadBuildFailed => "PromptPayloadBuildFailed",
             Self::QaArtifactNotFresh => "QaArtifactNotFresh",
             Self::RecommendAfterExecutionStart => "RecommendAfterExecutionStart",
             Self::ReleaseArtifactNotFresh => "ReleaseArtifactNotFresh",
+            Self::InstallMigrationFailed => "InstallMigrationFailed",
             Self::StaleExecutionEvidence => "StaleExecutionEvidence",
             Self::StaleMutation => "StaleMutation",
+            Self::UpdateCheckStateFailed => "UpdateCheckStateFailed",
             Self::WorkspaceNotSafe => "WorkspaceNotSafe",
         }
     }

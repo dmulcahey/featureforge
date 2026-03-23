@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MIGRATE_BIN="$REPO_ROOT/bin/superpowers-migrate-install"
+RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
+REPO_SAFETY_BIN="$REPO_ROOT/bin/superpowers-repo-safety"
 
 make_source_repo() {
   local dir="$1"
@@ -20,6 +22,21 @@ make_source_repo() {
   printf '1.0.0\n' > "$dir/VERSION"
   git -C "$dir" add VERSION bin/superpowers-update-check bin/superpowers-config agents/code-reviewer.md .codex/agents/code-reviewer.toml
   git -C "$dir" commit -m "init" >/dev/null 2>&1
+}
+
+make_state_repo() {
+  local dir="$1"
+  local remote_url="$2"
+  local branch="$3"
+
+  git init "$dir" >/dev/null 2>&1
+  git -C "$dir" config user.name "Superpowers Test"
+  git -C "$dir" config user.email "superpowers-tests@example.com"
+  printf '# state repo\n' > "$dir/README.md"
+  git -C "$dir" add README.md
+  git -C "$dir" commit -m "init" >/dev/null 2>&1
+  git -C "$dir" checkout -B "$branch" >/dev/null 2>&1
+  git -C "$dir" remote add origin "$remote_url"
 }
 
 make_install_repo() {
@@ -58,6 +75,29 @@ run_migrate() {
     SUPERPOWERS_COPILOT_ROOT="$copilot_root" \
     SUPERPOWERS_REPO_URL="$repo_url" \
     "$MIGRATE_BIN"
+}
+
+ensure_rust_superpowers_bin() {
+  source "$HOME/.cargo/env"
+  (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
+}
+
+run_rust_migrate() {
+  local home_dir="$1"
+  local shared_root="$2"
+  local codex_root="$3"
+  local copilot_root="$4"
+  local repo_url="$5"
+
+  ensure_rust_superpowers_bin
+  HOME="$home_dir" \
+    SUPERPOWERS_STATE_DIR="$home_dir/.superpowers" \
+    SUPERPOWERS_SHARED_ROOT="$shared_root" \
+    SUPERPOWERS_CODEX_ROOT="$codex_root" \
+    SUPERPOWERS_COPILOT_ROOT="$copilot_root" \
+    SUPERPOWERS_REPO_URL="$repo_url" \
+    SUPERPOWERS_MIGRATE_STAMP="20260323-140000" \
+    "$RUST_SUPERPOWERS_BIN" install migrate
 }
 
 require_contains() {
@@ -139,6 +179,60 @@ require_link_target() {
     echo "Expected $path to point to $expected, got $resolved"
     exit 1
   fi
+}
+
+current_user_name() {
+  if [[ -n "${USER:-}" ]]; then
+    printf '%s\n' "$USER"
+  elif [[ -n "${USERNAME:-}" ]]; then
+    printf '%s\n' "$USERNAME"
+  else
+    printf '%s\n' "user"
+  fi
+}
+
+repo_slug_from_remote() {
+  local remote_url="$1"
+  remote_url="${remote_url%.git}"
+  printf '%s\n' "$remote_url" | awk -F/ '{print $(NF-1) "-" $NF}'
+}
+
+task_hash() {
+  local stage="$1"
+  local task_id="$2"
+  printf '%s\n%s' "$stage" "$task_id" | shasum -a 256 | awk '{print substr($1,1,16)}'
+}
+
+canonical_approval_path() {
+  local state_dir="$1"
+  local remote_url="$2"
+  local branch="$3"
+  local stage="$4"
+  local task_id="$5"
+  local slug user hash
+
+  slug="$(repo_slug_from_remote "$remote_url")"
+  user="$(current_user_name)"
+  hash="$(task_hash "$stage" "$task_id")"
+  printf '%s\n' "$state_dir/repo-safety/approvals/$slug/$user-$branch/$hash.json"
+}
+
+seed_legacy_approval() {
+  local repo_dir="$1"
+  local state_dir="$2"
+  local stage="$3"
+  local task_id="$4"
+  (
+    cd "$repo_dir"
+    SUPERPOWERS_STATE_DIR="$state_dir" \
+      "$REPO_SAFETY_BIN" approve \
+        --stage "$stage" \
+        --task-id "$task_id" \
+        --reason "User explicitly approved this write." \
+        --path docs/superpowers/specs/example.md \
+        --write-target execution-task-slice \
+        >/dev/null
+  )
 }
 
 tmp_root="$(mktemp -d)"
@@ -285,3 +379,39 @@ if [[ "$ambiguous_output" != *"manual reconciliation"* ]]; then
 fi
 
 echo "superpowers-migrate-install regression test passed."
+
+home_dir="$tmp_root/canonical-rust-home"
+shared_root="$home_dir/.superpowers/install"
+codex_root="$home_dir/.codex/superpowers"
+copilot_root="$home_dir/.copilot/superpowers"
+state_dir="$home_dir/.superpowers"
+mkdir -p "$home_dir" "$state_dir" "$(dirname "$codex_root")"
+make_install_repo "$codex_root" "4.9.0"
+cat > "$state_dir/config.yaml" <<'EOF'
+update_check: false
+EOF
+state_repo="$tmp_root/install-state-repo"
+remote_url="https://example.com/acme/install-migrate.git"
+make_state_repo "$state_repo" "$remote_url" "main"
+seed_legacy_approval "$state_repo" "$state_dir" "superpowers:executing-plans" "task-7"
+canonical_output="$(run_rust_migrate "$home_dir" "$shared_root" "$codex_root" "$copilot_root" "$source_repo")"
+require_valid_install "$shared_root"
+require_link_target "$codex_root" "$shared_root"
+if [[ ! -f "$state_dir/config/config.yaml" ]]; then
+  echo "Expected canonical Rust install migrate to create $state_dir/config/config.yaml"
+  exit 1
+fi
+if [[ ! -f "$state_dir/config.yaml.bak" ]]; then
+  echo "Expected canonical Rust install migrate to back up the legacy config"
+  exit 1
+fi
+canonical_approval="$(canonical_approval_path "$state_dir" "$remote_url" "main" "superpowers:executing-plans" "task-7")"
+if [[ ! -f "$canonical_approval" ]]; then
+  echo "Expected canonical Rust install migrate to rewrite the legacy approval into $canonical_approval"
+  exit 1
+fi
+require_contains "$canonical_output" "Migrated config"
+require_contains "$canonical_output" "Migrated repo-safety approval"
+require_contains "$canonical_output" "Shared install ready"
+
+echo "superpowers-migrate-install canonical Rust contract passed."

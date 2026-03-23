@@ -7,7 +7,8 @@ HELPER_BIN="$REPO_ROOT/bin/superpowers-repo-safety"
 RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
 STATE_DIR="$(mktemp -d)"
 REPO_DIR="$(mktemp -d)"
-trap 'rm -rf "$STATE_DIR" "$REPO_DIR"' EXIT
+LAST_RUST_STDERR_FILE="$(mktemp)"
+trap 'rm -rf "$STATE_DIR" "$REPO_DIR"; rm -f "$LAST_RUST_STDERR_FILE"' EXIT
 export SUPERPOWERS_STATE_DIR="$STATE_DIR"
 
 USER_NAME="$(whoami 2>/dev/null || echo user)"
@@ -20,10 +21,6 @@ require_helper() {
 }
 
 ensure_rust_superpowers_bin() {
-  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
-    return 0
-  fi
-
   source "$HOME/.cargo/env"
   (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
 }
@@ -133,16 +130,23 @@ run_rust_json_command() {
   local repo_dir="$1"
   local label="$2"
   shift 2
-  local output
+  local stdout_file stderr_file output
   local status=0
 
   ensure_rust_superpowers_bin
-  output="$(cd "$repo_dir" && "$RUST_SUPERPOWERS_BIN" repo-safety "$@" 2>&1)" || status=$?
+  stdout_file="$(mktemp)"
+  stderr_file="$(mktemp)"
+  (cd "$repo_dir" && "$RUST_SUPERPOWERS_BIN" repo-safety "$@" >"$stdout_file" 2>"$stderr_file") || status=$?
   if [[ $status -ne 0 ]]; then
     echo "Expected canonical Rust repo-safety command to succeed for: $label"
-    printf '%s\n' "$output"
+    cat "$stdout_file"
+    cat "$stderr_file"
+    rm -f "$stdout_file" "$stderr_file"
     exit 1
   fi
+  cat "$stderr_file" > "$LAST_RUST_STDERR_FILE"
+  output="$(cat "$stdout_file")"
+  rm -f "$stdout_file" "$stderr_file"
   printf '%s\n' "$output"
 }
 
@@ -443,7 +447,7 @@ run_canonical_rust_protected_branch_block_matches_helper() {
   assert_json_equals "$rust_output" "approval_path" "$expected_path" "canonical rust protected branch block"
 }
 
-run_canonical_rust_migrates_legacy_approval_record() {
+run_canonical_rust_reads_legacy_approval_with_warning_until_install_migrate() {
   local repo="$REPO_DIR/rust-approval-migration"
   local rust_output
   local expected_path
@@ -455,8 +459,13 @@ run_canonical_rust_migrates_legacy_approval_record() {
   rust_output="$(run_rust_json_command "$repo" "canonical rust approval migration" check --intent write --stage superpowers:brainstorming --task-id spec-task --path docs/superpowers/specs/new-spec.md --write-target spec-artifact-write)"
   assert_json_equals "$rust_output" "outcome" "allowed" "canonical rust approval migration"
   assert_json_equals "$rust_output" "approval_path" "$expected_path" "canonical rust approval migration"
-  if [[ ! -f "$expected_path" ]]; then
-    echo "Expected canonical Rust repo-safety check to migrate approval into $expected_path"
+  if [[ -f "$expected_path" ]]; then
+    echo "Expected canonical Rust repo-safety check to leave approval rewrites to install migrate"
+    exit 1
+  fi
+  if [[ "$(cat "$LAST_RUST_STDERR_FILE")" != *"PendingMigration"* ]]; then
+    echo "Expected canonical Rust repo-safety check to warn about pending approval migration"
+    cat "$LAST_RUST_STDERR_FILE"
     exit 1
   fi
 }
@@ -478,7 +487,7 @@ run_whitespace_only_task_id_fails_closed
 run_windows_absolute_path_fails_closed
 run_hot_path_uses_deterministic_approval_file
 run_canonical_rust_protected_branch_block_matches_helper
-run_canonical_rust_migrates_legacy_approval_record
+run_canonical_rust_reads_legacy_approval_with_warning_until_install_migrate
 require_absent_pattern "$HELPER_BIN" 'find .*repo-safety'
 
 echo "repo-safety helper regression test passed."
