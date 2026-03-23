@@ -2,6 +2,7 @@ use clap::Parser;
 
 pub mod cli;
 pub mod compat;
+pub mod contracts;
 pub mod diagnostics;
 pub mod git;
 pub mod instructions;

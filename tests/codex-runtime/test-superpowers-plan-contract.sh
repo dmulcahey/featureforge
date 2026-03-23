@@ -813,6 +813,35 @@ test_persisted_packet_cache_prunes_old_entries() {
   fi
 }
 
+test_contract_schema_files_exist() {
+  local analyze_schema="$REPO_ROOT/schemas/plan-contract-analyze.schema.json"
+  local packet_schema="$REPO_ROOT/schemas/plan-contract-packet.schema.json"
+
+  if [[ ! -f "$analyze_schema" ]]; then
+    echo "Expected analyze schema to exist: $analyze_schema"
+    exit 1
+  fi
+  if [[ ! -f "$packet_schema" ]]; then
+    echo "Expected packet schema to exist: $packet_schema"
+    exit 1
+  fi
+
+  node - <<'NODE' "$analyze_schema" "$packet_schema"
+const fs = require("fs");
+const [analyzePath, packetPath] = process.argv.slice(2);
+const analyze = JSON.parse(fs.readFileSync(analyzePath, "utf8"));
+const packet = JSON.parse(fs.readFileSync(packetPath, "utf8"));
+if (analyze.title !== "AnalyzePlanReport") {
+  process.stderr.write(`Expected AnalyzePlanReport title, got ${analyze.title}\n`);
+  process.exit(1);
+}
+if (packet.title !== "TaskPacket") {
+  process.stderr.write(`Expected TaskPacket title, got ${packet.title}\n`);
+  process.exit(1);
+}
+NODE
+}
+
 require_helper
 require_fixtures
 init_repo "$REPO_DIR"
@@ -852,5 +881,6 @@ test_runtime_integration_repo_lint_stays_fast
 test_runtime_integration_repo_analyze_plan_stays_fast
 test_lint_cache_invalidates_after_plan_change
 test_persisted_packet_cache_prunes_old_entries
+test_contract_schema_files_exist
 
 echo "Plan-contract helper regression test passed."
