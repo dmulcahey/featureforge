@@ -1,8 +1,8 @@
 # Runtime Differential Harness
 
-This directory hosts the legacy-vs-Rust runtime smoke harness for canonical workflow routing.
+This directory hosts the legacy-snapshot-versus-canonical runtime smoke harness for workflow routing.
 
-- The harness compares legacy `bin/superpowers-workflow-status` output with canonical `superpowers workflow status --refresh`.
+- The harness compares a checked-in legacy workflow-status snapshot with canonical `featureforge workflow status --refresh`.
 - Any mismatch is a triage event, not a silent auto-fix.
 - The expected normalized result lives in `tests/fixtures/differential/workflow-status.json`.
 
