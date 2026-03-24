@@ -12,9 +12,9 @@ pub mod workflow;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "superpowers",
+    name = "featureforge",
     version,
-    about = "Unified Rust runtime for the Superpowers workflow toolkit",
+    about = "Unified Rust runtime for the FeatureForge workflow toolkit",
     long_about = None
 )]
 pub struct Cli {

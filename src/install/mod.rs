@@ -76,20 +76,20 @@ pub fn migrate(_: &InstallMigrateArgs) -> Result<String, DiagnosticError> {
 fn discover_paths() -> Result<InstallPaths, DiagnosticError> {
     let home_dir = superpowers_home_dir().unwrap_or_else(|| PathBuf::from("."));
     let state_dir = superpowers_state_dir();
-    let shared_root = env::var_os("SUPERPOWERS_SHARED_ROOT")
+    let shared_root = env::var_os("FEATUREFORGE_SHARED_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| state_dir.join("install"));
-    let codex_root = env::var_os("SUPERPOWERS_CODEX_ROOT")
+    let codex_root = env::var_os("FEATUREFORGE_CODEX_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir.join(".codex").join("superpowers"));
-    let copilot_root = env::var_os("SUPERPOWERS_COPILOT_ROOT")
+        .unwrap_or_else(|| home_dir.join(".codex").join("featureforge"));
+    let copilot_root = env::var_os("FEATUREFORGE_COPILOT_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir.join(".copilot").join("superpowers"));
+        .unwrap_or_else(|| home_dir.join(".copilot").join("featureforge"));
     let source_repo = resolve_local_source_repo(
-        env::var("SUPERPOWERS_REPO_URL")
-            .unwrap_or_else(|_| String::from("https://github.com/dmulcahey/superpowers.git")),
+        env::var("FEATUREFORGE_REPO_URL")
+            .unwrap_or_else(|_| String::from("https://github.com/dmulcahey/featureforge.git")),
     )?;
-    let stamp = env::var("SUPERPOWERS_MIGRATE_STAMP").unwrap_or_else(|_| {
+    let stamp = env::var("FEATUREFORGE_MIGRATE_STAMP").unwrap_or_else(|_| {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -171,19 +171,15 @@ fn resolve_prebuilt_runtime(
 
     let source_binary_path = source_repo.join(&binary_rel);
     let source_checksum_path = source_repo.join(&checksum_rel);
-    let install_name = source_binary_path
-        .file_name()
+    let install_name = if source_binary_path
+        .extension()
         .and_then(std::ffi::OsStr::to_str)
-        .ok_or_else(|| {
-            DiagnosticError::new(
-                FailureClass::InstallMigrationFailed,
-                format!(
-                    "Checked-in prebuilt manifest entry {} must resolve to a concrete binary filename.",
-                    binary_rel
-                ),
-            )
-        })?
-        .to_owned();
+        == Some("exe")
+    {
+        String::from("featureforge.exe")
+    } else {
+        String::from("featureforge")
+    };
 
     verify_prebuilt_checksum(&source_binary_path, &source_checksum_path)?;
 
@@ -197,12 +193,12 @@ fn resolve_prebuilt_runtime(
 }
 
 fn resolve_host_target() -> Result<String, DiagnosticError> {
-    if let Some(override_target) = env::var_os("SUPERPOWERS_HOST_TARGET") {
+    if let Some(override_target) = env::var_os("FEATUREFORGE_HOST_TARGET") {
         let normalized = override_target.to_string_lossy().trim().to_owned();
         if normalized.is_empty() {
             return Err(DiagnosticError::new(
                 FailureClass::InstallMigrationFailed,
-                "SUPERPOWERS_HOST_TARGET may not be blank.",
+                "FEATUREFORGE_HOST_TARGET may not be blank.",
             ));
         }
         return Ok(normalized);
@@ -528,7 +524,7 @@ fn migrate_non_rebuildable_state(
 fn print_next_steps(install_root: &Path) -> Vec<String> {
     vec![
         format!(
-            "Codex next step: create or refresh ~/.agents/skills/superpowers -> {}/skills",
+            "Codex next step: create or refresh ~/.agents/skills/featureforge -> {}/skills",
             install_root.display()
         ),
         format!(
@@ -536,7 +532,7 @@ fn print_next_steps(install_root: &Path) -> Vec<String> {
             install_root.display()
         ),
         format!(
-            "GitHub Copilot next step: create or refresh ~/.copilot/skills/superpowers -> {}/skills",
+            "GitHub Copilot next step: create or refresh ~/.copilot/skills/featureforge -> {}/skills",
             install_root.display()
         ),
         format!(
@@ -546,12 +542,11 @@ fn print_next_steps(install_root: &Path) -> Vec<String> {
     ]
 }
 
-// Legacy roots may predate the canonical `bin/superpowers` runtime. We only
+// Legacy roots may predate the canonical `bin/featureforge` runtime. We only
 // need enough structure here to reuse a root before `provision_prebuilt_runtime`
 // normalizes it into the final installed surface.
 fn is_reusable_install_root(path: &Path) -> bool {
-    path.join("bin/superpowers-update-check").is_file()
-        && path.join("bin/superpowers-config").is_file()
+    path.join("bin/featureforge").is_file()
         && path.join("agents/code-reviewer.md").is_file()
         && path.join(".codex/agents/code-reviewer.toml").is_file()
         && path.join("VERSION").is_file()

@@ -726,7 +726,7 @@ fn canonical_update_check_preserves_status_line_and_writes_canonical_state() {
 fn canonical_update_check_uses_userprofile_install_when_home_is_missing() {
     let repo_dir = TempDir::new().expect("repo tempdir should exist");
     let userprofile_dir = TempDir::new().expect("userprofile tempdir should exist");
-    let install_dir = userprofile_dir.path().join(".superpowers").join("install");
+    let install_dir = userprofile_dir.path().join(".featureforge").join("install");
     fs::create_dir_all(&install_dir).expect("install dir should exist");
     write_file(
         &install_dir.join("VERSION"),
@@ -746,7 +746,7 @@ fn canonical_update_check_uses_userprofile_install_when_home_is_missing() {
         Some(repo_dir.path()),
         None,
         None,
-        &["HOME", "SUPERPOWERS_STATE_DIR", "SUPERPOWERS_DIR"],
+        &["HOME", "FEATUREFORGE_STATE_DIR", "FEATUREFORGE_DIR"],
         &[
             (
                 "USERPROFILE",
@@ -755,7 +755,7 @@ fn canonical_update_check_uses_userprofile_install_when_home_is_missing() {
                     .to_str()
                     .expect("userprofile path should be utf8"),
             ),
-            ("SUPERPOWERS_REMOTE_URL", &remote_url),
+            ("FEATUREFORGE_REMOTE_URL", &remote_url),
         ],
         &["update-check"],
         "canonical update-check with USERPROFILE fallback",
@@ -771,7 +771,7 @@ fn canonical_update_check_uses_userprofile_install_when_home_is_missing() {
     assert!(
         userprofile_dir
             .path()
-            .join(".superpowers")
+            .join(".featureforge")
             .join("update-check")
             .join("last-update-check")
             .is_file(),
@@ -1822,33 +1822,33 @@ fn install_migrate_provisions_host_runtime_from_checked_in_manifest() {
         "1.0.0-test",
     );
 
-    let shared_root = home_dir.path().join(".superpowers/install");
-    let codex_root = home_dir.path().join(".codex/superpowers");
-    let copilot_root = home_dir.path().join(".copilot/superpowers");
+    let shared_root = home_dir.path().join(".featureforge/install");
+    let codex_root = home_dir.path().join(".codex/featureforge");
+    let copilot_root = home_dir.path().join(".copilot/featureforge");
 
     let migrate_output = run_rust_superpowers(
         None,
-        Some(&home_dir.path().join(".superpowers")),
+        Some(&home_dir.path().join(".featureforge")),
         Some(home_dir.path()),
         &[
             (
-                "SUPERPOWERS_SHARED_ROOT",
+                "FEATUREFORGE_SHARED_ROOT",
                 shared_root.to_string_lossy().as_ref(),
             ),
             (
-                "SUPERPOWERS_CODEX_ROOT",
+                "FEATUREFORGE_CODEX_ROOT",
                 codex_root.to_string_lossy().as_ref(),
             ),
             (
-                "SUPERPOWERS_COPILOT_ROOT",
+                "FEATUREFORGE_COPILOT_ROOT",
                 copilot_root.to_string_lossy().as_ref(),
             ),
             (
-                "SUPERPOWERS_REPO_URL",
+                "FEATUREFORGE_REPO_URL",
                 source_repo.to_string_lossy().as_ref(),
             ),
-            ("SUPERPOWERS_HOST_TARGET", "darwin-arm64"),
-            ("SUPERPOWERS_MIGRATE_STAMP", "20260323-150000"),
+            ("FEATUREFORGE_HOST_TARGET", "darwin-arm64"),
+            ("FEATUREFORGE_MIGRATE_STAMP", "20260323-150000"),
         ],
         &["install", "migrate"],
         "install migrate with manifest provisioning",
@@ -1860,10 +1860,10 @@ fn install_migrate_provisions_host_runtime_from_checked_in_manifest() {
         String::from_utf8_lossy(&migrate_output.stdout),
         String::from_utf8_lossy(&migrate_output.stderr)
     );
-    let installed_binary = shared_root.join("bin/superpowers");
+    let installed_binary = shared_root.join("bin/featureforge");
     assert!(
         installed_binary.is_file(),
-        "install migrate should provision the manifest-selected runtime into install/bin/superpowers"
+        "install migrate should provision the manifest-selected runtime into install/bin/featureforge"
     );
     assert_eq!(
         fs::read_to_string(&installed_binary).expect("installed runtime should exist"),

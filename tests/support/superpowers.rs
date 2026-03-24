@@ -25,12 +25,12 @@ pub fn run_rust_superpowers_with_env_control(
     context: &str,
 ) -> Output {
     let mut command =
-        Command::cargo_bin("superpowers").expect("superpowers cargo binary should be available");
+        Command::cargo_bin("featureforge").expect("featureforge cargo binary should be available");
     if let Some(repo) = repo {
         command.current_dir(repo);
     }
     if let Some(state_dir) = state_dir {
-        command.env("SUPERPOWERS_STATE_DIR", state_dir);
+        command.env("FEATUREFORGE_STATE_DIR", state_dir);
     }
     if let Some(home_dir) = home_dir {
         command.env("HOME", home_dir);

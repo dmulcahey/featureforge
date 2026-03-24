@@ -123,7 +123,7 @@ fn init_repo_at(path: &Path, name: &str) {
 fn run_shell_session_entry(state_dir: &Path, args: &[&str], context: &str) -> Output {
     let mut command = Command::new(session_entry_helper_path());
     command
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path())
         .args(args);
     run(command, context)
@@ -132,7 +132,7 @@ fn run_shell_session_entry(state_dir: &Path, args: &[&str], context: &str) -> Ou
 fn run_shell_config(state_dir: &Path, args: &[&str], context: &str) -> Output {
     let mut command = Command::new(config_helper_path());
     command
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path())
         .args(args);
     run(command, context)
@@ -244,7 +244,7 @@ fn canonical_config_uses_userprofile_when_home_is_missing() {
 
     let output = run_rust_superpowers_with_env_control(
         Some(repo_dir.path()),
-        &["HOME", "SUPERPOWERS_STATE_DIR"],
+        &["HOME", "FEATUREFORGE_STATE_DIR"],
         &[(
             "USERPROFILE",
             userprofile_dir
@@ -265,7 +265,7 @@ fn canonical_config_uses_userprofile_when_home_is_missing() {
 
     let canonical_path = userprofile_dir
         .path()
-        .join(".superpowers")
+        .join(".featureforge")
         .join("config")
         .join("config.yaml");
     assert!(
@@ -856,7 +856,7 @@ fn canonical_config_reads_legacy_yaml_in_read_only_mode_until_install_migrate_ru
 
     write_file(
         &legacy_config,
-        "update_check: false\nsuperpowers_contributor: true\n",
+        "update_check: false\nfeatureforge_contributor: true\n",
     );
 
     let shell_value = run_shell_config(state, &["get", "update_check"], "helper config get");
@@ -889,7 +889,7 @@ fn canonical_config_reads_legacy_yaml_in_read_only_mode_until_install_migrate_ru
     );
     let listing = String::from_utf8_lossy(&rust_list.stdout);
     assert!(listing.contains("update_check: false"));
-    assert!(listing.contains("superpowers_contributor: true"));
+    assert!(listing.contains("featureforge_contributor: true"));
     assert!(
         String::from_utf8_lossy(&rust_list.stderr).contains("PendingMigration"),
         "canonical config list should warn when explicit migration is still pending"
@@ -956,7 +956,7 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
     let set_contributor = run_rust_superpowers(
         None,
         state,
-        &["config", "set", "superpowers_contributor", "true"],
+        &["config", "set", "featureforge_contributor", "true"],
         "canonical config set contributor",
     );
     assert!(
@@ -971,11 +971,11 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
     );
     let listing_text = String::from_utf8_lossy(&listing.stdout);
     assert!(listing_text.contains("update_check: true"));
-    assert!(listing_text.contains("superpowers_contributor: true"));
+    assert!(listing_text.contains("featureforge_contributor: true"));
     assert_eq!(String::from_utf8_lossy(&listing.stderr).trim(), "");
     assert_eq!(
         fs::read_to_string(&canonical_config).expect("canonical config should be written"),
-        "update_check: true\nsuperpowers_contributor: true\n"
+        "update_check: true\nfeatureforge_contributor: true\n"
     );
 }
 

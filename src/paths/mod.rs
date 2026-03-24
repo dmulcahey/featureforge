@@ -106,10 +106,10 @@ pub fn superpowers_home_dir() -> Option<PathBuf> {
 }
 
 pub fn superpowers_state_dir() -> PathBuf {
-    env::var_os("SUPERPOWERS_STATE_DIR")
+    env::var_os("FEATUREFORGE_STATE_DIR")
         .map(PathBuf::from)
-        .or_else(|| superpowers_home_dir().map(|home| home.join(".superpowers")))
-        .unwrap_or_else(|| PathBuf::from(".superpowers"))
+        .or_else(|| superpowers_home_dir().map(|home| home.join(".featureforge")))
+        .unwrap_or_else(|| PathBuf::from(".featureforge"))
 }
 
 pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {

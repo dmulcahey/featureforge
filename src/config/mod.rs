@@ -12,7 +12,7 @@ pub const CONFIG_BACKUP_FILE: &str = "config.yaml.bak";
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct ConfigValues {
     update_check: Option<bool>,
-    superpowers_contributor: Option<bool>,
+    featureforge_contributor: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +41,7 @@ pub fn get(args: &ConfigGetArgs) -> Result<String, DiagnosticError> {
     warn_if_pending(&access);
     let value = match normalize_key(&args.key)?.as_str() {
         "update_check" => access.values.update_check.map(render_bool),
-        "superpowers_contributor" => access.values.superpowers_contributor.map(render_bool),
+        "featureforge_contributor" => access.values.featureforge_contributor.map(render_bool),
         _ => None,
     };
     Ok(value.unwrap_or_default())
@@ -55,7 +55,7 @@ pub fn set(args: &ConfigSetArgs) -> Result<String, DiagnosticError> {
 
     match key.as_str() {
         "update_check" => access.values.update_check = Some(value),
-        "superpowers_contributor" => access.values.superpowers_contributor = Some(value),
+        "featureforge_contributor" => access.values.featureforge_contributor = Some(value),
         _ => {}
     }
 
@@ -147,7 +147,7 @@ fn load_config(state_dir: &Path, access_mode: AccessMode) -> Result<ConfigAccess
 
     if access_mode == AccessMode::Mutating {
         return Err(pending_migration_error(
-            "Legacy config must be migrated before mutating config state. Run `superpowers install migrate`.",
+            "Legacy config must be migrated before mutating config state. Run `featureforge install migrate`.",
         ));
     }
 
@@ -170,7 +170,7 @@ fn load_config(state_dir: &Path, access_mode: AccessMode) -> Result<ConfigAccess
 fn warn_if_pending(access: &ConfigAccess) {
     if access.pending_migration {
         eprintln!(
-            "PendingMigration: Using legacy config in read-only mode. Run `superpowers install migrate` to rewrite non-rebuildable runtime state."
+            "PendingMigration: Using legacy config in read-only mode. Run `featureforge install migrate` to rewrite non-rebuildable runtime state."
         );
     }
 }
@@ -214,7 +214,7 @@ fn parse_config_source(source: &str) -> Result<ConfigValues, DiagnosticError> {
 
         match key.as_str() {
             "update_check" => config.update_check = Some(value),
-            "superpowers_contributor" => config.superpowers_contributor = Some(value),
+            "featureforge_contributor" => config.featureforge_contributor = Some(value),
             _ => return Err(invalid_config("Unsupported config key.")),
         }
     }
@@ -225,7 +225,7 @@ fn parse_config_source(source: &str) -> Result<ConfigValues, DiagnosticError> {
 fn normalize_key(key: &str) -> Result<String, DiagnosticError> {
     let trimmed = key.trim();
     match trimmed {
-        "update_check" | "superpowers_contributor" => Ok(trimmed.to_owned()),
+        "update_check" | "featureforge_contributor" => Ok(trimmed.to_owned()),
         _ => Err(invalid_config("Unsupported config key.")),
     }
 }
@@ -245,8 +245,8 @@ fn render_config(config: &ConfigValues) -> String {
     if let Some(value) = config.update_check {
         lines.push(format!("update_check: {}", render_bool(value)));
     }
-    if let Some(value) = config.superpowers_contributor {
-        lines.push(format!("superpowers_contributor: {}", render_bool(value)));
+    if let Some(value) = config.featureforge_contributor {
+        lines.push(format!("featureforge_contributor: {}", render_bool(value)));
     }
     if lines.is_empty() {
         String::new()
