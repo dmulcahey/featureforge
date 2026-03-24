@@ -51,6 +51,18 @@ fn parse_json(output: &Output, context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
+fn parse_failure_json(output: &Output, context: &str) -> Value {
+    assert!(
+        !output.status.success(),
+        "{context} should fail, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stderr)
+        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
+}
+
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("parent directory should be creatable");
@@ -112,6 +124,35 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     (repo_dir, state_dir)
 }
 
+fn init_repo_at(path: &Path, name: &str) {
+    fs::create_dir_all(path).expect("repo path should be creatable");
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(path);
+    run_checked(git_init, "git init");
+
+    let mut git_config_name = Command::new("git");
+    git_config_name
+        .args(["config", "user.name", "Superpowers Test"])
+        .current_dir(path);
+    run_checked(git_config_name, "git config user.name");
+
+    let mut git_config_email = Command::new("git");
+    git_config_email
+        .args(["config", "user.email", "superpowers-tests@example.com"])
+        .current_dir(path);
+    run_checked(git_config_email, "git config user.email");
+
+    write_file(&path.join("README.md"), &format!("# {name}\n"));
+
+    let mut git_add = Command::new("git");
+    git_add.args(["add", "README.md"]).current_dir(path);
+    run_checked(git_add, "git add README");
+
+    let mut git_commit = Command::new("git");
+    git_commit.args(["commit", "-m", "init"]).current_dir(path);
+    run_checked(git_commit, "git commit init");
+}
+
 fn run_shell_session_entry(state_dir: &Path, args: &[&str], context: &str) -> Output {
     let mut command = Command::new(session_entry_helper_path());
     command.env("SUPERPOWERS_STATE_DIR", state_dir).args(args);
@@ -136,12 +177,26 @@ fn run_rust_superpowers(
     args: &[&str],
     context: &str,
 ) -> Output {
+    run_rust_superpowers_with_env(repo, state_dir, &[], args, context)
+}
+
+fn run_rust_superpowers_with_env(
+    repo: Option<&Path>,
+    state_dir: &Path,
+    envs: &[(&str, &str)],
+    args: &[&str],
+    context: &str,
+) -> Output {
     let mut command =
         Command::cargo_bin("superpowers").expect("superpowers cargo binary should be available");
     if let Some(repo) = repo {
         command.current_dir(repo);
     }
-    command.env("SUPERPOWERS_STATE_DIR", state_dir).args(args);
+    command.env("SUPERPOWERS_STATE_DIR", state_dir);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command.args(args);
     run(command, context)
 }
 
@@ -248,6 +303,44 @@ fn canonical_session_entry_explicit_reentry_migrates_legacy_state_to_canonical_p
 }
 
 #[test]
+fn canonical_session_entry_existing_enabled_decision_returns_enabled_without_prompt() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-enabled");
+    let state = state_dir.path();
+    let message_file = state.join("enabled-message.txt");
+    let decision_path = canonical_session_entry_path(state, "enabled-session");
+
+    write_file(&message_file, "Continue normally.\n");
+    write_file(&decision_path, "enabled\n");
+
+    let rust_output = run_rust_superpowers(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "enabled-session",
+        ],
+        "canonical session-entry existing enabled",
+    );
+    let rust_json = parse_json(&rust_output, "canonical session-entry existing enabled");
+
+    assert_eq!(rust_json["outcome"], Value::String(String::from("enabled")));
+    assert_eq!(
+        rust_json["decision_source"],
+        Value::String(String::from("existing_enabled"))
+    );
+    assert_eq!(rust_json["persisted"], Value::Bool(true));
+    assert_eq!(rust_json["prompt"], Value::Null);
+    assert_eq!(
+        rust_json["decision_path"].as_str(),
+        Some(decision_path.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
 fn canonical_session_entry_skill_name_reentry_enables_superpowers_again() {
     let (_repo_dir, state_dir) = init_repo("session-entry-skill-reentry");
     let state = state_dir.path();
@@ -287,6 +380,370 @@ fn canonical_session_entry_skill_name_reentry_enables_superpowers_again() {
     assert_eq!(
         fs::read_to_string(&canonical_path).expect("canonical session-entry path should exist"),
         "enabled\n"
+    );
+}
+
+#[test]
+fn canonical_session_entry_bypassed_and_clause_reentry_matrix_matches_contract() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-clause-matrix");
+    let state = state_dir.path();
+    let cases = [
+        (
+            "existing-bypassed",
+            "Continue without extra workflow help.\n",
+            "bypassed",
+            "existing_bypassed",
+        ),
+        (
+            "natural-language-skill-reentry",
+            "Please use brainstorming for this task.\n",
+            "enabled",
+            "explicit_reentry",
+        ),
+        (
+            "direct-superpowers-please",
+            "superpowers please\n",
+            "enabled",
+            "explicit_reentry",
+        ),
+        (
+            "enable-superpowers-again",
+            "Enable superpowers again.\n",
+            "enabled",
+            "explicit_reentry",
+        ),
+        (
+            "negated-skill-request",
+            "Do not use brainstorming for this task.\n",
+            "bypassed",
+            "existing_bypassed",
+        ),
+        (
+            "use-no-skill-request",
+            "Please use no brainstorming here.\n",
+            "bypassed",
+            "existing_bypassed",
+        ),
+        (
+            "use-no-superpowers",
+            "Please use no superpowers here.\n",
+            "bypassed",
+            "existing_bypassed",
+        ),
+        (
+            "never-use-skill-request",
+            "Please never use brainstorming here.\n",
+            "bypassed",
+            "existing_bypassed",
+        ),
+        (
+            "long-negated-skill-request",
+            "Please do not under any circumstances use brainstorming for this task.\n",
+            "bypassed",
+            "existing_bypassed",
+        ),
+        (
+            "long-negated-superpowers-request",
+            "Please do not under any circumstances use superpowers for this task.\n",
+            "bypassed",
+            "existing_bypassed",
+        ),
+        (
+            "contrastive-superpowers",
+            "Do not use brainstorming, but use superpowers for this task.\n",
+            "enabled",
+            "explicit_reentry",
+        ),
+        (
+            "contrastive-skill",
+            "Do not use brainstorming, but use writing-plans for this task.\n",
+            "enabled",
+            "explicit_reentry",
+        ),
+    ];
+
+    for (session_key, message, expected_outcome, expected_source) in cases {
+        let message_file = state.join(format!("{session_key}.txt"));
+        let decision_path = canonical_session_entry_path(state, session_key);
+        write_file(&message_file, message);
+        write_file(&decision_path, "bypassed\n");
+
+        let rust_output = run_rust_superpowers(
+            None,
+            state,
+            &[
+                "session-entry",
+                "resolve",
+                "--message-file",
+                message_file.to_str().expect("message file should be utf8"),
+                "--session-key",
+                session_key,
+            ],
+            session_key,
+        );
+        let rust_json = parse_json(&rust_output, session_key);
+
+        assert_eq!(
+            rust_json["outcome"],
+            Value::String(expected_outcome.to_owned()),
+            "outcome should match for {session_key}"
+        );
+        assert_eq!(
+            rust_json["decision_source"],
+            Value::String(expected_source.to_owned()),
+            "decision_source should match for {session_key}"
+        );
+        assert_eq!(
+            rust_json["persisted"],
+            Value::Bool(true),
+            "persisted should remain true for {session_key}"
+        );
+        let expected_file = if expected_outcome == "enabled" {
+            "enabled\n"
+        } else {
+            "bypassed\n"
+        };
+        assert_eq!(
+            fs::read_to_string(&decision_path).expect("decision path should remain readable"),
+            expected_file,
+            "decision file should match for {session_key}"
+        );
+    }
+}
+
+#[test]
+fn canonical_session_entry_malformed_decision_fails_closed_with_prompt_and_failure_class() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-malformed");
+    let state = state_dir.path();
+    let message_file = state.join("malformed-message.txt");
+    let decision_path = canonical_session_entry_path(state, "malformed-session");
+
+    write_file(&message_file, "Please route this correctly.\n");
+    write_file(&decision_path, "corrupt\nextra\n");
+
+    let rust_output = run_rust_superpowers(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "malformed-session",
+        ],
+        "canonical session-entry malformed decision",
+    );
+    let rust_json = parse_json(&rust_output, "canonical session-entry malformed decision");
+
+    assert_eq!(
+        rust_json["outcome"],
+        Value::String(String::from("needs_user_choice"))
+    );
+    assert_eq!(
+        rust_json["decision_source"],
+        Value::String(String::from("malformed"))
+    );
+    assert_eq!(
+        rust_json["failure_class"],
+        Value::String(String::from("MalformedDecisionState"))
+    );
+    assert_eq!(rust_json["persisted"], Value::Bool(false));
+    assert_eq!(
+        rust_json["decision_path"].as_str(),
+        Some(decision_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        rust_json["prompt"]["recommended_option"],
+        Value::String(String::from("A"))
+    );
+}
+
+#[test]
+fn canonical_session_entry_explicit_reentry_write_failure_remains_unpersisted() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-write-failure");
+    let state = state_dir.path();
+    let message_file = state.join("explicit-reentry-write-failure.txt");
+    let decision_path = canonical_session_entry_path(state, "explicit-reentry-write-failure");
+
+    write_file(&message_file, "Use superpowers right now.\n");
+    write_file(&decision_path, "bypassed\n");
+
+    let rust_output = run_rust_superpowers_with_env(
+        None,
+        state,
+        &[(
+            "SUPERPOWERS_SESSION_ENTRY_TEST_FAILPOINT",
+            "reentry_write_failure",
+        )],
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "explicit-reentry-write-failure",
+        ],
+        "canonical session-entry explicit reentry write failure",
+    );
+    let rust_json = parse_json(
+        &rust_output,
+        "canonical session-entry explicit reentry write failure",
+    );
+
+    assert_eq!(rust_json["outcome"], Value::String(String::from("enabled")));
+    assert_eq!(
+        rust_json["decision_source"],
+        Value::String(String::from("explicit_reentry_unpersisted"))
+    );
+    assert_eq!(rust_json["persisted"], Value::Bool(false));
+    assert_eq!(
+        rust_json["failure_class"],
+        Value::String(String::from("DecisionWriteFailed"))
+    );
+    assert_eq!(
+        fs::read_to_string(&decision_path).expect("decision path should remain readable"),
+        "bypassed\n"
+    );
+}
+
+#[test]
+fn canonical_session_entry_record_and_validation_errors_match_contract() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-record");
+    let state = state_dir.path();
+    let decision_path = canonical_session_entry_path(state, "record-enabled");
+
+    let record_output = run_rust_superpowers(
+        None,
+        state,
+        &[
+            "session-entry",
+            "record",
+            "--decision",
+            "enabled",
+            "--session-key",
+            "record-enabled",
+        ],
+        "canonical session-entry record enabled",
+    );
+    let record_json = parse_json(&record_output, "canonical session-entry record enabled");
+    assert_eq!(
+        record_json["outcome"],
+        Value::String(String::from("enabled"))
+    );
+    assert_eq!(
+        record_json["decision_source"],
+        Value::String(String::from("existing_enabled"))
+    );
+    assert_eq!(record_json["persisted"], Value::Bool(true));
+    assert_eq!(
+        fs::read_to_string(&decision_path).expect("recorded decision should exist"),
+        "enabled\n"
+    );
+
+    let invalid_record = run_rust_superpowers(
+        None,
+        state,
+        &[
+            "session-entry",
+            "record",
+            "--decision",
+            "maybe",
+            "--session-key",
+            "record-invalid",
+        ],
+        "canonical session-entry invalid decision",
+    );
+    let invalid_record_json =
+        parse_failure_json(&invalid_record, "canonical session-entry invalid decision");
+    assert_eq!(
+        invalid_record_json["failure_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
+
+    let blank_record = run_rust_superpowers(
+        None,
+        state,
+        &[
+            "session-entry",
+            "record",
+            "--decision",
+            "enabled",
+            "--session-key",
+            "   ",
+        ],
+        "canonical session-entry blank record key",
+    );
+    let blank_record_json =
+        parse_failure_json(&blank_record, "canonical session-entry blank record key");
+    assert_eq!(
+        blank_record_json["failure_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
+
+    let message_file = state.join("blank-session-key.txt");
+    write_file(&message_file, "Please keep the gate deterministic.\n");
+    let blank_resolve = run_rust_superpowers(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "   ",
+        ],
+        "canonical session-entry blank resolve key",
+    );
+    let blank_resolve_json =
+        parse_failure_json(&blank_resolve, "canonical session-entry blank resolve key");
+    assert_eq!(
+        blank_resolve_json["failure_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
+}
+
+#[test]
+fn canonical_session_entry_uses_requested_decision_file_even_with_many_decoys() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-hot-path");
+    let state = state_dir.path();
+    let message_file = state.join("hot-path-message.txt");
+    let decision_root = state.join("session-entry").join("using-superpowers");
+    let decision_path = canonical_session_entry_path(state, "derived-session");
+
+    write_file(
+        &message_file,
+        "Normal routing should use the derived session key.\n",
+    );
+    fs::create_dir_all(&decision_root).expect("decision root should exist");
+    for index in 1..=100 {
+        write_file(
+            &decision_root.join(format!("decoy-session-{index}")),
+            "enabled\n",
+        );
+    }
+    write_file(&decision_path, "enabled\n");
+
+    let rust_output = run_rust_superpowers(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "derived-session",
+        ],
+        "canonical session-entry hot path",
+    );
+    let rust_json = parse_json(&rust_output, "canonical session-entry hot path");
+
+    assert_eq!(rust_json["outcome"], Value::String(String::from("enabled")));
+    assert_eq!(
+        rust_json["decision_path"].as_str(),
+        Some(decision_path.to_string_lossy().as_ref())
     );
 }
 
@@ -336,6 +793,89 @@ fn canonical_config_reads_legacy_yaml_in_read_only_mode_until_install_migrate_ru
     assert!(
         String::from_utf8_lossy(&rust_list.stderr).contains("PendingMigration"),
         "canonical config list should warn when explicit migration is still pending"
+    );
+}
+
+#[test]
+fn canonical_config_set_get_and_list_use_canonical_path() {
+    let (_repo_dir, state_dir) = init_repo("config-canonical");
+    let state = state_dir.path();
+    let canonical_config = state.join("config").join("config.yaml");
+
+    let missing = run_rust_superpowers(
+        None,
+        state,
+        &["config", "get", "update_check"],
+        "canonical config missing get",
+    );
+    assert!(
+        missing.status.success(),
+        "missing canonical config get should succeed"
+    );
+    assert_eq!(String::from_utf8_lossy(&missing.stdout).trim(), "");
+    assert_eq!(String::from_utf8_lossy(&missing.stderr).trim(), "");
+
+    let set_false = run_rust_superpowers(
+        None,
+        state,
+        &["config", "set", "update_check", "false"],
+        "canonical config set false",
+    );
+    assert!(
+        set_false.status.success(),
+        "canonical config set should succeed"
+    );
+
+    let get_false = run_rust_superpowers(
+        None,
+        state,
+        &["config", "get", "update_check"],
+        "canonical config get false",
+    );
+    assert_eq!(String::from_utf8_lossy(&get_false.stdout).trim(), "false");
+
+    let set_true = run_rust_superpowers(
+        None,
+        state,
+        &["config", "set", "update_check", "true"],
+        "canonical config set true",
+    );
+    assert!(
+        set_true.status.success(),
+        "canonical config overwrite should succeed"
+    );
+
+    let get_true = run_rust_superpowers(
+        None,
+        state,
+        &["config", "get", "update_check"],
+        "canonical config get true",
+    );
+    assert_eq!(String::from_utf8_lossy(&get_true.stdout).trim(), "true");
+
+    let set_contributor = run_rust_superpowers(
+        None,
+        state,
+        &["config", "set", "superpowers_contributor", "true"],
+        "canonical config set contributor",
+    );
+    assert!(
+        set_contributor.status.success(),
+        "canonical config second key set should succeed"
+    );
+
+    let listing = run_rust_superpowers(None, state, &["config", "list"], "canonical config list");
+    assert!(
+        listing.status.success(),
+        "canonical config list should succeed"
+    );
+    let listing_text = String::from_utf8_lossy(&listing.stdout);
+    assert!(listing_text.contains("update_check: true"));
+    assert!(listing_text.contains("superpowers_contributor: true"));
+    assert_eq!(String::from_utf8_lossy(&listing.stderr).trim(), "");
+    assert_eq!(
+        fs::read_to_string(&canonical_config).expect("canonical config should be written"),
+        "update_check: true\nsuperpowers_contributor: true\n"
     );
 }
 
@@ -426,5 +966,63 @@ fn canonical_slug_matches_helper_for_remote_and_detached_head() {
     assert_eq!(
         parse_slug_output(&rust_detached.stdout, "parse canonical detached slug"),
         parse_slug_output(&helper_detached.stdout, "parse helper detached slug")
+    );
+}
+
+#[test]
+fn canonical_slug_matches_helper_for_fallback_path_hashing_and_branch_cleanup() {
+    let temp_root = TempDir::new().expect("temp root should exist");
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+
+    let fallback_repo = temp_root
+        .path()
+        .join("slug with 'quotes' and $dollar and $(cmd)");
+    init_repo_at(&fallback_repo, "slug-fallback");
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "topic/$(weird)$branch"])
+        .current_dir(&fallback_repo);
+    run_checked(git_checkout, "git checkout fallback branch");
+
+    let helper_fallback = run_shell_slug(&fallback_repo, "helper fallback slug");
+    let rust_fallback = run_rust_superpowers(
+        Some(&fallback_repo),
+        state_dir.path(),
+        &["repo", "slug"],
+        "canonical fallback slug",
+    );
+    assert!(
+        rust_fallback.status.success(),
+        "canonical fallback slug should succeed"
+    );
+    assert_eq!(
+        parse_slug_output(&rust_fallback.stdout, "parse canonical fallback slug"),
+        parse_slug_output(&helper_fallback.stdout, "parse helper fallback slug")
+    );
+
+    let branch_safe_repo = temp_root.path().join("branch-safe-repo");
+    init_repo_at(&branch_safe_repo, "branch-safe-repo");
+
+    let mut git_checkout_branch_safe = Command::new("git");
+    git_checkout_branch_safe
+        .args(["checkout", "-B", "release.v1_2-3/needs-cleanup@now"])
+        .current_dir(&branch_safe_repo);
+    run_checked(git_checkout_branch_safe, "git checkout branch-safe branch");
+
+    let helper_branch_safe = run_shell_slug(&branch_safe_repo, "helper branch-safe slug");
+    let rust_branch_safe = run_rust_superpowers(
+        Some(&branch_safe_repo),
+        state_dir.path(),
+        &["repo", "slug"],
+        "canonical branch-safe slug",
+    );
+    assert!(
+        rust_branch_safe.status.success(),
+        "canonical branch-safe slug should succeed"
+    );
+    assert_eq!(
+        parse_slug_output(&rust_branch_safe.stdout, "parse canonical branch-safe slug"),
+        parse_slug_output(&helper_branch_safe.stdout, "parse helper branch-safe slug")
     );
 }

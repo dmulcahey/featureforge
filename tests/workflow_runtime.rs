@@ -1,3 +1,5 @@
+mod support;
+
 use assert_cmd::cargo::cargo_bin;
 use serde_json::Value;
 use std::fs;
@@ -8,34 +10,15 @@ use superpowers::workflow::manifest::{
     WorkflowManifest, manifest_path, recover_slug_changed_manifest,
 };
 use superpowers::workflow::status::WorkflowRuntime;
+use support::workflow::{
+    compiled_superpowers_path, init_repo as init_workflow_repo,
+    install_full_contract_ready_artifacts, parse_json, repo_root, run, run_checked,
+    workflow_fixture_root, write_file,
+};
 use tempfile::TempDir;
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn workflow_fixture_root() -> PathBuf {
-    repo_root().join("tests/codex-runtime/fixtures/workflow-artifacts")
-}
 
 fn workflow_status_helper_path() -> PathBuf {
     repo_root().join("bin/superpowers-workflow-status")
-}
-
-fn compiled_superpowers_path() -> PathBuf {
-    let path = repo_root().join("target/debug/superpowers");
-    if cfg!(windows) {
-        path.with_extension("exe")
-    } else {
-        path
-    }
-}
-
-fn write_file(path: &Path, contents: &str) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("parent directory should be creatable");
-    }
-    fs::write(path, contents).expect("file should be writable");
 }
 
 fn write_manifest(path: &Path, manifest: &WorkflowManifest) {
@@ -46,68 +29,9 @@ fn write_manifest(path: &Path, manifest: &WorkflowManifest) {
     fs::write(path, json).expect("manifest should be writable");
 }
 
-fn run(mut command: Command, context: &str) -> Output {
-    command
-        .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
-}
-
-fn run_checked(command: Command, context: &str) -> Output {
-    let output = run(command, context);
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
-fn parse_json(output: &Output, context: &str) -> Value {
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
-}
-
 fn init_repo(test_name: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should be available");
-    let state_dir = TempDir::new().expect("state tempdir should be available");
+    let (repo_dir, state_dir) = init_workflow_repo(test_name);
     let repo_path = repo_dir.path();
-
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(repo_path);
-    run_checked(git_init, "git init");
-
-    let mut git_config_name = Command::new("git");
-    git_config_name
-        .args(["config", "user.name", "Superpowers Test"])
-        .current_dir(repo_path);
-    run_checked(git_config_name, "git config user.name");
-
-    let mut git_config_email = Command::new("git");
-    git_config_email
-        .args(["config", "user.email", "superpowers-tests@example.com"])
-        .current_dir(repo_path);
-    run_checked(git_config_email, "git config user.email");
-
-    write_file(&repo_path.join("README.md"), "# workflow runtime fixture\n");
-
-    let mut git_add = Command::new("git");
-    git_add.args(["add", "README.md"]).current_dir(repo_path);
-    run_checked(git_add, "git add readme");
-
-    let mut git_commit = Command::new("git");
-    git_commit
-        .args(["commit", "-m", "init"])
-        .current_dir(repo_path);
-    run_checked(git_commit, "git commit init");
 
     let mut git_remote_add = Command::new("git");
     git_remote_add
@@ -124,15 +48,6 @@ fn init_repo(test_name: &str) -> (TempDir, TempDir) {
 }
 
 fn run_shell_status_helper(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    let mut build = Command::new("cargo");
-    build
-        .args(["build", "--quiet", "--bin", "superpowers"])
-        .current_dir(repo_root());
-    run_checked(
-        build,
-        "cargo build superpowers for workflow helper parity tests",
-    );
-
     let mut command = Command::new(workflow_status_helper_path());
     command
         .current_dir(repo)
@@ -148,17 +63,29 @@ fn run_shell_status_json(repo: &Path, state_dir: &Path, args: &[&str], context: 
 }
 
 fn run_rust_superpowers(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    let mut build = Command::new("cargo");
-    build
-        .args(["build", "--quiet", "--bin", "superpowers"])
-        .current_dir(repo_root());
-    run_checked(build, "cargo build superpowers for workflow runtime tests");
-
     let mut command = Command::new(compiled_superpowers_path());
     command
         .current_dir(repo)
         .env("SUPERPOWERS_STATE_DIR", state_dir)
         .args(args);
+    run(command, context)
+}
+
+fn run_rust_superpowers_with_env(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+    context: &str,
+) -> Output {
+    let mut command = Command::new(compiled_superpowers_path());
+    command
+        .current_dir(repo)
+        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .args(args);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
     run(command, context)
 }
 
@@ -693,4 +620,268 @@ fn canonical_workflow_status_refresh_limits_cross_slug_manifest_recovery_scan() 
     let manifest_json = fs::read_to_string(current_manifest_path)
         .expect("current manifest should be written after refresh");
     assert!(!manifest_json.contains(expected_plan));
+}
+
+#[test]
+fn canonical_workflow_phase_reads_canonical_session_entry_state() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-canonical-session-entry");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "phase-canonical-session-entry";
+    let decision_path = state
+        .join("session-entry")
+        .join("using-superpowers")
+        .join(session_key);
+
+    write_file(&decision_path, "enabled\n");
+
+    let phase_json = parse_json(
+        &run_rust_superpowers_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("SUPERPOWERS_SESSION_KEY", session_key)],
+            "rust canonical workflow phase should read canonical session-entry state",
+        ),
+        "rust canonical workflow phase should read canonical session-entry state",
+    );
+
+    assert_eq!(phase_json["session_entry"]["outcome"], "enabled");
+    assert_eq!(
+        phase_json["session_entry"]["decision_path"],
+        decision_path.to_string_lossy().as_ref()
+    );
+}
+
+#[test]
+fn canonical_workflow_phase_keeps_corrupt_manifest_read_only() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-corrupt-manifest");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = repo.join("docs/superpowers/specs/2026-03-24-corrupt-phase-spec.md");
+
+    write_file(
+        &spec_path,
+        "# Phase Corrupt Manifest Spec\n\n**Workflow State:** Draft\n**Spec Revision:** 1\n**Last Reviewed By:** brainstorming\n",
+    );
+
+    let refresh_output = run_rust_superpowers(
+        repo,
+        state,
+        &["workflow", "status", "--refresh"],
+        "rust canonical workflow status refresh should seed the manifest before corrupt phase inspection",
+    );
+    assert!(
+        refresh_output.status.success(),
+        "workflow status refresh should succeed before corrupt manifest inspection, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        refresh_output.status,
+        String::from_utf8_lossy(&refresh_output.stdout),
+        String::from_utf8_lossy(&refresh_output.stderr)
+    );
+
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    let manifest_path = manifest_path(&identity, state);
+    fs::write(&manifest_path, "{ \"broken\": true\n")
+        .expect("corrupt manifest fixture should be writable");
+    let before_bytes = fs::read(&manifest_path).expect("corrupt manifest fixture should exist");
+
+    let phase_json = parse_json(
+        &run_rust_superpowers(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            "rust canonical workflow phase should inspect corrupt manifests without repairing them",
+        ),
+        "rust canonical workflow phase should inspect corrupt manifests without repairing them",
+    );
+    assert!(phase_json["phase"].is_string());
+
+    let after_bytes = fs::read(&manifest_path)
+        .expect("workflow phase should leave the corrupt manifest in place");
+    assert_eq!(after_bytes, before_bytes);
+
+    let parent = manifest_path
+        .parent()
+        .expect("manifest fixture should have a parent directory");
+    let backup_prefix = format!(
+        "{}.corrupt-",
+        manifest_path
+            .file_name()
+            .expect("manifest fixture should have a file name")
+            .to_string_lossy()
+    );
+    let backup_written = fs::read_dir(parent)
+        .expect("manifest directory should stay readable")
+        .flatten()
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&backup_prefix)
+        });
+    assert!(
+        !backup_written,
+        "workflow phase should not create corrupt-manifest backups for read-only inspection"
+    );
+}
+
+#[test]
+fn canonical_workflow_public_text_commands_work_for_ready_plan() {
+    let (repo_dir, state_dir) = init_repo("workflow-public-text-commands");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-public-text-commands";
+    let decision_path = state
+        .join("session-entry")
+        .join("using-superpowers")
+        .join(session_key);
+
+    install_full_contract_ready_artifacts(repo);
+    write_file(&decision_path, "enabled\n");
+
+    let next_output = run_rust_superpowers_with_env(
+        repo,
+        state,
+        &["workflow", "next"],
+        &[("SUPERPOWERS_SESSION_KEY", session_key)],
+        "rust canonical workflow next should be available on ready plans",
+    );
+    assert!(
+        next_output.status.success(),
+        "workflow next should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        next_output.status,
+        String::from_utf8_lossy(&next_output.stdout),
+        String::from_utf8_lossy(&next_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&next_output.stdout)
+            .to_lowercase()
+            .contains("execution preflight"),
+        "workflow next should mention execution preflight"
+    );
+
+    let artifacts_output = run_rust_superpowers_with_env(
+        repo,
+        state,
+        &["workflow", "artifacts"],
+        &[("SUPERPOWERS_SESSION_KEY", session_key)],
+        "rust canonical workflow artifacts should be available on ready plans",
+    );
+    assert!(
+        artifacts_output.status.success(),
+        "workflow artifacts should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        artifacts_output.status,
+        String::from_utf8_lossy(&artifacts_output.stdout),
+        String::from_utf8_lossy(&artifacts_output.stderr)
+    );
+    let artifacts_stdout = String::from_utf8_lossy(&artifacts_output.stdout);
+    assert!(artifacts_stdout.contains("Workflow artifacts"));
+    assert!(
+        artifacts_stdout
+            .contains("docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md")
+    );
+
+    let explain_output = run_rust_superpowers_with_env(
+        repo,
+        state,
+        &["workflow", "explain"],
+        &[("SUPERPOWERS_SESSION_KEY", session_key)],
+        "rust canonical workflow explain should be available on ready plans",
+    );
+    assert!(
+        explain_output.status.success(),
+        "workflow explain should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        explain_output.status,
+        String::from_utf8_lossy(&explain_output.stdout),
+        String::from_utf8_lossy(&explain_output.stderr)
+    );
+    let explain_stdout = String::from_utf8_lossy(&explain_output.stdout);
+    assert!(explain_stdout.contains("Why"));
+    assert!(
+        explain_stdout
+            .contains("docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md")
+    );
+}
+
+#[test]
+fn canonical_workflow_public_json_commands_work_for_ready_plan() {
+    let (repo_dir, state_dir) = init_repo("workflow-public-json-commands");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-public-json-commands";
+    let decision_path = state
+        .join("session-entry")
+        .join("using-superpowers")
+        .join(session_key);
+    let plan_rel = "docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md";
+
+    install_full_contract_ready_artifacts(repo);
+    write_file(&decision_path, "enabled\n");
+
+    let doctor_json = parse_json(
+        &run_rust_superpowers_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("SUPERPOWERS_SESSION_KEY", session_key)],
+            "rust canonical workflow doctor should be available on ready plans",
+        ),
+        "rust canonical workflow doctor should be available on ready plans",
+    );
+    assert_eq!(doctor_json["route_status"], "implementation_ready");
+    assert_eq!(doctor_json["contract_state"], "valid");
+
+    let handoff_json = parse_json(
+        &run_rust_superpowers_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("SUPERPOWERS_SESSION_KEY", session_key)],
+            "rust canonical workflow handoff should be available on ready plans",
+        ),
+        "rust canonical workflow handoff should be available on ready plans",
+    );
+    assert_eq!(handoff_json["route_status"], "implementation_ready");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "superpowers:executing-plans"
+    );
+
+    let preflight_json = parse_json(
+        &run_rust_superpowers_with_env(
+            repo,
+            state,
+            &["workflow", "preflight", "--plan", plan_rel, "--json"],
+            &[("SUPERPOWERS_SESSION_KEY", session_key)],
+            "rust canonical workflow preflight should be available on ready plans",
+        ),
+        "rust canonical workflow preflight should be available on ready plans",
+    );
+    assert_eq!(preflight_json["allowed"], true);
+
+    let gate_review_json = parse_json(
+        &run_rust_superpowers_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "review", "--plan", plan_rel, "--json"],
+            &[("SUPERPOWERS_SESSION_KEY", session_key)],
+            "rust canonical workflow gate review should be available on ready plans",
+        ),
+        "rust canonical workflow gate review should be available on ready plans",
+    );
+    assert_eq!(gate_review_json["allowed"], false);
+    assert_eq!(gate_review_json["failure_class"], "ExecutionStateNotReady");
+
+    let gate_finish_json = parse_json(
+        &run_rust_superpowers_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
+            &[("SUPERPOWERS_SESSION_KEY", session_key)],
+            "rust canonical workflow gate finish should be available on ready plans",
+        ),
+        "rust canonical workflow gate finish should be available on ready plans",
+    );
+    assert_eq!(gate_finish_json["allowed"], false);
+    assert!(gate_finish_json["failure_class"].is_string());
 }

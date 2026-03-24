@@ -170,16 +170,11 @@ test('interactive question contract appears once per generated skill in normaliz
   }
 });
 
-test('workflow sequencing test uses local fixtures instead of historical docs paths', () => {
-  const content = readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/test-workflow-sequencing.sh'));
-  const stripped = content
-    .replace(/^require_pattern docs\/superpowers\/specs\/2026-03-17-workflow-state-runtime-design\.md .*$/gm, '')
-    .replace(/^require_pattern docs\/superpowers\/plans\/2026-03-17-workflow-state-runtime\.md .*$/gm, '')
-    .replace(/^require_pattern docs\/superpowers\/specs\/2026-03-22-runtime-integration-hardening-design\.md .*$/gm, '')
-    .replace(/^require_pattern docs\/superpowers\/plans\/2026-03-22-runtime-integration-hardening\.md .*$/gm, '');
-  assert.match(content, /WORKFLOW_FIXTURE_DIR="tests\/codex-runtime\/fixtures\/workflow-artifacts"/);
-  assert.doesNotMatch(stripped, /docs\/superpowers\/specs\/2026-/);
-  assert.doesNotMatch(stripped, /docs\/superpowers\/plans\/2026-/);
+test('workflow fixture coverage uses local fixtures instead of historical docs paths', () => {
+  const content = readUtf8(path.join(REPO_ROOT, 'tests/runtime_instruction_contracts.rs'));
+  assert.match(content, /tests\/codex-runtime\/fixtures\/workflow-artifacts/);
+  assert.doesNotMatch(content, /docs\/superpowers\/specs\/2026-/);
+  assert.doesNotMatch(content, /docs\/superpowers\/plans\/2026-/);
 });
 
 test('broad-safe skill descriptions expand discovery language without taking over workflow authority', () => {

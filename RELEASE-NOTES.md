@@ -144,7 +144,7 @@ For release history before `v5.1.0 (2026-03-16)`, see the upstream README: https
 
 ### Runtime Helpers
 
-- Added `superpowers config` for local runtime config under `~/.superpowers/config.yaml`
+- Added `superpowers config` for local runtime config under `~/.superpowers/config/config.yaml`
 - Added `superpowers install migrate` to collapse legacy `~/.codex/superpowers` and `~/.copilot/superpowers` clones into the shared install root at `~/.superpowers/install`
 - Added `superpowers update-check` for per-session upgrade notices, snoozes, and just-upgraded markers
 - Added canonical review support files at `review/TODOS-format.md`, `superpowers-upgrade/SKILL.md`, and root `VERSION`

@@ -14,7 +14,14 @@ pub enum WorkflowCommand {
     Resolve,
     Expect(ExpectArgs),
     Sync(SyncArgs),
+    Next,
+    Artifacts,
+    Explain,
     Phase(PhaseArgs),
+    Doctor(JsonModeArgs),
+    Handoff(JsonModeArgs),
+    Preflight(PlanArgs),
+    Gate(WorkflowGateCli),
 }
 
 #[derive(Debug, Args)]
@@ -51,4 +58,30 @@ pub struct SyncArgs {
 pub struct PhaseArgs {
     #[arg(long, default_value_t = false)]
     pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct JsonModeArgs {
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct PlanArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkflowGateCli {
+    #[command(subcommand)]
+    pub command: WorkflowGateCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkflowGateCommand {
+    Review(PlanArgs),
+    Finish(PlanArgs),
 }

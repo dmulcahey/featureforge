@@ -12,6 +12,7 @@ use crate::contracts::runtime::analyze_contract_report;
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::git::{RepositoryIdentity, discover_repo_identity};
 use crate::paths::RepoPath;
+use crate::session_entry;
 use crate::workflow::manifest::{
     ManifestLoadResult, WorkflowManifest, load_manifest, load_manifest_read_only, manifest_path,
     recover_slug_changed_manifest, recover_slug_changed_manifest_read_only, save_manifest,
@@ -349,7 +350,7 @@ impl WorkflowRuntime {
     }
 
     pub fn phase(&self) -> Result<WorkflowPhase, DiagnosticError> {
-        let route = self.status()?;
+        let route = self.resolve()?;
         let session_entry = read_session_entry(&self.state_dir);
         let phase = if route.status == "implementation_ready" {
             String::from("execution_preflight")
@@ -937,33 +938,31 @@ fn read_session_entry(state_dir: &Path) -> SessionEntryState {
     let session_key = env::var("SUPERPOWERS_SESSION_KEY")
         .or_else(|_| env::var("PPID"))
         .unwrap_or_else(|_| String::from("current"));
-    let decision_path = state_dir
-        .join("session-flags")
-        .join("using-superpowers")
-        .join(&session_key);
-
-    if decision_path.is_file() {
-        SessionEntryState {
-            outcome: String::from("enabled"),
-            decision_source: String::from("existing_enabled"),
-            session_key,
-            decision_path: decision_path.display().to_string(),
-            policy_source: String::from("default"),
-            persisted: true,
-            failure_class: String::new(),
-            reason: String::from("existing_enabled"),
-        }
-    } else {
-        SessionEntryState {
+    match session_entry::inspect(Some(&session_key)) {
+        Ok(output) => SessionEntryState {
+            outcome: output.outcome,
+            decision_source: output.decision_source,
+            session_key: output.session_key,
+            decision_path: output.decision_path,
+            policy_source: output.policy_source,
+            persisted: output.persisted,
+            failure_class: output.failure_class,
+            reason: output.reason,
+        },
+        Err(error) => SessionEntryState {
             outcome: String::from("needs_user_choice"),
-            decision_source: String::from("missing"),
+            decision_source: String::from("runtime_failure"),
             session_key,
-            decision_path: decision_path.display().to_string(),
+            decision_path: state_dir
+                .join("session-entry")
+                .join("using-superpowers")
+                .to_string_lossy()
+                .into_owned(),
             policy_source: String::from("default"),
             persisted: false,
-            failure_class: String::new(),
-            reason: String::from("missing"),
-        }
+            failure_class: error.failure_class().to_owned(),
+            reason: error.message().to_owned(),
+        },
     }
 }
 

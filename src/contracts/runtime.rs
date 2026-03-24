@@ -488,7 +488,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
             }
         }
         if let Some(parent) = path.parent() {
-            prune_packet_cache(parent);
+            prune_packet_cache(parent, &path);
         }
         packet_path = Some(path.display().to_string());
     }
@@ -1774,7 +1774,7 @@ fn write_packet_cache(
     fs::write(path, body)
 }
 
-fn prune_packet_cache(packet_dir: &Path) {
+fn prune_packet_cache(packet_dir: &Path, current_packet: &Path) {
     let mut limit = std::env::var("SUPERPOWERS_PLAN_PACKET_RETENTION")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -1803,7 +1803,21 @@ fn prune_packet_cache(packet_dir: &Path) {
         })
         .collect::<Vec<_>>();
     packets.sort_by(|left, right| right.1.cmp(&left.1));
-    for (path, _) in packets.into_iter().skip(limit) {
+    let current_is_present = packets.iter().any(|(path, _)| path == current_packet);
+    let keep_others = if current_is_present {
+        limit.saturating_sub(1)
+    } else {
+        limit
+    };
+    let mut kept_others = 0usize;
+    for (path, _) in packets {
+        if path == current_packet {
+            continue;
+        }
+        if kept_others < keep_others {
+            kept_others += 1;
+            continue;
+        }
         let _ = fs::remove_file(path);
     }
 }

@@ -142,6 +142,55 @@ pub fn resolve(
     }
 }
 
+pub fn inspect(session_key: Option<&str>) -> Result<SessionEntryResolveOutput, DiagnosticError> {
+    if matches!(
+        env::var("SUPERPOWERS_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
+        Ok("instruction_parse_failure")
+    ) {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "Session-entry test failpoint injected an instruction parse failure.",
+        ));
+    }
+    let runtime = SessionEntryRuntime::discover(session_key)?;
+    let decision_state = runtime.read_decision_state_read_only()?;
+
+    match decision_state {
+        DecisionState::Enabled => Ok(runtime.result(
+            "enabled",
+            "existing_enabled",
+            true,
+            "",
+            "existing_enabled",
+            None,
+        )),
+        DecisionState::Bypassed => Ok(runtime.result(
+            "bypassed",
+            "existing_bypassed",
+            true,
+            "",
+            "existing_bypassed",
+            None,
+        )),
+        DecisionState::Missing => Ok(runtime.result(
+            "needs_user_choice",
+            "missing",
+            false,
+            "",
+            "missing",
+            Some(default_prompt()),
+        )),
+        DecisionState::Malformed => Ok(runtime.result(
+            "needs_user_choice",
+            "malformed",
+            false,
+            "MalformedDecisionState",
+            "malformed",
+            Some(default_prompt()),
+        )),
+    }
+}
+
 pub fn record(args: &SessionEntryRecordArgs) -> Result<SessionEntryResolveOutput, DiagnosticError> {
     let runtime = SessionEntryRuntime::discover(args.session_key.as_deref())?;
     let decision = match args.decision.as_str() {
@@ -259,6 +308,16 @@ impl SessionEntryRuntime {
             })?;
         }
         Ok(legacy_state)
+    }
+
+    fn read_decision_state_read_only(&self) -> Result<DecisionState, DiagnosticError> {
+        if self.canonical_path.exists() {
+            return read_decision_file(&self.canonical_path);
+        }
+        if self.legacy_path.exists() {
+            return read_decision_file(&self.legacy_path);
+        }
+        Ok(DecisionState::Missing)
     }
 
     fn write_decision(&self, decision: &str) -> Result<(), DiagnosticError> {

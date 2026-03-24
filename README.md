@@ -275,7 +275,7 @@ Start a new session in your chosen platform and ask for something that should tr
 
 Runtime state lives in `~/.superpowers/`.
 
-- Preferences live in `~/.superpowers/config.yaml`
+- Preferences live in `~/.superpowers/config/config.yaml`
 - Session-awareness markers live in `~/.superpowers/sessions/`
 - Contributor field reports live in `~/.superpowers/contributor-logs/`
 - Project-scoped artifacts live in `~/.superpowers/projects/`
@@ -294,7 +294,7 @@ All 18 checked-in `skills/*/SKILL.md` files are generated from adjacent `SKILL.m
 
 The shipped reviewer agent artifacts are generated from `agents/code-reviewer.instructions.md`. Regenerate them with `node scripts/gen-agent-docs.mjs` and validate freshness with `node scripts/gen-agent-docs.mjs --check`.
 
-When changing the generated skill runtime, run `node scripts/gen-skill-docs.mjs --check`, then run `bash tests/codex-runtime/test-using-superpowers-bypass.sh`, `bash tests/codex-runtime/test-superpowers-session-entry.sh`, `bash tests/codex-runtime/test-superpowers-plan-contract.sh`, `bash tests/codex-runtime/test-superpowers-repo-safety.sh`, `bash tests/codex-runtime/test-runtime-instructions.sh`, `bash tests/codex-runtime/test-workflow-sequencing.sh`, and `bash tests/differential/run_legacy_vs_rust.sh` before claiming the docs are current.
+When changing the generated skill runtime, run `node scripts/gen-skill-docs.mjs --check`, then `cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test contracts_spec_plan --test runtime_instruction_contracts --test using_superpowers_skill --test session_config_slug --test repo_safety --test update_and_install --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill`, then run `bash tests/differential/run_legacy_vs_rust.sh` before claiming the docs are current.
 
 To enable contributor mode for the installed runtime, run `~/.superpowers/install/bin/superpowers config set superpowers_contributor true`.
 
@@ -308,7 +308,7 @@ Windows (PowerShell): `& "$env:USERPROFILE\.superpowers\install\bin\superpowers.
 
 - `skills/` contains the 18 public Superpowers skills. `using-superpowers` is the entry skill after the runtime-owned `superpowers session-entry` gate resolves the turn; `brainstorming`, `plan-ceo-review`, `writing-plans`, and `plan-eng-review` form the default planning chain.
 - `scripts/gen-skill-docs.mjs` renders every checked-in `SKILL.md` from its template and injects the shared runtime preamble contracts, including the runtime-owned `using-superpowers` session-entry wording plus its post-gate normal-stack handoff.
-- `bin/superpowers` is the only installed runtime binary; every supported runtime surface is exposed as a subcommand family on that binary.
+- `bin/superpowers` is the canonical installed runtime command; every supported runtime surface is exposed as a subcommand family on that binary, while helper-named wrappers remain compatibility shims in the repo checkout.
 - `superpowers install migrate`, `superpowers config`, and `superpowers update-check` manage local runtime state, contributor mode, and per-session upgrade notices under `~/.superpowers/`.
 - `superpowers workflow` is the supported read-only workflow inspection surface for humans and the canonical routing surface used by repo-owned callers.
 - `superpowers repo-safety`, `superpowers plan contract`, `superpowers plan execution`, `superpowers session-entry`, and `superpowers repo slug` cover protected-branch gating, task fidelity, execution state, first-turn routing, and branch-aware artifact lookup.

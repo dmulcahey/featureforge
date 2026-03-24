@@ -19,6 +19,10 @@ fn repo_safety_helper_path() -> PathBuf {
     repo_root().join("bin/superpowers-repo-safety")
 }
 
+fn migrate_install_helper_path() -> PathBuf {
+    repo_root().join("bin/superpowers-migrate-install")
+}
+
 fn run(mut command: Command, context: &str) -> Output {
     command
         .output()
@@ -79,6 +83,28 @@ fn run_shell_update_check(
         .env("SUPERPOWERS_DIR", install_dir)
         .env("SUPERPOWERS_REMOTE_URL", remote_url)
         .args(args);
+    run(command, context)
+}
+
+fn run_shell_migrate_install(
+    home_dir: &Path,
+    shared_root: &Path,
+    codex_root: &Path,
+    copilot_root: &Path,
+    source_repo: &Path,
+    host_target: &str,
+    context: &str,
+) -> Output {
+    let mut command = Command::new(migrate_install_helper_path());
+    command
+        .env("HOME", home_dir)
+        .env("SUPERPOWERS_STATE_DIR", home_dir.join(".superpowers"))
+        .env("SUPERPOWERS_SHARED_ROOT", shared_root)
+        .env("SUPERPOWERS_CODEX_ROOT", codex_root)
+        .env("SUPERPOWERS_COPILOT_ROOT", copilot_root)
+        .env("SUPERPOWERS_REPO_URL", source_repo)
+        .env("SUPERPOWERS_HOST_TARGET", host_target)
+        .env("SUPERPOWERS_MIGRATE_STAMP", "20260323-140000");
     run(command, context)
 }
 
@@ -207,6 +233,139 @@ fn legacy_approval_path(
         .join(repo_slug_from_remote(remote_url))
         .join(format!("{}-{}-repo-safety", current_user_name(), branch))
         .join(format!("{}.json", task_hash(stage, task_id)))
+}
+
+fn path_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn update_check_state_path(state_dir: &Path, file_name: &str) -> PathBuf {
+    state_dir.join("update-check").join(file_name)
+}
+
+fn run_update_check_command(
+    state_dir: &Path,
+    install_dir: &Path,
+    remote_url: &str,
+    args: &[&str],
+    context: &str,
+) -> Output {
+    let install_dir = path_string(install_dir);
+    run_rust_superpowers(
+        None,
+        Some(state_dir),
+        None,
+        &[
+            ("SUPERPOWERS_DIR", install_dir.as_str()),
+            ("SUPERPOWERS_REMOTE_URL", remote_url),
+        ],
+        &["update-check"]
+            .iter()
+            .copied()
+            .chain(args.iter().copied())
+            .collect::<Vec<_>>(),
+        context,
+    )
+}
+
+fn run_install_migrate_command(
+    home_dir: &Path,
+    state_dir: &Path,
+    shared_root: &Path,
+    codex_root: &Path,
+    copilot_root: &Path,
+    source_repo: &Path,
+    host_target: &str,
+    context: &str,
+) -> Output {
+    let shared_root = path_string(shared_root);
+    let codex_root = path_string(codex_root);
+    let copilot_root = path_string(copilot_root);
+    let source_repo = path_string(source_repo);
+    run_rust_superpowers(
+        None,
+        Some(state_dir),
+        Some(home_dir),
+        &[
+            ("SUPERPOWERS_SHARED_ROOT", shared_root.as_str()),
+            ("SUPERPOWERS_CODEX_ROOT", codex_root.as_str()),
+            ("SUPERPOWERS_COPILOT_ROOT", copilot_root.as_str()),
+            ("SUPERPOWERS_REPO_URL", source_repo.as_str()),
+            ("SUPERPOWERS_HOST_TARGET", host_target),
+            ("SUPERPOWERS_MIGRATE_STAMP", "20260323-140000"),
+        ],
+        &["install", "migrate"],
+        context,
+    )
+}
+
+fn assert_ready_install(path: &Path) {
+    assert!(
+        path.join("bin/superpowers").is_file(),
+        "expected {} to contain bin/superpowers",
+        path.display()
+    );
+    assert!(
+        path.join("bin/superpowers-update-check").is_file(),
+        "expected {} to contain bin/superpowers-update-check",
+        path.display()
+    );
+    assert!(
+        path.join("bin/superpowers-config").is_file(),
+        "expected {} to contain bin/superpowers-config",
+        path.display()
+    );
+    assert!(
+        path.join("agents/code-reviewer.md").is_file(),
+        "expected {} to contain agents/code-reviewer.md",
+        path.display()
+    );
+    assert!(
+        path.join(".codex/agents/code-reviewer.toml").is_file(),
+        "expected {} to contain .codex/agents/code-reviewer.toml",
+        path.display()
+    );
+    assert!(
+        path.join("VERSION").is_file(),
+        "expected {} to contain VERSION",
+        path.display()
+    );
+    assert!(
+        gix::discover(path).is_ok(),
+        "expected {} to be a git repository",
+        path.display()
+    );
+}
+
+fn assert_link_target(link_path: &Path, target_path: &Path) {
+    let linked = fs::read_link(link_path)
+        .unwrap_or_else(|error| panic!("expected {} to be a link: {error}", link_path.display()));
+    let resolved_link = fs::canonicalize(link_path)
+        .unwrap_or_else(|error| panic!("expected {} to resolve: {error}", link_path.display()));
+    let resolved_target = fs::canonicalize(target_path)
+        .unwrap_or_else(|error| panic!("expected {} to resolve: {error}", target_path.display()));
+    assert_eq!(
+        resolved_link,
+        resolved_target,
+        "expected {} to point at {}, got {:?} (raw link target: {})",
+        link_path.display(),
+        target_path.display(),
+        resolved_link,
+        linked.display()
+    );
+}
+
+fn assert_backup_exists(parent: &Path, prefix: &str) {
+    let count = fs::read_dir(parent)
+        .unwrap_or_else(|error| panic!("expected {} to be readable: {error}", parent.display()))
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(prefix))
+        .count();
+    assert!(
+        count > 0,
+        "expected at least one backup matching {prefix}* under {}",
+        parent.display()
+    );
 }
 
 fn prepare_install_dir(version: &str) -> TempDir {
@@ -394,6 +553,185 @@ fn make_legacy_install(dir: &Path, version: &str) {
     run_checked(git_commit, "legacy install git commit");
 }
 
+fn make_install_repo(dir: &Path, version: &str, commit_ts: Option<&str>) {
+    fs::create_dir_all(dir).expect("install repo dir should exist");
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(dir);
+    run_checked(git_init, "install repo git init");
+
+    let mut git_config_name = Command::new("git");
+    git_config_name
+        .args(["config", "user.name", "Superpowers Test"])
+        .current_dir(dir);
+    run_checked(git_config_name, "install repo git config user.name");
+
+    let mut git_config_email = Command::new("git");
+    git_config_email
+        .args(["config", "user.email", "superpowers-tests@example.com"])
+        .current_dir(dir);
+    run_checked(git_config_email, "install repo git config user.email");
+
+    mkdir_dir(dir.join("bin"));
+    mkdir_dir(dir.join("agents"));
+    mkdir_dir(dir.join(".codex/agents"));
+    write_file(&dir.join("bin/superpowers-update-check"), "");
+    write_file(&dir.join("bin/superpowers-config"), "");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            dir.join("bin/superpowers-update-check"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .expect("install repo update-check helper should be executable");
+        fs::set_permissions(
+            dir.join("bin/superpowers-config"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .expect("install repo config helper should be executable");
+    }
+    write_file(&dir.join("agents/code-reviewer.md"), "# reviewer\n");
+    write_file(
+        &dir.join(".codex/agents/code-reviewer.toml"),
+        "name = \"code-reviewer\"\ndescription = \"reviewer\"\ndeveloper_instructions = \"\"\"review\"\"\"",
+    );
+    write_file(&dir.join("VERSION"), &format!("{version}\n"));
+
+    let mut git_add = Command::new("git");
+    git_add
+        .args([
+            "add",
+            "VERSION",
+            "bin/superpowers-update-check",
+            "bin/superpowers-config",
+            "agents/code-reviewer.md",
+            ".codex/agents/code-reviewer.toml",
+        ])
+        .current_dir(dir);
+    run_checked(git_add, "install repo git add");
+
+    let mut git_commit = Command::new("git");
+    git_commit
+        .args(["commit", "-m", &format!("init-{version}")])
+        .current_dir(dir);
+    if let Some(commit_ts) = commit_ts {
+        git_commit.env("GIT_AUTHOR_DATE", format!("@{commit_ts}"));
+        git_commit.env("GIT_COMMITTER_DATE", format!("@{commit_ts}"));
+    }
+    run_checked(git_commit, "install repo git commit");
+}
+
+fn mkdir_dir(path: PathBuf) {
+    fs::create_dir_all(&path).expect("directory should be creatable");
+}
+
+fn make_legacy_install_without_config(dir: &Path, version: &str) {
+    fs::create_dir_all(dir).expect("legacy install dir should exist");
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(dir);
+    run_checked(git_init, "legacy install without config git init");
+
+    let mut git_config_name = Command::new("git");
+    git_config_name
+        .args(["config", "user.name", "Superpowers Test"])
+        .current_dir(dir);
+    run_checked(
+        git_config_name,
+        "legacy install without config git config user.name",
+    );
+
+    let mut git_config_email = Command::new("git");
+    git_config_email
+        .args(["config", "user.email", "superpowers-tests@example.com"])
+        .current_dir(dir);
+    run_checked(
+        git_config_email,
+        "legacy install without config git config user.email",
+    );
+
+    mkdir_dir(dir.join("bin"));
+    write_file(&dir.join("bin/superpowers-update-check"), "");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            dir.join("bin/superpowers-update-check"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .expect("legacy update-check helper should be executable");
+    }
+    write_file(&dir.join("VERSION"), &format!("{version}\n"));
+
+    let mut git_add = Command::new("git");
+    git_add
+        .args(["add", "VERSION", "bin/superpowers-update-check"])
+        .current_dir(dir);
+    run_checked(git_add, "legacy install without config git add");
+
+    let mut git_commit = Command::new("git");
+    git_commit.args(["commit", "-m", "init"]).current_dir(dir);
+    run_checked(git_commit, "legacy install without config git commit");
+}
+
+fn make_legacy_install_without_reviewers(dir: &Path, version: &str) {
+    fs::create_dir_all(dir).expect("legacy install dir should exist");
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(dir);
+    run_checked(git_init, "legacy install without reviewers git init");
+
+    let mut git_config_name = Command::new("git");
+    git_config_name
+        .args(["config", "user.name", "Superpowers Test"])
+        .current_dir(dir);
+    run_checked(
+        git_config_name,
+        "legacy install without reviewers git config user.name",
+    );
+
+    let mut git_config_email = Command::new("git");
+    git_config_email
+        .args(["config", "user.email", "superpowers-tests@example.com"])
+        .current_dir(dir);
+    run_checked(
+        git_config_email,
+        "legacy install without reviewers git config user.email",
+    );
+
+    mkdir_dir(dir.join("bin"));
+    write_file(&dir.join("bin/superpowers-update-check"), "");
+    write_file(&dir.join("bin/superpowers-config"), "");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            dir.join("bin/superpowers-update-check"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .expect("legacy update-check helper should be executable");
+        fs::set_permissions(
+            dir.join("bin/superpowers-config"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .expect("legacy config helper should be executable");
+    }
+    write_file(&dir.join("VERSION"), &format!("{version}\n"));
+
+    let mut git_add = Command::new("git");
+    git_add
+        .args([
+            "add",
+            "VERSION",
+            "bin/superpowers-update-check",
+            "bin/superpowers-config",
+        ])
+        .current_dir(dir);
+    run_checked(git_add, "legacy install without reviewers git add");
+
+    let mut git_commit = Command::new("git");
+    git_commit.args(["commit", "-m", "init"]).current_dir(dir);
+    run_checked(git_commit, "legacy install without reviewers git commit");
+}
+
 #[test]
 fn canonical_update_check_preserves_status_line_and_writes_canonical_state() {
     let state_dir = TempDir::new().expect("state tempdir should exist");
@@ -449,6 +787,334 @@ fn canonical_update_check_preserves_status_line_and_writes_canonical_state() {
     assert!(
         !state_dir.path().join("last-update-check").exists(),
         "canonical update-check should not keep writing the legacy root cache path"
+    );
+}
+
+#[test]
+fn update_check_force_bypasses_cached_up_to_date_result() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.0");
+    let remote_file = TempDir::new().expect("remote tempdir should exist");
+    write_file(&remote_file.path().join("VERSION"), "5.2.0\n");
+    let remote_url = format!("file://{}", remote_file.path().join("VERSION").display());
+    write_file(
+        &update_check_state_path(state_dir.path(), "last-update-check"),
+        "UP_TO_DATE 5.1.0\n",
+    );
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        &remote_url,
+        &["--force"],
+        "update-check --force against cached up-to-date result",
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0"
+    );
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("cached update-check should be written"),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0\n"
+    );
+}
+
+#[test]
+fn update_check_compares_versions_numerically() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.2");
+    let remote_file = TempDir::new().expect("remote tempdir should exist");
+    write_file(&remote_file.path().join("VERSION"), "5.1.10\n");
+    let remote_url = format!("file://{}", remote_file.path().join("VERSION").display());
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        &remote_url,
+        &[],
+        "update-check with multi-digit semver comparison",
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "UPGRADE_AVAILABLE 5.1.2 5.1.10"
+    );
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("upgrade cache should be written"),
+        "UPGRADE_AVAILABLE 5.1.2 5.1.10\n"
+    );
+}
+
+#[test]
+fn update_check_reuses_fresh_upgrade_cache() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.0");
+    let remote_file = TempDir::new().expect("remote tempdir should exist");
+    write_file(&remote_file.path().join("VERSION"), "5.0.0\n");
+    let remote_url = format!("file://{}", remote_file.path().join("VERSION").display());
+    write_file(
+        &update_check_state_path(state_dir.path(), "last-update-check"),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0\n",
+    );
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        &remote_url,
+        &[],
+        "update-check with fresh upgrade cache",
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0"
+    );
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("upgrade cache should remain canonical"),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0\n"
+    );
+}
+
+#[test]
+fn update_check_force_bypasses_cached_upgrade_available_result() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.0");
+    let remote_file = TempDir::new().expect("remote tempdir should exist");
+    write_file(&remote_file.path().join("VERSION"), "5.0.0\n");
+    let remote_url = format!("file://{}", remote_file.path().join("VERSION").display());
+    write_file(
+        &update_check_state_path(state_dir.path(), "last-update-check"),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0\n",
+    );
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        &remote_url,
+        &["--force"],
+        "update-check --force against cached upgrade result",
+    );
+
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("forced update-check should rewrite cache"),
+        "UP_TO_DATE 5.1.0\n"
+    );
+}
+
+#[test]
+fn update_check_local_ahead_stays_quiet_and_reuses_up_to_date_cache() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.2.0");
+    let remote_file = TempDir::new().expect("remote tempdir should exist");
+    write_file(&remote_file.path().join("VERSION"), "5.1.9\n");
+    let remote_url = format!("file://{}", remote_file.path().join("VERSION").display());
+
+    let first = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        &remote_url,
+        &[],
+        "update-check with local ahead of remote",
+    );
+    assert!(String::from_utf8_lossy(&first.stdout).trim().is_empty());
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("up-to-date cache should be written"),
+        "UP_TO_DATE 5.2.0\n"
+    );
+
+    let second = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        &remote_url,
+        &[],
+        "update-check with cached local-ahead result",
+    );
+    assert!(String::from_utf8_lossy(&second.stdout).trim().is_empty());
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("up-to-date cache should remain canonical"),
+        "UP_TO_DATE 5.2.0\n"
+    );
+}
+
+#[test]
+fn update_check_reports_just_upgraded_and_clears_marker_state() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.0");
+    write_file(
+        &update_check_state_path(state_dir.path(), "just-upgraded-from"),
+        "5.0.0\n",
+    );
+    write_file(
+        &update_check_state_path(state_dir.path(), "update-snoozed"),
+        "5.1.0 1 1\n",
+    );
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        "file:///does/not/matter",
+        &[],
+        "update-check with just-upgraded marker",
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "JUST_UPGRADED 5.0.0 5.1.0"
+    );
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("just-upgraded should write the canonical cache"),
+        "UP_TO_DATE 5.1.0\n"
+    );
+    assert!(
+        !update_check_state_path(state_dir.path(), "just-upgraded-from").exists(),
+        "just-upgraded marker should be cleared"
+    );
+    assert!(
+        !update_check_state_path(state_dir.path(), "update-snoozed").exists(),
+        "just-upgraded should clear snooze state"
+    );
+}
+
+#[test]
+fn update_check_stays_quiet_when_remote_lookup_fails_without_cache() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.0");
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        "file:///does/not/exist",
+        &[],
+        "update-check with missing remote and empty cache",
+    );
+
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+    assert!(
+        !update_check_state_path(state_dir.path(), "last-update-check").exists(),
+        "no cache should be written when remote lookup fails with no cache"
+    );
+}
+
+#[test]
+fn update_check_preserves_fresh_upgrade_cache_when_remote_lookup_fails() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.0");
+    write_file(
+        &update_check_state_path(state_dir.path(), "last-update-check"),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0\n",
+    );
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        "file:///does/not/exist",
+        &[],
+        "update-check with missing remote and sticky upgrade cache",
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0"
+    );
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("fresh upgrade cache should remain canonical"),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0\n"
+    );
+}
+
+#[test]
+fn update_check_can_be_disabled_via_canonical_config() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.0");
+    let remote_file = TempDir::new().expect("remote tempdir should exist");
+    write_file(&remote_file.path().join("VERSION"), "5.2.0\n");
+    let remote_url = format!("file://{}", remote_file.path().join("VERSION").display());
+    write_file(
+        &state_dir.path().join("config/config.yaml"),
+        "update_check: false\n",
+    );
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        &remote_url,
+        &[],
+        "update-check disabled by canonical config",
+    );
+
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+    assert!(
+        !update_check_state_path(state_dir.path(), "last-update-check").exists(),
+        "disabled update-check should not write cache state"
+    );
+}
+
+#[test]
+fn update_check_respects_snooze_window() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let install_dir = prepare_install_dir("5.1.0");
+    let remote_file = TempDir::new().expect("remote tempdir should exist");
+    write_file(&remote_file.path().join("VERSION"), "5.2.0\n");
+    let remote_url = format!("file://{}", remote_file.path().join("VERSION").display());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .expect("current time should be available")
+        .as_secs();
+    write_file(
+        &update_check_state_path(state_dir.path(), "update-snoozed"),
+        &format!("5.2.0 1 {now}\n"),
+    );
+
+    let output = run_update_check_command(
+        state_dir.path(),
+        install_dir.path(),
+        &remote_url,
+        &[],
+        "update-check with active snooze",
+    );
+
+    assert!(String::from_utf8_lossy(&output.stdout).trim().is_empty());
+    assert_eq!(
+        fs::read_to_string(update_check_state_path(
+            state_dir.path(),
+            "last-update-check"
+        ))
+        .expect("snoozed upgrade should still write the canonical cache"),
+        "UPGRADE_AVAILABLE 5.1.0 5.2.0\n"
     );
 }
 
@@ -753,6 +1419,401 @@ fn install_migrate_rewrites_config_and_legacy_approvals_with_backup_reporting() 
     assert!(
         canonical_approval.exists(),
         "install migrate should rewrite legacy approval state into the canonical subtree"
+    );
+}
+
+#[test]
+fn install_migrate_clones_fresh_shared_install_and_reports_next_steps() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+
+    let output = run_install_migrate_command(
+        home_dir.path(),
+        &home_dir.path().join(".superpowers"),
+        &shared_root,
+        &codex_root,
+        &copilot_root,
+        &source_repo,
+        "darwin-arm64",
+        "install migrate for fresh install",
+    );
+    assert!(output.status.success(), "fresh install should succeed");
+    assert_ready_install(&shared_root);
+    assert!(
+        !codex_root.exists(),
+        "fresh install should not create a legacy Codex root"
+    );
+    assert!(
+        !copilot_root.exists(),
+        "fresh install should not create a legacy Copilot root"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Codex next step:"));
+    assert!(stdout.contains("~/.agents/skills/superpowers"));
+    assert!(stdout.contains("~/.codex/agents/code-reviewer.toml"));
+    assert!(stdout.contains("GitHub Copilot next step:"));
+    assert!(stdout.contains("~/.copilot/skills/superpowers"));
+    assert!(stdout.contains("code-reviewer.agent.md"));
+}
+
+#[test]
+fn install_migrate_helper_dispatches_to_canonical_rust_command() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+
+    let output = run_shell_migrate_install(
+        home_dir.path(),
+        &shared_root,
+        &codex_root,
+        &copilot_root,
+        &source_repo,
+        "darwin-arm64",
+        "migrate-install helper dispatch",
+    );
+
+    assert!(
+        output.status.success(),
+        "helper migrate-install should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_ready_install(&shared_root);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Shared install ready"));
+    assert!(stdout.contains("Provisioned checked-in runtime"));
+}
+
+#[test]
+fn install_migrate_rewires_existing_codex_legacy_install() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+    fs::create_dir_all(codex_root.parent().expect("codex parent should exist"))
+        .expect("codex parent should exist");
+    make_install_repo(&codex_root, "2.0.0", None);
+
+    let output = run_install_migrate_command(
+        home_dir.path(),
+        &home_dir.path().join(".superpowers"),
+        &shared_root,
+        &codex_root,
+        &copilot_root,
+        &source_repo,
+        "darwin-arm64",
+        "install migrate for codex-only legacy install",
+    );
+
+    assert!(
+        output.status.success(),
+        "codex-only migration should succeed"
+    );
+    assert_ready_install(&shared_root);
+    assert_link_target(&codex_root, &shared_root);
+    assert!(
+        !copilot_root.exists(),
+        "codex-only migration should leave an absent Copilot root alone"
+    );
+}
+
+#[test]
+fn install_migrate_rewires_existing_copilot_legacy_install_and_reports_next_step() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+    fs::create_dir_all(copilot_root.parent().expect("copilot parent should exist"))
+        .expect("copilot parent should exist");
+    make_install_repo(&copilot_root, "3.0.0", None);
+
+    let output = run_install_migrate_command(
+        home_dir.path(),
+        &home_dir.path().join(".superpowers"),
+        &shared_root,
+        &codex_root,
+        &copilot_root,
+        &source_repo,
+        "darwin-arm64",
+        "install migrate for copilot-only legacy install",
+    );
+
+    assert!(
+        output.status.success(),
+        "copilot-only migration should succeed"
+    );
+    assert_ready_install(&shared_root);
+    assert_link_target(&copilot_root, &shared_root);
+    assert!(
+        !codex_root.exists(),
+        "copilot-only migration should leave an absent Codex root alone"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("GitHub Copilot next step:"));
+    assert!(stdout.contains("~/.copilot/agents/code-reviewer.agent.md"));
+    assert!(stdout.contains("copy on Windows; symlink on Unix-like installs"));
+}
+
+#[test]
+fn install_migrate_replaces_invalid_legacy_install_missing_config_with_fresh_clone() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+    fs::create_dir_all(codex_root.parent().expect("codex parent should exist"))
+        .expect("codex parent should exist");
+    make_legacy_install_without_config(&codex_root, "4.9.0");
+
+    let output = run_install_migrate_command(
+        home_dir.path(),
+        &home_dir.path().join(".superpowers"),
+        &shared_root,
+        &codex_root,
+        &copilot_root,
+        &source_repo,
+        "darwin-arm64",
+        "install migrate for legacy install missing config",
+    );
+
+    assert!(
+        output.status.success(),
+        "legacy install without config should migrate"
+    );
+    assert_ready_install(&shared_root);
+    assert_eq!(
+        fs::read_to_string(shared_root.join("VERSION")).expect("shared root version should exist"),
+        "1.0.0\n"
+    );
+    assert_link_target(&codex_root, &shared_root);
+    assert_backup_exists(
+        codex_root.parent().expect("codex parent should exist"),
+        "superpowers.backup-",
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Cloned shared install to"));
+    assert!(stdout.contains("Backed up legacy install at"));
+}
+
+#[test]
+fn install_migrate_replaces_invalid_legacy_install_missing_reviewers_with_fresh_clone() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+    fs::create_dir_all(codex_root.parent().expect("codex parent should exist"))
+        .expect("codex parent should exist");
+    make_legacy_install_without_reviewers(&codex_root, "4.9.1");
+
+    let output = run_install_migrate_command(
+        home_dir.path(),
+        &home_dir.path().join(".superpowers"),
+        &shared_root,
+        &codex_root,
+        &copilot_root,
+        &source_repo,
+        "darwin-arm64",
+        "install migrate for legacy install missing reviewers",
+    );
+
+    assert!(
+        output.status.success(),
+        "legacy install missing reviewers should migrate"
+    );
+    assert_ready_install(&shared_root);
+    assert_eq!(
+        fs::read_to_string(shared_root.join("VERSION")).expect("shared root version should exist"),
+        "1.0.0\n"
+    );
+    assert_link_target(&codex_root, &shared_root);
+    assert_backup_exists(
+        codex_root.parent().expect("codex parent should exist"),
+        "superpowers.backup-",
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Cloned shared install to"));
+    assert!(stdout.contains("Backed up legacy install at"));
+}
+
+#[test]
+fn install_migrate_prefers_newer_of_two_legacy_roots_and_backs_up_the_other() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+    fs::create_dir_all(codex_root.parent().expect("codex parent should exist"))
+        .expect("codex parent should exist");
+    fs::create_dir_all(copilot_root.parent().expect("copilot parent should exist"))
+        .expect("copilot parent should exist");
+    make_install_repo(&codex_root, "4.0.0", Some("1700000000"));
+    make_install_repo(&copilot_root, "5.0.0", Some("1700000100"));
+
+    let output = run_install_migrate_command(
+        home_dir.path(),
+        &home_dir.path().join(".superpowers"),
+        &shared_root,
+        &codex_root,
+        &copilot_root,
+        &source_repo,
+        "darwin-arm64",
+        "install migrate for dual legacy roots",
+    );
+
+    assert!(
+        output.status.success(),
+        "dual-root migration should succeed"
+    );
+    assert_ready_install(&shared_root);
+    assert_eq!(
+        fs::read_to_string(shared_root.join("VERSION")).expect("shared root version should exist"),
+        "5.0.0\n"
+    );
+    assert_link_target(&codex_root, &shared_root);
+    assert_link_target(&copilot_root, &shared_root);
+    assert_backup_exists(
+        codex_root.parent().expect("codex parent should exist"),
+        "superpowers.backup-",
+    );
+}
+
+#[test]
+fn install_migrate_fails_on_ambiguous_legacy_roots() {
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let source_repo = home_dir.path().join("source");
+    fs::create_dir_all(&source_repo).expect("source repo dir should exist");
+    create_source_install_repo(&source_repo);
+    write_prebuilt_runtime_fixture(
+        &source_repo,
+        &[(
+            "darwin-arm64",
+            "superpowers",
+            "#!/bin/sh\necho darwin-runtime\n",
+        )],
+        "1.0.0",
+    );
+
+    let shared_root = home_dir.path().join(".superpowers/install");
+    let codex_root = home_dir.path().join(".codex/superpowers");
+    let copilot_root = home_dir.path().join(".copilot/superpowers");
+    fs::create_dir_all(codex_root.parent().expect("codex parent should exist"))
+        .expect("codex parent should exist");
+    fs::create_dir_all(copilot_root.parent().expect("copilot parent should exist"))
+        .expect("copilot parent should exist");
+    make_install_repo(&codex_root, "6.0.0", Some("1700000200"));
+    make_install_repo(&copilot_root, "7.0.0", Some("1700000200"));
+
+    let output = run_install_migrate_command(
+        home_dir.path(),
+        &home_dir.path().join(".superpowers"),
+        &shared_root,
+        &codex_root,
+        &copilot_root,
+        &source_repo,
+        "darwin-arm64",
+        "install migrate for ambiguous legacy roots",
+    );
+
+    assert!(
+        !output.status.success(),
+        "ambiguous dual-root migration should fail closed"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("manual reconciliation"),
+        "ambiguous migration failure should mention manual reconciliation"
     );
 }
 

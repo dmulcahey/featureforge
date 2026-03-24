@@ -48,7 +48,7 @@ pub fn migrate(_: &InstallMigrateArgs) -> Result<String, DiagnosticError> {
     let mut lines = Vec::new();
 
     let legacy_roots = legacy_roots(&paths);
-    let selected_root = if is_valid_install(&paths.shared_root) {
+    let selected_root = if is_reusable_install_root(&paths.shared_root) {
         lines.push(format!(
             "Using existing shared install at {}",
             paths.shared_root.display()
@@ -365,7 +365,7 @@ fn select_or_create_shared_root(
 ) -> Result<PathBuf, DiagnosticError> {
     let valid_legacy_roots = legacy_roots
         .iter()
-        .filter(|path| is_valid_install(path))
+        .filter(|path| is_reusable_install_root(path))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -550,7 +550,10 @@ fn print_next_steps(install_root: &Path) -> Vec<String> {
     ]
 }
 
-fn is_valid_install(path: &Path) -> bool {
+// Legacy roots may predate the canonical `bin/superpowers` runtime. We only
+// need enough structure here to reuse a root before `provision_prebuilt_runtime`
+// normalizes it into the final installed surface.
+fn is_reusable_install_root(path: &Path) -> bool {
     path.join("bin/superpowers-update-check").is_file()
         && path.join("bin/superpowers-config").is_file()
         && path.join("agents/code-reviewer.md").is_file()

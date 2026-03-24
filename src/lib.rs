@@ -131,55 +131,132 @@ pub fn run() -> std::process::ExitCode {
         },
         Some(Command::UpdateCheck(args)) => emit_text(update_check::check(&args)),
         Some(Command::Workflow(workflow_cli)) => {
-            let is_resolve = matches!(
-                &workflow_cli.command,
-                cli::workflow::WorkflowCommand::Resolve
-            );
             let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let runtime_result = if is_resolve {
-                workflow::status::WorkflowRuntime::discover_read_only(&current_dir)
-            } else {
-                workflow::status::WorkflowRuntime::discover(&current_dir)
-            };
-            match runtime_result {
-                Ok(mut runtime) => match workflow_cli.command {
-                    cli::workflow::WorkflowCommand::Status(args) => {
-                        let route = if args.refresh {
-                            runtime.status_refresh()
-                        } else {
-                            runtime.status()
-                        };
-                        if args.summary {
-                            emit_text(route.map(render_workflow_status_summary))
-                        } else {
-                            emit_json(route)
+            match workflow_cli.command {
+                cli::workflow::WorkflowCommand::Status(args) => {
+                    match workflow::status::WorkflowRuntime::discover(&current_dir) {
+                        Ok(mut runtime) => {
+                            let route = if args.refresh {
+                                runtime.status_refresh()
+                            } else {
+                                runtime.status()
+                            };
+                            if args.summary {
+                                emit_text(route.map(render_workflow_status_summary))
+                            } else {
+                                emit_json(route)
+                            }
                         }
+                        Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
                     }
-                    cli::workflow::WorkflowCommand::Resolve => {
-                        emit_workflow_resolve_json(runtime.resolve().map_err(JsonFailure::from))
+                }
+                cli::workflow::WorkflowCommand::Resolve => {
+                    match workflow::status::WorkflowRuntime::discover_read_only(&current_dir) {
+                        Ok(runtime) => {
+                            emit_workflow_resolve_json(runtime.resolve().map_err(JsonFailure::from))
+                        }
+                        Err(error) => emit_workflow_resolve_json(Err(
+                            map_read_only_workflow_failure(error.into()),
+                        )),
                     }
-                    cli::workflow::WorkflowCommand::Expect(args) => {
-                        emit_json(runtime.expect(args.artifact, &args.path))
+                }
+                cli::workflow::WorkflowCommand::Expect(args) => {
+                    match workflow::status::WorkflowRuntime::discover(&current_dir) {
+                        Ok(mut runtime) => emit_json(runtime.expect(args.artifact, &args.path)),
+                        Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
                     }
-                    cli::workflow::WorkflowCommand::Sync(args) => {
-                        emit_json(runtime.sync(args.artifact, args.path.as_deref()))
+                }
+                cli::workflow::WorkflowCommand::Sync(args) => {
+                    match workflow::status::WorkflowRuntime::discover(&current_dir) {
+                        Ok(mut runtime) => {
+                            emit_json(runtime.sync(args.artifact, args.path.as_deref()))
+                        }
+                        Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
                     }
-                    cli::workflow::WorkflowCommand::Phase(_) => emit_json(runtime.phase()),
-                },
-                Err(error) => {
-                    let failure =
-                        if error.failure_class_enum() == FailureClass::BranchDetectionFailed {
-                            JsonFailure::new(
-                                FailureClass::RepoContextUnavailable,
-                                "Read-only workflow resolution requires a git repo.",
-                            )
-                        } else {
-                            error.into()
-                        };
-                    if is_resolve {
-                        emit_workflow_resolve_json(Err(failure))
+                }
+                cli::workflow::WorkflowCommand::Next => emit_text(
+                    workflow::operator::render_next(&current_dir)
+                        .map_err(map_read_only_workflow_failure),
+                ),
+                cli::workflow::WorkflowCommand::Artifacts => emit_text(
+                    workflow::operator::render_artifacts(&current_dir)
+                        .map_err(map_read_only_workflow_failure),
+                ),
+                cli::workflow::WorkflowCommand::Explain => emit_text(
+                    workflow::operator::render_explain(&current_dir)
+                        .map_err(map_read_only_workflow_failure),
+                ),
+                cli::workflow::WorkflowCommand::Phase(args) => {
+                    if args.json {
+                        emit_json(
+                            workflow::operator::phase(&current_dir)
+                                .map_err(map_read_only_workflow_failure),
+                        )
                     } else {
-                        emit_json::<Value, JsonFailure>(Err(failure))
+                        emit_text(
+                            workflow::operator::render_phase(&current_dir)
+                                .map_err(map_read_only_workflow_failure),
+                        )
+                    }
+                }
+                cli::workflow::WorkflowCommand::Doctor(args) => {
+                    if args.json {
+                        emit_json(
+                            workflow::operator::doctor(&current_dir)
+                                .map_err(map_read_only_workflow_failure),
+                        )
+                    } else {
+                        emit_text(
+                            workflow::operator::render_doctor(&current_dir)
+                                .map_err(map_read_only_workflow_failure),
+                        )
+                    }
+                }
+                cli::workflow::WorkflowCommand::Handoff(args) => {
+                    if args.json {
+                        emit_json(
+                            workflow::operator::handoff(&current_dir)
+                                .map_err(map_read_only_workflow_failure),
+                        )
+                    } else {
+                        emit_text(
+                            workflow::operator::render_handoff(&current_dir)
+                                .map_err(map_read_only_workflow_failure),
+                        )
+                    }
+                }
+                cli::workflow::WorkflowCommand::Preflight(args) => {
+                    let result = workflow::operator::preflight(&current_dir, &args);
+                    if args.json {
+                        emit_json(result)
+                    } else {
+                        emit_text(result.map(|gate| {
+                            workflow::operator::render_gate("Execution preflight", &gate)
+                        }))
+                    }
+                }
+                cli::workflow::WorkflowCommand::Gate(gate_cli) => {
+                    match gate_cli.command {
+                        cli::workflow::WorkflowGateCommand::Review(args) => {
+                            let result = workflow::operator::gate_review(&current_dir, &args);
+                            if args.json {
+                                emit_json(result)
+                            } else {
+                                emit_text(result.map(|gate| {
+                                    workflow::operator::render_gate("Review gate", &gate)
+                                }))
+                            }
+                        }
+                        cli::workflow::WorkflowGateCommand::Finish(args) => {
+                            let result = workflow::operator::gate_finish(&current_dir, &args);
+                            if args.json {
+                                emit_json(result)
+                            } else {
+                                emit_text(result.map(|gate| {
+                                    workflow::operator::render_gate("Finish gate", &gate)
+                                }))
+                            }
+                        }
                     }
                 }
             }
@@ -239,7 +316,10 @@ where
     }
 }
 
-fn emit_text(result: Result<String, DiagnosticError>) -> std::process::ExitCode {
+fn emit_text<E>(result: Result<String, E>) -> std::process::ExitCode
+where
+    E: Into<JsonFailure>,
+{
     match result {
         Ok(text) => {
             if !text.is_empty() {
@@ -248,7 +328,8 @@ fn emit_text(result: Result<String, DiagnosticError>) -> std::process::ExitCode 
             std::process::ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("{}: {}", error.failure_class(), error.message());
+            let failure = error.into();
+            eprintln!("{}: {}", failure.error_class, failure.message);
             std::process::ExitCode::from(1)
         }
     }
@@ -346,6 +427,17 @@ fn render_slug_output(current_dir: &std::path::Path) -> Result<String, Diagnosti
         shell_quote(&identity.repo_slug),
         shell_quote(&identity.safe_branch)
     ))
+}
+
+fn map_read_only_workflow_failure(failure: JsonFailure) -> JsonFailure {
+    if failure.error_class == FailureClass::BranchDetectionFailed.as_str() {
+        JsonFailure::new(
+            FailureClass::RepoContextUnavailable,
+            "Read-only workflow resolution requires a git repo.",
+        )
+    } else {
+        failure
+    }
 }
 
 fn render_workflow_status_summary(route: workflow::status::WorkflowRoute) -> String {
