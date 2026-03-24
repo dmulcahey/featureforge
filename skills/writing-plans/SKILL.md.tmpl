@@ -59,6 +59,13 @@ Before writing the plan, inspect the selected spec and validate these exact head
 - Do not write or extend an implementation plan from a draft spec.
 - Execution-bound specs must include a parseable `## Requirement Index` before planning begins. If the approved spec does not include one, stop and return to `superpowers:plan-ceo-review`.
 
+An approved spec may also include a trailing `## CEO Review Summary`. Treat that block as additive context only:
+
+- the approved spec headers and parseable `## Requirement Index` remain the prerequisite gate
+- the summary does not replace repo-visible approval truth or `superpowers plan contract` checks
+- absence of the summary must not become a prerequisite failure
+- if the summary conflicts with the approved spec body or headers, trust the approved spec body and headers
+
 ## Scope Check
 
 If the spec covers multiple independent subsystems, it should have been broken into sub-project specs during brainstorming. If it wasn't, suggest breaking this into separate plans — one per subsystem. Each plan should produce working, testable software on its own.
