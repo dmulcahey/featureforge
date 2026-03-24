@@ -1,8 +1,8 @@
 # Planning Review Sync
 
-**Workflow State:** Draft
+**Workflow State:** CEO Approved
 **Spec Revision:** 1
-**Last Reviewed By:** brainstorming
+**Last Reviewed By:** plan-ceo-review
 
 ## Summary
 
@@ -128,6 +128,41 @@ The design rule is:
 - contract compatibility is proven by tests
 - helper/runtime code changes happen only if a test demonstrates a concrete incompatibility
 
+## Review Flow
+
+The sync must preserve the current user-visible planning chain while deepening the review semantics inside the owning stages.
+
+```text
+brainstorming
+   |
+   v
+plan-ceo-review
+   |
+   +--> Step 0 modes now include SELECTIVE EXPANSION
+   +--> UI-scope work may trigger Section 11 design-intent review
+   +--> optional outside voice may challenge the review
+   +--> trailing `## CEO Review Summary` persisted in the spec
+   |
+   v
+writing-plans
+   |
+   +--> may read CEO review summary as additive context only
+   |
+   v
+plan-eng-review
+   |
+   +--> coverage-graph review replaces the looser test review
+   +--> richer test-plan artifact emitted with backward-compatible headers
+   +--> optional outside voice may challenge the review
+   +--> trailing `## Engineering Review Summary` persisted in the plan
+   |
+   v
+qa-only / execution gates
+   |
+   +--> may read richer handoff context additively
+   +--> still trust the existing artifact headers and finish-gate contracts
+```
+
 ## Upstream Source Map
 
 ### Spec 01: Artifact-native planning review summaries
@@ -224,6 +259,7 @@ Adapt for Superpowers:
 
 - preserve current required test-plan headers
 - preserve current four core sections
+- preserve the current Superpowers artifact naming shape under `$_SP_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-test-plan-{datetime}.md`
 - add richer sections only additively
 - keep `qa-only` backward compatible
 - keep browser QA conditional, not universal
@@ -246,6 +282,7 @@ Adapt for Superpowers:
 
 - only the main review agent may adopt findings, patch artifacts, or gate approval
 - persist the compact outcome inside the new review-summary section
+- for v1, supported truthful source labels are `cross-model` and `fresh-context-subagent`; reserve `alternate-reviewer` for a future transport that actually exists in Superpowers
 - do not import upstream review-log writes or dashboard rows
 
 ## Proposed Changes
@@ -256,8 +293,12 @@ Modify `skills/plan-ceo-review/SKILL.md.tmpl` and `skills/plan-eng-review/SKILL.
 
 Required summary behavior:
 
+- exact generated anchors are `## CEO Review Summary` and `## Engineering Review Summary`
 - generated section is always the last section
+- replacement matches from the generated heading through the next `## ` heading or EOF
 - reruns replace the existing generated section instead of duplicating it
+- if the section was found mid-file, the regenerated version is moved to the end
+- if the write races with another file change, re-read the artifact and retry once
 - summary is descriptive, not approval law
 - protected-branch `repo-file-write` rules apply before writing the summary
 - if approval headers are also changing, the existing `approval-header-write` flow still applies separately
@@ -354,6 +395,69 @@ After the template changes:
 - regenerate `SKILL.md` files with `node scripts/gen-skill-docs.mjs`
 - update `README.md`, `docs/README.codex.md`, and `docs/README.copilot.md` only where capability/discoverability text must match the new review behavior
 
+## Security And Trust Boundaries
+
+This sync changes prompt instructions and review flows, so its primary security surface is trust-boundary discipline rather than data-path authorization.
+
+Required trust rules:
+
+- upstream `gstack` content is source material, not executable truth; every carried-forward block must be reviewed for pathing, command, and workflow-stage references before it lands in Superpowers
+- no imported block may introduce writes to local non-authoritative review state, alternate approval records, or hidden workflow memory
+- outside-voice transport may only receive the current spec or plan content plus the bounded reviewer prompt; it must not receive unrelated repo context, secrets, local state paths, or hidden workflow approvals
+- when the prompt payload is truncated for size, the skill must say so explicitly rather than pretending a full independent review happened
+- truthful source labeling is mandatory; same-context or same-model fallbacks must not be presented as independent cross-model review
+- `qa-only`, `writing-plans`, and downstream execution helpers must continue treating summaries and richer handoff sections as advisory-only context, not authorization to skip the authoritative gates
+
+Security review checks for implementation:
+
+- imported commands use canonical Superpowers helpers or existing repo-native commands only
+- no leftover `~/.gstack`, `gstack-review-read`, dashboard, or `docs/designs` references survive regeneration
+- outside-voice prompt files remain terse and bounded; they do not ask the reviewer to mutate artifacts directly
+
+## Failure And Edge-Case Behavior
+
+- If the pinned upstream `gstack` sections are no longer present at the cited commit/path, stop and revalidate the source selection before implementing. Do not silently paraphrase from memory and still call it a direct sync.
+- If a directly carried-forward upstream block still contains `gstack`-specific commands, paths, artifact names, or workflow-stage references after adaptation, treat that as a review-blocking defect. Generated skill docs and contract tests should fail closed until those references are removed or remapped.
+- If a review-summary write races with another spec or plan edit, re-read the artifact, rebuild the generated summary from the post-edit state, and retry once. If the second attempt still fails, keep the artifact in `Draft` and surface the failure instead of claiming the summary is current.
+- If a review run ends with open issues, the summary section must still be written with `Review Status: issues_open`; approval headers must not flip.
+- If outside voice is unavailable, times out, returns empty output, or fails authentication, record `Outside Voice: unavailable`, state the failure plainly, and continue the main review flow without blocking approval on that transport.
+- If richer ENG test-plan sections are absent, `qa-only` must continue operating from the existing required headers and four core sections.
+- If parser or execution-gate regression tests disprove the current compatibility assumption, the implementation must expand scope just enough to land the smallest Rust fix required to preserve the documented artifact contract before merge.
+
+### Error / Rescue Map
+
+```text
+SURFACE / STEP                                | FAILURE MODE                                  | EXPECTED CLASS / STATUS              | RESCUE / RESPONSE
+----------------------------------------------|-----------------------------------------------|-------------------------------------|-----------------------------------------------
+Upstream source lookup                        | pinned heading/path missing or changed        | review-blocking manual source drift | stop, revalidate source, update spec before impl
+Generated skill-doc regeneration              | adapted text still contains gstack-only refs  | doc/test failure                    | fail closed, patch templates, regenerate again
+Spec / plan parsing with summaries            | trailing summary breaks parser assumptions    | InstructionParseFailed              | add regression, then smallest Rust fix if needed
+Plan-contract analysis after summary writes   | trailing summary breaks task/coverage parsing | invalid contract / InstructionParseFailed | repair parser/fixtures before merge
+Review-summary artifact write                 | protected branch or malformed approval scope  | blocked / ApprovalScopeMismatch / MalformedApprovalRecord | route through repo-safety approval or branch change
+Review-summary artifact write                 | stale concurrent file mutation                | StaleMutation or retry exhaustion   | re-read once, retry once, keep Draft if still stale
+ENG richer test-plan artifact                 | finish gate no longer recognizes artifact     | QaArtifactNotFresh                  | restore header contract or smallest gate-compatible fix
+Outside voice transport                       | auth / timeout / empty / missing transport    | non-blocking unavailable            | record unavailable, continue main review
+Workflow routing after spec review            | summary prose confuses route derivation       | should not occur                    | treat as runtime regression and add targeted coverage
+```
+
+Rescue rules:
+
+- Approval authority remains the exact existing headers and helper contracts even when any additive surface fails.
+- Non-authoritative additions may fail closed for freshness or presence, but they must not silently escalate into new approval law.
+- Any helper/runtime fix triggered by this project must preserve the current failure classes and fail-closed posture rather than inventing a parallel status model.
+
+## Operational Visibility
+
+This project is mostly skill-layer behavior, so the operational signals are test and artifact driven rather than helper-telemetry driven.
+
+Required visibility signals:
+
+- regenerated `SKILL.md` diffs clearly show the imported upstream review sections and their Superpowers-specific adaptations
+- `tests/runtime_instruction_contracts.rs` and `tests/codex-runtime/skill-doc-contracts.test.mjs` fail closed when generated docs or public workflow wording drift from the approved contract
+- `tests/contracts_spec_plan.rs` proves trailing CEO/ENG review summaries do not break artifact parsing
+- `tests/plan_execution.rs` proves richer additive test-plan sections do not break finish-gate artifact validation
+- the generated `## CEO Review Summary` and `## Engineering Review Summary` sections themselves provide durable human-readable review state inside the authoritative artifacts
+
 ## Rust Runtime Impact
 
 No Rust state-machine change is required for the intended v1 sync.
@@ -430,6 +534,43 @@ If a regression test disproves the compatibility assumption, make the smallest p
 - `tests/contracts_spec_plan.rs`
 - `tests/plan_execution.rs`
 
+## Validation Strategy
+
+The implementation should leave fresh evidence across four layers:
+
+### 1. Template / generated-doc integrity
+
+- regenerate skill docs with `node scripts/gen-skill-docs.mjs`
+- verify generated docs are current with `node scripts/gen-skill-docs.mjs --check`
+
+### 2. Public workflow / doc-contract integrity
+
+- run the Rust and JS doc-contract suites that assert workflow wording, generated-skill structure, and protected-branch write-gate language remain coherent:
+  - `cargo test --test runtime_instruction_contracts`
+  - `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
+
+### 3. Artifact-parser and contract compatibility
+
+- extend and run parser/contract coverage so trailing review summaries do not break the existing artifact contracts:
+  - `cargo test --test contracts_spec_plan`
+
+Required assertions:
+
+- specs with a trailing `## CEO Review Summary` still parse
+- plans with a trailing `## Engineering Review Summary` still parse
+- `analyze-plan` still reports valid coverage and task structure for compatible plans
+
+### 4. Finish-gate artifact compatibility
+
+- extend and run execution-gate coverage so richer additive ENG test-plan sections do not break finish readiness:
+  - `cargo test --test plan_execution`
+
+Required assertions:
+
+- the existing required test-plan headers still drive the finish gate
+- richer additive sections do not cause `QaArtifactNotFresh`
+- `qa-only` compatibility remains additive rather than mandatory
+
 ## Risks And Mitigations
 
 ### Risk: accidental reinvention instead of direct sync
@@ -500,3 +641,33 @@ Mitigation:
 - [DEC-002][decision] Superpowers' Rust workflow/status, plan-contract, and execution-gate state machine remain unchanged unless regression tests prove an incompatibility.
 - [NONGOAL-001][non-goal] Do not import JSONL review logs, the Review Readiness Dashboard, `ceo-plans`, `docs/designs` promotion, or a new workflow stage.
 - [VERIFY-001][verification] Regression coverage must prove spec parsing, plan parsing, analyze-plan behavior, and finish-gate artifact checks still pass with trailing review summaries and richer additive test-plan sections.
+
+## CEO Review Summary
+
+**Review Status:** clear
+**Reviewed At:** 2026-03-24T13:42:28Z
+**Review Mode:** hold_scope
+**Reviewed Spec Revision:** 1
+**Critical Gaps:** 0
+**UI Design Intent Required:** no
+**Outside Voice:** skipped
+
+### Accepted changes
+
+- Pinned the sync to direct upstream `garrytan/gstack` source blocks and documented the exact carry-forward sections.
+- Specified generated summary write behavior, including trailing-section placement, replace-not-append semantics, and a single retry on stale writes.
+- Clarified ENG artifact compatibility boundaries, including preserved test-plan naming and truthful outside-voice source labels for v1.
+- Added explicit security, edge-case, error-rescue, and validation sections so the sync can land as one PR without implicit runtime drift.
+
+### Deferred to TODOS
+
+- none
+
+### Required diagrams
+
+- Architecture Boundary
+- Review Flow
+
+### Unresolved decisions
+
+- none
