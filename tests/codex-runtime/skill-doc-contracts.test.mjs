@@ -28,7 +28,7 @@ function getSkillDescription(skill) {
   return frontmatter.description;
 }
 
-const HELPER_COMMAND_PATTERN = /\b(?:featureforge|superpowers)-(plan-contract|plan-execution|workflow-status|workflow|repo-safety|session-entry|config|slug|update-check|migrate-install)\b/;
+const HELPER_COMMAND_PATTERN = /\bfeatureforge-(plan-contract|plan-execution|workflow-status|workflow|repo-safety|session-entry|config|slug|update-check|migrate-install)\b/;
 
 test('templates declare exactly one base or review preamble placeholder', () => {
   for (const skill of listGeneratedSkills()) {
@@ -562,10 +562,10 @@ test('planning review sync docs describe additive review summaries and richer QA
 });
 
 test('approved workflow-state artifacts document the finalized helper contract', () => {
-  const specDoc = readUtf8(path.join(REPO_ROOT, 'docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md'));
+  const specDoc = readUtf8(path.join(REPO_ROOT, 'docs/archive/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md'));
   assert.match(
     specDoc,
-    /`(?:featureforge|superpowers)-workflow-status` must emit schema-versioned structured diagnostics including `contract_state`, `reason_codes`, `diagnostics`, `scan_truncated`, and candidate counts/,
+    /`superpowers-workflow-status` must emit schema-versioned structured diagnostics including `contract_state`, `reason_codes`, `diagnostics`, `scan_truncated`, and candidate counts/,
     'approved spec should describe structured route-time diagnostics',
   );
   assert.match(
@@ -575,11 +575,11 @@ test('approved workflow-state artifacts document the finalized helper contract',
   );
   assert.match(
     specDoc,
-    /`(?:featureforge|superpowers)-plan-execution` must expose read-only `preflight`, `gate-review`, and `gate-finish` commands/,
+    /`superpowers-plan-execution` must expose read-only `preflight`, `gate-review`, and `gate-finish` commands/,
     'approved spec should describe helper-owned execution gates',
   );
 
-  const planDoc = readUtf8(path.join(REPO_ROOT, 'docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md'));
+  const planDoc = readUtf8(path.join(REPO_ROOT, 'docs/archive/superpowers/plans/2026-03-22-runtime-integration-hardening.md'));
   assert.match(
     planDoc,
     /Route-time readiness and JSON diagnostics are driven by the same canonical approved-plan contract/,

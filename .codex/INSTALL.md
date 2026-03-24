@@ -36,21 +36,6 @@ Enable FeatureForge skills in Codex via native skill discovery. Codex and GitHub
    Copy-Item "$env:USERPROFILE\.featureforge\install\.codex\agents\code-reviewer.toml" "$env:USERPROFILE\.codex\agents\code-reviewer.toml" -Force
    ```
 
-## If You See `PendingMigration`
-
-If a FeatureForge command reports `PendingMigration`, rewrite the local runtime state before retrying:
-
-```bash
-~/.featureforge/install/bin/featureforge install migrate
-```
-
-**Windows (PowerShell):**
-```powershell
-& "$env:USERPROFILE\.featureforge\install\bin\featureforge.exe" install migrate
-```
-
-This migrates non-rebuildable state under `~/.featureforge/` into the current layout. After it finishes, rerun the original command.
-
 ## Verify
 
 ```bash

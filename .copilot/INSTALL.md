@@ -39,21 +39,6 @@ New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.copilot\agents"
 Copy-Item "$env:USERPROFILE\.featureforge\install\agents\code-reviewer.md" "$env:USERPROFILE\.copilot\agents\code-reviewer.agent.md" -Force
 ```
 
-## If You See `PendingMigration`
-
-If a FeatureForge command reports `PendingMigration`, rewrite the local runtime state before retrying:
-
-```bash
-~/.featureforge/install/bin/featureforge install migrate
-```
-
-**Windows (PowerShell):**
-```powershell
-& "$env:USERPROFILE\.featureforge\install\bin\featureforge.exe" install migrate
-```
-
-This migrates non-rebuildable state under `~/.featureforge/` into the current layout. After it finishes, rerun the original command.
-
 ## Verify
 
 ```bash

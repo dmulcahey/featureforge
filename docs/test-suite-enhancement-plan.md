@@ -11,6 +11,10 @@ The active contract surface already includes:
 - doc-driven eval gates under `tests/evals/`
 - a differential workflow-status harness under `tests/differential/`
 
+The active deterministic suite and recommended commands now live in `docs/testing.md`.
+
+Use `cargo nextest run --test runtime_instruction_contracts` as part of the deterministic Rust contract subset when workflow docs or command surfaces change.
+
 ## Near-Term Additions
 
 1. Add a single cutover gate that rejects new forbidden legacy names in active file contents and active path names while explicitly ignoring archived history.

@@ -1,7 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 
 pub mod config;
-pub mod install;
 pub mod plan_contract;
 pub mod plan_execution;
 pub mod repo_safety;
@@ -25,7 +24,6 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Config(config::ConfigCli),
-    Install(InstallCli),
     Plan(PlanCli),
     Repo(RepoCli),
     #[command(name = "repo-safety")]
@@ -35,17 +33,6 @@ pub enum Command {
     #[command(name = "update-check")]
     UpdateCheck(update_check::UpdateCheckCli),
     Workflow(workflow::WorkflowCli),
-}
-
-#[derive(Debug, Args)]
-pub struct InstallCli {
-    #[command(subcommand)]
-    pub command: InstallCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum InstallCommand {
-    Migrate(install::InstallMigrateArgs),
 }
 
 #[derive(Debug, Args)]

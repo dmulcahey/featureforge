@@ -52,6 +52,8 @@ The supported command families are:
 
 FeatureForge routes product work conservatively from repo-visible artifacts.
 
+Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.
+
 - `using-featureforge` is the human-readable entry router after `featureforge session-entry`
 - `featureforge workflow status --refresh` re-derives the safe next stage from active specs and plans
 - `featureforge plan contract` compiles approved markdown into exact execution and review inputs

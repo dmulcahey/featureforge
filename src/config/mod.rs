@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::config::{ConfigGetArgs, ConfigSetArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::paths::{superpowers_state_dir, write_atomic as write_atomic_file};
+use crate::paths::{featureforge_state_dir, write_atomic as write_atomic_file};
 
 pub const LEGACY_CONFIG_FILE: &str = "config.yaml";
 pub const CANONICAL_CONFIG_FILE: &str = "config/config.yaml";
@@ -13,18 +13,6 @@ pub const CONFIG_BACKUP_FILE: &str = "config.yaml.bak";
 struct ConfigValues {
     update_check: Option<bool>,
     featureforge_contributor: Option<bool>,
-}
-
-#[derive(Debug, Clone)]
-struct ConfigAccess {
-    values: ConfigValues,
-    pending_migration: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AccessMode {
-    ReadOnly,
-    Mutating,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,11 +25,10 @@ pub struct ConfigMigration {
 
 pub fn get(args: &ConfigGetArgs) -> Result<String, DiagnosticError> {
     let state_dir = state_dir();
-    let access = load_config(&state_dir, AccessMode::ReadOnly)?;
-    warn_if_pending(&access);
+    let values = load_config(&state_dir)?;
     let value = match normalize_key(&args.key)?.as_str() {
-        "update_check" => access.values.update_check.map(render_bool),
-        "featureforge_contributor" => access.values.featureforge_contributor.map(render_bool),
+        "update_check" => values.update_check.map(render_bool),
+        "featureforge_contributor" => values.featureforge_contributor.map(render_bool),
         _ => None,
     };
     Ok(value.unwrap_or_default())
@@ -49,35 +36,31 @@ pub fn get(args: &ConfigGetArgs) -> Result<String, DiagnosticError> {
 
 pub fn set(args: &ConfigSetArgs) -> Result<String, DiagnosticError> {
     let state_dir = state_dir();
-    let mut access = load_config(&state_dir, AccessMode::Mutating)?;
+    let mut values = load_config(&state_dir)?;
     let key = normalize_key(&args.key)?;
     let value = parse_bool(&args.value)?;
 
     match key.as_str() {
-        "update_check" => access.values.update_check = Some(value),
-        "featureforge_contributor" => access.values.featureforge_contributor = Some(value),
+        "update_check" => values.update_check = Some(value),
+        "featureforge_contributor" => values.featureforge_contributor = Some(value),
         _ => {}
     }
 
-    write_config(&state_dir.join(CANONICAL_CONFIG_FILE), &access.values)?;
+    write_config(&state_dir.join(CANONICAL_CONFIG_FILE), &values)?;
     Ok(String::new())
 }
 
 pub fn list() -> Result<String, DiagnosticError> {
     let state_dir = state_dir();
-    let access = load_config(&state_dir, AccessMode::ReadOnly)?;
-    warn_if_pending(&access);
-    Ok(render_config(&access.values))
+    Ok(render_config(&load_config(&state_dir)?))
 }
 
 pub fn read_update_check_preference(state_dir: &Path) -> Result<Option<bool>, DiagnosticError> {
-    let access = load_config(state_dir, AccessMode::ReadOnly)?;
-    warn_if_pending(&access);
-    Ok(access.values.update_check)
+    Ok(load_config(state_dir)?.update_check)
 }
 
-pub fn pending_explicit_migration(state_dir: &Path) -> bool {
-    state_dir.join(LEGACY_CONFIG_FILE).is_file() && !state_dir.join(CANONICAL_CONFIG_FILE).is_file()
+pub fn pending_explicit_migration(_: &Path) -> bool {
+    false
 }
 
 pub fn migrate_explicit(state_dir: &Path) -> Result<ConfigMigration, DiagnosticError> {
@@ -125,54 +108,15 @@ pub fn migrate_explicit(state_dir: &Path) -> Result<ConfigMigration, DiagnosticE
 }
 
 pub fn state_dir() -> PathBuf {
-    superpowers_state_dir()
+    featureforge_state_dir()
 }
 
-fn load_config(state_dir: &Path, access_mode: AccessMode) -> Result<ConfigAccess, DiagnosticError> {
+fn load_config(state_dir: &Path) -> Result<ConfigValues, DiagnosticError> {
     let canonical_path = state_dir.join(CANONICAL_CONFIG_FILE);
     if canonical_path.is_file() {
-        return Ok(ConfigAccess {
-            values: parse_config_file(&canonical_path)?,
-            pending_migration: false,
-        });
+        return parse_config_file(&canonical_path);
     }
-
-    let legacy_path = state_dir.join(LEGACY_CONFIG_FILE);
-    if !legacy_path.is_file() {
-        return Ok(ConfigAccess {
-            values: ConfigValues::default(),
-            pending_migration: false,
-        });
-    }
-
-    if access_mode == AccessMode::Mutating {
-        return Err(pending_migration_error(
-            "Legacy config must be migrated before mutating config state. Run `featureforge install migrate`.",
-        ));
-    }
-
-    let contents = fs::read_to_string(&legacy_path).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::InvalidConfigFormat,
-            format!(
-                "Could not read the legacy config file {}: {error}",
-                legacy_path.display()
-            ),
-        )
-    })?;
-
-    Ok(ConfigAccess {
-        values: parse_config_source(&contents)?,
-        pending_migration: true,
-    })
-}
-
-fn warn_if_pending(access: &ConfigAccess) {
-    if access.pending_migration {
-        eprintln!(
-            "PendingMigration: Using legacy config in read-only mode. Run `featureforge install migrate` to rewrite non-rebuildable runtime state."
-        );
-    }
+    Ok(ConfigValues::default())
 }
 
 fn ensure_backup(path: &Path, contents: &str) -> Result<bool, DiagnosticError> {
@@ -278,8 +222,4 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), DiagnosticError> {
 
 fn invalid_config(message: &str) -> DiagnosticError {
     DiagnosticError::new(FailureClass::InvalidConfigFormat, message)
-}
-
-fn pending_migration_error(message: &str) -> DiagnosticError {
-    DiagnosticError::new(FailureClass::PendingMigration, message)
 }

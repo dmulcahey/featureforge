@@ -17,7 +17,7 @@ Six layers matter:
 - `featureforge session-entry` owns first-turn session entry.
 - `using-featureforge` is the human-readable entry router after session entry resolves to `enabled`.
 - `featureforge workflow` owns product-work routing up to `implementation_ready`.
-- `featureforge repo-safety` owns protected-branch repo-write guarantees.
+- `featureforge repo-safety` owns protected branches and repo-write guarantees.
 - `featureforge plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.
 - `featureforge plan execution` owns execution state after an approved plan is handed off.
 
@@ -63,10 +63,16 @@ Default pipeline:
 
 `featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review -> implementation`
 
+Planning chain in plain language:
+
+`brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review -> implementation`
+
 Execution starts from an engineering-approved plan and the exact approved plan path. `featureforge plan execution recommend --plan <approved-plan-path>` selects between:
 
 - `featureforge:subagent-driven-development` when the approved tasks are independent and isolated-agent execution is viable
 - `featureforge:executing-plans` when the work should stay serial in the current session
+
+`featureforge plan execution` is the execution preflight boundary for the approved plan.
 
 Completion then flows through:
 

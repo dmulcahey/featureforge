@@ -2,6 +2,8 @@
 
 This document describes the active validation surface for the FeatureForge runtime and skill library.
 
+Legacy `tests/codex-runtime/*.sh` harnesses have been removed; use the Rust and Node contract suites below as the active oracle.
+
 ## Fast Validation
 
 Run these commands from the repo root for the core contract surface:
@@ -9,6 +11,7 @@ Run these commands from the repo root for the core contract surface:
 ```bash
 node scripts/gen-skill-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
+cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill --test contracts_spec_plan --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
 cargo nextest run --test contracts_spec_plan --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
 bash tests/differential/run_legacy_vs_rust.sh
 ```

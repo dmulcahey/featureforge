@@ -18,7 +18,6 @@ pub fn canonical_command_from_argv0(argv0: &str) -> &'static [&'static str] {
         "featureforge-slug" => &["repo", "slug"],
         "featureforge-config" => &["config"],
         "featureforge-update-check" => &["update-check"],
-        "featureforge-migrate-install" => &["install", "migrate"],
         _ => &[],
     }
 }

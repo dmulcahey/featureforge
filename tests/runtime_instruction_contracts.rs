@@ -315,7 +315,7 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
     );
     assert_contains(
         &readme_content,
-        "--test runtime_instruction_contracts --test using_superpowers_skill",
+        "--test runtime_instruction_contracts --test using_featureforge_skill",
         "README.md",
     );
     assert_contains(
@@ -346,14 +346,14 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
 
     assert_contains(
         &docs_testing_content,
-        "cargo nextest run --test runtime_instruction_contracts --test using_superpowers_skill",
+        "cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill",
         "docs/testing.md",
     );
     for legacy_command in [
         "bash tests/codex-runtime/test-runtime-instructions.sh",
         "bash tests/codex-runtime/test-workflow-enhancements.sh",
         "bash tests/codex-runtime/test-workflow-sequencing.sh",
-        "bash tests/codex-runtime/test-using-superpowers-bypass.sh",
+        "bash tests/codex-runtime/test-using-featureforge-bypass.sh",
         "bash tests/codex-runtime/test-superpowers-session-entry-gate.sh",
         "bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh",
         "bash tests/codex-runtime/test-superpowers-upgrade-skill.sh",
@@ -472,29 +472,31 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         (
             ".codex/INSTALL.md",
             [
-                "~/.superpowers/install/bin/superpowers install migrate",
-                "~/.superpowers/install/bin/superpowers config set superpowers_contributor true",
-                "~/.superpowers/install/bin/superpowers config set update_check true",
-                "~/.superpowers/install/bin/superpowers update-check",
+                "~/.featureforge/install/bin/featureforge config set featureforge_contributor true",
+                "~/.featureforge/install/bin/featureforge config set update_check true",
+                "~/.featureforge/install/bin/featureforge update-check",
             ],
             [
-                "~/.superpowers/install/bin/superpowers-migrate-install",
-                "~/.superpowers/install/bin/superpowers-config",
-                "~/.superpowers/install/bin/superpowers-update-check",
+                "~/.featureforge/install/bin/featureforge install migrate",
+                "~/.featureforge/install/bin/featureforge-migrate-install",
+                "~/.featureforge/install/bin/featureforge-config",
+                "~/.featureforge/install/bin/featureforge-update-check",
+                "PendingMigration",
             ],
         ),
         (
             ".copilot/INSTALL.md",
             [
-                "~/.superpowers/install/bin/superpowers install migrate",
-                "~/.superpowers/install/bin/superpowers config set superpowers_contributor true",
-                "~/.superpowers/install/bin/superpowers config set update_check true",
-                "~/.superpowers/install/bin/superpowers update-check",
+                "~/.featureforge/install/bin/featureforge config set featureforge_contributor true",
+                "~/.featureforge/install/bin/featureforge config set update_check true",
+                "~/.featureforge/install/bin/featureforge update-check",
             ],
             [
-                "~/.superpowers/install/bin/superpowers-migrate-install",
-                "~/.superpowers/install/bin/superpowers-config",
-                "~/.superpowers/install/bin/superpowers-update-check",
+                "~/.featureforge/install/bin/featureforge install migrate",
+                "~/.featureforge/install/bin/featureforge-migrate-install",
+                "~/.featureforge/install/bin/featureforge-config",
+                "~/.featureforge/install/bin/featureforge-update-check",
+                "PendingMigration",
             ],
         ),
     ] {
@@ -527,9 +529,9 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         .current_dir(&root);
     run_checked(gen_agents, "gen-agent-docs --check");
 
-    assert_file_contains(root.join("README.md"), "superpowers session-entry");
-    assert_file_contains(root.join("README.md"), "superpowers repo-safety");
-    assert_file_contains(root.join("README.md"), "superpowers plan contract");
+    assert_file_contains(root.join("README.md"), "featureforge session-entry");
+    assert_file_contains(root.join("README.md"), "featureforge repo-safety");
+    assert_file_contains(root.join("README.md"), "featureforge plan contract");
     assert_file_contains(root.join("README.md"), "protected branches");
     assert_file_contains(root.join("README.md"), "Six layers matter:");
     assert_file_contains(
@@ -650,7 +652,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
     );
     assert_file_not_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "If Step 1.9 already routed through `superpowers:document-release`",
+        "If Step 1.9 already routed through `featureforge:document-release`",
     );
     assert_file_contains(
         root.join("tests/evals/using-featureforge-routing.scenarios.md"),
@@ -782,7 +784,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "Use the execution skill recommended by `superpowers plan execution recommend --plan <approved-plan-path>`",
+        "Use the execution skill recommended by `featureforge plan execution recommend --plan <approved-plan-path>`",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
@@ -802,7 +804,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "If the current work is not governed by an approved Superpowers plan, skip this helper-owned finish gate and continue with the normal completion flow.",
+        "If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -818,7 +820,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "If `gate-finish` fails with `test_plan_artifact_missing` or `test_plan_artifact_stale`, hand control back to `superpowers:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.",
+        "If `gate-finish` fails with `test_plan_artifact_missing` or `test_plan_artifact_stale`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -843,7 +845,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
 
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "superpowers plan execution recommend --plan <approved-plan-path>",
+        "featureforge plan execution recommend --plan <approved-plan-path>",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -1015,7 +1017,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base aligned with `superpowers:document-release` and `gate-finish`.",
+        "Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base aligned with `featureforge:document-release` and `gate-finish`.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
