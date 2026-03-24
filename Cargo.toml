@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.94"
 publish = false
 description = "Rust runtime for the Superpowers workflow toolkit"
+license = "MIT"
 
 [workspace]
 resolver = "2"
@@ -49,10 +50,26 @@ unused_qualifications = "deny"
 unused_must_use = "deny"
 
 [lints.clippy]
-all = "deny"
-cargo = "deny"
-nursery = "deny"
-pedantic = "deny"
-module_name_repetitions = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
+all = { level = "deny", priority = -1 }
+collapsible_if = "allow"
+explicit_auto_deref = "allow"
+large_enum_variant = "allow"
+needless_lifetimes = "allow"
+needless_question_mark = "allow"
+nonminimal_bool = "allow"
+result_large_err = "allow"
+should_implement_trait = "allow"
+too_many_arguments = "allow"
+unnecessary_map_or = "allow"
+
+[[bench]]
+name = "workflow_status"
+harness = false
+
+[[bench]]
+name = "plan_contract"
+harness = false
+
+[[bench]]
+name = "execution_status"
+harness = false

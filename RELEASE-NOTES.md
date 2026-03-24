@@ -4,6 +4,14 @@ For release history before `v5.1.0 (2026-03-16)`, see the upstream README: https
 
 ## v5.7.0 (2026-03-22)
 
+### Rust Runtime Cutover
+
+- Cut the runtime over to the Rust `superpowers` binary while keeping the repo-visible workflow artifacts authoritative and the install surface canonical
+- Added checked-in prebuilt runtime artifacts under `bin/prebuilt/` for `darwin-arm64` and `windows-x64`, with manifest-backed checksum verification during `superpowers install migrate`
+- Switched the normal install path to provision the host-matching checked-in runtime into `~/.superpowers/install/bin` instead of requiring a local Rust toolchain on supported targets
+- Added checked-in benchmark thresholds plus `bash scripts/check-runtime-benchmarks.sh` for the workflow-status, plan-contract, and execution-status hot paths
+- Treat the release gate as requiring blocking macOS arm64 fresh-install evidence plus blocking Windows x64 manifest/provisioning/checksum/artifact evidence, with direct Windows-host launch proof deferred to follow-on validation when a real Windows host is available
+
 ### Task Fidelity Contract
 
 - Added internal `superpowers plan contract` so execution-bound specs and approved plans can be linted for Requirement Index and Requirement Coverage Matrix fidelity before planning, execution, or review proceeds
