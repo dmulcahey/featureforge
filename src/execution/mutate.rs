@@ -1,17 +1,19 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 
-use crate::cli::plan_execution::{BeginArgs, CompleteArgs};
+use crate::cli::plan_execution::{BeginArgs, CompleteArgs, NoteArgs, ReopenArgs, TransferArgs};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::state::{
     EvidenceAttempt, ExecutionContext, ExecutionEvidence, ExecutionRuntime, FileProof,
     NO_REPO_FILES_MARKER, PlanExecutionStatus, PlanStepState, compute_packet_fingerprint,
     current_file_proof, current_head_sha, hash_contract_plan, load_execution_context,
-    normalize_begin_request, normalize_complete_request, normalize_source, require_normalized_text,
-    status_from_context, validate_expected_fingerprint,
+    normalize_begin_request, normalize_complete_request, normalize_note_request,
+    normalize_reopen_request, normalize_source, normalize_transfer_request,
+    require_normalized_text, status_from_context, validate_expected_fingerprint,
 };
 use crate::paths::normalize_repo_relative_path;
 
@@ -85,15 +87,17 @@ pub fn begin(
             "begin may not bypass existing blocked work.",
         ));
     }
-    if context
+    if let Some(interrupted) = context
         .steps
         .iter()
-        .any(|step| step.note_state == Some(crate::execution::state::NoteState::Interrupted))
+        .find(|step| step.note_state == Some(crate::execution::state::NoteState::Interrupted))
     {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "Interrupted work must resume on the same step.",
-        ));
+        if interrupted.task_number != request.task || interrupted.step_number != request.step {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "Interrupted work must resume on the same step.",
+            ));
+        }
     }
 
     context.steps[step_index].note_state = Some(crate::execution::state::NoteState::Active);
@@ -146,6 +150,7 @@ pub fn complete(
     } else {
         canonicalize_files(&request.files)?
     };
+    let files = canonicalize_repo_visible_paths(&context.runtime.repo_root, &files)?;
     let file_proofs = files
         .iter()
         .map(|path| FileProof {
@@ -201,8 +206,199 @@ pub fn complete(
     let rendered_evidence =
         render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
 
-    write_atomic(&context.evidence_abs, &rendered_evidence)?;
+    write_plan_and_evidence_with_rollback(
+        &context.plan_abs,
+        &context.plan_source,
+        &rendered_plan,
+        &context.evidence_abs,
+        context.evidence.source.as_deref(),
+        &rendered_evidence,
+        "complete_after_plan_write",
+    )?;
+    let reloaded = load_execution_context(runtime, &args.plan)?;
+    Ok(status_from_context(&reloaded))
+}
+
+pub fn note(
+    runtime: &ExecutionRuntime,
+    args: &NoteArgs,
+) -> Result<PlanExecutionStatus, JsonFailure> {
+    let request = normalize_note_request(args)?;
+    let mut context = load_execution_context(runtime, &args.plan)?;
+    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+
+    let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "Requested task/step does not exist in the approved plan.",
+        )
+    })?;
+    if context.steps[step_index].note_state != Some(crate::execution::state::NoteState::Active) {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "note may target only the current active step.",
+        ));
+    }
+    if context.steps[step_index].checked {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "note may not target a completed step.",
+        ));
+    }
+
+    context.steps[step_index].note_state = Some(request.state);
+    context.steps[step_index].note_summary = request.message;
+
+    let rendered_plan = render_plan_source(
+        &context.plan_source,
+        &context.plan_document.execution_mode,
+        &context.steps,
+    );
     write_atomic(&context.plan_abs, &rendered_plan)?;
+    let reloaded = load_execution_context(runtime, &args.plan)?;
+    Ok(status_from_context(&reloaded))
+}
+
+pub fn reopen(
+    runtime: &ExecutionRuntime,
+    args: &ReopenArgs,
+) -> Result<PlanExecutionStatus, JsonFailure> {
+    let request = normalize_reopen_request(args)?;
+    let mut context = load_execution_context(runtime, &args.plan)?;
+    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+    normalize_source(&request.source, &context.plan_document.execution_mode)?;
+
+    let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "Requested task/step does not exist in the approved plan.",
+        )
+    })?;
+    if !context.steps[step_index].checked {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "reopen may target only a completed step.",
+        ));
+    }
+    if context
+        .steps
+        .iter()
+        .any(|step| step.note_state == Some(crate::execution::state::NoteState::Interrupted))
+    {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "reopen may not create a second parked interrupted step while one already exists.",
+        ));
+    }
+
+    invalidate_latest_completed_attempt(&mut context, request.task, request.step, &request.reason)?;
+    context.steps[step_index].checked = false;
+    context.steps[step_index].note_state = Some(crate::execution::state::NoteState::Interrupted);
+    context.steps[step_index].note_summary = truncate_summary(&request.reason);
+    context.evidence.format = crate::execution::state::EvidenceFormat::V2;
+
+    let rendered_plan = render_plan_source(
+        &context.plan_source,
+        &context.plan_document.execution_mode,
+        &context.steps,
+    );
+    let plan_fingerprint = sha256_hex(rendered_plan.as_bytes());
+    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+    let rendered_evidence =
+        render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
+    write_plan_and_evidence_with_rollback(
+        &context.plan_abs,
+        &context.plan_source,
+        &rendered_plan,
+        &context.evidence_abs,
+        context.evidence.source.as_deref(),
+        &rendered_evidence,
+        "reopen_after_plan_write",
+    )?;
+
+    let reloaded = load_execution_context(runtime, &args.plan)?;
+    Ok(status_from_context(&reloaded))
+}
+
+pub fn transfer(
+    runtime: &ExecutionRuntime,
+    args: &TransferArgs,
+) -> Result<PlanExecutionStatus, JsonFailure> {
+    let request = normalize_transfer_request(args)?;
+    let mut context = load_execution_context(runtime, &args.plan)?;
+    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+    normalize_source(&request.source, &context.plan_document.execution_mode)?;
+
+    let active_index = context
+        .steps
+        .iter()
+        .position(|step| step.note_state == Some(crate::execution::state::NoteState::Active))
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "transfer requires a current active step.",
+            )
+        })?;
+    if context
+        .steps
+        .iter()
+        .any(|step| step.note_state == Some(crate::execution::state::NoteState::Interrupted))
+    {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "transfer may not create a second parked interrupted step while one already exists.",
+        ));
+    }
+
+    let repair_index =
+        step_index(&context, request.repair_task, request.repair_step).ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "Requested repair task/step does not exist in the approved plan.",
+            )
+        })?;
+    if !context.steps[repair_index].checked {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidStepTransition,
+            "transfer may target only a completed repair step.",
+        ));
+    }
+
+    invalidate_latest_completed_attempt(
+        &mut context,
+        request.repair_task,
+        request.repair_step,
+        &request.reason,
+    )?;
+    context.steps[repair_index].checked = false;
+    context.steps[repair_index].note_state = None;
+    context.steps[repair_index].note_summary.clear();
+    context.steps[active_index].note_state = Some(crate::execution::state::NoteState::Interrupted);
+    context.steps[active_index].note_summary = truncate_summary(&format!(
+        "Parked for repair of Task {} Step {}",
+        request.repair_task, request.repair_step
+    ));
+    context.evidence.format = crate::execution::state::EvidenceFormat::V2;
+
+    let rendered_plan = render_plan_source(
+        &context.plan_source,
+        &context.plan_document.execution_mode,
+        &context.steps,
+    );
+    let plan_fingerprint = sha256_hex(rendered_plan.as_bytes());
+    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+    let rendered_evidence =
+        render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
+    write_plan_and_evidence_with_rollback(
+        &context.plan_abs,
+        &context.plan_source,
+        &rendered_plan,
+        &context.evidence_abs,
+        context.evidence.source.as_deref(),
+        &rendered_evidence,
+        "transfer_after_plan_write",
+    )?;
+
     let reloaded = load_execution_context(runtime, &args.plan)?;
     Ok(status_from_context(&reloaded))
 }
@@ -244,6 +440,103 @@ fn canonicalize_files(files: &[String]) -> Result<Vec<String>, JsonFailure> {
     })
 }
 
+fn canonicalize_repo_visible_paths(
+    repo_root: &Path,
+    files: &[String],
+) -> Result<Vec<String>, JsonFailure> {
+    let missing = files
+        .iter()
+        .filter(|path| !repo_root.join(path).exists())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if missing.is_empty() {
+        return Ok(files.to_vec());
+    }
+
+    let rename_map = rename_backed_paths(repo_root, &missing)?;
+    let mut canonical = files
+        .iter()
+        .map(|path| {
+            rename_map
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| path.clone())
+        })
+        .collect::<Vec<_>>();
+    canonical.sort();
+    canonical.dedup();
+    Ok(canonical)
+}
+
+fn rename_backed_paths(
+    repo_root: &Path,
+    missing: &BTreeSet<String>,
+) -> Result<BTreeMap<String, String>, JsonFailure> {
+    let repo = gix::discover(repo_root).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!(
+                "Could not discover the repository while canonicalizing rename-backed file paths: {error}"
+            ),
+        )
+    })?;
+    let head_tree = repo.head_tree_id_or_empty().map_err(|error| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!(
+                "Could not determine the HEAD tree while canonicalizing rename-backed file paths: {error}"
+            ),
+        )
+    })?;
+    let index = repo.index_or_empty().map_err(|error| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!(
+                "Could not open the repository index while canonicalizing rename-backed file paths: {error}"
+            ),
+        )
+    })?;
+
+    let mut paths = BTreeMap::new();
+    repo.tree_index_status(
+        head_tree.detach().as_ref(),
+        &*index,
+        None,
+        gix::status::tree_index::TrackRenames::AsConfigured,
+        |change, _, _| {
+            if let gix::diff::index::ChangeRef::Rewrite {
+                source_location,
+                location,
+                copy,
+                ..
+            } = change
+            {
+                if !copy {
+                    let source = String::from_utf8_lossy(source_location.as_ref()).into_owned();
+                    if missing.contains(&source) {
+                        let destination =
+                            String::from_utf8_lossy(location.as_ref()).into_owned();
+                        paths.insert(source, destination);
+                        if paths.len() == missing.len() {
+                            return Ok::<_, std::convert::Infallible>(std::ops::ControlFlow::Break(()));
+                        }
+                    }
+                }
+            }
+            Ok::<_, std::convert::Infallible>(std::ops::ControlFlow::Continue(()))
+        },
+    )
+    .map_err(|error| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!(
+                "Could not canonicalize rename-backed file paths from the current change set: {error}"
+            ),
+        )
+    })?;
+    Ok(paths)
+}
+
 fn default_files_for_task(context: &ExecutionContext, task_number: u32) -> Vec<String> {
     let Some(task) = context.tasks_by_number.get(&task_number) else {
         return vec![String::from(NO_REPO_FILES_MARKER)];
@@ -271,7 +564,7 @@ fn render_plan_source(
     let step_map = steps
         .iter()
         .map(|step| ((step.task_number, step.step_number), step))
-        .collect::<std::collections::BTreeMap<_, _>>();
+        .collect::<BTreeMap<_, _>>();
     let lines = original_source.lines().collect::<Vec<_>>();
     let mut rendered = Vec::new();
     let mut current_task = None::<u32>;
@@ -434,6 +727,86 @@ fn next_attempt_number(evidence: &ExecutionEvidence, task: u32, step: u32) -> u3
         .max()
         .unwrap_or(0)
         + 1
+}
+
+fn invalidate_latest_completed_attempt(
+    context: &mut ExecutionContext,
+    task: u32,
+    step: u32,
+    reason: &str,
+) -> Result<(), JsonFailure> {
+    let attempt_index =
+        context
+            .evidence
+            .attempts
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, attempt)| {
+                (attempt.task_number == task
+                    && attempt.step_number == step
+                    && attempt.status == "Completed")
+                    .then_some(index)
+            });
+    let Some(attempt_index) = attempt_index else {
+        return Ok(());
+    };
+    context.evidence.attempts[attempt_index].status = String::from("Invalidated");
+    context.evidence.attempts[attempt_index].recorded_at = Timestamp::now().to_string();
+    context.evidence.attempts[attempt_index].invalidation_reason = reason.to_owned();
+    Ok(())
+}
+
+fn write_plan_and_evidence_with_rollback(
+    plan_path: &Path,
+    original_plan: &str,
+    rendered_plan: &str,
+    evidence_path: &Path,
+    original_evidence: Option<&str>,
+    rendered_evidence: &str,
+    failpoint: &str,
+) -> Result<(), JsonFailure> {
+    write_atomic(plan_path, rendered_plan)?;
+    if let Err(error) = maybe_trigger_failpoint(failpoint) {
+        restore_plan_and_evidence(plan_path, original_plan, evidence_path, original_evidence);
+        return Err(error);
+    }
+    if let Err(error) = write_atomic(evidence_path, rendered_evidence) {
+        restore_plan_and_evidence(plan_path, original_plan, evidence_path, original_evidence);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn restore_plan_and_evidence(
+    plan_path: &Path,
+    original_plan: &str,
+    evidence_path: &Path,
+    original_evidence: Option<&str>,
+) {
+    let _ = fs::write(plan_path, original_plan);
+    match original_evidence {
+        Some(source) => {
+            let _ = fs::write(evidence_path, source);
+        }
+        None => {
+            let _ = fs::remove_file(evidence_path);
+        }
+    }
+}
+
+fn maybe_trigger_failpoint(name: &str) -> Result<(), JsonFailure> {
+    if std::env::var("SUPERPOWERS_PLAN_EXECUTION_TEST_FAILPOINT")
+        .ok()
+        .as_deref()
+        == Some(name)
+    {
+        return Err(JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!("Injected plan execution failpoint: {name}"),
+        ));
+    }
+    Ok(())
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<(), JsonFailure> {

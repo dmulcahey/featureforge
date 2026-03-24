@@ -1006,6 +1006,15 @@ fn analyze_contract(
     report
 }
 
+pub fn analyze_contract_report(
+    spec_path: &str,
+    plan_path: &str,
+    spec_source: &str,
+    plan_source: &str,
+) -> AnalyzePlanReport {
+    analyze_contract(spec_path, plan_path, spec_source, plan_source)
+}
+
 fn parse_spec_revision(source: &str) -> Result<u32, ()> {
     find_header_value(source, "Spec Revision")
         .ok_or(())

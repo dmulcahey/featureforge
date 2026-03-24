@@ -45,13 +45,13 @@ require_helper() {
 }
 
 ensure_rust_superpowers_bin() {
-  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
-    return 0
-  fi
-
-  # Build the Rust runtime once so shell parity can exercise the canonical CLI.
   source "$HOME/.cargo/env"
   (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
+  export SUPERPOWERS_COMPAT_BIN="$RUST_SUPERPOWERS_BIN"
+}
+
+lowercase_text() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
 slug_identity_for_repo() {
@@ -214,7 +214,8 @@ run_command_fails() {
     printf '%s\n' "$output"
     exit 1
   fi
-  if [[ -n "$expected_output" && "$output" != *"$expected_output"* && "${output,,}" != *"${expected_output,,}"* ]]; then
+  if [[ -n "$expected_output" && "$output" != *"$expected_output"* \
+    && "$(lowercase_text "$output")" != *"$(lowercase_text "$expected_output")"* ]]; then
     echo "Expected failure output for ${label} to mention '${expected_output}'"
     printf '%s\n' "$output"
     exit 1
@@ -343,7 +344,8 @@ run_resolve_fails_with_env() {
     printf '%s\n' "$output"
     exit 1
   fi
-  if [[ -n "$expected_output" && "$output" != *"$expected_output"* && "${output,,}" != *"${expected_output,,}"* ]]; then
+  if [[ -n "$expected_output" && "$output" != *"$expected_output"* \
+    && "$(lowercase_text "$output")" != *"$(lowercase_text "$expected_output")"* ]]; then
     echo "Expected read-only resolve failure for ${label} to mention '${expected_output}'"
     printf '%s\n' "$output"
     exit 1
@@ -523,7 +525,7 @@ run_packet_buildability_failure_surfaces_structured_contract() {
   local repo="$REPO_DIR/packet-buildability-structured"
   local spec_path="$repo/docs/superpowers/specs/2026-03-22-packet-buildability-structured-design.md"
   local plan_path="$repo/docs/superpowers/plans/2026-03-22-packet-buildability-structured.md"
-  local tool_dir
+  local analyze_report
   local output
 
   init_repo "$repo"
@@ -545,9 +547,13 @@ fs.writeFileSync(
   ),
 );
 NODE
-  tool_dir="$(create_status_bin_with_plan_contract_stub '{"contract_state":"valid","task_count":2,"packet_buildable_tasks":1,"reason_codes":[],"diagnostics":[]}')"
+  analyze_report='{"contract_state":"valid","spec_path":"docs/superpowers/specs/2026-03-22-packet-buildability-structured-design.md","spec_revision":1,"spec_fingerprint":"spec","plan_path":"docs/superpowers/plans/2026-03-22-packet-buildability-structured.md","plan_revision":1,"plan_fingerprint":"plan","task_count":2,"packet_buildable_tasks":1,"coverage_complete":true,"open_questions_resolved":true,"task_structure_valid":true,"files_blocks_valid":true,"reason_codes":[],"overlapping_write_scopes":[],"diagnostics":[]}'
 
-  output="$(cd "$repo" && "$tool_dir/superpowers-workflow-status" status --refresh 2>&1)"
+  output="$(run_status_refresh_with_env \
+    "$repo" \
+    "packet buildability structured" \
+    "superpowers:plan-eng-review" \
+    "SUPERPOWERS_WORKFLOW_STATUS_TEST_ANALYZE_REPORT_JSON=$analyze_report")"
   assert_json_equals "$output" "status" "plan_draft" "packet buildability structured status"
   assert_json_equals "$output" "next_skill" "superpowers:plan-eng-review" "packet buildability structured next skill"
   assert_json_equals "$output" "contract_state" "invalid" "packet buildability structured contract state"
@@ -1752,6 +1758,7 @@ run_canonical_rust_expect_and_sync_preserve_missing_expectation() {
 }
 
 require_helper
+ensure_rust_superpowers_bin
 
 run_bootstrap_no_docs
 run_draft_spec

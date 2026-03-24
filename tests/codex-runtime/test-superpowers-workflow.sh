@@ -43,12 +43,13 @@ require_helpers() {
 }
 
 ensure_rust_superpowers_bin() {
-  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
-    return 0
-  fi
-
   source "$HOME/.cargo/env"
   (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
+  export SUPERPOWERS_COMPAT_BIN="$RUST_SUPERPOWERS_BIN"
+}
+
+lowercase_text() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
 assert_contains() {
@@ -597,7 +598,8 @@ run_workflow_fails() {
     printf '%s\n' "$output"
     exit 1
   fi
-  if [[ -n "$expected_output" && "$output" != *"$expected_output"* && "${output,,}" != *"${expected_output,,}"* ]]; then
+  if [[ -n "$expected_output" && "$output" != *"$expected_output"* \
+    && "$(lowercase_text "$output")" != *"$(lowercase_text "$expected_output")"* ]]; then
     echo "Expected failure output for ${label} to mention '${expected_output}'"
     printf '%s\n' "$output"
     exit 1
@@ -1919,6 +1921,7 @@ run_canonical_rust_phase_matches_public_wrapper() {
 }
 
 require_helpers
+ensure_rust_superpowers_bin
 
 run_help_outside_repo
 run_status_bootstrap_no_docs

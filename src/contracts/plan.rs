@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
@@ -49,19 +49,19 @@ pub struct PlanDocument {
     pub source: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ContractDiagnostic {
     pub code: String,
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OverlappingWriteScope {
     pub path: String,
     pub tasks: Vec<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AnalyzePlanReport {
     pub contract_state: String,
     pub spec_path: String,

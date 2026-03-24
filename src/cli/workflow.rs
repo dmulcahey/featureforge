@@ -21,6 +21,8 @@ pub enum WorkflowCommand {
 pub struct StatusArgs {
     #[arg(long, default_value_t = false)]
     pub refresh: bool,
+    #[arg(long, default_value_t = false)]
+    pub summary: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

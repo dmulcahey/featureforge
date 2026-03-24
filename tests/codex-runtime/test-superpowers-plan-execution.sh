@@ -1890,8 +1890,8 @@ NODE
   assert_json_equals "$output" "reason_codes.0" "source_spec_fingerprint_mismatch" "gate-review source spec fingerprint mismatch"
 }
 
-run_gate_review_rejects_plan_fingerprint_unavailable() {
-  local repo_dir="$REPO_DIR/gate-review-plan-fingerprint-unavailable"
+run_gate_review_ignores_path_hash_wrapper_for_plan_fingerprint() {
+  local repo_dir="$REPO_DIR/gate-review-plan-fingerprint-path-wrapper"
   local wrapper_dir="$repo_dir/.hash-fail-plan"
   local output
 
@@ -1902,13 +1902,12 @@ run_gate_review_rejects_plan_fingerprint_unavailable() {
   install_hash_fail_wrapper "$wrapper_dir" "$repo_dir/$PLAN_REL"
 
   output="$(run_json_command_with_env "$repo_dir" PATH="$wrapper_dir:$PATH" "$EXEC_BIN" gate-review --plan "$PLAN_REL")"
-  assert_json_equals "$output" "allowed" "false" "gate-review plan fingerprint unavailable"
-  assert_json_equals "$output" "failure_class" "StaleExecutionEvidence" "gate-review plan fingerprint unavailable"
-  assert_json_equals "$output" "reason_codes.0" "plan_fingerprint_unavailable" "gate-review plan fingerprint unavailable"
+  assert_json_equals "$output" "allowed" "true" "gate-review plan fingerprint path wrapper"
+  assert_json_equals "$output" "failure_class" "" "gate-review plan fingerprint path wrapper"
 }
 
-run_gate_review_rejects_source_spec_fingerprint_unavailable() {
-  local repo_dir="$REPO_DIR/gate-review-source-spec-fingerprint-unavailable"
+run_gate_review_ignores_path_hash_wrapper_for_source_spec_fingerprint() {
+  local repo_dir="$REPO_DIR/gate-review-source-spec-fingerprint-path-wrapper"
   local wrapper_dir="$repo_dir/.hash-fail-spec"
   local output
 
@@ -1919,13 +1918,12 @@ run_gate_review_rejects_source_spec_fingerprint_unavailable() {
   install_hash_fail_wrapper "$wrapper_dir" "$repo_dir/$SPEC_REL"
 
   output="$(run_json_command_with_env "$repo_dir" PATH="$wrapper_dir:$PATH" "$EXEC_BIN" gate-review --plan "$PLAN_REL")"
-  assert_json_equals "$output" "allowed" "false" "gate-review source spec fingerprint unavailable"
-  assert_json_equals "$output" "failure_class" "StaleExecutionEvidence" "gate-review source spec fingerprint unavailable"
-  assert_json_equals "$output" "reason_codes.0" "source_spec_fingerprint_unavailable" "gate-review source spec fingerprint unavailable"
+  assert_json_equals "$output" "allowed" "true" "gate-review source spec fingerprint path wrapper"
+  assert_json_equals "$output" "failure_class" "" "gate-review source spec fingerprint path wrapper"
 }
 
-run_gate_review_rejects_packet_fingerprint_unavailable() {
-  local repo_dir="$REPO_DIR/gate-review-packet-fingerprint-unavailable"
+run_gate_review_ignores_path_hash_wrapper_for_packet_fingerprint() {
+  local repo_dir="$REPO_DIR/gate-review-packet-fingerprint-path-wrapper"
   local wrapper_dir="$repo_dir/.hash-fail-contract"
   local output
 
@@ -1936,9 +1934,8 @@ run_gate_review_rejects_packet_fingerprint_unavailable() {
   install_hash_fail_wrapper "$wrapper_dir" ".contract."
 
   output="$(run_json_command_with_env "$repo_dir" PATH="$wrapper_dir:$PATH" "$EXEC_BIN" gate-review --plan "$PLAN_REL")"
-  assert_json_equals "$output" "allowed" "false" "gate-review packet fingerprint unavailable"
-  assert_json_equals "$output" "failure_class" "StaleExecutionEvidence" "gate-review packet fingerprint unavailable"
-  assert_json_equals "$output" "reason_codes.0" "packet_fingerprint_unavailable" "gate-review packet fingerprint unavailable"
+  assert_json_equals "$output" "allowed" "true" "gate-review packet fingerprint path wrapper"
+  assert_json_equals "$output" "failure_class" "" "gate-review packet fingerprint path wrapper"
 }
 
 run_gate_review_rejects_missed_reopen_after_file_drift() {
@@ -4152,9 +4149,9 @@ run_gate_review_rejects_checked_step_without_completed_attempt
 run_gate_review_rejects_packet_fingerprint_mismatch
 run_gate_review_rejects_plan_fingerprint_mismatch
 run_gate_review_rejects_source_spec_fingerprint_mismatch
-run_gate_review_rejects_plan_fingerprint_unavailable
-run_gate_review_rejects_source_spec_fingerprint_unavailable
-run_gate_review_rejects_packet_fingerprint_unavailable
+run_gate_review_ignores_path_hash_wrapper_for_plan_fingerprint
+run_gate_review_ignores_path_hash_wrapper_for_source_spec_fingerprint
+run_gate_review_ignores_path_hash_wrapper_for_packet_fingerprint
 run_gate_review_rejects_missed_reopen_after_file_drift
 run_gate_review_ignores_current_plan_and_evidence_file_proofs
 run_gate_review_accepts_file_reproved_by_later_completed_step

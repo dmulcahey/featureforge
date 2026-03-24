@@ -7,13 +7,16 @@ use schemars::{JsonSchema, schema_for};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::cli::plan_execution::{BeginArgs, CompleteArgs, RecommendArgs, StatusArgs};
+use crate::cli::plan_execution::{
+    BeginArgs, CompleteArgs, NoteArgs, RecommendArgs, ReopenArgs, StatusArgs, TransferArgs,
+};
 use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::git::discover_repo_identity;
 use crate::paths::{
     RepoPath, normalize_identifier_token, normalize_repo_relative_path, normalize_whitespace,
 };
+use crate::repo_safety::RepoSafetyRuntime;
 
 pub const NO_REPO_FILES_MARKER: &str = "__superpowers__/no-repo-files";
 
@@ -186,6 +189,33 @@ pub struct BeginRequest {
     pub expect_execution_fingerprint: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct NoteRequest {
+    pub task: u32,
+    pub step: u32,
+    pub state: NoteState,
+    pub message: String,
+    pub expect_execution_fingerprint: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReopenRequest {
+    pub task: u32,
+    pub step: u32,
+    pub source: String,
+    pub reason: String,
+    pub expect_execution_fingerprint: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TransferRequest {
+    pub repair_task: u32,
+    pub repair_step: u32,
+    pub source: String,
+    pub reason: String,
+    pub expect_execution_fingerprint: String,
+}
+
 impl ExecutionRuntime {
     pub fn discover(current_dir: &Path) -> Result<Self, JsonFailure> {
         let identity = discover_repo_identity(current_dir).map_err(JsonFailure::from)?;
@@ -298,8 +328,20 @@ impl ExecutionRuntime {
     }
 
     pub fn gate_review(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
-        let context = load_execution_context(self, &args.plan)?;
-        Ok(gate_review_from_context(&context))
+        match load_execution_context(self, &args.plan) {
+            Ok(context) => Ok(gate_review_from_context(&context)),
+            Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
+                let mut gate = GateState::default();
+                gate.fail(
+                    FailureClass::PlanNotExecutionReady,
+                    "plan_not_execution_ready",
+                    error.message,
+                    "Refresh the approved plan/spec pair before running gate-review.",
+                );
+                Ok(gate.finish())
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn gate_finish(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
@@ -409,6 +451,7 @@ pub fn load_execution_context(
         &source_spec_source,
         &plan_document.source_spec_path,
         plan_document.source_spec_revision,
+        &runtime.repo_root,
     )?;
 
     let evidence_rel = derive_evidence_rel_path(&plan_rel, plan_document.plan_revision);
@@ -446,6 +489,25 @@ pub fn load_execution_context(
         .cloned()
         .map(|task| (task.number, task))
         .collect();
+
+    for attempt in &evidence.attempts {
+        if !steps.iter().any(|step| {
+            step.task_number == attempt.task_number && step.step_number == attempt.step_number
+        }) {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                "Execution evidence references a task/step that does not exist in the approved plan.",
+            ));
+        }
+        normalize_source(&attempt.execution_source, &plan_document.execution_mode).map_err(
+            |_| {
+                JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence source must match the persisted execution mode.",
+                )
+            },
+        )?;
+    }
 
     Ok(ExecutionContext {
         runtime: runtime.clone(),
@@ -563,6 +625,14 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
             "Restore repository availability before continuing execution.",
         ),
     }
+    if let Err(error) = RepoSafetyRuntime::discover(&context.runtime.repo_root) {
+        gate.fail(
+            FailureClass::WorkspaceNotSafe,
+            "repo_safety_unavailable",
+            error.message(),
+            "Restore repo-safety availability before continuing execution.",
+        );
+    }
 
     if context.runtime.git_dir.join("MERGE_HEAD").exists() {
         gate.fail(
@@ -589,6 +659,21 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
             "Execution preflight does not allow an in-progress cherry-pick.",
             "Resolve or abort the cherry-pick before continuing.",
         );
+    }
+    match repo_has_unresolved_index_entries(&context.runtime.repo_root) {
+        Ok(true) => gate.fail(
+            FailureClass::WorkspaceNotSafe,
+            "unresolved_index_entries",
+            "Execution preflight does not allow unresolved index entries.",
+            "Resolve index conflicts before continuing.",
+        ),
+        Ok(false) => {}
+        Err(error) => gate.fail(
+            FailureClass::WorkspaceNotSafe,
+            "index_unavailable",
+            error.message,
+            "Restore repository index availability before continuing execution.",
+        ),
     }
 
     gate.finish()
@@ -688,7 +773,17 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
 
     let branch = &context.runtime.branch_name;
     let current_head = current_head_sha(&context.runtime.repo_root).unwrap_or_default();
-    let current_base_branch = branch.clone();
+    let Some(current_base_branch) =
+        resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
+    else {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_base_branch_unresolved",
+            "Finish readiness could not determine the expected base branch for the current workspace.",
+            "Resolve the release base branch before running gate-finish.",
+        );
+        return gate.finish();
+    };
     let artifact_dir = context
         .runtime
         .state_dir
@@ -707,12 +802,21 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         return gate.finish();
     };
 
-    let test_plan = parse_headers_file(&test_plan_path);
-    if test_plan.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
-        || test_plan.get("Source Plan Revision")
+    let test_plan = parse_artifact_document(&test_plan_path);
+    if test_plan.title.as_deref() != Some("# Test Plan") {
+        gate.fail(
+            FailureClass::QaArtifactNotFresh,
+            "test_plan_artifact_malformed",
+            "The latest test-plan artifact is malformed.",
+            "Regenerate the test-plan artifact for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if test_plan.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
+        || test_plan.headers.get("Source Plan Revision")
             != Some(&context.plan_document.plan_revision.to_string())
-        || test_plan.get("Branch") != Some(branch)
-        || test_plan.get("Repo") != Some(&context.runtime.repo_slug)
+        || test_plan.headers.get("Branch") != Some(branch)
+        || test_plan.headers.get("Repo") != Some(&context.runtime.repo_slug)
     {
         gate.fail(
             FailureClass::QaArtifactNotFresh,
@@ -720,9 +824,11 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
             "The latest test-plan artifact does not match the current approved plan, repo, or branch.",
             "Regenerate the test-plan artifact for the current approved plan revision.",
         );
+        return gate.finish();
     }
 
     if test_plan
+        .headers
         .get("Browser QA Required")
         .is_some_and(|value| value == "yes")
     {
@@ -739,26 +845,78 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
             );
             return gate.finish();
         };
-        let qa = parse_headers_file(&qa_path);
-        if qa.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
-            || qa.get("Source Plan Revision")
+        let qa = parse_artifact_document(&qa_path);
+        if qa.title.as_deref() != Some("# QA Result") {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "qa_artifact_malformed",
+                "The latest QA result artifact is malformed.",
+                "Re-run qa-only using the latest test-plan handoff.",
+            );
+            return gate.finish();
+        }
+        if qa.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
+            || qa.headers.get("Source Plan Revision")
                 != Some(&context.plan_document.plan_revision.to_string())
-            || qa.get("Branch") != Some(branch)
-            || qa.get("Repo") != Some(&context.runtime.repo_slug)
-            || qa.get("Head SHA") != Some(&current_head)
-            || qa.get("Result") != Some(&String::from("pass"))
-            || qa
-                .get("Source Test Plan")
-                .map(|value| strip_backticks(value))
-                .as_deref()
-                != Some(test_plan_path.to_string_lossy().as_ref())
         {
             gate.fail(
                 FailureClass::QaArtifactNotFresh,
-                "qa_artifact_stale",
-                "The latest QA result artifact does not match the current repo, branch, or HEAD.",
+                "qa_artifact_plan_mismatch",
+                "The latest QA result artifact does not match the current approved plan revision.",
                 "Re-run qa-only using the latest test-plan handoff.",
             );
+            return gate.finish();
+        }
+        if qa.headers.get("Branch") != Some(branch) {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "qa_artifact_branch_mismatch",
+                "The latest QA result artifact does not match the current branch.",
+                "Re-run qa-only using the latest test-plan handoff.",
+            );
+            return gate.finish();
+        }
+        if qa.headers.get("Head SHA") != Some(&current_head) {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "qa_artifact_head_mismatch",
+                "The latest QA result artifact does not match the current HEAD.",
+                "Re-run qa-only using the latest test-plan handoff.",
+            );
+            return gate.finish();
+        }
+        if qa
+            .headers
+            .get("Source Test Plan")
+            .map(|value| strip_backticks(value))
+            .as_deref()
+            != Some(test_plan_path.to_string_lossy().as_ref())
+        {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "qa_artifact_source_test_plan_mismatch",
+                "The latest QA result artifact does not point at the current test-plan artifact.",
+                "Re-run qa-only using the latest test-plan handoff.",
+            );
+            return gate.finish();
+        }
+        if qa.headers.get("Result") != Some(&String::from("pass")) {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "qa_result_not_pass",
+                "The latest QA result artifact is not marked pass.",
+                "Re-run qa-only using the latest test-plan handoff.",
+            );
+            return gate.finish();
+        }
+        if qa.headers.get("Repo") != Some(&context.runtime.repo_slug) {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "qa_artifact_plan_mismatch",
+                "The latest QA result artifact does not match the current repo.",
+                "Re-run qa-only using the latest test-plan handoff.",
+            );
+            return gate.finish();
         }
     }
 
@@ -775,22 +933,85 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         );
         return gate.finish();
     };
-    let release = parse_headers_file(&release_path);
-    if release.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
-        || release.get("Source Plan Revision")
+    let release = parse_artifact_document(&release_path);
+    if release.title.as_deref() != Some("# Release Readiness Result") {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_malformed",
+            "The latest release-readiness artifact is malformed.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
+        || release.headers.get("Source Plan Revision")
             != Some(&context.plan_document.plan_revision.to_string())
-        || release.get("Branch") != Some(branch)
-        || release.get("Repo") != Some(&context.runtime.repo_slug)
-        || release.get("Base Branch") != Some(&current_base_branch)
-        || release.get("Head SHA") != Some(&current_head)
-        || release.get("Result") != Some(&String::from("pass"))
     {
         gate.fail(
             FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_stale",
-            "The latest release-readiness artifact does not match the current repo, branch, base branch, or HEAD.",
+            "release_artifact_plan_mismatch",
+            "The latest release-readiness artifact does not match the current approved plan revision.",
             "Re-run document-release for the current approved plan revision.",
         );
+        return gate.finish();
+    }
+    if release.headers.get("Branch") != Some(branch) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_branch_mismatch",
+            "The latest release-readiness artifact does not match the current branch.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Head SHA") != Some(&current_head) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_head_mismatch",
+            "The latest release-readiness artifact does not match the current HEAD.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release
+        .headers
+        .get("Base Branch")
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_base_branch_unresolved",
+            "The latest release-readiness artifact is missing its base branch declaration.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Base Branch") != Some(&current_base_branch) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_base_branch_mismatch",
+            "The latest release-readiness artifact does not match the expected base branch.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Result") != Some(&String::from("pass")) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_result_not_pass",
+            "The latest release-readiness artifact is not marked pass.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Repo") != Some(&context.runtime.repo_slug) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_plan_mismatch",
+            "The latest release-readiness artifact does not match the current repo.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
     }
 
     gate.finish()
@@ -803,6 +1024,38 @@ pub fn normalize_begin_request(args: &BeginArgs) -> BeginRequest {
         execution_mode: args.execution_mode.clone(),
         expect_execution_fingerprint: args.expect_execution_fingerprint.clone(),
     }
+}
+
+pub fn normalize_note_request(args: &NoteArgs) -> Result<NoteRequest, JsonFailure> {
+    let message = require_normalized_text(
+        &args.message,
+        FailureClass::InvalidCommandInput,
+        "Execution note summaries may not be blank after whitespace normalization.",
+    )?;
+    if message.chars().count() > 120 {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            "Execution note summaries may not exceed 120 characters.",
+        ));
+    }
+    let state = match args.state.as_str() {
+        "blocked" => NoteState::Blocked,
+        "interrupted" => NoteState::Interrupted,
+        _ => {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "Execution note state must be one of: blocked, interrupted.",
+            ));
+        }
+    };
+
+    Ok(NoteRequest {
+        task: args.task,
+        step: args.step,
+        state,
+        message,
+        expect_execution_fingerprint: args.expect_execution_fingerprint.clone(),
+    })
 }
 
 pub fn normalize_complete_request(args: &CompleteArgs) -> Result<CompleteRequest, JsonFailure> {
@@ -862,6 +1115,34 @@ pub fn normalize_complete_request(args: &CompleteArgs) -> Result<CompleteRequest
     })
 }
 
+pub fn normalize_reopen_request(args: &ReopenArgs) -> Result<ReopenRequest, JsonFailure> {
+    Ok(ReopenRequest {
+        task: args.task,
+        step: args.step,
+        source: args.source.clone(),
+        reason: require_normalized_text(
+            &args.reason,
+            FailureClass::InvalidCommandInput,
+            "Reopen reasons may not be blank after whitespace normalization.",
+        )?,
+        expect_execution_fingerprint: args.expect_execution_fingerprint.clone(),
+    })
+}
+
+pub fn normalize_transfer_request(args: &TransferArgs) -> Result<TransferRequest, JsonFailure> {
+    Ok(TransferRequest {
+        repair_task: args.repair_task,
+        repair_step: args.repair_step,
+        source: args.source.clone(),
+        reason: require_normalized_text(
+            &args.reason,
+            FailureClass::InvalidCommandInput,
+            "Transfer reasons may not be blank after whitespace normalization.",
+        )?,
+        expect_execution_fingerprint: args.expect_execution_fingerprint.clone(),
+    })
+}
+
 pub fn normalize_source(source: &str, execution_mode: &str) -> Result<(), JsonFailure> {
     match source {
         "superpowers:executing-plans" | "superpowers:subagent-driven-development" => {}
@@ -883,17 +1164,37 @@ pub fn normalize_source(source: &str, execution_mode: &str) -> Result<(), JsonFa
 
 pub fn validate_v2_evidence_provenance(context: &ExecutionContext, gate: &mut GateState) {
     let contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
+    let legacy_plan_fingerprint = sha256_hex(context.plan_source.as_bytes());
     let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
     let latest_attempts = latest_completed_attempts_by_step(&context.evidence);
+    let latest_file_proofs = latest_completed_attempts_by_file(&context.evidence, &latest_attempts);
+
+    if context.evidence.plan_fingerprint.as_deref() != Some(legacy_plan_fingerprint.as_str()) {
+        gate.fail(
+            FailureClass::StaleExecutionEvidence,
+            "plan_fingerprint_mismatch",
+            "Execution evidence plan fingerprint no longer matches the approved plan source.",
+            "Rebuild the execution evidence for the current approved plan revision.",
+        );
+    }
+    if context.evidence.source_spec_fingerprint.as_deref() != Some(source_spec_fingerprint.as_str())
+    {
+        gate.fail(
+            FailureClass::StaleExecutionEvidence,
+            "source_spec_fingerprint_mismatch",
+            "Execution evidence source spec fingerprint no longer matches the approved source spec.",
+            "Rebuild the execution evidence for the current approved spec revision.",
+        );
+    }
 
     for step in context.steps.iter().filter(|step| step.checked) {
-        let Some(attempt) = latest_attempts
+        let Some(attempt_index) = latest_attempts
             .get(&(step.task_number, step.step_number))
             .copied()
-            .map(|index| &context.evidence.attempts[index])
         else {
             continue;
         };
+        let attempt = &context.evidence.attempts[attempt_index];
         let expected_packet = compute_packet_fingerprint(
             &context.plan_rel,
             context.plan_document.plan_revision,
@@ -905,20 +1206,40 @@ pub fn validate_v2_evidence_provenance(context: &ExecutionContext, gate: &mut Ga
             step.step_number,
         );
         if attempt.packet_fingerprint.as_deref() != Some(expected_packet.as_str()) {
-            gate.fail(
-                FailureClass::StaleExecutionEvidence,
-                "packet_fingerprint_mismatch",
-                format!(
-                    "Task {} Step {} evidence packet provenance no longer matches the current approved plan/spec pair.",
-                    step.task_number, step.step_number
-                ),
-                "Rebuild the packet and reopen the affected step.",
+            let legacy_packet = compute_packet_fingerprint(
+                &context.plan_rel,
+                context.plan_document.plan_revision,
+                &legacy_plan_fingerprint,
+                &context.plan_document.source_spec_path,
+                context.plan_document.source_spec_revision,
+                &source_spec_fingerprint,
+                step.task_number,
+                step.step_number,
             );
+            if attempt.packet_fingerprint.as_deref() == Some(legacy_packet.as_str()) {
+                gate.warn("legacy_packet_provenance");
+            } else {
+                gate.fail(
+                    FailureClass::StaleExecutionEvidence,
+                    "packet_fingerprint_mismatch",
+                    format!(
+                        "Task {} Step {} evidence packet provenance no longer matches the current approved plan/spec pair.",
+                        step.task_number, step.step_number
+                    ),
+                    "Rebuild the packet and reopen the affected step.",
+                );
+            }
         }
         for proof in &attempt.file_proofs {
             if proof.path == NO_REPO_FILES_MARKER
                 || proof.path == context.plan_rel
                 || proof.path == context.evidence_rel
+            {
+                continue;
+            }
+            if latest_file_proofs
+                .get(&proof.path)
+                .is_some_and(|latest_index| *latest_index != attempt_index)
             {
                 continue;
             }
@@ -1003,6 +1324,17 @@ pub fn current_file_proof(repo_root: &Path, path: &str) -> String {
         Ok(contents) => format!("sha256:{}", sha256_hex(&contents)),
         Err(_) => String::from("sha256:missing"),
     }
+}
+
+fn normalize_persisted_file_path(path: &str) -> Result<String, JsonFailure> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Execution evidence must include at least one repo-relative file entry.",
+        ));
+    }
+    normalize_repo_relative_path(trimmed).map_err(JsonFailure::from)
 }
 
 pub fn require_normalized_text(
@@ -1125,6 +1457,7 @@ fn validate_source_spec(
     source: &str,
     expected_path: &str,
     expected_revision: u32,
+    repo_root: &Path,
 ) -> Result<(), JsonFailure> {
     let headers = parse_headers(source);
     if headers.get("Workflow State") != Some(&String::from("CEO Approved")) {
@@ -1152,8 +1485,32 @@ fn validate_source_spec(
             ));
         }
     }
-    let _ = expected_path;
+    if current_approved_spec_path(repo_root).as_deref() != Some(expected_path) {
+        return Err(JsonFailure::new(
+            FailureClass::PlanNotExecutionReady,
+            "Approved plan source spec path or revision is stale.",
+        ));
+    }
     Ok(())
+}
+
+fn repo_has_unresolved_index_entries(repo_root: &Path) -> Result<bool, JsonFailure> {
+    let repo = gix::discover(repo_root).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            format!("Could not discover the current repository: {error}"),
+        )
+    })?;
+    let index = repo.open_index().map_err(|error| {
+        JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            format!("Could not open the repository index: {error}"),
+        )
+    })?;
+    Ok(index
+        .entries()
+        .iter()
+        .any(|entry| entry.stage() != gix::index::entry::Stage::Unconflicted))
 }
 
 fn parse_headers(source: &str) -> BTreeMap<String, String> {
@@ -1173,6 +1530,115 @@ fn parse_headers_file(path: &Path) -> BTreeMap<String, String> {
         .ok()
         .map(|source| parse_headers(&source))
         .unwrap_or_default()
+}
+
+#[derive(Debug, Default)]
+struct ArtifactDocument {
+    title: Option<String>,
+    headers: BTreeMap<String, String>,
+}
+
+fn parse_artifact_document(path: &Path) -> ArtifactDocument {
+    let Ok(source) = fs::read_to_string(path) else {
+        return ArtifactDocument::default();
+    };
+    ArtifactDocument {
+        title: source
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(str::to_owned),
+        headers: parse_headers(&source),
+    }
+}
+
+fn resolve_release_base_branch(git_dir: &Path, current_branch: &str) -> Option<String> {
+    if matches!(current_branch, "main" | "master") {
+        return Some(current_branch.to_owned());
+    }
+
+    let branches = local_head_branches(&git_dir.join("refs/heads"));
+    if branches.iter().any(|branch| branch == "main") {
+        return Some(String::from("main"));
+    }
+    if branches.iter().any(|branch| branch == "master") {
+        return Some(String::from("master"));
+    }
+    None
+}
+
+fn local_head_branches(heads_dir: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(heads_dir) else {
+        return Vec::new();
+    };
+    let mut branches = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            branches.extend(local_head_branches(&path).into_iter().filter_map(|branch| {
+                path.file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .map(|prefix| format!("{prefix}/{branch}"))
+            }));
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) {
+            branches.push(name.to_owned());
+        }
+    }
+    branches
+}
+
+fn current_approved_spec_path(repo_root: &Path) -> Option<String> {
+    let mut candidates = markdown_files_under(&repo_root.join("docs/superpowers/specs"))
+        .into_iter()
+        .filter_map(|path| {
+            let headers = parse_headers_file(&path);
+            if headers.get("Workflow State").map(String::as_str) != Some("CEO Approved") {
+                return None;
+            }
+            let revision_valid = headers
+                .get("Spec Revision")
+                .and_then(|value| value.parse::<u32>().ok())
+                .is_some();
+            let reviewed_by_valid = headers
+                .get("Last Reviewed By")
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            if !revision_valid || !reviewed_by_valid {
+                return None;
+            }
+            let modified = path
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok());
+            path.strip_prefix(repo_root)
+                .ok()
+                .map(|relative| (modified, relative.to_string_lossy().replace('\\', "/")))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+    candidates.pop().map(|(_, path)| path)
+}
+
+fn markdown_files_under(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    visit_markdown_files(root, &mut files);
+    files
+}
+
+fn visit_markdown_files(root: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            visit_markdown_files(&path, files);
+        } else if path.extension().and_then(std::ffi::OsStr::to_str) == Some("md") {
+            files.push(path);
+        }
+    }
 }
 
 fn parse_step_state(
@@ -1220,6 +1686,18 @@ fn parse_step_state(
             }
             if cursor < lines.len() {
                 if let Some((parsed_state, parsed_summary)) = parse_note_line(lines[cursor]) {
+                    if parsed_summary.is_empty() {
+                        return Err(JsonFailure::new(
+                            FailureClass::MalformedExecutionState,
+                            "Execution note summaries may not be blank after whitespace normalization.",
+                        ));
+                    }
+                    if parsed_summary.chars().count() > 120 {
+                        return Err(JsonFailure::new(
+                            FailureClass::MalformedExecutionState,
+                            "Execution note summaries may not exceed 120 characters.",
+                        ));
+                    }
                     note_state = Some(parsed_state);
                     note_summary = parsed_summary;
                     let mut duplicate_cursor = cursor + 1;
@@ -1270,7 +1748,7 @@ pub(crate) fn parse_step_line(line: &str) -> Option<(bool, u32, String)> {
 }
 
 fn parse_note_line(line: &str) -> Option<(NoteState, String)> {
-    let rest = line.trim().strip_prefix("**Execution Note:** ")?;
+    let rest = line.trim_start().strip_prefix("**Execution Note:** ")?;
     let (state, summary) = rest.split_once(" - ")?;
     let note_state = match state {
         "Active" => NoteState::Active,
@@ -1369,6 +1847,7 @@ fn parse_evidence_attempts(
 ) -> Result<Vec<EvidenceAttempt>, JsonFailure> {
     let lines = source.lines().collect::<Vec<_>>();
     let mut attempts = Vec::new();
+    let mut next_attempt_by_step = BTreeMap::<(u32, u32), u32>::new();
     let mut line_index = 0;
     let mut current_task = None::<u32>;
     let mut current_step = None::<u32>;
@@ -1407,6 +1886,17 @@ fn parse_evidence_attempts(
                     "Execution evidence attempt number is malformed.",
                 )
             })?;
+            let expected_attempt = next_attempt_by_step
+                .get(&(task_number, step_number))
+                .copied()
+                .unwrap_or(1);
+            if attempt_number != expected_attempt {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence attempts must start at 1 and increase sequentially per step.",
+                ));
+            }
+            next_attempt_by_step.insert((task_number, step_number), expected_attempt + 1);
 
             let mut status = String::new();
             let mut recorded_at = String::new();
@@ -1453,7 +1943,7 @@ fn parse_evidence_attempts(
                                     "Execution evidence Files Proven bullets must include a proof suffix.",
                                 )
                             })?;
-                            let path = normalize_repo_relative_path(path).map_err(|_| {
+                            let path = normalize_persisted_file_path(path).map_err(|_| {
                                 JsonFailure::new(
                                     FailureClass::MalformedExecutionState,
                                     "Execution evidence Files Proven bullets must use canonical repo-relative paths.",
@@ -1475,7 +1965,7 @@ fn parse_evidence_attempts(
                     while line_index < lines.len() {
                         let legacy_line = lines[line_index];
                         if let Some(path) = legacy_line.strip_prefix("- ") {
-                            let path = normalize_repo_relative_path(path).map_err(|_| {
+                            let path = normalize_persisted_file_path(path).map_err(|_| {
                                 JsonFailure::new(
                                     FailureClass::MalformedExecutionState,
                                     "Execution evidence Files bullets must use canonical repo-relative paths.",
@@ -1508,24 +1998,80 @@ fn parse_evidence_attempts(
                 line_index += 1;
             }
 
-            if !claim.is_empty() {
-                attempts.push(EvidenceAttempt {
-                    task_number,
-                    step_number,
-                    attempt_number,
-                    status,
-                    recorded_at,
-                    execution_source,
-                    claim,
-                    files,
-                    file_proofs,
-                    verification_summary,
-                    invalidation_reason,
-                    packet_fingerprint,
-                    head_sha,
-                    base_sha,
-                });
+            if !matches!(status.as_str(), "Completed" | "Invalidated") {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence status must be Completed or Invalidated.",
+                ));
             }
+            if recorded_at.trim().is_empty() {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence recorded-at timestamps may not be blank.",
+                ));
+            }
+            if execution_source.is_empty() {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence source may not be blank.",
+                ));
+            }
+            if !matches!(
+                execution_source.as_str(),
+                "superpowers:executing-plans" | "superpowers:subagent-driven-development"
+            ) {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence source must be one of the supported execution modes.",
+                ));
+            }
+            if claim.is_empty() {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence claims may not be blank after whitespace normalization.",
+                ));
+            }
+            if files.is_empty() {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence must include at least one repo-relative file entry.",
+                ));
+            }
+            if verification_summary.is_empty() {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence verification summaries may not be blank after whitespace normalization.",
+                ));
+            }
+            if invalidation_reason.is_empty() {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Execution evidence invalidation reasons may not be blank after whitespace normalization.",
+                ));
+            }
+            if status == "Invalidated" && invalidation_reason == "N/A" {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "Invalidated execution evidence must carry a real invalidation reason.",
+                ));
+            }
+
+            attempts.push(EvidenceAttempt {
+                task_number,
+                step_number,
+                attempt_number,
+                status,
+                recorded_at,
+                execution_source,
+                claim,
+                files,
+                file_proofs,
+                verification_summary,
+                invalidation_reason,
+                packet_fingerprint,
+                head_sha,
+                base_sha,
+            });
         }
 
         line_index += 1;
@@ -1646,6 +2192,23 @@ fn latest_completed_attempts_by_step(evidence: &ExecutionEvidence) -> BTreeMap<(
         }
     }
     indices
+}
+
+fn latest_completed_attempts_by_file(
+    evidence: &ExecutionEvidence,
+    latest_attempts_by_step: &BTreeMap<(u32, u32), usize>,
+) -> BTreeMap<String, usize> {
+    let mut latest_attempts_by_file = BTreeMap::new();
+    for index in latest_attempts_by_step.values().copied() {
+        let attempt = &evidence.attempts[index];
+        for proof in &attempt.file_proofs {
+            if proof.path == NO_REPO_FILES_MARKER {
+                continue;
+            }
+            latest_attempts_by_file.insert(proof.path.clone(), index);
+        }
+    }
+    latest_attempts_by_file
 }
 
 fn execution_started(context: &ExecutionContext) -> bool {

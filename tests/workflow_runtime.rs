@@ -1,8 +1,13 @@
-use assert_cmd::cargo::{CommandCargoExt, cargo_bin};
+use assert_cmd::cargo::cargo_bin;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use superpowers::git::discover_repo_identity;
+use superpowers::workflow::manifest::{
+    WorkflowManifest, manifest_path, recover_slug_changed_manifest,
+};
+use superpowers::workflow::status::WorkflowRuntime;
 use tempfile::TempDir;
 
 fn repo_root() -> PathBuf {
@@ -17,11 +22,28 @@ fn workflow_status_helper_path() -> PathBuf {
     repo_root().join("bin/superpowers-workflow-status")
 }
 
+fn compiled_superpowers_path() -> PathBuf {
+    let path = repo_root().join("target/debug/superpowers");
+    if cfg!(windows) {
+        path.with_extension("exe")
+    } else {
+        path
+    }
+}
+
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("parent directory should be creatable");
     }
     fs::write(path, contents).expect("file should be writable");
+}
+
+fn write_manifest(path: &Path, manifest: &WorkflowManifest) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("manifest parent should be creatable");
+    }
+    let json = serde_json::to_string(manifest).expect("manifest json should serialize");
+    fs::write(path, json).expect("manifest should be writable");
 }
 
 fn run(mut command: Command, context: &str) -> Output {
@@ -102,10 +124,20 @@ fn init_repo(test_name: &str) -> (TempDir, TempDir) {
 }
 
 fn run_shell_status_helper(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
+    let mut build = Command::new("cargo");
+    build
+        .args(["build", "--quiet", "--bin", "superpowers"])
+        .current_dir(repo_root());
+    run_checked(
+        build,
+        "cargo build superpowers for workflow helper parity tests",
+    );
+
     let mut command = Command::new(workflow_status_helper_path());
     command
         .current_dir(repo)
         .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path())
         .args(args);
     run(command, context)
 }
@@ -116,13 +148,78 @@ fn run_shell_status_json(repo: &Path, state_dir: &Path, args: &[&str], context: 
 }
 
 fn run_rust_superpowers(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("superpowers").expect("superpowers cargo binary should be available");
+    let mut build = Command::new("cargo");
+    build
+        .args(["build", "--quiet", "--bin", "superpowers"])
+        .current_dir(repo_root());
+    run_checked(build, "cargo build superpowers for workflow runtime tests");
+
+    let mut command = Command::new(compiled_superpowers_path());
     command
         .current_dir(repo)
         .env("SUPERPOWERS_STATE_DIR", state_dir)
         .args(args);
     run(command, context)
+}
+
+fn set_remote_url(repo: &Path, url: &str) {
+    let mut git_remote_set = Command::new("git");
+    git_remote_set
+        .args(["remote", "set-url", "origin", url])
+        .current_dir(repo);
+    run_checked(git_remote_set, "git remote set-url origin");
+}
+
+#[test]
+fn shell_workflow_resolve_exposes_wrapper_contract_fields() {
+    let (repo_dir, state_dir) = init_repo("workflow-resolve-contract");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let resolve_json = run_shell_status_json(
+        repo,
+        state,
+        &["resolve"],
+        "shell helper resolve wrapper contract",
+    );
+    let resolved_root = PathBuf::from(
+        resolve_json["root"]
+            .as_str()
+            .expect("resolve root should stay a string"),
+    );
+
+    assert_eq!(resolve_json["outcome"], "resolved");
+    assert_eq!(
+        fs::canonicalize(&resolved_root).expect("resolved root should canonicalize"),
+        fs::canonicalize(repo).expect("repo root should canonicalize"),
+    );
+    assert_eq!(
+        resolve_json["manifest_source_path"],
+        resolve_json["manifest_path"]
+    );
+}
+
+#[test]
+fn shell_workflow_resolve_failures_use_runtime_failure_contract() {
+    let outside_repo = TempDir::new().expect("outside repo tempdir should be available");
+    let state_dir = TempDir::new().expect("state tempdir should be available");
+
+    let output = run_shell_status_helper(
+        outside_repo.path(),
+        state_dir.path(),
+        &["resolve"],
+        "shell helper resolve failure contract",
+    );
+    assert!(
+        !output.status.success(),
+        "resolve outside repo should fail, got {:?}",
+        output.status
+    );
+
+    let failure: Value = serde_json::from_slice(&output.stderr)
+        .expect("resolve failure should emit valid json on stderr");
+    assert_eq!(failure["outcome"], "runtime_failure");
+    assert_eq!(failure["failure_class"], "RepoContextUnavailable");
 }
 
 #[test]
@@ -189,11 +286,17 @@ fn canonical_workflow_status_matches_helper_for_ambiguous_specs() {
     )
     .expect("second fixture spec should copy");
 
-    let helper_json = run_shell_status_json(
+    let _helper_warmup = run_shell_status_json(
         repo,
         state,
         &["status", "--refresh"],
         "shell helper status refresh for ambiguous specs",
+    );
+    let helper_json = run_shell_status_json(
+        repo,
+        state,
+        &["status", "--refresh"],
+        "shell helper status refresh for ambiguous specs after manifest warmup",
     );
     let rust_output = run_rust_superpowers(
         repo,
@@ -278,6 +381,112 @@ fn canonical_workflow_expect_and_sync_preserve_missing_spec_semantics() {
     assert_eq!(status_json["reason_codes"][0], "missing_expected_spec");
 }
 
+#[test]
+fn canonical_workflow_status_routes_draft_plan_for_single_matching_plan() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let fixture_root = workflow_fixture_root();
+
+    fs::create_dir_all(repo.join("docs/superpowers/specs")).expect("spec directory should exist");
+    fs::copy(
+        fixture_root.join("specs/2026-01-22-document-review-system-design.md"),
+        repo.join("docs/superpowers/specs/2026-01-22-document-review-system-design.md"),
+    )
+    .expect("fixture spec should copy");
+    write_file(
+        &repo.join("docs/superpowers/plans/2026-01-22-document-review-system.md"),
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/superpowers/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    );
+
+    let status_json = parse_json(
+        &run_rust_superpowers(
+            repo,
+            state,
+            &["workflow", "status", "--refresh"],
+            "rust canonical workflow status refresh for draft plan",
+        ),
+        "rust canonical workflow status refresh for draft plan",
+    );
+
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(status_json["next_skill"], "superpowers:plan-eng-review");
+    assert_eq!(
+        status_json["plan_path"],
+        "docs/superpowers/plans/2026-01-22-document-review-system.md"
+    );
+}
+
+#[test]
+fn canonical_workflow_status_routes_lone_stale_approved_plan_as_stale() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-stale-approved-plan");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_file(
+        &repo.join("docs/superpowers/specs/2026-01-22-document-review-system-design-v2.md"),
+        "# Approved Spec, Newer Path\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n\n## Notes\n",
+    );
+    write_file(
+        &repo.join("docs/superpowers/plans/2026-01-22-document-review-system.md"),
+        "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/superpowers/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The plan remains structurally valid while its source-spec path goes stale.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
+    );
+
+    let status_json = parse_json(
+        &run_rust_superpowers(
+            repo,
+            state,
+            &["workflow", "status", "--refresh"],
+            "rust canonical workflow status refresh for stale approved plan",
+        ),
+        "rust canonical workflow status refresh for stale approved plan",
+    );
+
+    assert_eq!(status_json["status"], "stale_plan");
+    assert_eq!(status_json["next_skill"], "superpowers:writing-plans");
+    assert_eq!(status_json["contract_state"], "stale");
+    assert_eq!(status_json["reason_codes"][0], "stale_spec_plan_linkage");
+    assert_eq!(
+        status_json["diagnostics"][0]["code"],
+        "stale_spec_plan_linkage"
+    );
+}
+
+#[test]
+fn canonical_workflow_status_routes_stale_source_revision_as_stale() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-stale-approved-revision");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_file(
+        &repo.join("docs/superpowers/specs/2026-01-22-document-review-system-design.md"),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 2\n**Last Reviewed By:** plan-ceo-review\n\n## Requirement Index\n\n- [REQ-001][behavior] The route should expose stale approved plans when the source-spec revision drifts.\n",
+    );
+    write_file(
+        &repo.join("docs/superpowers/plans/2026-01-22-document-review-system.md"),
+        "# Approved Plan, Stale Source Revision\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/superpowers/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source revision case\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The plan remains structurally valid while its source-spec revision goes stale.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source revision**\n",
+    );
+
+    let status_json = parse_json(
+        &run_rust_superpowers(
+            repo,
+            state,
+            &["workflow", "status", "--refresh"],
+            "rust canonical workflow status refresh for stale approved revision",
+        ),
+        "rust canonical workflow status refresh for stale approved revision",
+    );
+
+    assert_eq!(status_json["status"], "stale_plan");
+    assert_eq!(status_json["next_skill"], "superpowers:writing-plans");
+    assert_eq!(status_json["contract_state"], "stale");
+    assert_eq!(status_json["reason_codes"][0], "stale_spec_plan_linkage");
+    assert_eq!(
+        status_json["diagnostics"][0]["code"],
+        "stale_spec_plan_linkage"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn workflow_status_argv0_alias_dispatches_to_canonical_tree() {
@@ -321,4 +530,167 @@ fn workflow_status_argv0_alias_dispatches_to_canonical_tree() {
     assert_eq!(alias_json["next_skill"], helper_json["next_skill"]);
     assert_eq!(alias_json["reason"], helper_json["reason"]);
     assert_eq!(alias_json["reason_codes"], helper_json["reason_codes"]);
+}
+
+#[test]
+fn canonical_workflow_status_refresh_recovers_old_manifest_after_slug_change() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-cross-slug-old");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/superpowers/specs/2026-03-24-cross-slug-design.md";
+    let expected_plan = "docs/superpowers/plans/2026-03-24-cross-slug-plan.md";
+
+    write_file(
+        &repo.join(spec_path),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+
+    let old_identity = discover_repo_identity(repo).expect("old repo identity should resolve");
+    let old_manifest_path = manifest_path(&old_identity, state);
+    write_manifest(
+        &old_manifest_path,
+        &WorkflowManifest {
+            version: 1,
+            repo_root: old_identity.repo_root.to_string_lossy().into_owned(),
+            branch: old_identity.branch_name.clone(),
+            expected_spec_path: spec_path.to_owned(),
+            expected_plan_path: expected_plan.to_owned(),
+            status: String::from("spec_approved_needs_plan"),
+            next_skill: String::from("superpowers:writing-plans"),
+            reason: String::from("missing_expected_plan,expect_set"),
+            note: String::from("missing_expected_plan,expect_set"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
+    );
+
+    set_remote_url(
+        repo,
+        "https://example.com/example/workflow-runtime-cross-slug-new.git",
+    );
+    let new_identity = discover_repo_identity(repo).expect("new repo identity should resolve");
+    let new_manifest_path = manifest_path(&new_identity, state);
+    assert_ne!(
+        old_manifest_path, new_manifest_path,
+        "slug change should move the manifest path"
+    );
+    let recovered = recover_slug_changed_manifest(&new_identity, state, &new_manifest_path)
+        .expect("cross-slug manifest should be recoverable from sibling state");
+    assert_eq!(recovered.expected_plan_path, expected_plan);
+
+    let route = WorkflowRuntime {
+        identity: new_identity.clone(),
+        state_dir: state.to_path_buf(),
+        manifest_path: new_manifest_path.clone(),
+        manifest: Some(recovered.clone()),
+        manifest_warning: None,
+        manifest_recovery_reasons: vec![String::from("repo_slug_recovered")],
+    }
+    .status()
+    .expect("status should preserve the recovered expected plan path");
+    assert_eq!(route.plan_path, expected_plan);
+
+    let refreshed_route = WorkflowRuntime {
+        identity: new_identity,
+        state_dir: state.to_path_buf(),
+        manifest_path: new_manifest_path.clone(),
+        manifest: Some(recovered),
+        manifest_warning: None,
+        manifest_recovery_reasons: vec![String::from("repo_slug_recovered")],
+    }
+    .status_refresh()
+    .expect("status refresh should preserve recovery metadata and write the new manifest");
+
+    assert_eq!(refreshed_route.status, "spec_approved_needs_plan");
+    assert_eq!(refreshed_route.plan_path, expected_plan);
+    assert!(refreshed_route.reason.contains("repo_slug_recovered"));
+    assert!(
+        refreshed_route
+            .reason_codes
+            .iter()
+            .any(|value| value == "repo_slug_recovered")
+    );
+
+    let new_manifest_json = fs::read_to_string(&new_manifest_path)
+        .expect("recovered manifest should be written at the new slug path");
+    assert!(new_manifest_json.contains(expected_plan));
+}
+
+#[test]
+fn canonical_workflow_status_refresh_limits_cross_slug_manifest_recovery_scan() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-cross-slug-budget");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/superpowers/specs/2026-03-24-budget-limit-design.md";
+    let expected_plan = "docs/superpowers/plans/2026-03-24-budget-limit-plan.md";
+
+    write_file(
+        &repo.join(spec_path),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+
+    let current_identity =
+        discover_repo_identity(repo).expect("current repo identity should resolve");
+    let current_manifest_path = manifest_path(&current_identity, state);
+    let manifest_name = current_manifest_path
+        .file_name()
+        .expect("manifest path should have a file name")
+        .to_owned();
+
+    for index in 1..=12 {
+        let decoy_dir = state.join("projects").join(format!("decoy-{index:02}"));
+        write_manifest(
+            &decoy_dir.join(&manifest_name),
+            &WorkflowManifest {
+                version: 1,
+                repo_root: format!("/tmp/not-the-current-repo-{index:02}"),
+                branch: current_identity.branch_name.clone(),
+                expected_spec_path: String::new(),
+                expected_plan_path: String::new(),
+                status: String::from("needs_brainstorming"),
+                next_skill: String::from("superpowers:brainstorming"),
+                reason: String::from("decoy"),
+                note: String::from("decoy"),
+                updated_at: String::from("2026-03-24T00:00:00Z"),
+            },
+        );
+    }
+
+    write_manifest(
+        &state.join("projects/zzz-old-slug").join(&manifest_name),
+        &WorkflowManifest {
+            version: 1,
+            repo_root: current_identity.repo_root.to_string_lossy().into_owned(),
+            branch: current_identity.branch_name.clone(),
+            expected_spec_path: spec_path.to_owned(),
+            expected_plan_path: expected_plan.to_owned(),
+            status: String::from("spec_approved_needs_plan"),
+            next_skill: String::from("superpowers:writing-plans"),
+            reason: String::from("repo_slug_recovered"),
+            note: String::from("repo_slug_recovered"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
+    );
+
+    let status_json = parse_json(
+        &run_rust_superpowers(
+            repo,
+            state,
+            &["workflow", "status", "--refresh"],
+            "rust canonical workflow status refresh for slug recovery scan budget",
+        ),
+        "rust canonical workflow status refresh for slug recovery scan budget",
+    );
+
+    assert_eq!(status_json["status"], "spec_approved_needs_plan");
+    assert_eq!(status_json["plan_path"], "");
+    assert!(
+        !status_json["reason"]
+            .as_str()
+            .unwrap_or("")
+            .contains("repo_slug_recovered")
+    );
+
+    let manifest_json = fs::read_to_string(current_manifest_path)
+        .expect("current manifest should be written after refresh");
+    assert!(!manifest_json.contains(expected_plan));
 }

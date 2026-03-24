@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use cli::{Command, InstallCommand, PlanCommand, RepoCommand};
-use diagnostics::{DiagnosticError, JsonFailure};
+use diagnostics::{DiagnosticError, FailureClass, JsonFailure};
+use serde_json::{Value, json};
 
 pub mod cli;
 pub mod compat;
@@ -23,7 +24,21 @@ pub mod workflow;
 
 pub fn run() -> std::process::ExitCode {
     let args = canonicalized_args();
-    let cli = cli::Cli::parse_from(args);
+    let cli = match cli::Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(error) => match error.kind() {
+            clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                print!("{error}");
+                return std::process::ExitCode::SUCCESS;
+            }
+            _ => {
+                return emit_json::<Value, JsonFailure>(Err(JsonFailure::new(
+                    FailureClass::InvalidCommandInput,
+                    error.to_string(),
+                )));
+            }
+        },
+    };
 
     match cli.command {
         Some(Command::Config(config_cli)) => match config_cli.command {
@@ -69,11 +84,20 @@ pub fn run() -> std::process::ExitCode {
                         cli::plan_execution::PlanExecutionCommand::Begin(args) => {
                             emit_json(execution::mutate::begin(&runtime, &args))
                         }
+                        cli::plan_execution::PlanExecutionCommand::Note(args) => {
+                            emit_json(execution::mutate::note(&runtime, &args))
+                        }
                         cli::plan_execution::PlanExecutionCommand::Complete(args) => {
                             emit_json(execution::mutate::complete(&runtime, &args))
                         }
+                        cli::plan_execution::PlanExecutionCommand::Reopen(args) => {
+                            emit_json(execution::mutate::reopen(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::Transfer(args) => {
+                            emit_json(execution::mutate::transfer(&runtime, &args))
+                        }
                     },
-                    Err(error) => emit_json::<serde_json::Value, _>(Err(error)),
+                    Err(error) => emit_json::<Value, _>(Err(error)),
                 }
             }
         },
@@ -94,34 +118,72 @@ pub fn run() -> std::process::ExitCode {
                         emit_json(runtime.approve(&args))
                     }
                 },
-                Err(error) => emit_json::<serde_json::Value, JsonFailure>(Err(error.into())),
+                Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
             }
         }
         Some(Command::SessionEntry(session_entry_cli)) => match session_entry_cli.command {
             cli::session_entry::SessionEntryCommand::Resolve(args) => {
-                emit_json(session_entry::resolve(&args))
+                emit_session_entry_json(session_entry::resolve(&args))
             }
             cli::session_entry::SessionEntryCommand::Record(args) => {
-                emit_json(session_entry::record(&args))
+                emit_session_entry_json(session_entry::record(&args))
             }
         },
         Some(Command::UpdateCheck(args)) => emit_text(update_check::check(&args)),
-        Some(Command::Workflow(workflow_cli)) => match workflow::status::WorkflowRuntime::discover(
-            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        ) {
-            Ok(mut runtime) => match workflow_cli.command {
-                cli::workflow::WorkflowCommand::Status(_) => emit_json(runtime.status()),
-                cli::workflow::WorkflowCommand::Resolve => emit_json(runtime.resolve()),
-                cli::workflow::WorkflowCommand::Expect(args) => {
-                    emit_json(runtime.expect(args.artifact, &args.path))
+        Some(Command::Workflow(workflow_cli)) => {
+            let is_resolve = matches!(
+                &workflow_cli.command,
+                cli::workflow::WorkflowCommand::Resolve
+            );
+            let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let runtime_result = if is_resolve {
+                workflow::status::WorkflowRuntime::discover_read_only(&current_dir)
+            } else {
+                workflow::status::WorkflowRuntime::discover(&current_dir)
+            };
+            match runtime_result {
+                Ok(mut runtime) => match workflow_cli.command {
+                    cli::workflow::WorkflowCommand::Status(args) => {
+                        let route = if args.refresh {
+                            runtime.status_refresh()
+                        } else {
+                            runtime.status()
+                        };
+                        if args.summary {
+                            emit_text(route.map(render_workflow_status_summary))
+                        } else {
+                            emit_json(route)
+                        }
+                    }
+                    cli::workflow::WorkflowCommand::Resolve => {
+                        emit_workflow_resolve_json(runtime.resolve().map_err(JsonFailure::from))
+                    }
+                    cli::workflow::WorkflowCommand::Expect(args) => {
+                        emit_json(runtime.expect(args.artifact, &args.path))
+                    }
+                    cli::workflow::WorkflowCommand::Sync(args) => {
+                        emit_json(runtime.sync(args.artifact, args.path.as_deref()))
+                    }
+                    cli::workflow::WorkflowCommand::Phase(_) => emit_json(runtime.phase()),
+                },
+                Err(error) => {
+                    let failure =
+                        if error.failure_class_enum() == FailureClass::BranchDetectionFailed {
+                            JsonFailure::new(
+                                FailureClass::RepoContextUnavailable,
+                                "Read-only workflow resolution requires a git repo.",
+                            )
+                        } else {
+                            error.into()
+                        };
+                    if is_resolve {
+                        emit_workflow_resolve_json(Err(failure))
+                    } else {
+                        emit_json::<Value, JsonFailure>(Err(failure))
+                    }
                 }
-                cli::workflow::WorkflowCommand::Sync(args) => {
-                    emit_json(runtime.sync(args.artifact, args.path.as_deref()))
-                }
-                cli::workflow::WorkflowCommand::Phase(_) => emit_json(runtime.phase()),
-            },
-            Err(error) => emit_json::<serde_json::Value, JsonFailure>(Err(error.into())),
-        },
+            }
+        }
         None => std::process::ExitCode::SUCCESS,
     }
 }
@@ -129,13 +191,22 @@ pub fn run() -> std::process::ExitCode {
 fn canonicalized_args() -> Vec<OsString> {
     let mut args = std::env::args_os();
     let argv0 = args.next().unwrap_or_else(|| OsString::from("superpowers"));
+    let user_args = args.collect::<Vec<_>>();
+    let injected = compat::argv0::canonical_command_from_argv0(&argv0.to_string_lossy());
     let mut canonicalized = vec![argv0.clone()];
-    canonicalized.extend(
-        compat::argv0::canonical_command_from_argv0(&argv0.to_string_lossy())
-            .iter()
-            .map(OsString::from),
-    );
-    canonicalized.extend(args);
+    canonicalized.extend(injected.iter().map(OsString::from));
+
+    let overlap = (0..=std::cmp::min(injected.len(), user_args.len()))
+        .rev()
+        .find(|overlap| {
+            injected[injected.len().saturating_sub(*overlap)..]
+                .iter()
+                .zip(user_args.iter().take(*overlap))
+                .all(|(expected, actual)| actual.to_string_lossy() == *expected)
+        })
+        .unwrap_or(0);
+
+    canonicalized.extend(user_args.into_iter().skip(overlap));
     canonicalized
 }
 
@@ -183,6 +254,91 @@ fn emit_text(result: Result<String, DiagnosticError>) -> std::process::ExitCode 
     }
 }
 
+fn emit_workflow_resolve_json(
+    result: Result<workflow::status::WorkflowRoute, JsonFailure>,
+) -> std::process::ExitCode {
+    match result {
+        Ok(route) => {
+            let manifest_source_path = route.manifest_path.clone();
+            match serde_json::to_value(route) {
+                Ok(Value::Object(mut object)) => {
+                    object.insert(
+                        String::from("outcome"),
+                        Value::String(String::from("resolved")),
+                    );
+                    object.insert(
+                        String::from("manifest_source_path"),
+                        Value::String(manifest_source_path),
+                    );
+                    match serde_json::to_string(&Value::Object(object)) {
+                        Ok(json) => {
+                            println!("{json}");
+                            std::process::ExitCode::SUCCESS
+                        }
+                        Err(error) => {
+                            eprintln!("Could not serialize workflow resolve output: {error}");
+                            std::process::ExitCode::from(1)
+                        }
+                    }
+                }
+                Ok(_) => {
+                    eprintln!("Could not serialize workflow resolve output: expected object");
+                    std::process::ExitCode::from(1)
+                }
+                Err(error) => {
+                    eprintln!("Could not serialize workflow resolve output: {error}");
+                    std::process::ExitCode::from(1)
+                }
+            }
+        }
+        Err(failure) => match serde_json::to_string(&json!({
+            "outcome": "runtime_failure",
+            "failure_class": failure.error_class,
+            "message": failure.message,
+        })) {
+            Ok(json) => {
+                eprintln!("{json}");
+                std::process::ExitCode::from(1)
+            }
+            Err(error) => {
+                eprintln!("Could not serialize workflow resolve failure: {error}");
+                std::process::ExitCode::from(1)
+            }
+        },
+    }
+}
+
+fn emit_session_entry_json(
+    result: Result<session_entry::SessionEntryResolveOutput, DiagnosticError>,
+) -> std::process::ExitCode {
+    match result {
+        Ok(output) => match serde_json::to_string(&output) {
+            Ok(json) => {
+                println!("{json}");
+                std::process::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("Could not serialize session-entry output: {error}");
+                std::process::ExitCode::from(1)
+            }
+        },
+        Err(error) => match serde_json::to_string(&json!({
+            "outcome": "runtime_failure",
+            "failure_class": error.failure_class(),
+            "message": error.message(),
+        })) {
+            Ok(json) => {
+                eprintln!("{json}");
+                std::process::ExitCode::from(1)
+            }
+            Err(serialize_error) => {
+                eprintln!("Could not serialize session-entry failure: {serialize_error}");
+                std::process::ExitCode::from(1)
+            }
+        },
+    }
+}
+
 fn render_slug_output(current_dir: &std::path::Path) -> Result<String, DiagnosticError> {
     let identity = git::discover_slug_identity(current_dir);
     Ok(format!(
@@ -190,6 +346,18 @@ fn render_slug_output(current_dir: &std::path::Path) -> Result<String, Diagnosti
         shell_quote(&identity.repo_slug),
         shell_quote(&identity.safe_branch)
     ))
+}
+
+fn render_workflow_status_summary(route: workflow::status::WorkflowRoute) -> String {
+    let next = if route.status == "implementation_ready" {
+        "execution_preflight"
+    } else {
+        route.next_skill.as_str()
+    };
+    format!(
+        "status={} next={} spec={} plan={} reason={}\n",
+        route.status, next, route.spec_path, route.plan_path, route.reason
+    )
 }
 
 fn shell_quote(value: &str) -> String {

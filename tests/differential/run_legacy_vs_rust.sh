@@ -2,7 +2,8 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/superpowers-differential.XXXXXX")
+LEGACY_STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/superpowers-differential-legacy.XXXXXX")
+RUST_STATE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/superpowers-differential-rust.XXXXXX")
 REPO_DIR=$(mktemp -d "${TMPDIR:-/tmp}/superpowers-differential-repo.XXXXXX")
 FIXTURE_ROOT="$REPO_ROOT/tests/codex-runtime/fixtures/workflow-artifacts"
 EXPECTED_JSON="$REPO_ROOT/tests/fixtures/differential/workflow-status.json"
@@ -10,7 +11,7 @@ LEGACY_BIN="$REPO_ROOT/bin/superpowers-workflow-status"
 RUST_BIN="$REPO_ROOT/target/debug/superpowers"
 
 cleanup() {
-  rm -rf "$STATE_DIR" "$REPO_DIR"
+  rm -rf "$LEGACY_STATE_DIR" "$RUST_STATE_DIR" "$REPO_DIR"
 }
 trap cleanup EXIT
 
@@ -47,8 +48,8 @@ cp "$FIXTURE_ROOT/specs/2026-01-22-document-review-system-design.md" \
 cp "$FIXTURE_ROOT/specs/2026-01-22-document-review-system-design-v2.md" \
   "$REPO_DIR/docs/superpowers/specs/2026-01-22-document-review-system-design-v2.md"
 
-legacy_output="$(cd "$REPO_DIR" && SUPERPOWERS_STATE_DIR="$STATE_DIR" "$LEGACY_BIN" status --refresh)"
-rust_output="$(cd "$REPO_DIR" && SUPERPOWERS_STATE_DIR="$STATE_DIR" "$RUST_BIN" workflow status --refresh)"
+legacy_output="$(cd "$REPO_DIR" && SUPERPOWERS_STATE_DIR="$LEGACY_STATE_DIR" "$LEGACY_BIN" status --refresh)"
+rust_output="$(cd "$REPO_DIR" && SUPERPOWERS_STATE_DIR="$RUST_STATE_DIR" "$RUST_BIN" workflow status --refresh)"
 
 legacy_normalized="$(normalize_json "$legacy_output")"
 rust_normalized="$(normalize_json "$rust_output")"

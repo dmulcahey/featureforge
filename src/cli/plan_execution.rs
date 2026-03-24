@@ -18,7 +18,10 @@ pub enum PlanExecutionCommand {
     #[command(name = "gate-finish")]
     GateFinish(StatusArgs),
     Begin(BeginArgs),
+    Note(NoteArgs),
     Complete(CompleteArgs),
+    Reopen(ReopenArgs),
+    Transfer(TransferArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -54,6 +57,22 @@ pub struct BeginArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct NoteArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long)]
+    pub task: u32,
+    #[arg(long)]
+    pub step: u32,
+    #[arg(long)]
+    pub state: String,
+    #[arg(long)]
+    pub message: String,
+    #[arg(long = "expect-execution-fingerprint")]
+    pub expect_execution_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct CompleteArgs {
     #[arg(long)]
     pub plan: PathBuf,
@@ -73,6 +92,38 @@ pub struct CompleteArgs {
     pub verify_result: Option<String>,
     #[arg(long = "manual-verify-summary")]
     pub manual_verify_summary: Option<String>,
+    #[arg(long = "expect-execution-fingerprint")]
+    pub expect_execution_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ReopenArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long)]
+    pub task: u32,
+    #[arg(long)]
+    pub step: u32,
+    #[arg(long)]
+    pub source: String,
+    #[arg(long)]
+    pub reason: String,
+    #[arg(long = "expect-execution-fingerprint")]
+    pub expect_execution_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct TransferArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long = "repair-task")]
+    pub repair_task: u32,
+    #[arg(long = "repair-step")]
+    pub repair_step: u32,
+    #[arg(long)]
+    pub source: String,
+    #[arg(long)]
+    pub reason: String,
     #[arg(long = "expect-execution-fingerprint")]
     pub expect_execution_fingerprint: String,
 }
