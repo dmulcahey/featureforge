@@ -26,8 +26,8 @@ STATE_DIR="$(mktemp -d)"
 trap 'rm -rf "$STATE_DIR"' EXIT
 export SUPERPOWERS_STATE_DIR="$STATE_DIR"
 
-require_pattern '~/.superpowers/session-flags/using-superpowers/$PPID'
-require_pattern 'superpowers-session-entry resolve --message-file <path>'
+require_pattern '~/.superpowers/session-entry/using-superpowers/$PPID'
+require_pattern 'superpowers session-entry resolve --message-file <path>'
 require_pattern 'if the session decision is `enabled`, continue into the normal stack'
 require_pattern 'if the session decision is `bypassed` and the user did not explicitly request Superpowers, stop and bypass the rest of this skill'
 require_pattern 'if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to `enabled` and continue on the same turn'
@@ -55,7 +55,7 @@ decision_path="$(
 )"
 
 case "$decision_path" in
-  "$STATE_DIR"/session-flags/using-superpowers/*) ;;
+  "$STATE_DIR"/session-entry/using-superpowers/*) ;;
   *)
     echo "Expected decision path to live under the temp state dir, got: $decision_path"
     exit 1
@@ -72,7 +72,7 @@ require_pattern 'if the session decision is `bypassed` and the user did not expl
 
 printf 'corrupt\nextra\n' > "$decision_path"
 require_pattern 'ask the opt-out question again before any normal Superpowers work happens'
-require_pattern '`superpowers-session-entry resolve` should surface `outcome` `needs_user_choice` with `failure_class` `MalformedDecisionState`'
+require_pattern '`superpowers session-entry resolve` should surface `outcome` `needs_user_choice` with `failure_class` `MalformedDecisionState`'
 require_pattern 'treat future turns as undecided until a later write succeeds'
 
 echo "using-superpowers bypass regression passed."

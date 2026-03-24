@@ -7,6 +7,17 @@ UPDATE_BIN="$REPO_ROOT/bin/superpowers-update-check"
 CONFIG_BIN="$REPO_ROOT/bin/superpowers-config"
 RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
 
+canonical_update_state_path() {
+  printf '%s\n' "$STATE_DIR/update-check/$1"
+}
+
+write_state_file() {
+  local path="$1"
+  local contents="$2"
+  mkdir -p "$(dirname "$path")"
+  printf '%s\n' "$contents" > "$path"
+}
+
 make_install_dir() {
   local dir
   dir="$(mktemp -d)"
@@ -38,7 +49,11 @@ reset_state() {
     "$STATE_DIR/last-update-check" \
     "$STATE_DIR/update-snoozed" \
     "$STATE_DIR/just-upgraded-from" \
-    "$STATE_DIR/config.yaml"
+    "$(canonical_update_state_path last-update-check)" \
+    "$(canonical_update_state_path update-snoozed)" \
+    "$(canonical_update_state_path just-upgraded-from)" \
+    "$STATE_DIR/config.yaml" \
+    "$STATE_DIR/config/config.yaml"
 }
 
 set_mtime_minutes_ago() {
@@ -66,7 +81,7 @@ assert_output() {
 assert_cache() {
   local expected="$1"
   local actual
-  actual="$(cat "$STATE_DIR/last-update-check" 2>/dev/null || true)"
+  actual="$(cat "$(canonical_update_state_path last-update-check)" 2>/dev/null || true)"
   if [[ "$actual" != "$expected" ]]; then
     echo "Unexpected cache contents"
     echo "Expected: $expected"
@@ -76,9 +91,10 @@ assert_cache() {
 }
 
 assert_no_cache() {
-  if [[ -e "$STATE_DIR/last-update-check" ]]; then
+  if [[ -e "$(canonical_update_state_path last-update-check)" || -e "$STATE_DIR/last-update-check" ]]; then
     echo "Expected no update-check cache file to be written"
-    cat "$STATE_DIR/last-update-check"
+    cat "$(canonical_update_state_path last-update-check)" 2>/dev/null || true
+    cat "$STATE_DIR/last-update-check" 2>/dev/null || true
     exit 1
   fi
 }
@@ -102,7 +118,7 @@ local_dir="$(make_install_dir 5.1.0)"
 remote_file="$(make_remote_file 5.2.0)"
 export SUPERPOWERS_DIR="$local_dir"
 export SUPERPOWERS_REMOTE_URL="file://$remote_file"
-printf '%s\n' "UP_TO_DATE 5.1.0" > "$STATE_DIR/last-update-check"
+write_state_file "$(canonical_update_state_path last-update-check)" "UP_TO_DATE 5.1.0"
 output="$("$UPDATE_BIN" --force)"
 assert_output "UPGRADE_AVAILABLE 5.1.0 5.2.0" "$output" "--force bypasses cached up-to-date result"
 assert_cache "UPGRADE_AVAILABLE 5.1.0 5.2.0"
@@ -125,8 +141,8 @@ local_dir="$(make_install_dir 5.1.0)"
 remote_file="$(make_remote_file 5.2.0)"
 export SUPERPOWERS_DIR="$local_dir"
 export SUPERPOWERS_REMOTE_URL="file://$remote_file"
-printf '%s\n' "UP_TO_DATE 5.1.0" > "$STATE_DIR/last-update-check"
-set_mtime_minutes_ago "$STATE_DIR/last-update-check" 61
+write_state_file "$(canonical_update_state_path last-update-check)" "UP_TO_DATE 5.1.0"
+set_mtime_minutes_ago "$(canonical_update_state_path last-update-check)" 61
 output="$("$UPDATE_BIN")"
 assert_output "UPGRADE_AVAILABLE 5.1.0 5.2.0" "$output" "stale up-to-date cache refresh"
 assert_cache "UPGRADE_AVAILABLE 5.1.0 5.2.0"
@@ -149,7 +165,7 @@ local_dir="$(make_install_dir 5.1.0)"
 remote_file="$(make_remote_file 5.0.0)"
 export SUPERPOWERS_DIR="$local_dir"
 export SUPERPOWERS_REMOTE_URL="file://$remote_file"
-printf '%s\n' "UPGRADE_AVAILABLE 5.1.0 5.2.0" > "$STATE_DIR/last-update-check"
+write_state_file "$(canonical_update_state_path last-update-check)" "UPGRADE_AVAILABLE 5.1.0 5.2.0"
 output="$("$UPDATE_BIN")"
 assert_output "UPGRADE_AVAILABLE 5.1.0 5.2.0" "$output" "fresh upgrade cache reuse"
 assert_cache "UPGRADE_AVAILABLE 5.1.0 5.2.0"
@@ -161,7 +177,7 @@ local_dir="$(make_install_dir 5.1.0)"
 remote_file="$(make_remote_file 5.0.0)"
 export SUPERPOWERS_DIR="$local_dir"
 export SUPERPOWERS_REMOTE_URL="file://$remote_file"
-printf '%s\n' "UPGRADE_AVAILABLE 5.1.0 5.2.0" > "$STATE_DIR/last-update-check"
+write_state_file "$(canonical_update_state_path last-update-check)" "UPGRADE_AVAILABLE 5.1.0 5.2.0"
 output="$("$UPDATE_BIN" --force)"
 assert_output "" "$output" "--force bypasses cached upgrade-available result"
 assert_cache "UP_TO_DATE 5.1.0"
@@ -185,7 +201,7 @@ reset_state
 
 local_dir="$(make_install_dir 5.1.0)"
 export SUPERPOWERS_DIR="$local_dir"
-printf '%s\n' '5.0.0' > "$STATE_DIR/just-upgraded-from"
+write_state_file "$(canonical_update_state_path just-upgraded-from)" "5.0.0"
 output="$("$UPDATE_BIN")"
 assert_output "JUST_UPGRADED 5.0.0 5.1.0" "$output" "just-upgraded marker"
 assert_cache "UP_TO_DATE 5.1.0"
@@ -204,7 +220,7 @@ reset_state
 local_dir="$(make_install_dir 5.1.0)"
 export SUPERPOWERS_DIR="$local_dir"
 export SUPERPOWERS_REMOTE_URL="file:///does/not/exist"
-printf '%s\n' "UPGRADE_AVAILABLE 5.1.0 5.2.0" > "$STATE_DIR/last-update-check"
+write_state_file "$(canonical_update_state_path last-update-check)" "UPGRADE_AVAILABLE 5.1.0 5.2.0"
 output="$("$UPDATE_BIN")"
 assert_output "UPGRADE_AVAILABLE 5.1.0 5.2.0" "$output" "remote lookup failure with sticky upgrade cache"
 assert_cache "UPGRADE_AVAILABLE 5.1.0 5.2.0"
@@ -226,7 +242,7 @@ local_dir="$(make_install_dir 5.1.0)"
 remote_file="$(make_remote_file 5.2.0)"
 export SUPERPOWERS_DIR="$local_dir"
 export SUPERPOWERS_REMOTE_URL="file://$remote_file"
-printf '%s %s %s\n' "5.2.0" "1" "$(date +%s)" > "$STATE_DIR/update-snoozed"
+write_state_file "$(canonical_update_state_path update-snoozed)" "5.2.0 1 $(date +%s)"
 output="$("$UPDATE_BIN")"
 assert_output "" "$output" "snoozed true upgrade"
 

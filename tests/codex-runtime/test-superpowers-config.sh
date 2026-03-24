@@ -87,7 +87,9 @@ fi
 echo "superpowers-config smoke test passed."
 
 legacy_config="$STATE_DIR/config.yaml"
+canonical_config="$STATE_DIR/config/config.yaml"
 mkdir -p "$(dirname "$legacy_config")"
+rm -f "$canonical_config"
 cat > "$legacy_config" <<'EOF'
 update_check: false
 superpowers_contributor: true
@@ -103,7 +105,6 @@ if [[ ! "$(run_rust_config_with_stderr get update_check)" == *"PendingMigration"
   exit 1
 fi
 
-canonical_config="$STATE_DIR/config/config.yaml"
 if [[ -f "$canonical_config" ]]; then
   echo "Expected canonical Rust config get to avoid rewriting legacy config state"
   exit 1

@@ -15,15 +15,13 @@ require_helper() {
     echo "Expected helper to exist and be executable: $HELPER_BIN"
     exit 1
   fi
+  ensure_rust_superpowers_bin
 }
 
 ensure_rust_superpowers_bin() {
-  if [[ -x "$RUST_SUPERPOWERS_BIN" ]]; then
-    return 0
-  fi
-
   source "$HOME/.cargo/env"
   (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
+  export SUPERPOWERS_COMPAT_BIN="$RUST_SUPERPOWERS_BIN"
 }
 
 json_value() {
@@ -150,7 +148,7 @@ write_message_file() {
 
 decision_path_for_key() {
   local session_key="$1"
-  printf '%s\n' "$STATE_DIR/session-flags/using-superpowers/$session_key"
+  printf '%s\n' "$STATE_DIR/session-entry/using-superpowers/$session_key"
 }
 
 canonical_decision_path_for_key() {
@@ -158,9 +156,14 @@ canonical_decision_path_for_key() {
   printf '%s\n' "$STATE_DIR/session-entry/using-superpowers/$session_key"
 }
 
+legacy_decision_path_for_key() {
+  local session_key="$1"
+  printf '%s\n' "$STATE_DIR/session-flags/using-superpowers/$session_key"
+}
+
 populate_decoy_state_tree() {
   local count="$1"
-  local dir="$STATE_DIR/session-flags/using-superpowers"
+  local dir="$STATE_DIR/session-entry/using-superpowers"
   local i
   mkdir -p "$dir"
   for ((i=1; i<=count; i++)); do
@@ -637,7 +640,7 @@ run_canonical_rust_explicit_reentry_persists_enabled_to_canonical_path() {
 Please use superpowers for this task.
 EOF
 )"
-  legacy_path="$(decision_path_for_key "rust-explicit-reentry")"
+  legacy_path="$(legacy_decision_path_for_key "rust-explicit-reentry")"
   canonical_path="$(canonical_decision_path_for_key "rust-explicit-reentry")"
   mkdir -p "$(dirname "$legacy_path")"
   printf 'bypassed\n' > "$legacy_path"

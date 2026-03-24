@@ -98,14 +98,20 @@ run_json_command() {
   local repo_dir="$1"
   local label="$2"
   shift 2
-  local output
+  local stdout_file stderr_file output
   local status=0
-  output="$(cd "$repo_dir" && "$HELPER_BIN" "$@" 2>&1)" || status=$?
+  stdout_file="$(mktemp)"
+  stderr_file="$(mktemp)"
+  (cd "$repo_dir" && "$HELPER_BIN" "$@" >"$stdout_file" 2>"$stderr_file") || status=$?
   if [[ $status -ne 0 ]]; then
     echo "Expected command to succeed for: $label"
-    printf '%s\n' "$output"
+    cat "$stdout_file"
+    cat "$stderr_file"
+    rm -f "$stdout_file" "$stderr_file"
     exit 1
   fi
+  output="$(cat "$stdout_file")"
+  rm -f "$stdout_file" "$stderr_file"
   printf '%s\n' "$output"
 }
 
@@ -122,7 +128,11 @@ run_command_fails() {
     printf '%s\n' "$output"
     exit 1
   fi
-  assert_contains "$output" "\"failure_class\":\"$expected_class\"" "$label"
+  if [[ "$output" != *"\"failure_class\":\"$expected_class\""* && "$output" != *"\"error_class\":\"$expected_class\""* ]]; then
+    echo "Expected ${label} output to contain failure_class or error_class '${expected_class}'"
+    printf '%s\n' "$output"
+    exit 1
+  fi
   printf '%s\n' "$output"
 }
 
@@ -174,6 +184,13 @@ slug_identity_for_repo() {
 }
 
 approval_path_for() {
+  local repo_dir="$1"
+  local stage="$2"
+  local task_id="$3"
+  canonical_approval_path_for "$repo_dir" "$stage" "$task_id"
+}
+
+legacy_approval_path_for() {
   local repo_dir="$1"
   local stage="$2"
   local task_id="$3"
@@ -427,6 +444,7 @@ run_hot_path_uses_deterministic_approval_file() {
   output="$(run_json_command "$repo" "hot path deterministic approval file" check --intent write --stage superpowers:brainstorming --task-id spec-task --path docs/superpowers/specs/new-spec.md --write-target spec-artifact-write)"
   assert_json_equals "$output" "approval_path" "$expected_path" "hot path deterministic approval file"
   assert_json_equals "$output" "outcome" "allowed" "hot path deterministic approval file"
+  rm -rf "$STATE_DIR/projects"/decoy-*
 }
 
 run_canonical_rust_protected_branch_block_matches_helper() {
@@ -451,10 +469,15 @@ run_canonical_rust_reads_legacy_approval_with_warning_until_install_migrate() {
   local repo="$REPO_DIR/rust-approval-migration"
   local rust_output
   local expected_path
+  local legacy_path
 
   init_repo "$repo" "main" "https://example.com/acme/repo-safety.git"
   run_json_command "$repo" "helper approve legacy approval" approve --stage superpowers:brainstorming --task-id spec-task --reason "User explicitly approved writing the spec on main." --path docs/superpowers/specs/new-spec.md --write-target spec-artifact-write >/dev/null
   expected_path="$(canonical_approval_path_for "$repo" "superpowers:brainstorming" "spec-task")"
+  legacy_path="$(legacy_approval_path_for "$repo" "superpowers:brainstorming" "spec-task")"
+  mkdir -p "$(dirname "$legacy_path")"
+  cp "$expected_path" "$legacy_path"
+  rm -f "$expected_path"
 
   rust_output="$(run_rust_json_command "$repo" "canonical rust approval migration" check --intent write --stage superpowers:brainstorming --task-id spec-task --path docs/superpowers/specs/new-spec.md --write-target spec-artifact-write)"
   assert_json_equals "$rust_output" "outcome" "allowed" "canonical rust approval migration"

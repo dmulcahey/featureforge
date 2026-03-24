@@ -5,10 +5,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SKILL_DOC="$REPO_ROOT/skills/using-superpowers/SKILL.md"
 ENTRY_HARNESS="$REPO_ROOT/tests/codex-runtime/session-entry-supported-entry-harness.sh"
+RUST_SUPERPOWERS_BIN="$REPO_ROOT/target/debug/superpowers"
 STATE_DIR="$(mktemp -d)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$STATE_DIR" "$TMP_DIR"' EXIT
 export SUPERPOWERS_STATE_DIR="$STATE_DIR"
+
+ensure_rust_superpowers_bin() {
+  source "$HOME/.cargo/env"
+  (cd "$REPO_ROOT" && cargo build --quiet --bin superpowers >/dev/null)
+  export SUPERPOWERS_COMPAT_BIN="$RUST_SUPERPOWERS_BIN"
+}
 
 require_pattern() {
   local pattern="$1"
@@ -84,7 +91,7 @@ write_message_file() {
 
 decision_path_for_key() {
   local session_key="$1"
-  printf '%s\n' "$STATE_DIR/session-flags/using-superpowers/$session_key"
+  printf '%s\n' "$STATE_DIR/session-entry/using-superpowers/$session_key"
 }
 
 run_json_command() {
@@ -103,16 +110,18 @@ run_json_command() {
 
 require_pattern 'session-entry bootstrap ownership is runtime-owned'
 require_pattern 'missing or malformed decision state fails closed'
-require_pattern 'Supported entry paths must resolve `superpowers-session-entry resolve --message-file <path>` before any normal Superpowers behavior:'
+require_pattern 'Supported entry paths must resolve `superpowers session-entry resolve --message-file <path>` before any normal Superpowers behavior:'
 require_pattern 'if the helper returns `needs_user_choice`, ask the opt-out question and persist either `enabled` or `bypassed`'
 require_pattern 'if the helper returns `runtime_failure`, surface that failure instead of pretending the gate was resolved'
-require_pattern '`superpowers-session-entry resolve` should surface `outcome` `needs_user_choice` with `failure_class` `MalformedDecisionState`'
+require_pattern '`superpowers session-entry resolve` should surface `outcome` `needs_user_choice` with `failure_class` `MalformedDecisionState`'
 require_absent_pattern 'continue to normal Superpowers behavior'
 
 if [[ ! -x "$ENTRY_HARNESS" ]]; then
   echo "Expected supported-entry harness to exist and be executable: $ENTRY_HARNESS"
   exit 1
 fi
+
+ensure_rust_superpowers_bin
 
 missing_message="$(write_message_file missing-entry.txt <<'EOF'
 Please route this from a fresh entry path.

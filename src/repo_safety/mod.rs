@@ -89,6 +89,14 @@ pub struct RepoSafetyRuntime {
 
 impl RepoSafetyRuntime {
     pub fn discover(current_dir: &Path) -> Result<Self, DiagnosticError> {
+        if env::var("SUPERPOWERS_REPO_SAFETY_TEST_FAILPOINT").as_deref()
+            == Ok("instruction_parse_failure")
+        {
+            return Err(DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Repo-safety test failpoint requested an instruction-parse failure.",
+            ));
+        }
         let identity = discover_repo_identity(current_dir)?;
         let slug_identity = discover_slug_identity(current_dir);
         let normalized_branch = normalize_identifier_token(&identity.branch_name);

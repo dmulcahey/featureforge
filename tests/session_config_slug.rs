@@ -248,6 +248,49 @@ fn canonical_session_entry_explicit_reentry_migrates_legacy_state_to_canonical_p
 }
 
 #[test]
+fn canonical_session_entry_skill_name_reentry_enables_superpowers_again() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-skill-reentry");
+    let state = state_dir.path();
+    let legacy_path = state
+        .join("session-flags")
+        .join("using-superpowers")
+        .join("skill-reentry");
+    write_file(&legacy_path, "bypassed\n");
+    let message_file = state.join("skill-reentry-message.txt");
+    write_file(&message_file, "Please use brainstorming for this task.\n");
+
+    let rust_output = run_rust_superpowers(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "skill-reentry",
+        ],
+        "canonical session-entry skill-name reentry",
+    );
+    let rust_json = parse_json(&rust_output, "canonical session-entry skill-name reentry");
+    let canonical_path = canonical_session_entry_path(state, "skill-reentry");
+
+    assert_eq!(rust_json["outcome"], Value::String(String::from("enabled")));
+    assert_eq!(
+        rust_json["decision_source"],
+        Value::String(String::from("explicit_reentry"))
+    );
+    assert_eq!(
+        rust_json["decision_path"].as_str(),
+        Some(canonical_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        fs::read_to_string(&canonical_path).expect("canonical session-entry path should exist"),
+        "enabled\n"
+    );
+}
+
+#[test]
 fn canonical_config_reads_legacy_yaml_in_read_only_mode_until_install_migrate_runs() {
     let (_repo_dir, state_dir) = init_repo("config-migration");
     let state = state_dir.path();

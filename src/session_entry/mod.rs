@@ -10,6 +10,26 @@ use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::paths::normalize_identifier_token;
 
 const MAX_MESSAGE_BYTES: u64 = 65_536;
+const SUPERPOWERS_SKILLS: &[&str] = &[
+    "brainstorming",
+    "dispatching-parallel-agents",
+    "document-release",
+    "executing-plans",
+    "finishing-a-development-branch",
+    "plan-ceo-review",
+    "plan-eng-review",
+    "qa-only",
+    "receiving-code-review",
+    "requesting-code-review",
+    "subagent-driven-development",
+    "systematic-debugging",
+    "test-driven-development",
+    "using-git-worktrees",
+    "using-superpowers",
+    "verification-before-completion",
+    "writing-plans",
+    "writing-skills",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SessionPromptOption {
@@ -49,6 +69,15 @@ enum DecisionState {
 pub fn resolve(
     args: &SessionEntryResolveArgs,
 ) -> Result<SessionEntryResolveOutput, DiagnosticError> {
+    if matches!(
+        env::var("SUPERPOWERS_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
+        Ok("instruction_parse_failure")
+    ) {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "Session-entry test failpoint injected an instruction parse failure.",
+        ));
+    }
     let runtime = SessionEntryRuntime::discover(args.session_key.as_deref())?;
     let message_text = runtime.load_message_text(&args.message_file)?;
     let decision_state = runtime.read_decision_state()?;
@@ -63,6 +92,19 @@ pub fn resolve(
             None,
         )),
         DecisionState::Bypassed if message_requests_reentry(&message_text) => {
+            if matches!(
+                env::var("SUPERPOWERS_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
+                Ok("reentry_write_failure")
+            ) {
+                return Ok(runtime.result(
+                    "enabled",
+                    "explicit_reentry_unpersisted",
+                    false,
+                    "DecisionWriteFailed",
+                    "explicit_reentry_unpersisted",
+                    None,
+                ));
+            }
             runtime.write_decision("enabled")?;
             Ok(runtime.result(
                 "enabled",
@@ -340,17 +382,33 @@ fn message_requests_reentry(message: &str) -> bool {
         if clause == "superpowers please" {
             return true;
         }
-        if clause.contains("do not use superpowers")
-            || clause.contains("never use superpowers")
-            || clause.contains("use no superpowers")
+        if clause_requests_phrase(clause, "use superpowers")
+            || clause_requests_phrase(clause, "enable superpowers")
+            || clause_requests_skill_reentry(clause)
         {
-            continue;
-        }
-        if clause.contains("use superpowers") || clause.contains("enable superpowers") {
             return true;
         }
     }
     false
+}
+
+fn clause_requests_skill_reentry(clause: &str) -> bool {
+    SUPERPOWERS_SKILLS.iter().any(|skill| {
+        clause_requests_phrase(clause, &format!("use {skill}"))
+            || clause_requests_phrase(clause, &format!("use superpowers:{skill}"))
+            || clause_requests_phrase(clause, &format!("/{skill}"))
+            || clause_requests_phrase(clause, &format!("${skill}"))
+    })
+}
+
+fn clause_requests_phrase(clause: &str, phrase: &str) -> bool {
+    clause.match_indices(phrase).any(|(index, _)| {
+        let prefix = &clause[..index];
+        !prefix.contains("do not")
+            && !prefix.contains("never")
+            && !prefix.contains("use no ")
+            && !prefix.contains("no ")
+    })
 }
 
 fn state_dir() -> PathBuf {

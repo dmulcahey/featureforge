@@ -9,7 +9,8 @@ pub fn canonical_command_from_argv0(argv0: &str) -> &'static [&'static str] {
 
     match normalized {
         "superpowers" => &[],
-        "superpowers-workflow" | "superpowers-workflow-status" => &["workflow"],
+        "superpowers-workflow" => &["workflow"],
+        "superpowers-workflow-status" => &["workflow", "status"],
         "superpowers-plan-contract" => &["plan", "contract"],
         "superpowers-plan-execution" => &["plan", "execution"],
         "superpowers-repo-safety" => &["repo-safety"],

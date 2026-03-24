@@ -245,19 +245,19 @@ require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Return a 
 require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Do not write files or approve execution."
 require_pattern skills/plan-eng-review/accelerated-reviewer-prompt.md "Escalate any high-judgment issue individually."
 require_pattern docs/README.codex.md 'Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.'
-require_pattern README.md 'superpowers-session-entry'
-require_pattern README.md 'superpowers-repo-safety'
-require_pattern README.md 'superpowers-plan-contract'
+require_pattern README.md 'superpowers session-entry'
+require_pattern README.md 'superpowers repo-safety'
+require_pattern README.md 'superpowers plan contract'
 require_pattern README.md 'protected branches'
 require_pattern README.md 'Six layers matter:'
 require_pattern README.md 'bash tests/codex-runtime/test-superpowers-session-entry.sh'
-require_pattern docs/README.codex.md 'superpowers-session-entry'
-require_pattern docs/README.codex.md 'superpowers-repo-safety'
-require_pattern docs/README.codex.md 'superpowers-plan-contract'
+require_pattern docs/README.codex.md 'superpowers session-entry'
+require_pattern docs/README.codex.md 'superpowers repo-safety'
+require_pattern docs/README.codex.md 'superpowers plan contract'
 require_pattern docs/README.codex.md 'protected branches'
-require_pattern docs/README.copilot.md 'superpowers-session-entry'
-require_pattern docs/README.copilot.md 'superpowers-repo-safety'
-require_pattern docs/README.copilot.md 'superpowers-plan-contract'
+require_pattern docs/README.copilot.md 'superpowers session-entry'
+require_pattern docs/README.copilot.md 'superpowers repo-safety'
+require_pattern docs/README.copilot.md 'superpowers plan contract'
 require_pattern docs/README.copilot.md 'protected branches'
 require_pattern docs/testing.md 'bash tests/codex-runtime/test-superpowers-session-entry-gate.sh'
 require_pattern docs/testing.md 'bash tests/codex-runtime/test-superpowers-session-entry.sh'
@@ -287,8 +287,8 @@ require_pattern skills/plan-eng-review/SKILL.md '**Browser QA Required:** yes'
 require_pattern skills/qa-only/SKILL.md '# QA Result'
 require_pattern skills/qa-only/SKILL.md '**Source Test Plan:** `~/.superpowers/projects/.../test-plan.md`'
 require_pattern skills/document-release/SKILL.md '# Release Readiness Result'
-require_pattern skills/finishing-a-development-branch/SKILL.md 'Run `superpowers-plan-execution gate-review --plan <approved-plan-path>` before late-stage QA or release routing.'
-require_pattern skills/finishing-a-development-branch/SKILL.md 'After `superpowers:document-release` and any required `superpowers:qa-only` handoff are current, run `superpowers-plan-execution gate-finish --plan <approved-plan-path>` before presenting completion options.'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'Run `superpowers plan execution gate-review --plan <approved-plan-path>` before late-stage QA or release routing.'
+require_pattern skills/finishing-a-development-branch/SKILL.md 'After `superpowers:document-release` and any required `superpowers:qa-only` handoff are current, run `superpowers plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.'
 
 if rg -n -F 'requires a required `document-release` handoff' docs/README.codex.md docs/README.copilot.md >/dev/null; then
   echo "Platform workflow docs should not duplicate the document-release requirement wording."
@@ -320,19 +320,10 @@ if ! rg -n -F '_IS_SUPERPOWERS_RUNTIME_ROOT()' skills/using-superpowers/SKILL.md
   exit 1
 fi
 
-if ! rg -n -F '[[ -x "$dir/bin/superpowers-config" ]]' bin/superpowers-migrate-install >/dev/null; then
-  echo "Migration helper should require superpowers-config as part of the valid install contract."
+if ! rg -n -F 'exec "$(resolve_runtime_entry)" install migrate "$@"' bin/superpowers-migrate-install >/dev/null; then
+  echo "Migration helper should stay a thin shim that dispatches to the canonical install migrate command."
   exit 1
 fi
-
-for pattern in \
-  '[[ -f "$dir/agents/code-reviewer.md" ]]' \
-  '[[ -f "$dir/.codex/agents/code-reviewer.toml" ]]'; do
-  if ! rg -n -F "$pattern" bin/superpowers-migrate-install >/dev/null; then
-    echo "Migration helper should require reviewer agent artifacts as part of the valid install contract."
-    exit 1
-  fi
-done
 
 echo "Generated skills use marker-based current-repo detection."
 
@@ -364,10 +355,10 @@ required_patterns=(
   "README.md:**plan-eng-review** - Engineering review of the written plan before implementation"
   'README.md:Runtime state lives in `~/.superpowers/`.'
   "README.md:single shared checkout"
-  "README.md:bin/superpowers-config set superpowers_contributor true"
-  "README.md:bin/superpowers-migrate-install"
-  "README.md:superpowers-migrate-install.ps1"
-  "README.md:superpowers-config.ps1"
+  "README.md:~/.superpowers/install/bin/superpowers config set superpowers_contributor true"
+  "README.md:~/.superpowers/install/bin/superpowers install migrate"
+  "README.md:superpowers.exe\" install migrate"
+  "README.md:superpowers.exe\" config set superpowers_contributor true"
   'README.md:$env:TEMP'
   'README.md:Join-Path $env:TEMP "superpowers-migrate"'
   "README.md:After migrating, finish the normal platform setup:"
@@ -388,17 +379,17 @@ required_patterns=(
   "docs/testing.md:bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh"
   "docs/testing.md:bash tests/codex-runtime/test-superpowers-workflow.sh"
   "docs/testing.md:bash tests/brainstorm-server/test-launch-wrappers.sh"
-  "README.md:bin/superpowers-workflow"
-  "README.md:bin/superpowers-workflow.ps1"
+  "README.md:superpowers workflow status --refresh"
+  "README.md:superpowers workflow handoff"
   'README.md:Use `status`, `next`, `artifacts`, `explain`, or `help`'
-  "README.md:read-only workflow inspection surfaces"
-  "docs/README.codex.md:bin/superpowers-workflow"
-  "docs/README.codex.md:bin/superpowers-workflow.ps1"
+  "README.md:baseline read-only inspection surfaces"
+  "docs/README.codex.md:superpowers workflow"
+  "docs/README.codex.md:superpowers workflow status --refresh"
   "docs/README.codex.md:These commands stay read-only"
-  "docs/README.copilot.md:bin/superpowers-workflow"
-  "docs/README.copilot.md:bin/superpowers-workflow.ps1"
+  "docs/README.copilot.md:superpowers workflow"
+  "docs/README.copilot.md:superpowers workflow status --refresh"
   "docs/README.copilot.md:These commands stay read-only"
-  "RELEASE-NOTES.md:bin/superpowers-workflow"
+  "RELEASE-NOTES.md:superpowers workflow"
   "RELEASE-NOTES.md:read-only workflow inspection CLI"
   "docs/README.codex.md:brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review -> implementation"
   'docs/README.codex.md:Workspace preparation is the user'"'"'s responsibility; invoke `using-git-worktrees` manually when you want isolated workspace management.'
@@ -438,7 +429,7 @@ required_patterns=(
   "skills/plan-eng-review/SKILL.md:docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md"
   "skills/plan-eng-review/SKILL.md:Use when a written Superpowers implementation plan from a CEO-approved spec needs engineering review before execution"
   'skills/plan-eng-review/SKILL.md:**Workflow State:** Draft | Engineering Approved'
-  'skills/plan-eng-review/SKILL.md:superpowers-plan-contract" analyze-plan'
+  'skills/plan-eng-review/SKILL.md:superpowers" plan contract analyze-plan'
   'skills/plan-eng-review/SKILL.md:Engineering approval must fail closed unless `contract_state == valid` and `packet_buildable_tasks == task_count`.'
   'skills/plan-eng-review/SKILL.md:If any task packet is missing, stale, or non-buildable for the approved plan revision, stop and route back to review instead of handing off execution.'
   "skills/plan-eng-review/SKILL.md:_TODOS_FORMAT"
@@ -454,7 +445,7 @@ required_patterns=(
   "skills/using-superpowers/SKILL.md:_IS_SUPERPOWERS_RUNTIME_ROOT()"
   "skills/using-superpowers/SKILL.md:\$HOME/.superpowers/install"
   "skills/using-superpowers/SKILL.md:ask one interactive question before any normal Superpowers work happens"
-  "skills/using-superpowers/SKILL.md:~/.superpowers/session-flags/using-superpowers/\$PPID"
+  "skills/using-superpowers/SKILL.md:~/.superpowers/session-entry/using-superpowers/\$PPID"
   'skills/using-superpowers/SKILL.md:do not compute `_SESSIONS`'
   "skills/using-superpowers/SKILL.md:If the session decision file exists but contains malformed content:"
   "skills/using-superpowers/SKILL.md:if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to \`enabled\` and continue on the same turn"
@@ -500,8 +491,8 @@ required_patterns=(
   "docs/README.copilot.md:~/.copilot/agents/code-reviewer.agent.md"
   "docs/README.copilot.md:~/.superpowers/install/skills"
   "docs/README.copilot.md:~/.superpowers/install/agents/code-reviewer.md"
-  "docs/README.copilot.md:superpowers-migrate-install.ps1"
-  "docs/README.copilot.md:superpowers-config.ps1"
+  "docs/README.copilot.md:superpowers.exe\" install migrate"
+  "docs/README.copilot.md:superpowers.exe\" config set superpowers_contributor true"
   "docs/README.copilot.md:Migration only consolidates the checkout."
   "docs/README.copilot.md:After migrating, continue with steps 2 and 3"
   'docs/README.copilot.md:Get-Item "$env:USERPROFILE\.copilot\skills\superpowers"'
@@ -537,8 +528,8 @@ required_patterns=(
   ".codex/INSTALL.md:bin/superpowers-config set superpowers_contributor true"
   ".codex/INSTALL.md:update_check true"
   "docs/README.codex.md:~/.superpowers/install/skills"
-  "docs/README.codex.md:superpowers-migrate-install.ps1"
-  "docs/README.codex.md:superpowers-config.ps1"
+  "docs/README.codex.md:superpowers.exe\" install migrate"
+  "docs/README.codex.md:superpowers.exe\" config set superpowers_contributor true"
   'docs/README.codex.md:$env:TEMP'
   'docs/README.codex.md:Join-Path $env:TEMP "superpowers-migrate"'
   "docs/README.codex.md:Migration only consolidates the checkout."
@@ -577,9 +568,9 @@ required_patterns=(
   'skills/brainstorming/visual-companion.md:restart it with `scripts/start-server.sh` on Unix-like shells or `scripts/start-server.ps1` from PowerShell before continuing.'
   "RELEASE-NOTES.md:## v5.1.0 (2026-03-16)"
   "RELEASE-NOTES.md:Generated skill preambles for all 16 Superpowers skills"
-  "RELEASE-NOTES.md:superpowers-config"
-  "RELEASE-NOTES.md:superpowers-migrate-install"
-  "RELEASE-NOTES.md:superpowers-update-check"
+  "RELEASE-NOTES.md:superpowers config"
+  "RELEASE-NOTES.md:superpowers install migrate"
+  "RELEASE-NOTES.md:superpowers update-check"
   "README.md:agents/code-reviewer.instructions.md"
   "README.md:.codex/agents/code-reviewer.toml"
   "README.md:agents/code-reviewer.md"
@@ -617,10 +608,8 @@ extract_bash_block() {
 make_runtime_root() {
   local dir="$1"
   mkdir -p "$dir/bin"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/bin/superpowers-update-check"
-  chmod +x "$dir/bin/superpowers-update-check"
-  printf '#!/usr/bin/env bash\nif [[ "${1:-}" == "get" ]]; then\n  exit 0\nfi\nexit 0\n' > "$dir/bin/superpowers-config"
-  chmod +x "$dir/bin/superpowers-config"
+  printf '#!/usr/bin/env bash\ncase "${1:-}" in\n  update-check)\n    exit 0\n    ;;\n  config)\n    if [[ "${2:-}" == "get" ]]; then\n      exit 0\n    fi\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n' > "$dir/bin/superpowers"
+  chmod +x "$dir/bin/superpowers"
   printf '5.1.0\n' > "$dir/VERSION"
 }
 
@@ -759,7 +748,7 @@ for pattern in \
   'skills/subagent-driven-development/SKILL.md:**vs. Executing Plans (parallel session):**' \
   'skills/subagent-driven-development/SKILL.md:- **superpowers:executing-plans** - Use for parallel session instead of same-session execution' \
   'skills/subagent-driven-development/SKILL.md:[Invoke superpowers:finishing-a-development-branch]' \
-  'README.md:Implementation starts from an engineering-approved current plan and the exact approved plan path. `plan-eng-review` presents that handoff, and `superpowers-plan-execution recommend --plan <approved-plan-path>` chooses between *subagent-driven-development* and *executing-plans*. In both cases, execution runs a workspace-readiness preflight, executes the plan task by task, reviews before completion, and hands off through the normal branch-finishing flow.' \
+  'README.md:Implementation starts from an engineering-approved current plan and the exact approved plan path. `plan-eng-review` presents that handoff, and `superpowers plan execution recommend --plan <approved-plan-path>` chooses between *subagent-driven-development* and *executing-plans*. In both cases, execution runs a workspace-readiness preflight, executes the plan task by task, reviews before completion, and hands off through the normal branch-finishing flow.' \
   'docs/README.codex.md:During implementation, either `subagent-driven-development` or `executing-plans` starts from an engineering-approved current plan, runs a workspace-readiness preflight, and then drives task execution.' \
   'docs/README.copilot.md:During implementation, either `subagent-driven-development` or `executing-plans` starts from an engineering-approved current plan, runs a workspace-readiness preflight, and then drives task execution.' \
   'README.md:- **requesting-code-review** - Code-review dispatch and triage'; do
@@ -957,8 +946,8 @@ if ! rg -n -F 'the `using-superpowers` routing gate, which remains a required ch
   exit 1
 fi
 
-if ! rg -n -F 'BYPASS_GATE["superpowers-session-entry runtime bootstrap' README.md >/dev/null; then
-  echo "README.md should show the runtime-owned superpowers-session-entry bootstrap before the normal Superpowers stack."
+if ! rg -n -F 'BYPASS_GATE["superpowers session-entry runtime bootstrap' README.md >/dev/null; then
+  echo "README.md should show the runtime-owned superpowers session-entry bootstrap before the normal Superpowers stack."
   exit 1
 fi
 

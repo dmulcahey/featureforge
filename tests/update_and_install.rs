@@ -195,6 +195,20 @@ fn canonical_approval_path(
         .join(format!("{}.json", task_hash(stage, task_id)))
 }
 
+fn legacy_approval_path(
+    state_dir: &Path,
+    remote_url: &str,
+    branch: &str,
+    stage: &str,
+    task_id: &str,
+) -> PathBuf {
+    state_dir
+        .join("projects")
+        .join(repo_slug_from_remote(remote_url))
+        .join(format!("{}-{}-repo-safety", current_user_name(), branch))
+        .join(format!("{}.json", task_hash(stage, task_id)))
+}
+
 fn prepare_install_dir(version: &str) -> TempDir {
     let install_dir = TempDir::new().expect("install tempdir should exist");
     let bin_dir = install_dir.path().join("bin");
@@ -512,6 +526,25 @@ fn pending_non_rebuildable_state_blocks_mutations_but_allows_read_only_inspectio
         helper_json["outcome"].as_str().is_some(),
         "helper repo-safety approve should emit an outcome field"
     );
+    let canonical_path = canonical_approval_path(
+        state,
+        remote_url,
+        "main",
+        "superpowers:executing-plans",
+        "task-7",
+    );
+    let legacy_path = legacy_approval_path(
+        state,
+        remote_url,
+        "main",
+        "superpowers:executing-plans",
+        "task-7",
+    );
+    if let Some(parent) = legacy_path.parent() {
+        fs::create_dir_all(parent).expect("legacy approval parent should exist");
+    }
+    fs::copy(&canonical_path, &legacy_path).expect("legacy approval should copy");
+    fs::remove_file(&canonical_path).expect("canonical approval should be removed");
 
     let repo_check = run_rust_superpowers(
         Some(repo),
@@ -633,6 +666,25 @@ fn install_migrate_rewrites_config_and_legacy_approvals_with_backup_reporting() 
         helper_json["outcome"].as_str().is_some(),
         "helper repo-safety approve should emit an outcome field"
     );
+    let canonical_approval = canonical_approval_path(
+        &state_dir,
+        remote_url,
+        "main",
+        "superpowers:executing-plans",
+        "task-7",
+    );
+    let legacy_approval = legacy_approval_path(
+        &state_dir,
+        remote_url,
+        "main",
+        "superpowers:executing-plans",
+        "task-7",
+    );
+    if let Some(parent) = legacy_approval.parent() {
+        fs::create_dir_all(parent).expect("legacy approval parent should exist");
+    }
+    fs::copy(&canonical_approval, &legacy_approval).expect("legacy approval should copy");
+    fs::remove_file(&canonical_approval).expect("canonical approval should be removed");
 
     let migrate_output = run_rust_superpowers(
         None,

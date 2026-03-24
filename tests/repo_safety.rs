@@ -262,14 +262,27 @@ fn canonical_repo_safety_reads_legacy_approval_with_warning_until_install_migrat
         "superpowers:brainstorming",
         "spec-task",
     );
+    let canonical_path = canonical_approval_path(
+        state,
+        remote_url,
+        "main",
+        "superpowers:brainstorming",
+        "spec-task",
+    );
     assert_eq!(
         helper_json["approval_path"].as_str(),
-        Some(legacy_path.to_string_lossy().as_ref())
+        Some(canonical_path.to_string_lossy().as_ref())
     );
     assert!(
-        legacy_path.is_file(),
-        "helper should write legacy approval record"
+        canonical_path.is_file(),
+        "helper should write the canonical approval record"
     );
+    if let Some(parent) = legacy_path.parent() {
+        fs::create_dir_all(parent).expect("legacy approval directory should exist");
+    }
+    fs::copy(&canonical_path, &legacy_path).expect("legacy approval record should copy");
+    fs::remove_file(&canonical_path)
+        .expect("canonical approval should be removed to force legacy read");
 
     let rust_output = run_rust_superpowers(
         repo,
@@ -294,14 +307,6 @@ fn canonical_repo_safety_reads_legacy_approval_with_warning_until_install_migrat
         &rust_output,
         "canonical repo-safety migrated approval check",
     );
-    let canonical_path = canonical_approval_path(
-        state,
-        remote_url,
-        "main",
-        "superpowers:brainstorming",
-        "spec-task",
-    );
-
     assert_eq!(rust_json["outcome"], Value::String(String::from("allowed")));
     assert_eq!(
         rust_json["approval_path"].as_str(),

@@ -332,7 +332,7 @@ for arg in "$@"; do
   printf '%s\n' "$arg" >> "$log_file"
 done
 
-printf '{"outcome":"needs_user_choice","decision_path":"/c/tmp/state/session-flags/using-superpowers/session-123"}\n'
+printf '{"outcome":"needs_user_choice","decision_path":"/c/tmp/state/session-entry/using-superpowers/session-123"}\n'
 SH
   chmod +x "$git_bin_dir/bash.exe"
 
@@ -341,7 +341,7 @@ SH
       SUPERPOWERS_TEST_BASH_LOG="$bash_log" \
       "$pwsh_bin" -NoLogo -NoProfile -Command "& '$wrapper_path' resolve --message-file transcript.md"
   )"
-  if [[ "$wrapper_output" != *'"/c/tmp/state/session-flags/using-superpowers/session-123"'* ]]; then
+  if [[ "$wrapper_output" != *'"/c/tmp/state/session-entry/using-superpowers/session-123"'* ]]; then
     echo "Expected session-entry wrapper to preserve raw JSON paths"
     echo "Actual output: $wrapper_output"
     exit 1

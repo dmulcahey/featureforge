@@ -246,11 +246,32 @@ canonical_approval_path() {
   printf '%s\n' "$state_dir/repo-safety/approvals/$slug/$user-$branch/$hash.json"
 }
 
+legacy_approval_path() {
+  local state_dir="$1"
+  local remote_url="$2"
+  local branch="$3"
+  local stage="$4"
+  local task_id="$5"
+  local slug user hash
+
+  slug="$(repo_slug_from_remote "$remote_url")"
+  user="$(current_user_name)"
+  hash="$(task_hash "$stage" "$task_id")"
+  printf '%s\n' "$state_dir/projects/$slug/$user-$branch-repo-safety/$hash.json"
+}
+
 seed_legacy_approval() {
   local repo_dir="$1"
   local state_dir="$2"
   local stage="$3"
   local task_id="$4"
+  local branch
+  local remote_url
+  local canonical_approval
+  local legacy_approval
+
+  branch="$(git -C "$repo_dir" rev-parse --abbrev-ref HEAD)"
+  remote_url="$(git -C "$repo_dir" remote get-url origin)"
   (
     cd "$repo_dir"
     SUPERPOWERS_STATE_DIR="$state_dir" \
@@ -262,6 +283,12 @@ seed_legacy_approval() {
         --write-target execution-task-slice \
         >/dev/null
   )
+
+  canonical_approval="$(canonical_approval_path "$state_dir" "$remote_url" "$branch" "$stage" "$task_id")"
+  legacy_approval="$(legacy_approval_path "$state_dir" "$remote_url" "$branch" "$stage" "$task_id")"
+  mkdir -p "$(dirname "$legacy_approval")"
+  cp "$canonical_approval" "$legacy_approval"
+  rm -f "$canonical_approval"
 }
 
 tmp_root="$(mktemp -d)"
