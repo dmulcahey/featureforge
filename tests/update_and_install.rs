@@ -1,25 +1,29 @@
-#[path = "support/executable.rs"]
-mod executable_support;
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
+#[path = "support/prebuilt.rs"]
+mod prebuilt_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/superpowers.rs"]
+mod superpowers_support;
 
-use assert_cmd::cargo::CommandCargoExt;
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use serde_json::Value;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
-use executable_support::make_executable;
 use files_support::write_file;
 use json_support::parse_json;
+use prebuilt_support::{
+    PrebuiltManifestEntry, sha256_checksum_line, write_prebuilt_artifact, write_prebuilt_manifest,
+};
 use process_support::{repo_root, run, run_checked};
+use sha2::{Digest, Sha256};
+use superpowers_support::{run_rust_superpowers, run_rust_superpowers_with_env_control};
 
 fn update_check_helper_path() -> PathBuf {
     repo_root().join("bin/superpowers-update-check")
@@ -68,32 +72,6 @@ fn run_shell_migrate_install(
         .env("SUPERPOWERS_REPO_URL", source_repo)
         .env("SUPERPOWERS_HOST_TARGET", host_target)
         .env("SUPERPOWERS_MIGRATE_STAMP", "20260323-140000");
-    run(command, context)
-}
-
-fn run_rust_superpowers(
-    repo: Option<&Path>,
-    state_dir: Option<&Path>,
-    home_dir: Option<&Path>,
-    envs: &[(&str, &str)],
-    args: &[&str],
-    context: &str,
-) -> Output {
-    let mut command =
-        Command::cargo_bin("superpowers").expect("superpowers cargo binary should be available");
-    if let Some(repo) = repo {
-        command.current_dir(repo);
-    }
-    if let Some(state_dir) = state_dir {
-        command.env("SUPERPOWERS_STATE_DIR", state_dir);
-    }
-    if let Some(home_dir) = home_dir {
-        command.env("HOME", home_dir);
-    }
-    for (key, value) in envs {
-        command.env(key, value);
-    }
-    command.args(args);
     run(command, context)
 }
 
@@ -420,35 +398,26 @@ fn write_prebuilt_runtime_fixture(
     targets: &[(&str, &str, &str)],
     runtime_revision: &str,
 ) {
-    let mut manifest_targets = serde_json::Map::new();
+    let mut manifest_entries = Vec::new();
     for (target, binary_name, contents) in targets {
-        let binary_path = source_repo
-            .join("bin/prebuilt")
-            .join(target)
-            .join(binary_name);
-        write_file(&binary_path, contents);
-        make_executable(&binary_path);
-        let checksum_path = binary_path.with_file_name(format!("{binary_name}.sha256"));
-        let checksum = format!("{:x}", Sha256::digest(contents.as_bytes()));
-        write_file(&checksum_path, &format!("{checksum}  {binary_name}\n"));
-
-        manifest_targets.insert(
-            (*target).to_owned(),
-            json!({
-                "binary_path": format!("bin/prebuilt/{target}/{binary_name}"),
-                "checksum_path": format!("bin/prebuilt/{target}/{binary_name}.sha256"),
-            }),
-        );
+        let binary_rel = format!("bin/prebuilt/{target}/{binary_name}");
+        let checksum_rel = format!("bin/prebuilt/{target}/{binary_name}.sha256");
+        let checksum = sha256_checksum_line(binary_name, contents);
+        write_prebuilt_artifact(source_repo, &binary_rel, &checksum_rel, contents, &checksum);
+        manifest_entries.push((target.to_string(), binary_rel, checksum_rel));
     }
 
-    write_file(
-        &source_repo.join("bin/prebuilt/manifest.json"),
-        &serde_json::to_string_pretty(&json!({
-            "runtime_revision": runtime_revision,
-            "targets": manifest_targets,
-        }))
-        .expect("manifest json should serialize"),
-    );
+    let manifest_refs = manifest_entries
+        .iter()
+        .map(
+            |(target, binary_path, checksum_path)| PrebuiltManifestEntry {
+                target,
+                binary_path,
+                checksum_path,
+            },
+        )
+        .collect::<Vec<_>>();
+    write_prebuilt_manifest(source_repo, runtime_revision, &manifest_refs);
 }
 
 fn make_legacy_install(dir: &Path, version: &str) {
@@ -750,6 +719,63 @@ fn canonical_update_check_preserves_status_line_and_writes_canonical_state() {
     assert!(
         !state_dir.path().join("last-update-check").exists(),
         "canonical update-check should not keep writing the legacy root cache path"
+    );
+}
+
+#[test]
+fn canonical_update_check_uses_userprofile_install_when_home_is_missing() {
+    let repo_dir = TempDir::new().expect("repo tempdir should exist");
+    let userprofile_dir = TempDir::new().expect("userprofile tempdir should exist");
+    let install_dir = userprofile_dir.path().join(".superpowers").join("install");
+    fs::create_dir_all(&install_dir).expect("install dir should exist");
+    write_file(
+        &install_dir.join("VERSION"),
+        concat!(env!("CARGO_PKG_VERSION"), "\n"),
+    );
+
+    let remote_version = userprofile_dir.path().join("remote-version.txt");
+    write_file(&remote_version, concat!(env!("CARGO_PKG_VERSION"), "\n"));
+    let remote_url = format!(
+        "file://{}",
+        remote_version
+            .to_str()
+            .expect("remote version path should be utf8")
+    );
+
+    let output = run_rust_superpowers_with_env_control(
+        Some(repo_dir.path()),
+        None,
+        None,
+        &["HOME", "SUPERPOWERS_STATE_DIR", "SUPERPOWERS_DIR"],
+        &[
+            (
+                "USERPROFILE",
+                userprofile_dir
+                    .path()
+                    .to_str()
+                    .expect("userprofile path should be utf8"),
+            ),
+            ("SUPERPOWERS_REMOTE_URL", &remote_url),
+        ],
+        &["update-check"],
+        "canonical update-check with USERPROFILE fallback",
+    );
+
+    assert!(
+        output.status.success(),
+        "canonical update-check with USERPROFILE fallback should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        userprofile_dir
+            .path()
+            .join(".superpowers")
+            .join("update-check")
+            .join("last-update-check")
+            .is_file(),
+        "update-check should write canonical state beneath USERPROFILE when HOME is missing"
     );
 }
 

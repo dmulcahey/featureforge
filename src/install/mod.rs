@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use crate::cli::install::InstallMigrateArgs;
 use crate::config;
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::paths::normalize_repo_relative_path;
+use crate::paths::{normalize_repo_relative_path, superpowers_home_dir, superpowers_state_dir};
 use crate::repo_safety;
 
 #[derive(Debug, Clone)]
@@ -74,12 +74,8 @@ pub fn migrate(_: &InstallMigrateArgs) -> Result<String, DiagnosticError> {
 }
 
 fn discover_paths() -> Result<InstallPaths, DiagnosticError> {
-    let home_dir = env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let state_dir = env::var_os("SUPERPOWERS_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir.join(".superpowers"));
+    let home_dir = superpowers_home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let state_dir = superpowers_state_dir();
     let shared_root = env::var_os("SUPERPOWERS_SHARED_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| state_dir.join("install"));

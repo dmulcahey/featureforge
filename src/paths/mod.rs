@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -83,10 +84,14 @@ pub fn normalize_identifier_token(value: &str) -> String {
     }
 }
 
+pub fn superpowers_home_dir() -> Option<PathBuf> {
+    resolve_home_dir(|key| env::var_os(key))
+}
+
 pub fn superpowers_state_dir() -> PathBuf {
     env::var_os("SUPERPOWERS_STATE_DIR")
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
+        .or_else(|| superpowers_home_dir().map(|home| home.join(".superpowers")))
         .unwrap_or_else(|| PathBuf::from(".superpowers"))
 }
 
@@ -129,4 +134,25 @@ fn atomic_temp_path(path: &Path) -> PathBuf {
         .and_then(std::ffi::OsStr::to_str)
         .unwrap_or("state");
     path.with_file_name(format!("{file_name}.tmp-{pid}-{stamp}"))
+}
+
+fn resolve_home_dir<F>(mut get_var: F) -> Option<PathBuf>
+where
+    F: FnMut(&str) -> Option<OsString>,
+{
+    get_var("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            get_var("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            let home_drive = get_var("HOMEDRIVE").filter(|value| !value.is_empty())?;
+            let home_path = get_var("HOMEPATH").filter(|value| !value.is_empty())?;
+            let mut combined = home_drive;
+            combined.push(home_path);
+            Some(PathBuf::from(combined))
+        })
 }

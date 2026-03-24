@@ -6,8 +6,9 @@ mod files_support;
 mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/superpowers.rs"]
+mod superpowers_support;
 
-use assert_cmd::cargo::CommandCargoExt;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -138,7 +139,7 @@ fn run_rust_superpowers(
     args: &[&str],
     context: &str,
 ) -> Output {
-    run_rust_superpowers_with_env(repo, state_dir, &[], args, context)
+    superpowers_support::run_rust_superpowers(repo, Some(state_dir), None, &[], args, context)
 }
 
 fn run_rust_superpowers_with_env(
@@ -148,17 +149,19 @@ fn run_rust_superpowers_with_env(
     args: &[&str],
     context: &str,
 ) -> Output {
-    let mut command =
-        Command::cargo_bin("superpowers").expect("superpowers cargo binary should be available");
-    if let Some(repo) = repo {
-        command.current_dir(repo);
-    }
-    command.env("SUPERPOWERS_STATE_DIR", state_dir);
-    for (key, value) in envs {
-        command.env(key, value);
-    }
-    command.args(args);
-    run(command, context)
+    superpowers_support::run_rust_superpowers(repo, Some(state_dir), None, envs, args, context)
+}
+
+fn run_rust_superpowers_with_env_control(
+    repo: Option<&Path>,
+    env_remove: &[&str],
+    envs: &[(&str, &str)],
+    args: &[&str],
+    context: &str,
+) -> Output {
+    superpowers_support::run_rust_superpowers_with_env_control(
+        repo, None, None, env_remove, envs, args, context,
+    )
 }
 
 fn canonical_session_entry_path(state_dir: &Path, session_key: &str) -> PathBuf {
@@ -217,6 +220,50 @@ fn canonical_session_entry_missing_decision_matches_helper_semantics() {
                 .to_string_lossy()
                 .as_ref()
         )
+    );
+}
+
+#[test]
+fn canonical_config_uses_userprofile_when_home_is_missing() {
+    let repo_dir = TempDir::new().expect("repo tempdir should exist");
+    let userprofile_dir = TempDir::new().expect("userprofile tempdir should exist");
+    init_repo_at(repo_dir.path(), "config-userprofile-home-fallback");
+
+    let output = run_rust_superpowers_with_env_control(
+        Some(repo_dir.path()),
+        &["HOME", "SUPERPOWERS_STATE_DIR"],
+        &[(
+            "USERPROFILE",
+            userprofile_dir
+                .path()
+                .to_str()
+                .expect("userprofile path should be utf8"),
+        )],
+        &["config", "set", "update_check", "false"],
+        "canonical config set with USERPROFILE fallback",
+    );
+    assert!(
+        output.status.success(),
+        "canonical config set with USERPROFILE fallback should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let canonical_path = userprofile_dir
+        .path()
+        .join(".superpowers")
+        .join("config")
+        .join("config.yaml");
+    assert!(
+        canonical_path.is_file(),
+        "config command should store canonical config beneath USERPROFILE when HOME is missing"
+    );
+    let contents = fs::read_to_string(&canonical_path)
+        .expect("canonical USERPROFILE-backed config should be readable");
+    assert!(
+        contents.contains("update_check: false"),
+        "canonical config should record the requested value, got:\n{contents}"
     );
 }
 

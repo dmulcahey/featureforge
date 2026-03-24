@@ -1,12 +1,18 @@
+#[path = "support/prebuilt.rs"]
+mod prebuilt_support;
 #[path = "support/process.rs"]
 mod process_support;
 
 use assert_cmd::Command as AssertCommand;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+use tempfile::TempDir;
 
+use prebuilt_support::{
+    PrebuiltManifestEntry, sha256_checksum_line, write_prebuilt_artifact, write_prebuilt_manifest,
+};
 use process_support::{repo_root, run, run_checked};
 
 fn read_utf8(path: impl AsRef<Path>) -> String {
@@ -99,11 +105,89 @@ fn make_runtime_root(dir: &Path) {
     fs::write(dir.join("VERSION"), "5.1.0\n").expect("VERSION should be writable");
 }
 
+fn make_executable(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+            .expect("path should be executable");
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
+
 fn make_runtime_repo(dir: &Path) {
     let mut git_init = Command::new("git");
     git_init.arg("init").current_dir(dir);
     run_checked(git_init, "git init runtime repo");
     make_runtime_root(dir);
+}
+
+fn copy_repo_launcher(temp_root: &Path) -> PathBuf {
+    let launcher = temp_root.join("bin").join("superpowers");
+    let common = temp_root.join("bin").join("superpowers-runtime-common.sh");
+    fs::create_dir_all(launcher.parent().expect("launcher parent should exist"))
+        .expect("launcher parent should be creatable");
+    fs::copy(repo_root().join("bin/superpowers"), &launcher).expect("launcher should copy");
+    fs::copy(
+        repo_root().join("bin/superpowers-runtime-common.sh"),
+        &common,
+    )
+    .expect("launcher common should copy");
+    make_executable(&launcher);
+    make_executable(&common);
+    launcher
+}
+
+fn copy_repo_powershell_launcher(temp_root: &Path) -> PathBuf {
+    let launcher = temp_root.join("bin").join("superpowers.ps1");
+    let common = temp_root.join("bin").join("superpowers-pwsh-common.ps1");
+    fs::create_dir_all(launcher.parent().expect("launcher parent should exist"))
+        .expect("launcher parent should be creatable");
+    fs::copy(repo_root().join("bin/superpowers.ps1"), &launcher)
+        .expect("powershell launcher should copy");
+    fs::copy(repo_root().join("bin/superpowers-pwsh-common.ps1"), &common)
+        .expect("powershell common should copy");
+    launcher
+}
+
+fn pwsh_bin() -> Option<&'static str> {
+    ["pwsh", "powershell"].into_iter().find(|candidate| {
+        Command::new(candidate)
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                "$PSVersionTable.PSVersion.ToString()",
+            ])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    })
+}
+
+fn run_pwsh_launcher(
+    pwsh: &str,
+    launcher: &Path,
+    cwd: &Path,
+    args: &[&str],
+    context: &str,
+) -> std::process::Output {
+    let mut command = Command::new(pwsh);
+    command
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(launcher)
+        .current_dir(cwd)
+        .args(args);
+    run(command, context)
 }
 
 #[test]
@@ -161,6 +245,184 @@ fn repo_checkout_canonical_launcher_avoids_non_binary_repo_fallbacks() {
         assert_file_not_contains(path, "target/debug");
         assert_file_not_contains(path, "target/release");
     }
+}
+
+#[test]
+fn repo_checkout_canonical_launcher_uses_manifest_selected_binary_path() {
+    let temp_root = TempDir::new().expect("temp runtime root should exist");
+    let binary_rel = "bin/prebuilt/darwin-arm64/nested/runtime/superpowers";
+    let checksum_rel = "bin/prebuilt/darwin-arm64/nested/runtime/superpowers.sha256";
+    let binary_contents = "#!/usr/bin/env bash\necho 'superpowers manifest-selected'\n";
+    copy_repo_launcher(temp_root.path());
+    write_prebuilt_artifact(
+        temp_root.path(),
+        binary_rel,
+        checksum_rel,
+        binary_contents,
+        &sha256_checksum_line("superpowers", binary_contents),
+    );
+    write_prebuilt_manifest(
+        temp_root.path(),
+        env!("CARGO_PKG_VERSION"),
+        &[PrebuiltManifestEntry {
+            target: "darwin-arm64",
+            binary_path: binary_rel,
+            checksum_path: checksum_rel,
+        }],
+    );
+
+    let output = AssertCommand::new(temp_root.path().join("bin/superpowers"))
+        .current_dir(temp_root.path())
+        .timeout(Duration::from_secs(2))
+        .arg("--version")
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "manifest-selected launcher path should run successfully\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "superpowers manifest-selected\n"
+    );
+}
+
+#[test]
+fn repo_checkout_canonical_launcher_rejects_stale_prebuilt_checksum() {
+    let temp_root = TempDir::new().expect("temp runtime root should exist");
+    let binary_rel = "bin/prebuilt/darwin-arm64/superpowers";
+    let checksum_rel = "bin/prebuilt/darwin-arm64/superpowers.sha256";
+    copy_repo_launcher(temp_root.path());
+    write_prebuilt_artifact(
+        temp_root.path(),
+        binary_rel,
+        checksum_rel,
+        "#!/usr/bin/env bash\necho 'superpowers stale checksum'\n",
+        "0000000000000000000000000000000000000000000000000000000000000000  superpowers\n",
+    );
+    write_prebuilt_manifest(
+        temp_root.path(),
+        env!("CARGO_PKG_VERSION"),
+        &[PrebuiltManifestEntry {
+            target: "darwin-arm64",
+            binary_path: binary_rel,
+            checksum_path: checksum_rel,
+        }],
+    );
+
+    let output = AssertCommand::new(temp_root.path().join("bin/superpowers"))
+        .current_dir(temp_root.path())
+        .timeout(Duration::from_secs(2))
+        .arg("--version")
+        .unwrap_err();
+
+    let rendered = output.to_string();
+    assert!(
+        rendered.contains("checksum") || rendered.contains("sha256"),
+        "stale prebuilt checksum failure should mention checksum verification, got:\n{rendered}"
+    );
+}
+
+#[test]
+fn repo_checkout_powershell_launcher_uses_manifest_selected_binary_path() {
+    let Some(pwsh) = pwsh_bin() else {
+        eprintln!(
+            "Skipping PowerShell launcher manifest test: no pwsh or powershell binary found."
+        );
+        return;
+    };
+
+    let temp_root = TempDir::new().expect("temp runtime root should exist");
+    let binary_rel = "bin/prebuilt/darwin-arm64/nested/runtime/superpowers";
+    let checksum_rel = "bin/prebuilt/darwin-arm64/nested/runtime/superpowers.sha256";
+    let binary_contents = "#!/usr/bin/env bash\necho 'superpowers powershell manifest-selected'\n";
+    let launcher = copy_repo_powershell_launcher(temp_root.path());
+    write_prebuilt_artifact(
+        temp_root.path(),
+        binary_rel,
+        checksum_rel,
+        binary_contents,
+        &sha256_checksum_line("superpowers", binary_contents),
+    );
+    write_prebuilt_manifest(
+        temp_root.path(),
+        env!("CARGO_PKG_VERSION"),
+        &[PrebuiltManifestEntry {
+            target: "darwin-arm64",
+            binary_path: binary_rel,
+            checksum_path: checksum_rel,
+        }],
+    );
+
+    let output = run_pwsh_launcher(
+        pwsh,
+        &launcher,
+        temp_root.path(),
+        &["--version"],
+        "powershell manifest-selected launcher",
+    );
+    assert!(
+        output.status.success(),
+        "manifest-selected PowerShell launcher path should run successfully\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "superpowers powershell manifest-selected\n"
+    );
+}
+
+#[test]
+fn repo_checkout_powershell_launcher_rejects_stale_prebuilt_checksum() {
+    let Some(pwsh) = pwsh_bin() else {
+        eprintln!(
+            "Skipping PowerShell launcher checksum test: no pwsh or powershell binary found."
+        );
+        return;
+    };
+
+    let temp_root = TempDir::new().expect("temp runtime root should exist");
+    let binary_rel = "bin/prebuilt/darwin-arm64/superpowers";
+    let checksum_rel = "bin/prebuilt/darwin-arm64/superpowers.sha256";
+    let launcher = copy_repo_powershell_launcher(temp_root.path());
+    write_prebuilt_artifact(
+        temp_root.path(),
+        binary_rel,
+        checksum_rel,
+        "#!/usr/bin/env bash\necho 'superpowers powershell stale checksum'\n",
+        "0000000000000000000000000000000000000000000000000000000000000000  superpowers\n",
+    );
+    write_prebuilt_manifest(
+        temp_root.path(),
+        env!("CARGO_PKG_VERSION"),
+        &[PrebuiltManifestEntry {
+            target: "darwin-arm64",
+            binary_path: binary_rel,
+            checksum_path: checksum_rel,
+        }],
+    );
+
+    let output = run_pwsh_launcher(
+        pwsh,
+        &launcher,
+        temp_root.path(),
+        &["--version"],
+        "powershell stale checksum launcher",
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "stale checksum should fail closed for PowerShell launcher\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        stderr
+    );
+    assert!(
+        stderr.contains("checksum") || stderr.contains("sha256"),
+        "stale prebuilt checksum failure should mention checksum verification, got:\n{stderr}"
+    );
 }
 
 #[test]
@@ -634,7 +896,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
 fn using_superpowers_preamble_prefers_valid_repo_roots_over_fallback_installs() {
     let content = read_utf8(repo_root().join("skills/using-superpowers/SKILL.md"));
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
-    let tmp_root = tempfile::TempDir::new().expect("temp root should exist");
+    let tmp_root = TempDir::new().expect("temp root should exist");
 
     let shared_home = tmp_root.path().join("shared-home");
     fs::create_dir_all(shared_home.join(".superpowers")).expect("shared home should exist");
