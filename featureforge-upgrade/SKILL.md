@@ -1,11 +1,11 @@
 ---
-name: superpowers-upgrade
-description: Use when Superpowers detects an installed update and needs to upgrade the local runtime checkout before continuing
+name: featureforge-upgrade
+description: Use when FeatureForge detects an installed update and needs to upgrade the local runtime checkout before continuing
 ---
 
-# /superpowers-upgrade
+# /featureforge-upgrade
 
-Upgrade Superpowers to the latest version and summarize what changed.
+Upgrade FeatureForge to the latest version and summarize what changed.
 
 ## Inline upgrade flow
 
@@ -16,43 +16,42 @@ This section is referenced by all skill preambles when they detect `UPGRADE_AVAI
 Resolve the active install once and reuse it for the rest of the flow:
 
 ```bash
-_IS_SUPERPOWERS_RUNTIME_ROOT() {
+_IS_FEATUREFORGE_RUNTIME_ROOT() {
   local candidate="$1"
   [ -n "$candidate" ] &&
-  [ -x "$candidate/bin/superpowers-update-check" ] &&
-  [ -x "$candidate/bin/superpowers-config" ] &&
+  [ -x "$candidate/bin/featureforge" ] &&
   [ -f "$candidate/VERSION" ] &&
   { [ -d "$candidate/.git" ] || [ -f "$candidate/.git" ]; }
 }
 
 INSTALL_DIR=""
-if [ -n "${_SUPERPOWERS_ROOT:-}" ] && _IS_SUPERPOWERS_RUNTIME_ROOT "$_SUPERPOWERS_ROOT"; then
-  INSTALL_DIR="$_SUPERPOWERS_ROOT"
+if [ -n "${_FEATUREFORGE_ROOT:-}" ] && _IS_FEATUREFORGE_RUNTIME_ROOT "$_FEATUREFORGE_ROOT"; then
+  INSTALL_DIR="$_FEATUREFORGE_ROOT"
 else
   _ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-  if [ -n "$_ROOT" ] && _IS_SUPERPOWERS_RUNTIME_ROOT "$_ROOT"; then
+  if [ -n "$_ROOT" ] && _IS_FEATUREFORGE_RUNTIME_ROOT "$_ROOT"; then
     INSTALL_DIR="$_ROOT"
-  elif _IS_SUPERPOWERS_RUNTIME_ROOT "$HOME/.superpowers/install"; then
-    INSTALL_DIR="$HOME/.superpowers/install"
-  elif _IS_SUPERPOWERS_RUNTIME_ROOT "$HOME/.codex/superpowers"; then
-    INSTALL_DIR="$HOME/.codex/superpowers"
-  elif _IS_SUPERPOWERS_RUNTIME_ROOT "$HOME/.copilot/superpowers"; then
-    INSTALL_DIR="$HOME/.copilot/superpowers"
+  elif _IS_FEATUREFORGE_RUNTIME_ROOT "$HOME/.featureforge/install"; then
+    INSTALL_DIR="$HOME/.featureforge/install"
+  elif _IS_FEATUREFORGE_RUNTIME_ROOT "$HOME/.codex/featureforge"; then
+    INSTALL_DIR="$HOME/.codex/featureforge"
+  elif _IS_FEATUREFORGE_RUNTIME_ROOT "$HOME/.copilot/featureforge"; then
+    INSTALL_DIR="$HOME/.copilot/featureforge"
   else
-    echo "ERROR: superpowers install not found"
+    echo "ERROR: featureforge install not found"
     exit 1
   fi
 fi
-CONFIG_BIN="$INSTALL_DIR/bin/superpowers-config"
+FEATUREFORGE_BIN="$INSTALL_DIR/bin/featureforge"
 echo "INSTALL_DIR=$INSTALL_DIR"
 ```
 
 ### Step 2: Resolve versions and auto-upgrade preference
 
-Resolve the local and remote version before asking the user anything. This makes direct `/superpowers-upgrade` usage self-contained and uses the same remote source as `bin/superpowers-update-check`.
+Resolve the local and remote version before asking the user anything. This makes direct `/featureforge-upgrade` usage self-contained and uses the same remote source as `featureforge update-check`.
 
 ```bash
-_COMPARE_SUPERPOWERS_VERSIONS() {
+_COMPARE_FEATUREFORGE_VERSIONS() {
   local left="$1"
   local right="$2"
   local IFS=.
@@ -91,7 +90,7 @@ _COMPARE_SUPERPOWERS_VERSIONS() {
 }
 
 LOCAL_VERSION="$(tr -d '[:space:]' < "$INSTALL_DIR/VERSION" 2>/dev/null || true)"
-REMOTE_URL="${SUPERPOWERS_REMOTE_URL:-https://raw.githubusercontent.com/dmulcahey/superpowers/main/VERSION}"
+REMOTE_URL="${FEATUREFORGE_REMOTE_URL:-https://raw.githubusercontent.com/dmulcahey/featureforge/main/VERSION}"
 REMOTE_VERSION="$(curl -sf --max-time 5 "$REMOTE_URL" 2>/dev/null || true)"
 REMOTE_VERSION="$(printf '%s' "$REMOTE_VERSION" | tr -d '[:space:]')"
 
@@ -107,7 +106,7 @@ fi
 
 VERSION_RELATION="unknown"
 if [ "$LOCAL_VERSION" != "unknown" ] && [ "$REMOTE_STATUS" = "ok" ]; then
-  VERSION_RELATION="$(_COMPARE_SUPERPOWERS_VERSIONS "$LOCAL_VERSION" "$REMOTE_VERSION")"
+  VERSION_RELATION="$(_COMPARE_FEATUREFORGE_VERSIONS "$LOCAL_VERSION" "$REMOTE_VERSION")"
 fi
 
 echo "LOCAL_VERSION=$LOCAL_VERSION"
@@ -116,13 +115,13 @@ echo "REMOTE_STATUS=$REMOTE_STATUS"
 echo "VERSION_RELATION=$VERSION_RELATION"
 ```
 
-If `REMOTE_STATUS=unavailable` and this skill was invoked directly, stop before Step 3. Tell the user: `Superpowers couldn't verify the latest version right now. Try /superpowers-upgrade again in a moment.`
+If `REMOTE_STATUS=unavailable` and this skill was invoked directly, stop before Step 3. Tell the user: `FeatureForge couldn't verify the latest version right now. Try /featureforge-upgrade again in a moment.`
 
-If `VERSION_RELATION=unknown` and this skill was invoked directly, stop before Step 3. Tell the user: `Superpowers couldn't compare the local and remote versions right now. Check $INSTALL_DIR/VERSION and try again.`
+If `VERSION_RELATION=unknown` and this skill was invoked directly, stop before Step 3. Tell the user: `FeatureForge couldn't compare the local and remote versions right now. Check $INSTALL_DIR/VERSION and try again.`
 
 If `VERSION_RELATION=equal`, tell the user: `You're already on the latest known version (v$LOCAL_VERSION).`
 
-If `VERSION_RELATION=local_ahead`, tell the user: `Your local Superpowers install (v$LOCAL_VERSION) is newer than the fetched remote version (v$REMOTE_VERSION).`
+If `VERSION_RELATION=local_ahead`, tell the user: `Your local FeatureForge install (v$LOCAL_VERSION) is newer than the fetched remote version (v$REMOTE_VERSION).`
 
 If this skill was invoked from an `UPGRADE_AVAILABLE` handoff, the prompting layer already knows the display versions `{old}` and `{new}`. If the fresh fetch fails, keep using the handoff values and continue. If it was invoked directly, use `v$LOCAL_VERSION` and `v$REMOTE_VERSION` in the upgrade question below.
 
@@ -132,17 +131,17 @@ First, check if auto-upgrade is enabled:
 
 ```bash
 _AUTO=""
-[ "${SUPERPOWERS_AUTO_UPGRADE:-}" = "1" ] && _AUTO="true"
-[ -z "$_AUTO" ] && _AUTO=$("$CONFIG_BIN" get auto_upgrade 2>/dev/null || true)
+[ "${FEATUREFORGE_AUTO_UPGRADE:-}" = "1" ] && _AUTO="true"
+[ -z "$_AUTO" ] && _AUTO=$("$FEATUREFORGE_BIN" config get auto_upgrade 2>/dev/null || true)
 echo "AUTO_UPGRADE=$_AUTO"
 ```
 
-Direct manual `/superpowers-upgrade` runs are explicit user intent, so they ignore `update_check=false` and any snooze state. They still honor `auto_upgrade` when a real newer version exists.
+Direct manual `/featureforge-upgrade` runs are explicit user intent, so they ignore `update_check=false` and any snooze state. They still honor `auto_upgrade` when a real newer version exists.
 
-**If `AUTO_UPGRADE=true` or `AUTO_UPGRADE=1`:** skip the interactive question, log `Auto-upgrading superpowers v{old} -> v{new}...` (or `Auto-upgrading superpowers v$LOCAL_VERSION -> v$REMOTE_VERSION...` for direct invocation), and continue to Step 3.
+**If `AUTO_UPGRADE=true` or `AUTO_UPGRADE=1`:** skip the interactive question, log `Auto-upgrading featureforge v{old} -> v{new}...` (or `Auto-upgrading featureforge v$LOCAL_VERSION -> v$REMOTE_VERSION...` for direct invocation), and continue to Step 3.
 
 **Otherwise**, ask one interactive user question:
-- Question: `superpowers v{new} is available (you're on v{old}). Upgrade now?`
+- Question: `featureforge v{new} is available (you're on v{old}). Upgrade now?`
   For direct invocation, substitute `v$REMOTE_VERSION` and `v$LOCAL_VERSION`.
 - Options: `A) Yes, upgrade now B) Always keep me up to date C) Not now D) Never ask again`
 
@@ -151,7 +150,7 @@ Direct manual `/superpowers-upgrade` runs are explicit user intent, so they igno
 **If "Always keep me up to date":**
 
 ```bash
-"$CONFIG_BIN" set auto_upgrade true
+"$FEATUREFORGE_BIN" config set auto_upgrade true
 ```
 
 Tell the user: `Auto-upgrade enabled. Future updates will install automatically.` Then continue to Step 3.
@@ -159,7 +158,7 @@ Tell the user: `Auto-upgrade enabled. Future updates will install automatically.
 **If "Not now":** write snooze state with escalating backoff (24h, then 48h, then 1 week), then continue with the current skill.
 
 ```bash
-_SP_STATE_DIR="${SUPERPOWERS_STATE_DIR:-$HOME/.superpowers}"
+_SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 _SNOOZE_FILE="$_SP_STATE_DIR/update-snoozed"
 _REMOTE_VER="{new}"
 _CUR_LEVEL=0
@@ -181,10 +180,10 @@ Tell the user the snooze duration and continue with the current skill.
 **If "Never ask again":**
 
 ```bash
-"$CONFIG_BIN" set update_check false
+"$FEATUREFORGE_BIN" config set update_check false
 ```
 
-Tell the user: `Update checks disabled. Run $CONFIG_BIN set update_check true to re-enable.` Continue with the current skill.
+Tell the user: `Update checks disabled. Run $FEATUREFORGE_BIN config set update_check true to re-enable.` Continue with the current skill.
 
 ### Step 3: Save old version
 
@@ -196,9 +195,9 @@ OLD_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
 
 ```bash
 cd "$INSTALL_DIR"
-STASH_OUTPUT=$(git stash push --include-untracked -m "superpowers-upgrade-$(date +%Y%m%d-%H%M%S)" 2>&1 || true)
+STASH_OUTPUT=$(git stash push --include-untracked -m "featureforge-upgrade-$(date +%Y%m%d-%H%M%S)" 2>&1 || true)
 if ! git pull --ff-only; then
-  echo "ERROR: superpowers upgrade failed during git pull"
+  echo "ERROR: featureforge upgrade failed during git pull"
   exit 1
 fi
 NEW_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
@@ -210,7 +209,7 @@ If `$STASH_OUTPUT` contains `Saved working directory`, warn the user that local 
 ### Step 5: Write marker and clear cache
 
 ```bash
-_SP_STATE_DIR="${SUPERPOWERS_STATE_DIR:-$HOME/.superpowers}"
+_SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 mkdir -p "$_SP_STATE_DIR"
 rm -f "$_SP_STATE_DIR/last-update-check" "$_SP_STATE_DIR/update-snoozed"
 if [ "$NEW_VERSION" != "$OLD_VERSION" ] && [ "$NEW_VERSION" != "unknown" ]; then
@@ -227,7 +226,7 @@ Read `$INSTALL_DIR/RELEASE-NOTES.md`. Summarize the most relevant items between 
 Format:
 
 ```text
-superpowers v{new} — upgraded from v{old}!
+featureforge v{new} — upgraded from v{old}!
 
 What's new:
 - [bullet 1]
@@ -241,4 +240,4 @@ After the summary, continue with whatever skill the user originally invoked.
 
 ## Standalone usage
 
-When invoked directly as `/superpowers-upgrade`, run Steps 1-6 above. The skill must resolve `LOCAL_VERSION`, fetch `REMOTE_VERSION`, and stop before `git pull` unless `REMOTE_VERSION` is a valid newer version. If the remote lookup fails, tell the user Superpowers could not verify the latest version right now. If the pull leaves `NEW_VERSION` unchanged, tell the user: `You're already on the latest version (v$NEW_VERSION).`
+When invoked directly as `/featureforge-upgrade`, run Steps 1-6 above. The skill must resolve `LOCAL_VERSION`, fetch `REMOTE_VERSION`, and stop before `git pull` unless `REMOTE_VERSION` is a valid newer version. If the remote lookup fails, tell the user FeatureForge could not verify the latest version right now. If the pull leaves `NEW_VERSION` unchanged, tell the user: `You're already on the latest version (v$NEW_VERSION).`

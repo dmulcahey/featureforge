@@ -1,4 +1,4 @@
-# using-superpowers Routing Judge
+# using-featureforge Routing Judge
 
 Use this instruction set for a fresh isolated judge subagent.
 

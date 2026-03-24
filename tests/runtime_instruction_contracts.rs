@@ -84,7 +84,7 @@ fn extract_bash_block(content: &str, heading: &str) -> String {
 fn make_runtime_root(dir: &Path) {
     fs::create_dir_all(dir.join("bin")).expect("runtime bin dir should exist");
     fs::write(
-        dir.join("bin/superpowers"),
+        dir.join("bin/featureforge"),
         "#!/usr/bin/env bash\ncase \"${1:-}\" in\n  update-check)\n    exit 0\n    ;;\n  config)\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
     )
     .expect("runtime launcher should be writable");
@@ -92,12 +92,12 @@ fn make_runtime_root(dir: &Path) {
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(
-            dir.join("bin/superpowers"),
+            dir.join("bin/featureforge"),
             fs::Permissions::from_mode(0o755),
         )
         .expect("runtime launcher should be executable");
     }
-    fs::write(dir.join("VERSION"), "5.1.0\n").expect("VERSION should be writable");
+    fs::write(dir.join("VERSION"), "1.0.0\n").expect("VERSION should be writable");
 }
 
 fn make_runtime_repo(dir: &Path) {
@@ -381,7 +381,7 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         "qa/references/issue-taxonomy.md",
         "qa/templates/qa-report-template.md",
         "tests/runtime_instruction_contracts.rs",
-        "tests/using_superpowers_skill.rs",
+        "tests/using_featureforge_skill.rs",
         "tests/powershell_wrapper_resolution.rs",
         "tests/upgrade_skill.rs",
     ] {
@@ -420,11 +420,11 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         "docs/README.copilot.md",
         "skills/plan-ceo-review/SKILL.md",
         "skills/plan-eng-review/SKILL.md",
-        "skills/using-superpowers/SKILL.md",
+        "skills/using-featureforge/SKILL.md",
         "skills/using-git-worktrees/SKILL.md",
         "skills/subagent-driven-development/SKILL.md",
         "skills/dispatching-parallel-agents/SKILL.md",
-        "skills/using-superpowers/references/codex-tools.md",
+        "skills/using-featureforge/references/codex-tools.md",
     ];
     let banned_terms = [
         "cursor",
@@ -618,15 +618,15 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
         (
             "skills/finishing-a-development-branch/SKILL.md",
             vec![
-                "superpowers:requesting-code-review",
-                "superpowers:qa-only",
-                "superpowers:document-release",
+                "featureforge:requesting-code-review",
+                "featureforge:qa-only",
+                "featureforge:document-release",
                 "Conditional Pre-Landing QA Gate",
                 "Required release-readiness pass for workflow-routed work before completion",
-                "superpowers repo-safety check --intent write",
-                "Run `superpowers plan execution gate-review --plan <approved-plan-path>` before late-stage QA or release routing.",
-                "If the current work is governed by an approved Superpowers plan, after `superpowers:document-release` and any required `superpowers:qa-only` handoff are current, run `superpowers plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.",
-                "If the current work is not governed by an approved Superpowers plan, skip this helper-owned finish gate and continue with the normal completion flow.",
+                "featureforge repo-safety check --intent write",
+                "Run `featureforge plan execution gate-review --plan <approved-plan-path>` before late-stage QA or release routing.",
+                "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, run `featureforge plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.",
+                "If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.",
             ],
         ),
     ] {
@@ -653,35 +653,35 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
         "If Step 1.9 already routed through `superpowers:document-release`",
     );
     assert_file_contains(
-        root.join("tests/evals/using-superpowers-routing.scenarios.md"),
+        root.join("tests/evals/using-featureforge-routing.scenarios.md"),
         "branch-completion language still routes to `requesting-code-review` when no fresh final review artifact exists",
     );
     assert_file_contains(
-        root.join("tests/evals/using-superpowers-routing.orchestrator.md"),
-        "Use the real repo-versioned `using-superpowers` entry contract and skill/runtime surfaces from the branch under test",
+        root.join("tests/evals/using-featureforge-routing.orchestrator.md"),
+        "Use the real repo-versioned `using-featureforge` entry contract and skill/runtime surfaces from the branch under test",
     );
     assert_file_contains(
-        root.join("tests/evals/using-superpowers-routing.orchestrator.md"),
+        root.join("tests/evals/using-featureforge-routing.orchestrator.md"),
         "Pass the absolute branch-under-test repo root into both runner and judge prompts.",
     );
     assert_file_contains(
-        root.join("tests/evals/using-superpowers-routing.orchestrator.md"),
-        "invoke `<BRANCH_UNDER_TEST_ROOT>/bin/superpowers` explicitly",
+        root.join("tests/evals/using-featureforge-routing.orchestrator.md"),
+        "invoke `<BRANCH_UNDER_TEST_ROOT>/bin/featureforge` explicitly",
     );
     assert_file_contains(
-        root.join("tests/evals/using-superpowers-routing.runner.md"),
-        "Use the real repo-versioned `using-superpowers` entry contract and skill/runtime surfaces from the branch under test",
+        root.join("tests/evals/using-featureforge-routing.runner.md"),
+        "Use the real repo-versioned `using-featureforge` entry contract and skill/runtime surfaces from the branch under test",
     );
     assert_file_contains(
-        root.join("tests/evals/using-superpowers-routing.runner.md"),
+        root.join("tests/evals/using-featureforge-routing.runner.md"),
         "The controller must pass `BRANCH_UNDER_TEST_ROOT` as an absolute path.",
     );
     assert_file_contains(
-        root.join("tests/evals/using-superpowers-routing.runner.md"),
+        root.join("tests/evals/using-featureforge-routing.runner.md"),
         "Do not rely on temp-fixture runtime-root autodetection or any home-install fallback.",
     );
     assert_file_not_contains(
-        root.join("tests/evals/using-superpowers-routing.scenarios.md"),
+        root.join("tests/evals/using-featureforge-routing.scenarios.md"),
         "| P3 |",
     );
 }
@@ -696,7 +696,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/brainstorming/SKILL.md"),
-        "\"$_SUPERPOWERS_ROOT/bin/superpowers\" workflow expect --artifact spec --path",
+        "\"$_FEATUREFORGE_ROOT/bin/featureforge\" workflow expect --artifact spec --path",
     );
     assert_file_contains(
         root.join("skills/brainstorming/SKILL.md"),
@@ -708,7 +708,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/brainstorming/SKILL.md"),
-        "superpowers repo-safety check --intent write",
+        "featureforge repo-safety check --intent write",
     );
     assert_file_contains(
         root.join("skills/brainstorming/visual-companion.md"),
@@ -720,57 +720,57 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/brainstorming/visual-companion.md"),
-        "install Git Bash or point `SUPERPOWERS_BASH_PATH` at a compatible `bash`",
+        "install Git Bash or point `FEATUREFORGE_BASH_PATH` at a compatible `bash`",
     );
 
     assert_description_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
+        root.join("skills/using-featureforge/SKILL.md"),
         "deciding which skill or workflow stage applies",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
-        "First, if `$_SUPERPOWERS_ROOT/bin/superpowers` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers workflow status --refresh`.",
+        root.join("skills/using-featureforge/SKILL.md"),
+        "First, if `$_FEATUREFORGE_ROOT/bin/featureforge` is available, call `$_FEATUREFORGE_ROOT/bin/featureforge workflow status --refresh`.",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
+        root.join("skills/using-featureforge/SKILL.md"),
         "treat `execution_started` as an executor-resume signal only when the reported `phase` is `executing`",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
-        "If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `superpowers:subagent-driven-development` or `superpowers:executing-plans` just because `execution_started` is `yes`.",
+        root.join("skills/using-featureforge/SKILL.md"),
+        "If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
+        root.join("skills/using-featureforge/SKILL.md"),
         "Treat the public handoff recommendation as a conservative default.",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
-        "superpowers plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>",
+        root.join("skills/using-featureforge/SKILL.md"),
+        "featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
+        root.join("skills/using-featureforge/SKILL.md"),
         "then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review -> execution.",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
+        root.join("skills/using-featureforge/SKILL.md"),
         "Approved spec reviewer: `^\\*\\*Last Reviewed By:\\*\\* plan-ceo-review$`",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
+        root.join("skills/using-featureforge/SKILL.md"),
         "Approved plan reviewer: `^\\*\\*Last Reviewed By:\\*\\* plan-eng-review$`",
     );
     assert_file_not_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
+        root.join("skills/using-featureforge/SKILL.md"),
         "newest relevant artifacts",
     );
 
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "\"$_SUPERPOWERS_ROOT/bin/superpowers\" workflow expect --artifact plan --path",
+        "\"$_FEATUREFORGE_ROOT/bin/featureforge\" workflow expect --artifact plan --path",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "\"$_SUPERPOWERS_ROOT/bin/superpowers\" plan contract lint \\",
+        "\"$_FEATUREFORGE_ROOT/bin/featureforge\" plan contract lint \\",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
@@ -871,7 +871,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If the helper returns `status` `implementation_ready`, immediately call `$_SUPERPOWERS_ROOT/bin/superpowers workflow handoff` before presenting any handoff text.",
+        "If the helper returns `status` `implementation_ready`, immediately call `$_FEATUREFORGE_ROOT/bin/featureforge workflow handoff` before presenting any handoff text.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -1027,7 +1027,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "**Generated By:** superpowers:requesting-code-review",
+        "**Generated By:** featureforge:requesting-code-review",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -1059,19 +1059,19 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "REVIEW_GATE_JSON=$(\"$_SUPERPOWERS_ROOT/bin/superpowers\" plan execution gate-review --plan \"$APPROVED_PLAN_PATH\")",
+        "REVIEW_GATE_JSON=$(\"$_FEATUREFORGE_ROOT/bin/featureforge\" plan execution gate-review --plan \"$APPROVED_PLAN_PATH\")",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "if [ \"$REVIEW_ALLOWED\" != \"true\" ]; then",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
+        root.join("skills/using-featureforge/SKILL.md"),
         "treat `execution_started` as an executor-resume signal only when the reported `phase` is `executing`",
     );
     assert_file_contains(
-        root.join("skills/using-superpowers/SKILL.md"),
-        "If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `superpowers:subagent-driven-development` or `superpowers:executing-plans` just because `execution_started` is `yes`.",
+        root.join("skills/using-featureforge/SKILL.md"),
+        "If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
@@ -1164,14 +1164,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
 }
 
 #[test]
-fn using_superpowers_preamble_prefers_valid_repo_roots_over_fallback_installs() {
-    let content = read_utf8(repo_root().join("skills/using-superpowers/SKILL.md"));
+fn using_featureforge_preamble_prefers_valid_repo_roots_over_fallback_installs() {
+    let content = read_utf8(repo_root().join("skills/using-featureforge/SKILL.md"));
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
     let tmp_root = TempDir::new().expect("temp root should exist");
 
     let shared_home = tmp_root.path().join("shared-home");
-    fs::create_dir_all(shared_home.join(".superpowers")).expect("shared home should exist");
-    make_runtime_root(&shared_home.join(".superpowers/install"));
+    fs::create_dir_all(shared_home.join(".featureforge")).expect("shared home should exist");
+    make_runtime_root(&shared_home.join(".featureforge/install"));
     let renamed_repo = tmp_root.path().join("runtime-dev-checkout");
     fs::create_dir_all(&renamed_repo).expect("renamed repo should exist");
     make_runtime_repo(&renamed_repo);
@@ -1182,21 +1182,21 @@ fn using_superpowers_preamble_prefers_valid_repo_roots_over_fallback_installs() 
     command
         .arg("-lc")
         .arg(format!(
-            "{preamble}\nprintf \"SUPERPOWERS_ROOT=%s\\n\" \"$_SUPERPOWERS_ROOT\"\n"
+            "{preamble}\nprintf \"FEATUREFORGE_ROOT=%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"
         ))
         .current_dir(&renamed_repo)
         .env("HOME", &shared_home);
-    let output = run_checked(command, "run generated using-superpowers preamble");
+    let output = run_checked(command, "run generated using-featureforge preamble");
     let stdout = String::from_utf8(output.stdout).expect("preamble output should be utf8");
     assert_contains(
         &stdout,
-        &format!("SUPERPOWERS_ROOT={}", expected_repo_root.display()),
-        "using-superpowers preamble output",
+        &format!("FEATUREFORGE_ROOT={}", expected_repo_root.display()),
+        "using-featureforge preamble output",
     );
 
     let invalid_home = tmp_root.path().join("invalid-home");
-    fs::create_dir_all(invalid_home.join(".superpowers")).expect("invalid home should exist");
-    make_runtime_root(&invalid_home.join(".superpowers/install"));
+    fs::create_dir_all(invalid_home.join(".featureforge")).expect("invalid home should exist");
+    make_runtime_root(&invalid_home.join(".featureforge/install"));
     let invalid_repo = tmp_root.path().join("not-a-runtime");
     fs::create_dir_all(&invalid_repo).expect("invalid repo should exist");
     let mut git_init = Command::new("git");
@@ -1207,19 +1207,19 @@ fn using_superpowers_preamble_prefers_valid_repo_roots_over_fallback_installs() 
     fallback_command
         .arg("-lc")
         .arg(format!(
-            "{preamble}\nprintf \"SUPERPOWERS_ROOT=%s\\n\" \"$_SUPERPOWERS_ROOT\"\n"
+            "{preamble}\nprintf \"FEATUREFORGE_ROOT=%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"
         ))
         .current_dir(&invalid_repo)
         .env("HOME", &invalid_home);
-    let fallback = run_checked(fallback_command, "run fallback using-superpowers preamble");
+    let fallback = run_checked(fallback_command, "run fallback using-featureforge preamble");
     let fallback_stdout =
         String::from_utf8(fallback.stdout).expect("fallback output should be utf8");
     assert_contains(
         &fallback_stdout,
         &format!(
-            "SUPERPOWERS_ROOT={}",
-            invalid_home.join(".superpowers/install").display()
+            "FEATUREFORGE_ROOT={}",
+            invalid_home.join(".featureforge/install").display()
         ),
-        "using-superpowers fallback output",
+        "using-featureforge fallback output",
     );
 }

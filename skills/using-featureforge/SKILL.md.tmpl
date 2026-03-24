@@ -1,5 +1,5 @@
 ---
-name: using-superpowers
+name: using-featureforge
 description: Use when starting any conversation or deciding which skill or workflow stage applies before any response, clarification, or action
 ---
 
@@ -9,11 +9,11 @@ If you were dispatched as a subagent to execute a specific task, skip this skill
 
 {{BASE_PREAMBLE}}
 
-{{USING_SUPERPOWERS_BYPASS_GATE}}
+{{USING_FEATUREFORGE_BYPASS_GATE}}
 
 This skill documents the helper-owned session-entry contract and the post-gate routing stack. It does not replace the runtime-owned bootstrap itself.
 
-{{USING_SUPERPOWERS_NORMAL_STACK}}
+{{USING_FEATUREFORGE_NORMAL_STACK}}
 
 
 <EXTREMELY-IMPORTANT>
@@ -26,10 +26,10 @@ This is not negotiable. This is not optional. You cannot rationalize your way ou
 
 ## Instruction Priority
 
-Superpowers skills override default system prompt behavior, but **user instructions always take precedence**:
+FeatureForge skills override default system prompt behavior, but **user instructions always take precedence**:
 
 1. **User's explicit instructions** (`AGENTS.md`, `AGENTS.override.md`, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, direct requests) — highest priority
-2. **Superpowers skills** — override default system behavior where they conflict
+2. **FeatureForge skills** — override default system behavior where they conflict
 3. **Default system prompt** — lowest priority
 
 If `AGENTS.md`, `AGENTS.override.md`, or a Copilot instruction file says "don't use TDD" and a skill says "always use TDD," follow the user's instructions. The user is in control.
@@ -112,7 +112,7 @@ When multiple skills could apply, use this order:
 3. **Domain-specific implementation skills last** - only after the active workflow stage allows them
 
 "Let's build X" → brainstorming first, then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review -> execution.
-"Fix this bug" → debugging first, then if it changes Superpowers product or workflow behavior follow the artifact-state workflow; otherwise continue to the appropriate implementation skill.
+"Fix this bug" → debugging first, then if it changes FeatureForge product or workflow behavior follow the artifact-state workflow; otherwise continue to the appropriate implementation skill.
 
 ## Skill Types
 
@@ -122,20 +122,20 @@ When multiple skills could apply, use this order:
 
 The skill itself tells you which.
 
-## Superpowers Workflow Router
+## FeatureForge Workflow Router
 
-For feature requests, bugfixes that materially change Superpowers product or workflow behavior, product requests, or workflow-change requests inside a Superpowers project, route by artifact state instead of skipping ahead based on the user's wording alone.
+For feature requests, bugfixes that materially change FeatureForge product or workflow behavior, product requests, or workflow-change requests inside a FeatureForge project, route by artifact state instead of skipping ahead based on the user's wording alone.
 
 Do NOT jump from brainstorming straight to implementation. For workflow-routed work, every stage owns the handoff into the next one.
 
 ### Helper-first routing
 
-First, if `$_SUPERPOWERS_ROOT/bin/superpowers` is available, call `$_SUPERPOWERS_ROOT/bin/superpowers workflow status --refresh`.
+First, if `$_FEATUREFORGE_ROOT/bin/featureforge` is available, call `$_FEATUREFORGE_ROOT/bin/featureforge workflow status --refresh`.
 
 - If the JSON result contains a non-empty `next_skill`, use that route.
-- If the JSON result reports `status` `implementation_ready`, proceed to the normal execution preflight and handoff flow using the exact approved plan path. Treat the public handoff recommendation as a conservative default. When you know isolated-agent availability, session intent, and workspace readiness, call `superpowers plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>` before choosing between `superpowers:subagent-driven-development` and `superpowers:executing-plans`.
+- If the JSON result reports `status` `implementation_ready`, proceed to the normal execution preflight and handoff flow using the exact approved plan path. Treat the public handoff recommendation as a conservative default. When you know isolated-agent availability, session intent, and workspace readiness, call `featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>` before choosing between `featureforge:subagent-driven-development` and `featureforge:executing-plans`.
 - In that helper-backed handoff flow, treat `execution_started` as an executor-resume signal only when the reported `phase` is `executing`.
-- If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `superpowers:subagent-driven-development` or `superpowers:executing-plans` just because `execution_started` is `yes`.
+- If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.
 - Only fall back to manual artifact inspection if the helper itself is unavailable or fails.
 
 When the helper succeeds, route using its JSON result and do not re-derive state manually.
@@ -150,7 +150,7 @@ If helpers are unavailable, fallback stays minimal and conservative:
 - Manual fallback is only a conservative backward-routing path until the helper works again.
 - If the helper failure leaves workflow state unclear, route to the earlier safe stage instead of synthesizing a parallel readiness decision.
 
-Inspect `docs/superpowers/specs/` and `docs/superpowers/plans/` conservatively for the exact relevant artifacts. If more than one plausible latest or approved artifact exists, treat that as ambiguity and route to the earlier safe stage rather than guessing. Then parse these exact-match header lines:
+Inspect `docs/featureforge/specs/` and `docs/featureforge/plans/` conservatively for the exact relevant artifacts. If more than one plausible latest or approved artifact exists, treat that as ambiguity and route to the earlier safe stage rather than guessing. Then parse these exact-match header lines:
 
 - Spec state: `^\*\*Workflow State:\*\* (Draft|CEO Approved)$`
 - Spec revision: `^\*\*Spec Revision:\*\* ([0-9]+)$`
@@ -158,7 +158,7 @@ Inspect `docs/superpowers/specs/` and `docs/superpowers/plans/` conservatively f
 - Approved spec reviewer: `^\*\*Last Reviewed By:\*\* plan-ceo-review$`
 - Plan state: `^\*\*Workflow State:\*\* (Draft|Engineering Approved)$`
 - Plan revision: `^\*\*Plan Revision:\*\* ([0-9]+)$`
-- Plan execution mode: `^\*\*Execution Mode:\*\* (none|superpowers:executing-plans|superpowers:subagent-driven-development)$`
+- Plan execution mode: `^\*\*Execution Mode:\*\* (none|featureforge:executing-plans|featureforge:subagent-driven-development)$`
 - Plan source: `^\*\*Source Spec:\*\* (.+)$`
 - Plan source revision: `^\*\*Source Spec Revision:\*\* ([0-9]+)$`
 - Draft plan reviewer: `^\*\*Last Reviewed By:\*\* (writing-plans|plan-eng-review)$`
@@ -166,11 +166,11 @@ Inspect `docs/superpowers/specs/` and `docs/superpowers/plans/` conservatively f
 
 Routing rules:
 
-1. No relevant spec artifact: invoke `superpowers:brainstorming`.
-2. Spec exists but is `Draft`, has malformed approval headers, or has `CEO Approved` without `**Last Reviewed By:** plan-ceo-review`: invoke `superpowers:plan-ceo-review`.
-3. Spec is `CEO Approved` and no relevant plan exists: invoke `superpowers:writing-plans`.
-4. Plan exists but is `Draft`, has malformed approval headers, or has `Engineering Approved` without `**Last Reviewed By:** plan-eng-review`: invoke `superpowers:plan-eng-review`.
-5. Plan is `Engineering Approved` but its `Source Spec:` path or `Source Spec Revision:` does not match the latest approved spec: invoke `superpowers:writing-plans`.
+1. No relevant spec artifact: invoke `featureforge:brainstorming`.
+2. Spec exists but is `Draft`, has malformed approval headers, or has `CEO Approved` without `**Last Reviewed By:** plan-ceo-review`: invoke `featureforge:plan-ceo-review`.
+3. Spec is `CEO Approved` and no relevant plan exists: invoke `featureforge:writing-plans`.
+4. Plan exists but is `Draft`, has malformed approval headers, or has `Engineering Approved` without `**Last Reviewed By:** plan-eng-review`: invoke `featureforge:plan-eng-review`.
+5. Plan is `Engineering Approved` but its `Source Spec:` path or `Source Spec Revision:` does not match the latest approved spec: invoke `featureforge:writing-plans`.
 6. Plan is `Engineering Approved` and its `Source Spec:` path plus `Source Spec Revision:` match the latest approved spec: only proceed through the normal helper-backed execution preflight and handoff flow for that approved plan path.
 7. If artifacts are ambiguous or incomplete, route to the earlier safe stage instead of skipping ahead.
 8. If the helper-backed execution preflight or handoff flow is unavailable, do not route directly from manual fallback into implementation. Stop at the approved plan path and return to the earlier safe stage or the current execution flow instead.

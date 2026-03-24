@@ -1,9 +1,9 @@
-# using-superpowers Routing Scenarios
+# using-featureforge Routing Scenarios
 
 This file is the authoritative scenario set for the Item 1 routing gate.
 It is item-local, single-turn, and versioned with the repo so the runner and judge instructions can refer to a stable matrix.
 
-Scenario set identifier: `using-superpowers-routing-r4`
+Scenario set identifier: `using-featureforge-routing-r4`
 
 ## Contract
 
@@ -13,7 +13,7 @@ Scenario set identifier: `using-superpowers-routing-r4`
 - The runner is read-only.
 - The judge reads raw runner evidence plus this file and the expected-safe-stage rubric.
 - Fail closed on ambiguous, mixed, malformed, or missing evidence.
-- The bypass prompt itself is out of scope for this gate and is covered by `cargo nextest run --test using_superpowers_skill`.
+- The bypass prompt itself is out of scope for this gate and is covered by `cargo nextest run --test using_featureforge_skill`.
 
 ## Fixed Minimum Matrix
 
@@ -24,7 +24,7 @@ Scenario set identifier: `using-superpowers-routing-r4`
 | N3 | Negative | `start implementing` | `implementation plan exists but is still Draft` | `plan-eng-review` | `executing-plans`, `subagent-driven-development`, `finishing-a-development-branch` |
 | N4 | Negative | `finish this branch` | `implementation steps are complete but final review is not yet resolved` | `requesting-code-review` | `finishing-a-development-branch` |
 | P1 | Positive | `review the architecture` | `spec is CEO Approved and implementation planning has not started` | `writing-plans` | none |
-| P1b | Positive | `use superpowers and review the architecture` | `spec is CEO Approved and implementation planning has not started` | `writing-plans` | none |
+| P1b | Positive | `use featureforge and review the architecture` | `spec is CEO Approved and implementation planning has not started` | `writing-plans` | none |
 | P2a | Positive | `start implementing` | `implementation plan is Engineering Approved, isolated-agent workflows are unavailable, and workspace is prepared` | `executing-plans` | none |
 | P2b | Positive | `start implementing` | `implementation plan is Engineering Approved, isolated-agent workflows are available, session intent is stay, and the plan tasks are mostly independent` | `subagent-driven-development` | none |
 
@@ -35,7 +35,7 @@ Scenario set identifier: `using-superpowers-routing-r4`
 - `N3` proves implementation language does not skip engineering review.
 - `N4` proves branch-completion language does not skip the final review gate.
 - `P1` is the positive-control floor for the plan-authoring family.
-- `P1b` proves that explicit “use Superpowers” language still routes by artifact state once the runtime-owned bootstrap has already resolved the turn to `enabled`.
+- `P1b` proves that explicit “use FeatureForge” language still routes by artifact state once the runtime-owned bootstrap has already resolved the turn to `enabled`.
 - `P2a` and `P2b` are the positive-control floor for the execution family.
 - `N4` proves branch-completion language still routes to `requesting-code-review` when no fresh final review artifact exists for the current HEAD.
 - Once fresh code-review, QA, and release-readiness artifacts exist for the current HEAD, the in-session workflow handoff may advance to `finishing-a-development-branch`.

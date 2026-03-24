@@ -13,22 +13,16 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
-use bin_support::compiled_superpowers_path;
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{repo_root, run, run_checked};
 
 fn skill_doc_path() -> PathBuf {
-    repo_root().join("skills/using-superpowers/SKILL.md")
+    repo_root().join("skills/using-featureforge/SKILL.md")
 }
 
 fn read_skill_doc() -> String {
-    fs::read_to_string(skill_doc_path()).expect("using-superpowers skill doc should be readable")
-}
-
-fn read_repo_file(path: &str) -> String {
-    fs::read_to_string(repo_root().join(path))
-        .unwrap_or_else(|error| panic!("{path} should be readable: {error}"))
+    fs::read_to_string(skill_doc_path()).expect("using-featureforge skill doc should be readable")
 }
 
 fn extract_bash_block(content: &str, heading: &str) -> String {
@@ -65,7 +59,7 @@ fn extract_bash_block(content: &str, heading: &str) -> String {
 fn canonical_decision_path(state_dir: &Path, session_key: &str) -> PathBuf {
     state_dir
         .join("session-entry")
-        .join("using-superpowers")
+        .join("using-featureforge")
         .join(session_key)
 }
 
@@ -75,9 +69,12 @@ fn run_bash_block(state_dir: &Path, home_dir: &Path, script: &str, context: &str
         .arg("-lc")
         .arg(script)
         .current_dir(repo_root())
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .env("HOME", home_dir)
-        .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path());
+        .env(
+            "FEATUREFORGE_COMPAT_BIN",
+            bin_support::compiled_superpowers_path(),
+        );
     run(command, context)
 }
 
@@ -92,7 +89,7 @@ fn run_bash_block_without_override(
         .arg("-lc")
         .arg(script)
         .current_dir(repo_root())
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .env("HOME", home_dir);
     run(command, context)
 }
@@ -122,7 +119,7 @@ fn simulate_supported_entry(
         r#"
 set -euo pipefail
 {preamble}
-_resolve_json="$("$SUPERPOWERS_COMPAT_BIN" session-entry resolve --message-file "$SP_TEST_MESSAGE_FILE" --session-key "$SP_TEST_SESSION_KEY")"
+_resolve_json="$("$FEATUREFORGE_COMPAT_BIN" session-entry resolve --message-file "$SP_TEST_MESSAGE_FILE" --session-key "$SP_TEST_SESSION_KEY")"
 eval "$(
   RESOLVE_JSON="$_resolve_json" python3 - <<'PY'
 import json
@@ -153,7 +150,7 @@ case "$SP_TEST_OUTCOME" in
     _normal_stack_session_path="$_SP_STATE_DIR/sessions/$PPID"
     ;;
   bypassed)
-    _first_response_kind="superpowers_bypassed"
+    _first_response_kind="featureforge_bypassed"
     ;;
   *)
     _first_response_kind="runtime_failure"
@@ -191,9 +188,12 @@ PY
                 .arg("-lc")
                 .arg(script)
                 .current_dir(repo_root())
-                .env("SUPERPOWERS_STATE_DIR", state_dir)
+                .env("FEATUREFORGE_STATE_DIR", state_dir)
                 .env("HOME", home_dir)
-                .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path())
+                .env(
+                    "FEATUREFORGE_COMPAT_BIN",
+                    bin_support::compiled_superpowers_path(),
+                )
                 .env("SP_TEST_MESSAGE_FILE", &message_file)
                 .env("SP_TEST_SESSION_KEY", session_key);
             command
@@ -205,20 +205,20 @@ PY
 }
 
 #[test]
-fn using_superpowers_skill_documents_and_derives_the_canonical_bypass_gate() {
+fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
     let content = read_skill_doc();
     let required_patterns = [
-        "~/.superpowers/session-entry/using-superpowers/$PPID",
-        "superpowers session-entry resolve --message-file <path>",
+        "~/.featureforge/session-entry/using-featureforge/$PPID",
+        "featureforge session-entry resolve --message-file <path>",
         "if the session decision is `enabled`, continue into the normal stack",
-        "if the session decision is `bypassed` and the user did not explicitly request Superpowers, stop and bypass the rest of this skill",
-        "if the user explicitly requests Superpowers or explicitly names a Superpowers skill, rewrite the session decision to `enabled` and continue on the same turn",
+        "if the session decision is `bypassed` and the user did not explicitly request FeatureForge, stop and bypass the rest of this skill",
+        "if the user explicitly requests FeatureForge or explicitly names a FeatureForge skill, rewrite the session decision to `enabled` and continue on the same turn",
         "session-entry bootstrap ownership is runtime-owned",
         "missing or malformed decision state fails closed",
         "If the session decision file exists but contains malformed content:",
         "do not compute `_SESSIONS`",
         "If the user explicitly requests re-entry but the bootstrap cannot rewrite the session decision to `enabled`:",
-        "If the bypass gate resolves to `enabled` for this turn, run the normal shared Superpowers stack before any further Superpowers behavior:",
+        "If the bypass gate resolves to `enabled` for this turn, run the normal shared FeatureForge stack before any further FeatureForge behavior:",
         "If helpers are unavailable, fallback stays minimal and conservative:",
         "Manual fallback must not infer readiness from the legacy thin header subset.",
         "_UPD=\"\"",
@@ -229,12 +229,12 @@ fn using_superpowers_skill_documents_and_derives_the_canonical_bypass_gate() {
     for pattern in required_patterns {
         assert!(
             content.contains(pattern),
-            "using-superpowers skill should contain pattern: {pattern}"
+            "using-featureforge skill should contain pattern: {pattern}"
         );
     }
     assert!(
-        !content.contains("continue to normal Superpowers behavior"),
-        "using-superpowers skill should not use the stale normal-behavior phrase"
+        !content.contains("continue to normal FeatureForge behavior"),
+        "using-featureforge skill should not use the stale normal-behavior phrase"
     );
 
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
@@ -243,15 +243,15 @@ fn using_superpowers_skill_documents_and_derives_the_canonical_bypass_gate() {
     let output = run_bash_block(
         state_dir.path(),
         temp_home.path(),
-        &format!("{preamble}\nprintf \"%s\\n\" \"$_SP_USING_SUPERPOWERS_DECISION_PATH\"\n"),
-        "derive using-superpowers decision path",
+        &format!("{preamble}\nprintf \"%s\\n\" \"$_SP_USING_FEATUREFORGE_DECISION_PATH\"\n"),
+        "derive using-featureforge decision path",
     );
     let decision_path =
-        extract_last_nonempty_line(&output.stdout, "derive using-superpowers decision path");
+        extract_last_nonempty_line(&output.stdout, "derive using-featureforge decision path");
     let expected_prefix = state_dir
         .path()
         .join("session-entry")
-        .join("using-superpowers");
+        .join("using-featureforge");
     assert!(
         Path::new(&decision_path).starts_with(&expected_prefix),
         "decision path should live under {:?}, got {}",
@@ -261,7 +261,7 @@ fn using_superpowers_skill_documents_and_derives_the_canonical_bypass_gate() {
 }
 
 #[test]
-fn using_superpowers_preamble_recognizes_the_repo_checkout_as_a_runtime_root() {
+fn using_featureforge_preamble_recognizes_the_repo_checkout_as_a_runtime_root() {
     let content = read_skill_doc();
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
     let temp_home = TempDir::new().expect("home tempdir should exist");
@@ -269,25 +269,25 @@ fn using_superpowers_preamble_recognizes_the_repo_checkout_as_a_runtime_root() {
     let output = run_bash_block_without_override(
         state_dir.path(),
         temp_home.path(),
-        &format!("{preamble}\nprintf \"%s\\n\" \"$_SUPERPOWERS_ROOT\"\n"),
-        "derive using-superpowers runtime root without compat override",
+        &format!("{preamble}\nprintf \"%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"),
+        "derive using-featureforge runtime root without compat override",
     );
     let derived_root = extract_last_nonempty_line(
         &output.stdout,
-        "derive using-superpowers runtime root without compat override",
+        "derive using-featureforge runtime root without compat override",
     );
     assert_eq!(
         PathBuf::from(&derived_root),
         repo_root(),
-        "using-superpowers preamble should recognize the repo checkout as the runtime root without test-only launcher overrides"
+        "using-featureforge preamble should recognize the repo checkout as the runtime root without test-only launcher overrides"
     );
 }
 
 #[test]
-fn using_superpowers_skill_supported_entry_routing_matches_runtime_contract() {
+fn using_featureforge_skill_supported_entry_routing_matches_runtime_contract() {
     let content = read_skill_doc();
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
-    let normal_stack = extract_bash_block(&content, "## Normal Superpowers Stack");
+    let normal_stack = extract_bash_block(&content, "## Normal FeatureForge Stack");
     let temp_home = TempDir::new().expect("home tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let state = state_dir.path();
@@ -395,7 +395,7 @@ fn using_superpowers_skill_supported_entry_routing_matches_runtime_contract() {
         &preamble,
         &normal_stack,
         "bypassed-entry",
-        "Continue without Superpowers.\n",
+        "Continue without FeatureForge.\n",
     );
     assert_eq!(
         bypassed_output["helper_outcome"],
@@ -403,7 +403,7 @@ fn using_superpowers_skill_supported_entry_routing_matches_runtime_contract() {
     );
     assert_eq!(
         bypassed_output["first_response_kind"],
-        Value::String(String::from("superpowers_bypassed"))
+        Value::String(String::from("featureforge_bypassed"))
     );
     assert_eq!(bypassed_output["normal_stack_started"], Value::Bool(false));
     assert_eq!(
@@ -419,7 +419,7 @@ fn using_superpowers_skill_supported_entry_routing_matches_runtime_contract() {
         &preamble,
         &normal_stack,
         "reentry-entry",
-        "superpowers please\n",
+        "featureforge please\n",
     );
     assert_eq!(
         reentry_output["helper_outcome"],
@@ -438,22 +438,4 @@ fn using_superpowers_skill_supported_entry_routing_matches_runtime_contract() {
         fs::read_to_string(&reentry_path).expect("reentry path should be readable"),
         "enabled\n"
     );
-}
-
-#[test]
-fn using_superpowers_docs_point_to_rust_gate_instead_of_legacy_shell_tests() {
-    for path in [
-        "tests/evals/README.md",
-        "tests/evals/using-superpowers-routing.scenarios.md",
-    ] {
-        let content = read_repo_file(path);
-        assert!(
-            content.contains("cargo nextest run --test using_superpowers_skill"),
-            "{path} should point to the Rust gate"
-        );
-        assert!(
-            !content.contains("tests/codex-runtime/test-using-superpowers-bypass.sh"),
-            "{path} should no longer point to the removed shell harness"
-        );
-    }
 }

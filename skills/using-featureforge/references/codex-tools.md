@@ -25,7 +25,7 @@ If you encounter legacy tool names in a skill, use your platform equivalent:
 - Custom agents:
   - Project-scoped: `.codex/agents/*.toml`
   - Personal: `~/.codex/agents/*.toml`
-  - Superpowers installs its `code-reviewer` custom agent to `~/.codex/agents/code-reviewer.toml`.
+  - FeatureForge installs its `code-reviewer` custom agent to `~/.codex/agents/code-reviewer.toml`.
   - Required fields: `name`, `description`, `developer_instructions`
   - Common optional fields: `nickname_candidates`, `model`, `model_reasoning_effort`, `sandbox_mode`, `mcp_servers`, `skills.config`
   - Omitted optional fields inherit from the parent session
