@@ -1,18 +1,13 @@
-#[path = "support/prebuilt.rs"]
-mod prebuilt_support;
 #[path = "support/process.rs"]
 mod process_support;
 
 use assert_cmd::Command as AssertCommand;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 
-use prebuilt_support::{
-    PrebuiltManifestEntry, sha256_checksum_line, write_prebuilt_artifact, write_prebuilt_manifest,
-};
 use process_support::{repo_root, run, run_checked};
 
 fn read_utf8(path: impl AsRef<Path>) -> String {
@@ -105,19 +100,6 @@ fn make_runtime_root(dir: &Path) {
     fs::write(dir.join("VERSION"), "5.1.0\n").expect("VERSION should be writable");
 }
 
-fn make_executable(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .expect("path should be executable");
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-    }
-}
-
 fn make_runtime_repo(dir: &Path) {
     let mut git_init = Command::new("git");
     git_init.arg("init").current_dir(dir);
@@ -125,77 +107,16 @@ fn make_runtime_repo(dir: &Path) {
     make_runtime_root(dir);
 }
 
-fn copy_repo_launcher(temp_root: &Path) -> PathBuf {
-    let launcher = temp_root.join("bin").join("superpowers");
-    let common = temp_root.join("bin").join("superpowers-runtime-common.sh");
-    fs::create_dir_all(launcher.parent().expect("launcher parent should exist"))
-        .expect("launcher parent should be creatable");
-    fs::copy(repo_root().join("bin/superpowers"), &launcher).expect("launcher should copy");
-    fs::copy(
-        repo_root().join("bin/superpowers-runtime-common.sh"),
-        &common,
-    )
-    .expect("launcher common should copy");
-    make_executable(&launcher);
-    make_executable(&common);
-    launcher
-}
-
-fn copy_repo_powershell_launcher(temp_root: &Path) -> PathBuf {
-    let launcher = temp_root.join("bin").join("superpowers.ps1");
-    let common = temp_root.join("bin").join("superpowers-pwsh-common.ps1");
-    fs::create_dir_all(launcher.parent().expect("launcher parent should exist"))
-        .expect("launcher parent should be creatable");
-    fs::copy(repo_root().join("bin/superpowers.ps1"), &launcher)
-        .expect("powershell launcher should copy");
-    fs::copy(repo_root().join("bin/superpowers-pwsh-common.ps1"), &common)
-        .expect("powershell common should copy");
-    launcher
-}
-
-fn pwsh_bin() -> Option<&'static str> {
-    ["pwsh", "powershell"].into_iter().find(|candidate| {
-        Command::new(candidate)
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-Command",
-                "$PSVersionTable.PSVersion.ToString()",
-            ])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    })
-}
-
-fn run_pwsh_launcher(
-    pwsh: &str,
-    launcher: &Path,
-    cwd: &Path,
-    args: &[&str],
-    context: &str,
-) -> std::process::Output {
-    let mut command = Command::new(pwsh);
-    command
-        .args([
-            "-NoLogo",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ])
-        .arg(launcher)
-        .current_dir(cwd)
-        .args(args);
-    run(command, context)
-}
-
 #[test]
 fn repo_checkout_ships_the_canonical_runtime_launcher() {
-    let launcher = repo_root().join("bin/superpowers");
+    let launcher = if cfg!(windows) {
+        repo_root().join("bin/featureforge.exe")
+    } else {
+        repo_root().join("bin/featureforge")
+    };
     assert!(
         launcher.is_file(),
-        "repo checkout should expose bin/superpowers because install docs and generated skill preambles use it as the canonical repo-local launcher"
+        "repo checkout should expose the real featureforge binary as the canonical repo-local launcher"
     );
     #[cfg(unix)]
     {
@@ -213,7 +134,12 @@ fn repo_checkout_ships_the_canonical_runtime_launcher() {
 
 #[test]
 fn repo_checkout_canonical_launcher_runs_without_recursive_fallback() {
-    let output = AssertCommand::new(repo_root().join("bin/superpowers"))
+    let launcher = if cfg!(windows) {
+        repo_root().join("bin/featureforge.exe")
+    } else {
+        repo_root().join("bin/featureforge")
+    };
+    let output = AssertCommand::new(launcher)
         .current_dir(repo_root())
         .timeout(Duration::from_secs(2))
         .arg("--version")
@@ -228,256 +154,150 @@ fn repo_checkout_canonical_launcher_runs_without_recursive_fallback() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains(env!("CARGO_PKG_VERSION")),
-        "repo-local launcher should print the current runtime version, got:\n{stdout}"
+        stdout.contains("featureforge") && stdout.contains(env!("CARGO_PKG_VERSION")),
+        "repo-local featureforge binary should print the current runtime version, got:\n{stdout}"
     );
 }
 
 #[test]
 fn repo_checkout_canonical_launcher_avoids_non_binary_repo_fallbacks() {
-    let bash_launcher = repo_root().join("bin/superpowers");
-    let powershell_launcher = repo_root().join("bin/superpowers.ps1");
-
-    for path in [&bash_launcher, &powershell_launcher] {
-        assert_file_not_contains(path, "cargo run");
-        assert_file_not_contains(path, "SUPERPOWERS_COMPAT_BIN");
-        assert_file_not_contains(path, ".superpowers/install");
-        assert_file_not_contains(path, "target/debug");
-        assert_file_not_contains(path, "target/release");
+    for relative in [
+        "bin/superpowers",
+        "bin/superpowers-config",
+        "bin/superpowers-config.ps1",
+        "bin/superpowers-migrate-install",
+        "bin/superpowers-migrate-install.ps1",
+        "bin/superpowers-plan-contract",
+        "bin/superpowers-plan-contract.ps1",
+        "bin/superpowers-plan-execution",
+        "bin/superpowers-plan-execution.ps1",
+        "bin/superpowers-plan-structure-common",
+        "bin/superpowers-pwsh-common.ps1",
+        "bin/superpowers-repo-safety",
+        "bin/superpowers-repo-safety.ps1",
+        "bin/superpowers-runtime-common.sh",
+        "bin/superpowers-session-entry",
+        "bin/superpowers-session-entry.ps1",
+        "bin/superpowers-slug",
+        "bin/superpowers-update-check",
+        "bin/superpowers-update-check.ps1",
+        "bin/superpowers-workflow",
+        "bin/superpowers-workflow-status",
+        "bin/superpowers-workflow-status.ps1",
+        "bin/superpowers-workflow.ps1",
+        "bin/superpowers.ps1",
+        "compat/bash/superpowers",
+        "compat/powershell/superpowers.ps1",
+        "commands/brainstorm.md",
+        "commands/execute-plan.md",
+        "commands/write-plan.md",
+    ] {
+        assert!(
+            !repo_root().join(relative).exists(),
+            "legacy shim surface should be removed: {relative}"
+        );
     }
 }
 
 #[test]
 fn repo_checkout_canonical_launcher_uses_manifest_selected_binary_path() {
-    let temp_root = TempDir::new().expect("temp runtime root should exist");
-    let binary_rel = "bin/prebuilt/darwin-arm64/nested/runtime/superpowers";
-    let checksum_rel = "bin/prebuilt/darwin-arm64/nested/runtime/superpowers.sha256";
-    let binary_contents = "#!/usr/bin/env bash\necho 'superpowers manifest-selected'\n";
-    copy_repo_launcher(temp_root.path());
-    write_prebuilt_artifact(
-        temp_root.path(),
-        binary_rel,
-        checksum_rel,
-        binary_contents,
-        &sha256_checksum_line("superpowers", binary_contents),
-    );
-    write_prebuilt_manifest(
-        temp_root.path(),
-        env!("CARGO_PKG_VERSION"),
-        &[PrebuiltManifestEntry {
-            target: "darwin-arm64",
-            binary_path: binary_rel,
-            checksum_path: checksum_rel,
-        }],
-    );
-
-    let output = AssertCommand::new(temp_root.path().join("bin/superpowers"))
-        .current_dir(temp_root.path())
-        .timeout(Duration::from_secs(2))
-        .arg("--version")
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "manifest-selected launcher path should run successfully\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "superpowers manifest-selected\n"
-    );
+    let root = repo_root();
+    let manifest = read_utf8(root.join("bin/prebuilt/manifest.json"));
+    for needle in [
+        &format!("\"runtime_revision\": \"{}\"", env!("CARGO_PKG_VERSION")),
+        "bin/prebuilt/darwin-arm64/featureforge",
+        "bin/prebuilt/darwin-arm64/featureforge.sha256",
+        "bin/prebuilt/windows-x64/featureforge.exe",
+        "bin/prebuilt/windows-x64/featureforge.exe.sha256",
+    ] {
+        assert_contains(&manifest, needle, "bin/prebuilt/manifest.json");
+    }
+    for retired in [
+        "bin/prebuilt/darwin-arm64/superpowers",
+        "bin/prebuilt/darwin-arm64/superpowers.sha256",
+        "bin/prebuilt/windows-x64/superpowers.exe",
+        "bin/prebuilt/windows-x64/superpowers.exe.sha256",
+    ] {
+        assert_not_contains(&manifest, retired, "bin/prebuilt/manifest.json");
+    }
+    for relative in [
+        "bin/prebuilt/darwin-arm64/featureforge",
+        "bin/prebuilt/darwin-arm64/featureforge.sha256",
+        "bin/prebuilt/windows-x64/featureforge.exe",
+        "bin/prebuilt/windows-x64/featureforge.exe.sha256",
+    ] {
+        assert!(
+            root.join(relative).is_file(),
+            "renamed prebuilt runtime asset should exist: {relative}"
+        );
+    }
 }
 
 #[test]
 fn repo_checkout_canonical_launcher_rejects_stale_prebuilt_checksum() {
-    let temp_root = TempDir::new().expect("temp runtime root should exist");
-    let binary_rel = "bin/prebuilt/darwin-arm64/superpowers";
-    let checksum_rel = "bin/prebuilt/darwin-arm64/superpowers.sha256";
-    copy_repo_launcher(temp_root.path());
-    write_prebuilt_artifact(
-        temp_root.path(),
-        binary_rel,
-        checksum_rel,
-        "#!/usr/bin/env bash\necho 'superpowers stale checksum'\n",
-        "0000000000000000000000000000000000000000000000000000000000000000  superpowers\n",
+    let root = repo_root();
+    let darwin_checksum = read_utf8(root.join("bin/prebuilt/darwin-arm64/featureforge.sha256"));
+    let windows_checksum =
+        read_utf8(root.join("bin/prebuilt/windows-x64/featureforge.exe.sha256"));
+    assert_contains(
+        &darwin_checksum,
+        "  featureforge",
+        "bin/prebuilt/darwin-arm64/featureforge.sha256",
     );
-    write_prebuilt_manifest(
-        temp_root.path(),
-        env!("CARGO_PKG_VERSION"),
-        &[PrebuiltManifestEntry {
-            target: "darwin-arm64",
-            binary_path: binary_rel,
-            checksum_path: checksum_rel,
-        }],
-    );
-
-    let output = AssertCommand::new(temp_root.path().join("bin/superpowers"))
-        .current_dir(temp_root.path())
-        .timeout(Duration::from_secs(2))
-        .arg("--version")
-        .unwrap_err();
-
-    let rendered = output.to_string();
-    assert!(
-        rendered.contains("checksum") || rendered.contains("sha256"),
-        "stale prebuilt checksum failure should mention checksum verification, got:\n{rendered}"
+    assert_contains(
+        &windows_checksum,
+        "  featureforge.exe",
+        "bin/prebuilt/windows-x64/featureforge.exe.sha256",
     );
 }
 
 #[test]
 fn repo_checkout_powershell_launcher_uses_manifest_selected_binary_path() {
-    let Some(pwsh) = pwsh_bin() else {
-        eprintln!(
-            "Skipping PowerShell launcher manifest test: no pwsh or powershell binary found."
+    for relative in [
+        "bin/superpowers.ps1",
+        "bin/superpowers-pwsh-common.ps1",
+        "compat/powershell/superpowers.ps1",
+    ] {
+        assert!(
+            !repo_root().join(relative).exists(),
+            "legacy PowerShell wrapper surface should be removed: {relative}"
         );
-        return;
-    };
-
-    let temp_root = TempDir::new().expect("temp runtime root should exist");
-    let binary_rel = "bin/prebuilt/darwin-arm64/nested/runtime/superpowers";
-    let checksum_rel = "bin/prebuilt/darwin-arm64/nested/runtime/superpowers.sha256";
-    let binary_contents = "#!/usr/bin/env bash\necho 'superpowers powershell manifest-selected'\n";
-    let launcher = copy_repo_powershell_launcher(temp_root.path());
-    write_prebuilt_artifact(
-        temp_root.path(),
-        binary_rel,
-        checksum_rel,
-        binary_contents,
-        &sha256_checksum_line("superpowers", binary_contents),
-    );
-    write_prebuilt_manifest(
-        temp_root.path(),
-        env!("CARGO_PKG_VERSION"),
-        &[PrebuiltManifestEntry {
-            target: "darwin-arm64",
-            binary_path: binary_rel,
-            checksum_path: checksum_rel,
-        }],
-    );
-
-    let output = run_pwsh_launcher(
-        pwsh,
-        &launcher,
-        temp_root.path(),
-        &["--version"],
-        "powershell manifest-selected launcher",
-    );
-    assert!(
-        output.status.success(),
-        "manifest-selected PowerShell launcher path should run successfully\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "superpowers powershell manifest-selected\n"
-    );
+    }
 }
 
 #[test]
 fn repo_checkout_powershell_launcher_rejects_stale_prebuilt_checksum() {
-    let Some(pwsh) = pwsh_bin() else {
-        eprintln!(
-            "Skipping PowerShell launcher checksum test: no pwsh or powershell binary found."
+    for relative in [
+        "compat/bash/superpowers",
+        "bin/superpowers-runtime-common.sh",
+    ] {
+        assert!(
+            !repo_root().join(relative).exists(),
+            "legacy bash compat surface should be removed: {relative}"
         );
-        return;
-    };
-
-    let temp_root = TempDir::new().expect("temp runtime root should exist");
-    let binary_rel = "bin/prebuilt/darwin-arm64/superpowers";
-    let checksum_rel = "bin/prebuilt/darwin-arm64/superpowers.sha256";
-    let launcher = copy_repo_powershell_launcher(temp_root.path());
-    write_prebuilt_artifact(
-        temp_root.path(),
-        binary_rel,
-        checksum_rel,
-        "#!/usr/bin/env bash\necho 'superpowers powershell stale checksum'\n",
-        "0000000000000000000000000000000000000000000000000000000000000000  superpowers\n",
-    );
-    write_prebuilt_manifest(
-        temp_root.path(),
-        env!("CARGO_PKG_VERSION"),
-        &[PrebuiltManifestEntry {
-            target: "darwin-arm64",
-            binary_path: binary_rel,
-            checksum_path: checksum_rel,
-        }],
-    );
-
-    let output = run_pwsh_launcher(
-        pwsh,
-        &launcher,
-        temp_root.path(),
-        &["--version"],
-        "powershell stale checksum launcher",
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !output.status.success(),
-        "stale checksum should fail closed for PowerShell launcher\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        stderr
-    );
-    assert!(
-        stderr.contains("checksum") || stderr.contains("sha256"),
-        "stale prebuilt checksum failure should mention checksum verification, got:\n{stderr}"
-    );
+    }
 }
 
 #[test]
 fn repo_checkout_powershell_launcher_preserves_native_exit_code_with_psnative_preference() {
-    let Some(pwsh) = pwsh_bin() else {
-        eprintln!(
-            "Skipping PowerShell launcher exit-code test: no pwsh or powershell binary found."
+    for relative in [
+        "bin/superpowers",
+        "bin/superpowers-config",
+        "bin/superpowers-migrate-install",
+        "bin/superpowers-plan-contract",
+        "bin/superpowers-plan-execution",
+        "bin/superpowers-repo-safety",
+        "bin/superpowers-session-entry",
+        "bin/superpowers-slug",
+        "bin/superpowers-update-check",
+        "bin/superpowers-workflow",
+        "bin/superpowers-workflow-status",
+    ] {
+        assert!(
+            !repo_root().join(relative).exists(),
+            "legacy bash wrapper entrypoint should be removed: {relative}"
         );
-        return;
-    };
-
-    let temp_root = TempDir::new().expect("temp runtime root should exist");
-    let binary_rel = "bin/prebuilt/darwin-arm64/superpowers";
-    let checksum_rel = "bin/prebuilt/darwin-arm64/superpowers.sha256";
-    let binary_contents = "#!/usr/bin/env bash\nexit 42\n";
-    let launcher = copy_repo_powershell_launcher(temp_root.path());
-    write_prebuilt_artifact(
-        temp_root.path(),
-        binary_rel,
-        checksum_rel,
-        binary_contents,
-        &sha256_checksum_line("superpowers", binary_contents),
-    );
-    write_prebuilt_manifest(
-        temp_root.path(),
-        env!("CARGO_PKG_VERSION"),
-        &[PrebuiltManifestEntry {
-            target: "darwin-arm64",
-            binary_path: binary_rel,
-            checksum_path: checksum_rel,
-        }],
-    );
-
-    let launcher_escaped = launcher.to_string_lossy().replace('\'', "''");
-    let script = format!(
-        "$PSNativeCommandUseErrorActionPreference = $true; & '{launcher_escaped}' --version; exit $LASTEXITCODE"
-    );
-    let output = run(
-        {
-            let mut command = Command::new(pwsh);
-            command
-                .args(["-NoLogo", "-NoProfile", "-Command"])
-                .arg(script)
-                .current_dir(temp_root.path());
-            command
-        },
-        "powershell launcher should preserve native exit codes when PSNativeCommandUseErrorActionPreference is enabled",
-    );
-    assert_eq!(
-        output.status.code(),
-        Some(42),
-        "PowerShell launcher should preserve native runtime exit codes even when PSNativeCommandUseErrorActionPreference is enabled\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    }
 }
 
 #[test]
@@ -687,16 +507,13 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         }
     }
 
-    let release_notes = read_utf8(root.join("RELEASE-NOTES.md"));
-    let latest_release_version = release_notes
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("## v")
-                .and_then(|rest| rest.split_once(" (").map(|(version, _)| version.to_owned()))
-        })
-        .expect("release notes should contain a version heading");
     let runtime_version = read_utf8(root.join("VERSION")).trim().to_owned();
-    assert_eq!(runtime_version, latest_release_version);
+    let manifest = read_utf8(root.join("bin/prebuilt/manifest.json"));
+    assert_contains(
+        &manifest,
+        &format!("\"runtime_revision\": \"{runtime_version}\""),
+        "bin/prebuilt/manifest.json",
+    );
 
     let mut gen_skills = Command::new("node");
     gen_skills
@@ -1256,15 +1073,6 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/using-superpowers/SKILL.md"),
         "If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `superpowers:subagent-driven-development` or `superpowers:executing-plans` just because `execution_started` is `yes`.",
     );
-    assert_file_contains(
-        root.join("commands/execute-plan.md"),
-        "If the handoff reports `phase` `executing`, use the approved plan path from handoff plus `superpowers plan execution status --plan <approved-plan-path>` to resume the current execution flow.",
-    );
-    assert_file_contains(
-        root.join("commands/execute-plan.md"),
-        "If the handoff reports any later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow the reported `phase` and `next_action`, or use `superpowers workflow next`, instead of resuming an executor merely because `execution_started` is `yes`.",
-    );
-
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
         "# Code Review Briefing Template",

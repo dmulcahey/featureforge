@@ -48,13 +48,13 @@ cleanup() {
 
 trap cleanup EXIT
 
-if [[ ! -f "$COMPAT_BASH" ]]; then
-  echo "Expected canonical bash compat launcher to exist at $COMPAT_BASH"
+if [[ -f "$COMPAT_BASH" ]]; then
+  echo "Expected legacy bash compat launcher to be removed at $COMPAT_BASH"
   exit 1
 fi
 
-if [[ ! -f "$COMPAT_PS1" ]]; then
-  echo "Expected canonical PowerShell compat launcher to exist at $COMPAT_PS1"
+if [[ -f "$COMPAT_PS1" ]]; then
+  echo "Expected legacy PowerShell compat launcher to be removed at $COMPAT_PS1"
   exit 1
 fi
 
@@ -266,7 +266,7 @@ SH
   chmod +x "$fake_bash"
 
   pwsh_windows_project='C:\repo with spaces\proj'
-  pwsh_windows_output="$(SUPERPOWERS_BASH_PATH="$fake_bash" SUPERPOWERS_CAPTURED_ARGS="$captured_args_file" "$pwsh_bin" -NoLogo -NoProfile -File "$START_PS1" --project-dir "$pwsh_windows_project" --background)"
+  pwsh_windows_output="$(FEATUREFORGE_BASH_PATH="$fake_bash" SUPERPOWERS_CAPTURED_ARGS="$captured_args_file" "$pwsh_bin" -NoLogo -NoProfile -File "$START_PS1" --project-dir "$pwsh_windows_project" --background)"
   if [[ "$pwsh_windows_output" != *'"screen_dir":"C:\\repo with spaces\\proj\\.superpowers\\brainstorm\\session-1"'* ]]; then
     echo "Expected PowerShell wrapper to convert brainstorm screen_dir back to a Windows-native path"
     printf '%s\n' "$pwsh_windows_output"
@@ -278,7 +278,7 @@ SH
     exit 1
   fi
 
-  pwsh_stop_output="$(SUPERPOWERS_BASH_PATH="$fake_bash" SUPERPOWERS_CAPTURED_ARGS="$captured_args_file" "$pwsh_bin" -NoLogo -NoProfile -File "$STOP_PS1" 'C:\repo with spaces\proj\.superpowers\brainstorm\session-1')"
+  pwsh_stop_output="$(FEATUREFORGE_BASH_PATH="$fake_bash" SUPERPOWERS_CAPTURED_ARGS="$captured_args_file" "$pwsh_bin" -NoLogo -NoProfile -File "$STOP_PS1" 'C:\repo with spaces\proj\.superpowers\brainstorm\session-1')"
   if [[ "$pwsh_stop_output" != *'"type":"server-started"'* ]]; then
     echo "Expected fake PowerShell stop-wrapper invocation to preserve bash stdout"
     printf '%s\n' "$pwsh_stop_output"
@@ -299,7 +299,7 @@ SH
   chmod +x "$streaming_bash"
 
   streaming_output="$tmp_root/pwsh-streaming.out"
-  SUPERPOWERS_BASH_PATH="$streaming_bash" CODEX_CI=1 "$pwsh_bin" -NoLogo -NoProfile -File "$START_PS1" --project-dir "$pwsh_windows_project" >"$streaming_output" 2>&1 &
+  FEATUREFORGE_BASH_PATH="$streaming_bash" CODEX_CI=1 "$pwsh_bin" -NoLogo -NoProfile -File "$START_PS1" --project-dir "$pwsh_windows_project" >"$streaming_output" 2>&1 &
   streaming_pid=$!
   streaming_seen=0
   for _ in $(seq 1 20); do
