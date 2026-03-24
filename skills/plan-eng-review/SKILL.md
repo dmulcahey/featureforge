@@ -364,7 +364,11 @@ Apply domain overlays when relevant so review questions stay concrete rather tha
 
 ### 3. Test review
 
-Make a diagram of all new UX, new data flow, new codepaths, and new branching if statements or outcomes. For each, note what is new about the features discussed in this branch and plan. Then, for each new item in the diagram, make sure there is a project-native automated test.
+Make a coverage graph of all new UX, new data flow, new codepaths, and new branching if statements or outcomes. For each meaningful path, classify it as:
+
+* automated
+* manual QA
+* explicitly not required, with written justification
 
 Before approving the plan, also verify:
 
@@ -379,7 +383,7 @@ For LLM or prompt changes, check the repo's prompt or evaluation docs. If this p
 
 ### Test Plan Artifact
 
-After producing the test diagram, write a QA handoff artifact for cross-session reuse:
+After producing the coverage graph, write a QA handoff artifact for cross-session reuse:
 
 ```bash
 _SLUG_ENV=$("$_SUPERPOWERS_ROOT/bin/superpowers" repo slug 2>/dev/null || true)
@@ -407,17 +411,26 @@ Write to `$_SP_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-test-plan-{datetime
 ## Affected Pages / Routes
 - {route} — {what to verify and why}
 
-## Key Interactions
-- {interaction} on {page}
+## Coverage Graph
+- {path or flow} -> automated | manual QA | not required ({why})
 
-## Edge Cases
-- {edge case} on {page}
+## Browser Matrix
+- {browser/device} — {flow or route}
 
-## Critical Paths
-- {end-to-end flow}
+## Non-Browser Contract Checks
+- {suite or command} — {what it proves}
+
+## Regression Risks
+- {risk} — {why it matters}
+
+## Manual QA Notes
+- {tester-facing note}
+
+## Engineering Review Summary
+- Review outcome captured separately in the source plan.
 ```
 
-This file is consumed by `superpowers:qa-only` as the primary QA handoff. Include only tester-facing guidance: what to test, where to test it, and why it matters.
+This file is consumed by `superpowers:qa-only` as the primary QA handoff. Include only tester-facing guidance: what to test, where to test it, and why it matters. Richer body sections are additive; finish-gate freshness still depends on the existing required headers.
 
 Set `**Browser QA Required:** yes` when the approved plan, branch-specific routes, or interaction surface make browser QA part of the normal finish gate. Otherwise write `no`.
 
@@ -431,6 +444,52 @@ Evaluate:
 * Slow or high-complexity code paths
 
 **STOP.** In normal review, use one interactive user question per issue. In accelerated review, keep routine issues in the section packet and break out only escalated high-judgment issues as direct human questions. Present options, state your recommendation, explain WHY. Do NOT batch escalated issues into one interactive user question. Only proceed to the next section after the current section is resolved.
+
+## Outside Voice — Independent Plan Challenge (optional, recommended)
+
+After all review sections are complete, optionally get an outside voice. This is informative by default. It becomes actionable only if the main reviewer explicitly adopts a finding and patches the authoritative plan body.
+
+Use `skills/plan-eng-review/outside-voice-prompt.md` when briefing the outside voice.
+
+Tool order:
+
+1. Prefer `codex exec` when available and label the source as `cross-model`.
+2. If `codex exec` is unavailable, use a fresh-context reviewer path and label the source as `fresh-context-subagent`.
+3. If neither path is available, record `Outside Voice: unavailable`.
+
+Outside voice rules:
+
+* Review only the supplied plan and QA-handoff context.
+* Do not mutate plan or artifacts directly.
+* Report disagreements as candidate findings for the main reviewer to adopt or reject.
+* Present findings truthfully labeled by source.
+* If the outside voice is skipped, record `Outside Voice: skipped`.
+
+## Engineering Review Summary Writeback
+
+After review decisions are applied to the authoritative plan body, write or replace a single trailing summary block at the end of the plan:
+
+```markdown
+## Engineering Review Summary
+
+**Review Status:** clear | issues_open
+**Reviewed At:** <ISO-8601 UTC>
+**Review Mode:** big_change | small_change | scope_reduction
+**Reviewed Plan Revision:** <integer>
+**Critical Gaps:** <integer>
+**Browser QA Required:** yes | no
+**Test Plan Artifact:** `<artifact path>`
+**Outside Voice:** skipped | unavailable | cross-model | fresh-context-subagent
+```
+
+Summary write rules:
+
+* Accepted review findings must patch the authoritative plan body before approval. The summary is descriptive only.
+* Run the repo-file-write gate before editing the summary body.
+* Run the approval-header-write gate separately before flipping approval headers.
+* If an `## Engineering Review Summary` section already exists, replace from that heading through the next `## ` heading or EOF, whichever comes first.
+* Always move the summary to the end of the file. Do not leave an older copy in the middle.
+* If the write fails because the plan changed concurrently, re-read the file and retry once. If freshness cannot be re-established, leave the plan in `Draft`.
 
 ## CRITICAL RULE — How to ask questions
 
@@ -491,12 +550,15 @@ At the end of the review, fill in and display this summary:
 * Step 0: Scope Challenge (user chose: ___)
 * Architecture Review: ___ issues found
 * Code Quality Review: ___ issues found
-* Test Review: diagram produced, ___ gaps identified
+* Test Review: coverage graph produced, ___ automated gaps identified, browser QA required: yes/no
 * Performance Review: ___ issues found
 * NOT in scope: written
 * What already exists: written
 * TODOS.md updates: ___ items proposed to user
 * Failure modes: ___ critical gaps flagged
+* Test Plan Artifact: `<artifact path>`
+* Outside Voice: skipped / unavailable / cross-model / fresh-context-subagent
+* Engineering Review Summary: written
 
 ## Retrospective learning
 
