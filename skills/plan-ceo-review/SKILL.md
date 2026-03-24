@@ -129,6 +129,7 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 ```
 
 - If any header line is missing or malformed, normalize the spec to this contract before continuing and treat it as `Draft`.
+- `brainstorming` is only valid while the spec remains `Draft`. A `CEO Approved` spec must end with `**Last Reviewed By:** plan-ceo-review`.
 - When review decisions change the written spec, update the spec document before continuing.
 - After each spec edit (including final approval edits), runs `sync --artifact spec` for the spec path:
 
@@ -269,7 +270,36 @@ Before doing anything else, run a system audit. This is not the spec review. It 
 Run repo-appropriate commands such as:
 
 ```bash
-BASE_BRANCH=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+BASE_BRANCH=""
+if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
+  case "$CURRENT_BRANCH" in
+    main|master|develop|dev|trunk)
+      BASE_BRANCH="$CURRENT_BRANCH"
+      ;;
+  esac
+  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git config --get "branch.$CURRENT_BRANCH.gh-merge-base" 2>/dev/null || true)
+fi
+[ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)
+if [ -z "$BASE_BRANCH" ]; then
+  for candidate in main master develop dev trunk; do
+    if git show-ref --verify --quiet "refs/heads/$candidate"; then
+      BASE_BRANCH="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$BASE_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
+  NON_CURRENT_BRANCHES=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vxF "$CURRENT_BRANCH" || true)
+  NON_CURRENT_BRANCH_COUNT=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d' | wc -l | tr -d ' ')
+  if [ "$NON_CURRENT_BRANCH_COUNT" = "1" ]; then
+    BASE_BRANCH=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d')
+  fi
+fi
+if [ -z "$BASE_BRANCH" ]; then
+  echo "Could not determine the base branch for the review audit. Stop and resolve it before continuing."
+  exit 1
+fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
 git log --oneline -30
 git diff --stat "origin/$BASE_BRANCH...HEAD" 2>/dev/null || git diff --stat "$BASE_BRANCH...HEAD" 2>/dev/null || git diff --stat
@@ -277,6 +307,8 @@ git stash list
 rg -l "TODO|FIXME|HACK|XXX"
 find . -type f -not -path "*/.git/*" | head -20
 ```
+
+Do not use PR metadata or repo default-branch APIs as a fallback; keep the system audit aligned with `document-release`, `requesting-code-review`, and `gate-finish`.
 
 Then read `AGENTS.md`, `AGENTS.override.md`, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, `TODOS.md`, and any existing architecture docs. If this repo stores prompt, eval, or workflow conventions in project docs, read those too.
 
@@ -700,9 +732,12 @@ Use `skills/plan-ceo-review/outside-voice-prompt.md` when briefing the outside v
 
 Tool order:
 
-1. Prefer `codex exec` when available and label the source as `cross-model`.
-2. If `codex exec` is unavailable, use a fresh-context reviewer path and label the source as `fresh-context-subagent`.
-3. If neither path is available, record `Outside Voice: unavailable`.
+1. Prefer `codex exec` when available.
+2. Label the source as `cross-model` only when the outside voice definitely uses a different model/provider than the main reviewer.
+3. If model provenance is the same, unknown, or only a fresh-context rerun of the same reviewer family, label the source as `fresh-context-subagent`.
+4. If the transport truncates or summarizes the outside-voice output, disclose that limitation plainly in review prose instead of overstating independence.
+5. If `codex exec` is unavailable, use a fresh-context reviewer path and label the source as `fresh-context-subagent`.
+6. If neither path is available, record `Outside Voice: unavailable`.
 
 Outside voice rules:
 
