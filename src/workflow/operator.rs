@@ -92,7 +92,7 @@ pub fn render_artifacts(current_dir: &Path) -> Result<String, JsonFailure> {
 pub fn render_explain(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
     Ok(format!(
-        "Why Superpowers chose this state\n- State: {}\n- Spec: {}\n- Plan: {}\nWhat to do:\n1. {}\n",
+        "Why FeatureForge chose this state\n- State: {}\n- Spec: {}\n- Plan: {}\nWhat to do:\n1. {}\n",
         context.route.status,
         display_or_none(&context.route.spec_path),
         display_or_none(&context.route.plan_path),
@@ -216,7 +216,7 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
             "bypassed" => (
                 String::new(),
                 String::from(
-                    "Superpowers is bypassed for this session until the user explicitly re-enters.",
+                    "FeatureForge is bypassed for this session until the user explicitly re-enters.",
                 ),
             ),
             "executing" => {
@@ -513,10 +513,10 @@ fn next_text_for_phase(
 ) -> String {
     match phase {
         "needs_user_choice" => String::from(
-            "Resolve the session-entry gate before continuing into the normal Superpowers workflow.",
+            "Resolve the session-entry gate before continuing into the normal FeatureForge workflow.",
         ),
         "bypassed" => String::from(
-            "Continue outside the Superpowers workflow unless the user explicitly re-enters.",
+            "Continue outside the FeatureForge workflow unless the user explicitly re-enters.",
         ),
         "execution_preflight" | "implementation_handoff" => {
             if plan_path.is_empty() {
@@ -589,7 +589,7 @@ fn reason_text(context: &OperatorContext) -> String {
             String::from("The session-entry decision is still unresolved for this session.")
         }
         "bypassed" => String::from(
-            "Superpowers is bypassed for this session until the user explicitly re-enters.",
+            "FeatureForge is bypassed for this session until the user explicitly re-enters.",
         ),
         _ => context.route.reason.clone(),
     }

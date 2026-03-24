@@ -10,8 +10,8 @@ use superpowers::execution::state::{
 use superpowers::paths::branch_storage_key;
 use tempfile::TempDir;
 
-const PLAN_REL: &str = "docs/superpowers/plans/2026-03-17-example-execution-plan.md";
-const SPEC_REL: &str = "docs/superpowers/specs/2026-03-17-example-execution-plan-design.md";
+const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-plan.md";
+const SPEC_REL: &str = "docs/featureforge/specs/2026-03-17-example-execution-plan-design.md";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -110,7 +110,7 @@ Fixture spec for plan execution helper regression coverage.
 
 fn write_newer_approved_spec_same_revision_different_path(repo: &Path) {
     write_file(
-        &repo.join("docs/superpowers/specs/2026-03-17-example-execution-plan-design-v2.md"),
+        &repo.join("docs/featureforge/specs/2026-03-17-example-execution-plan-design-v2.md"),
         r#"# Example Execution Plan Design V2
 
 **Workflow State:** CEO Approved
@@ -182,7 +182,7 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 
 fn write_second_approved_plan_same_spec(repo: &Path, execution_mode: &str) {
     write_file(
-        &repo.join("docs/superpowers/plans/2026-03-18-example-execution-plan-v2.md"),
+        &repo.join("docs/featureforge/plans/2026-03-18-example-execution-plan-v2.md"),
         &format!(
             r#"# Example Execution Plan V2
 
@@ -382,7 +382,7 @@ fn sha256_hex(contents: &[u8]) -> String {
 }
 
 fn evidence_rel_path() -> String {
-    "docs/superpowers/execution-evidence/2026-03-17-example-execution-plan-r1-evidence.md".into()
+    "docs/featureforge/execution-evidence/2026-03-17-example-execution-plan-r1-evidence.md".into()
 }
 
 fn execution_contract_plan_hash(repo: &Path) -> String {
@@ -686,9 +686,12 @@ fn prepare_finished_single_step_finish_gate_fixture(
 
 fn run_shell(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
     let mut command = Command::new(execution_helper_path());
+    let compat_bin =
+        std::env::var_os("CARGO_BIN_EXE_featureforge").expect("featureforge test binary path");
     command
         .current_dir(repo)
-        .env("SUPERPOWERS_STATE_DIR", state)
+        .env("SUPERPOWERS_COMPAT_BIN", compat_bin)
+        .env("FEATUREFORGE_STATE_DIR", state)
         .args(args);
     run(command, context)
 }
@@ -699,10 +702,10 @@ fn run_shell_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Va
 
 fn run_rust(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
     let mut command =
-        Command::cargo_bin("superpowers").expect("superpowers binary should be available");
+        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
     command
         .current_dir(repo)
-        .env("SUPERPOWERS_STATE_DIR", state)
+        .env("FEATUREFORGE_STATE_DIR", state)
         .args(["plan", "execution"])
         .args(args);
     run(command, context)
@@ -716,10 +719,10 @@ fn run_rust_with_env(
     context: &str,
 ) -> Output {
     let mut command =
-        Command::cargo_bin("superpowers").expect("superpowers binary should be available");
+        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
     command
         .current_dir(repo)
-        .env("SUPERPOWERS_STATE_DIR", state)
+        .env("FEATUREFORGE_STATE_DIR", state)
         .args(["plan", "execution"])
         .args(args);
     for (key, value) in env {
@@ -893,7 +896,7 @@ fn canonical_status_rejects_ambiguous_approved_specs_even_when_plan_targets_newe
     let (repo_dir, state_dir) = init_repo("plan-execution-ambiguous-approved-specs");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let newer_spec_rel = "docs/superpowers/specs/2026-03-17-example-execution-plan-design-v2.md";
+    let newer_spec_rel = "docs/featureforge/specs/2026-03-17-example-execution-plan-design-v2.md";
     write_approved_spec(repo);
     write_newer_approved_spec_same_revision_different_path(repo);
     write_plan(repo, "none");
@@ -1630,7 +1633,7 @@ fn gate_finish_rejects_code_review_artifact_regressions() {
                 replace_in_file(
                     &review_path,
                     &format!("**Source Plan:** `{PLAN_REL}`"),
-                    "**Source Plan:** `docs/superpowers/plans/other-plan.md`",
+                    "**Source Plan:** `docs/featureforge/plans/other-plan.md`",
                 );
             }
             "review_branch_mismatch" => {
@@ -1810,7 +1813,7 @@ fn gate_finish_rejects_test_plan_and_qa_artifact_regressions() {
                 replace_in_file(
                     &test_plan_path,
                     &format!("**Source Plan:** `{PLAN_REL}`"),
-                    "**Source Plan:** `docs/superpowers/plans/other-plan.md`",
+                    "**Source Plan:** `docs/featureforge/plans/other-plan.md`",
                 );
             }
             "stale_test_plan_head" => {
@@ -1841,7 +1844,7 @@ fn gate_finish_rejects_test_plan_and_qa_artifact_regressions() {
                 replace_in_file(
                     &qa_path,
                     &format!("**Source Plan:** `{PLAN_REL}`"),
-                    "**Source Plan:** `docs/superpowers/plans/other-plan.md`",
+                    "**Source Plan:** `docs/featureforge/plans/other-plan.md`",
                 );
             }
             "qa_branch_mismatch" => {
@@ -2054,7 +2057,7 @@ fn gate_finish_rejects_release_artifact_regressions() {
                 replace_in_file(
                     &release_path,
                     &format!("**Source Plan:** `{PLAN_REL}`"),
-                    "**Source Plan:** `docs/superpowers/plans/other-plan.md`",
+                    "**Source Plan:** `docs/featureforge/plans/other-plan.md`",
                 );
             }
             "release_branch_mismatch" => {

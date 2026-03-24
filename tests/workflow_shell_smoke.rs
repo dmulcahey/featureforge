@@ -37,8 +37,8 @@ fn copy_fixture(repo: &Path, fixture_rel: &str, dest_rel: &str) {
 }
 
 fn install_ready_artifacts(repo: &Path) {
-    let spec_rel = "docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md";
-    let plan_rel = "docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md";
+    let spec_rel = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     copy_fixture(
         repo,
         "specs/2026-03-22-runtime-integration-hardening-design.md",
@@ -60,10 +60,10 @@ fn install_ready_artifacts(repo: &Path) {
 
 fn run_superpowers(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
     let mut command =
-        Command::cargo_bin("superpowers").expect("superpowers cargo binary should be available");
+        Command::cargo_bin("featureforge").expect("featureforge cargo binary should be available");
     command
         .current_dir(repo)
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .args(args);
     run(command, context)
 }
@@ -76,10 +76,10 @@ fn run_superpowers_with_env(
     context: &str,
 ) -> Output {
     let mut command =
-        Command::cargo_bin("superpowers").expect("superpowers cargo binary should be available");
+        Command::cargo_bin("featureforge").expect("featureforge cargo binary should be available");
     command
         .current_dir(repo)
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .args(args);
     for (key, value) in extra_env {
         command.env(key, value);
@@ -97,7 +97,7 @@ fn run_public_workflow_wrapper(
     command
         .current_dir(repo)
         .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path())
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .args(args);
     run(command, context)
 }
@@ -112,7 +112,7 @@ fn run_public_workflow_status_wrapper(
     command
         .current_dir(repo)
         .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path())
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .args(args);
     run(command, context)
 }
@@ -128,7 +128,7 @@ fn run_public_workflow_wrapper_with_env(
     command
         .current_dir(repo)
         .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path())
-        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
         .args(args);
     for (key, value) in extra_env {
         command.env(key, value);
@@ -146,7 +146,7 @@ fn workflow_help_outside_repo_mentions_the_public_surfaces() {
         "workflow help outside repo",
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Usage: superpowers workflow <COMMAND>"));
+    assert!(stdout.contains("Usage: featureforge workflow <COMMAND>"));
     assert!(stdout.contains("Commands:"));
     assert!(stdout.contains("status"));
     assert!(stdout.contains("help"));
@@ -162,7 +162,7 @@ fn public_workflow_wrapper_help_outside_repo_mentions_the_public_surfaces() {
         "public workflow wrapper help outside repo",
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Usage: superpowers workflow <COMMAND>"));
+    assert!(stdout.contains("Usage: featureforge workflow <COMMAND>"));
     assert!(stdout.contains("Commands:"));
     assert!(stdout.contains("status"));
     assert!(stdout.contains("help"));
@@ -178,7 +178,7 @@ fn public_workflow_wrapper_dedupes_duplicate_workflow_prefix() {
         "public workflow wrapper duplicate workflow prefix",
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Usage: superpowers workflow <COMMAND>"));
+    assert!(stdout.contains("Usage: featureforge workflow <COMMAND>"));
     assert!(stdout.contains("Commands:"));
 }
 
@@ -192,7 +192,7 @@ fn public_workflow_status_wrapper_dedupes_duplicate_status_prefix() {
         "public workflow-status wrapper duplicate status prefix",
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Usage: superpowers workflow status"));
+    assert!(stdout.contains("Usage: featureforge workflow status"));
     assert!(stdout.contains("--refresh"));
 }
 
@@ -204,7 +204,7 @@ fn workflow_status_summary_matches_json_semantics_for_ready_plans() {
     let session_key = "workflow-summary";
     let decision_path = state
         .join("session-entry")
-        .join("using-superpowers")
+        .join("using-featureforge")
         .join(session_key);
     write_file(&decision_path, "enabled\n");
     install_ready_artifacts(repo);
@@ -230,11 +230,11 @@ fn workflow_status_summary_matches_json_semantics_for_ready_plans() {
     assert!(summary_stdout.contains("status=implementation_ready"));
     assert!(summary_stdout.contains("next=execution_preflight"));
     assert!(summary_stdout.contains(
-        "spec=docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md"
+        "spec=docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"
     ));
     assert!(
         summary_stdout
-            .contains("plan=docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md")
+            .contains("plan=docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md")
     );
 }
 
@@ -246,7 +246,7 @@ fn public_workflow_wrapper_status_summary_matches_json_semantics_for_ready_plans
     let session_key = "workflow-summary-wrapper";
     let decision_path = state
         .join("session-entry")
-        .join("using-superpowers")
+        .join("using-featureforge")
         .join(session_key);
     write_file(&decision_path, "enabled\n");
     install_ready_artifacts(repo);
@@ -272,11 +272,11 @@ fn public_workflow_wrapper_status_summary_matches_json_semantics_for_ready_plans
     assert!(summary_stdout.contains("status=implementation_ready"));
     assert!(summary_stdout.contains("next=execution_preflight"));
     assert!(summary_stdout.contains(
-        "spec=docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md"
+        "spec=docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"
     ));
     assert!(
         summary_stdout
-            .contains("plan=docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md")
+            .contains("plan=docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md")
     );
 }
 
@@ -288,7 +288,7 @@ fn public_workflow_wrapper_text_operator_commands_match_canonical_ready_plan_out
     let session_key = "workflow-wrapper-text-operator-parity";
     let decision_path = state
         .join("session-entry")
-        .join("using-superpowers")
+        .join("using-featureforge")
         .join(session_key);
 
     install_full_contract_ready_artifacts(repo);
@@ -366,9 +366,9 @@ fn public_workflow_wrapper_json_operator_commands_match_canonical_ready_plan_out
     let session_key = "workflow-wrapper-json-operator-parity";
     let decision_path = state
         .join("session-entry")
-        .join("using-superpowers")
+        .join("using-featureforge")
         .join(session_key);
-    let plan_rel = "docs/superpowers/plans/2026-03-22-runtime-integration-hardening.md";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "enabled\n");

@@ -19,6 +19,9 @@ use crate::paths::{
 use crate::repo_safety::RepoSafetyRuntime;
 
 pub const NO_REPO_FILES_MARKER: &str = "__superpowers__/no-repo-files";
+const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
+const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
+const ACTIVE_EVIDENCE_ROOT: &str = "docs/featureforge/execution-evidence";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanExecutionStatus {
@@ -1442,7 +1445,7 @@ pub fn derive_evidence_rel_path(plan_rel: &str, revision: u32) -> String {
         .file_stem()
         .and_then(std::ffi::OsStr::to_str)
         .unwrap_or("plan");
-    format!("docs/superpowers/execution-evidence/{base}-r{revision}-evidence.md")
+    format!("{ACTIVE_EVIDENCE_ROOT}/{base}-r{revision}-evidence.md")
 }
 
 pub fn hash_contract_plan(source: &str) -> String {
@@ -1636,10 +1639,11 @@ fn normalize_plan_path(plan_path: &Path) -> Result<String, JsonFailure> {
             "Plan path must be a normalized repo-relative path.",
         )
     })?;
-    if !normalized.as_str().starts_with("docs/superpowers/plans/") {
+    let required_prefix = format!("{ACTIVE_PLAN_ROOT}/");
+    if !normalized.as_str().starts_with(&required_prefix) {
         return Err(JsonFailure::new(
             FailureClass::InvalidCommandInput,
-            "Plan path must live under docs/superpowers/plans/.",
+            "Plan path must live under docs/featureforge/plans/.",
         ));
     }
     Ok(normalized.as_str().to_owned())
@@ -1871,7 +1875,7 @@ fn local_head_branches(heads_dir: &Path) -> Vec<String> {
 }
 
 fn approved_spec_candidate_paths(repo_root: &Path) -> Vec<String> {
-    let mut candidates = markdown_files_under(&repo_root.join("docs/superpowers/specs"))
+    let mut candidates = markdown_files_under(&repo_root.join(ACTIVE_SPEC_ROOT))
         .into_iter()
         .filter_map(|path| {
             let headers = parse_headers_file(&path);
@@ -1901,7 +1905,7 @@ fn approved_plan_candidate_paths(
     source_spec_path: &str,
     source_spec_revision: u32,
 ) -> Vec<String> {
-    let mut candidates = markdown_files_under(&repo_root.join("docs/superpowers/plans"))
+    let mut candidates = markdown_files_under(&repo_root.join(ACTIVE_PLAN_ROOT))
         .into_iter()
         .filter_map(|path| {
             let headers = parse_headers_file(&path);

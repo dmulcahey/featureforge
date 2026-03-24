@@ -18,6 +18,10 @@ use crate::workflow::manifest::{
     recover_slug_changed_manifest, recover_slug_changed_manifest_read_only, save_manifest,
 };
 
+const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
+const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
+const ACTIVE_SESSION_ENTRY_SKILL: &str = "using-featureforge";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowRoute {
     pub schema_version: u32,
@@ -865,7 +869,7 @@ fn normalize_repo_path(path: &Path) -> Result<String, DiagnosticError> {
 fn scan_specs(repo_root: &Path) -> (Vec<WorkflowSpecCandidate>, Vec<WorkflowSpecCandidate>) {
     let mut candidates = Vec::new();
     let mut malformed = Vec::new();
-    for path in markdown_files_under(&repo_root.join("docs/superpowers/specs")) {
+    for path in markdown_files_under(&repo_root.join(ACTIVE_SPEC_ROOT)) {
         if let Ok(document) = parse_workflow_spec_candidate(&path) {
             if document.malformed_headers {
                 malformed.push(document);
@@ -879,7 +883,7 @@ fn scan_specs(repo_root: &Path) -> (Vec<WorkflowSpecCandidate>, Vec<WorkflowSpec
 
 fn scan_plans(repo_root: &Path) -> Vec<WorkflowPlanCandidate> {
     let mut candidates = Vec::new();
-    for path in markdown_files_under(&repo_root.join("docs/superpowers/plans")) {
+    for path in markdown_files_under(&repo_root.join(ACTIVE_PLAN_ROOT)) {
         if let Ok(document) = parse_workflow_plan_candidate(&path) {
             candidates.push(document);
         }
@@ -947,7 +951,7 @@ fn read_session_entry(state_dir: &Path) -> SessionEntryState {
             session_key,
             decision_path: state_dir
                 .join("session-entry")
-                .join("using-superpowers")
+                .join(ACTIVE_SESSION_ENTRY_SKILL)
                 .to_string_lossy()
                 .into_owned(),
             policy_source: String::from("default"),

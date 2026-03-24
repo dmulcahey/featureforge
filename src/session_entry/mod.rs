@@ -12,6 +12,7 @@ use crate::paths::{
 };
 
 const MAX_MESSAGE_BYTES: u64 = 65_536;
+const ACTIVE_SESSION_ENTRY_SKILL: &str = "using-featureforge";
 const SUPERPOWERS_SKILLS: &[&str] = &[
     "brainstorming",
     "dispatching-parallel-agents",
@@ -27,7 +28,7 @@ const SUPERPOWERS_SKILLS: &[&str] = &[
     "systematic-debugging",
     "test-driven-development",
     "using-git-worktrees",
-    "using-superpowers",
+    "using-featureforge",
     "verification-before-completion",
     "writing-plans",
     "writing-skills",
@@ -256,7 +257,6 @@ pub fn write_session_entry_schema(output_dir: &Path) -> Result<(), DiagnosticErr
 
 struct SessionEntryRuntime {
     session_key: String,
-    legacy_path: PathBuf,
     canonical_path: PathBuf,
 }
 
@@ -265,13 +265,9 @@ impl SessionEntryRuntime {
         let session_key = derive_session_key(raw_session_key)?;
         let state_dir = state_dir();
         Ok(Self {
-            legacy_path: state_dir
-                .join("session-flags")
-                .join("using-superpowers")
-                .join(&session_key),
             canonical_path: state_dir
                 .join("session-entry")
-                .join("using-superpowers")
+                .join(ACTIVE_SESSION_ENTRY_SKILL)
                 .join(&session_key),
             session_key,
         })
@@ -308,29 +304,12 @@ impl SessionEntryRuntime {
         if self.canonical_path.exists() {
             return read_decision_file(&self.canonical_path);
         }
-        if !self.legacy_path.exists() {
-            return Ok(DecisionState::Missing);
-        }
-        let legacy_state = read_decision_file(&self.legacy_path)?;
-        if matches!(
-            legacy_state,
-            DecisionState::Enabled | DecisionState::Bypassed
-        ) {
-            self.write_decision(match legacy_state {
-                DecisionState::Enabled => "enabled",
-                DecisionState::Bypassed => "bypassed",
-                _ => unreachable!(),
-            })?;
-        }
-        Ok(legacy_state)
+        Ok(DecisionState::Missing)
     }
 
     fn read_decision_state_read_only(&self) -> Result<DecisionState, DiagnosticError> {
         if self.canonical_path.exists() {
             return read_decision_file(&self.canonical_path);
-        }
-        if self.legacy_path.exists() {
-            return read_decision_file(&self.legacy_path);
         }
         Ok(DecisionState::Missing)
     }
@@ -410,16 +389,16 @@ fn read_decision_file(path: &Path) -> Result<DecisionState, DiagnosticError> {
 
 fn default_prompt() -> SessionPrompt {
     SessionPrompt {
-        question: String::from("Use Superpowers for this session?"),
+        question: String::from("Use FeatureForge for this session?"),
         recommended_option: String::from("A"),
         options: vec![
             SessionPromptOption {
                 decision: String::from("enabled"),
-                label: String::from("Use Superpowers"),
+                label: String::from("Use FeatureForge"),
             },
             SessionPromptOption {
                 decision: String::from("bypassed"),
-                label: String::from("Bypass Superpowers"),
+                label: String::from("Bypass FeatureForge"),
             },
         ],
     }
@@ -432,11 +411,11 @@ fn message_requests_reentry(message: &str) -> bool {
         if clause.is_empty() {
             continue;
         }
-        if clause == "superpowers please" {
+        if clause == "featureforge please" {
             return true;
         }
-        if clause_requests_phrase(clause, "use superpowers")
-            || clause_requests_phrase(clause, "enable superpowers")
+        if clause_requests_phrase(clause, "use featureforge")
+            || clause_requests_phrase(clause, "enable featureforge")
             || clause_requests_skill_reentry(clause)
         {
             return true;
