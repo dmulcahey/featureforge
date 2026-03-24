@@ -322,6 +322,31 @@ fn analyze_valid_contract_fixture_with_checked_steps_and_fenced_details() {
 }
 
 #[test]
+fn analyze_plan_rejects_malformed_checked_step_entries() {
+    let repo_root = unique_temp_dir("contract-analyze-malformed-checked-step");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "- [ ] **Step 1: Parse the source requirement index**",
+        "- [x] **Step 1 Parse the source requirement index**",
+    );
+
+    let error = analyze_plan(repo_root.join(SPEC_REL), plan_path)
+        .expect_err("malformed checked step entry should fail closed");
+
+    assert_eq!(error.failure_class(), "InstructionParseFailed");
+    assert!(
+        error
+            .message()
+            .contains("Malformed step entry: - [x] **Step 1 Parse the source requirement index**"),
+        "unexpected diagnostic: {}",
+        error.message()
+    );
+}
+
+#[test]
 fn lint_valid_contract_matches_helper_and_canonical_cli() {
     let repo_root = unique_temp_dir("contract-lint-valid-cli");
     let state_dir = unique_temp_dir("contract-lint-valid-state");
