@@ -77,7 +77,7 @@ test('using-superpowers gets a dedicated bootstrap preamble contract', () => {
   const content = readUtf8(getSkillPath('using-superpowers'));
   const bootstrapBlock = extractBashBlockUnderHeading(content, 'Preamble (run first)');
   const normalStackBlock = extractBashBlockUnderHeading(content, 'Normal Superpowers Stack');
-  assert.match(bootstrapBlock, /session-flags\/using-superpowers/, 'using-superpowers should derive the decision-file path');
+  assert.match(bootstrapBlock, /session-entry\/using-superpowers/, 'using-superpowers should derive the decision-file path');
   assert.doesNotMatch(bootstrapBlock, /touch "\$_SP_STATE_DIR\/sessions\/\$PPID"/, 'using-superpowers should not write session markers before the bypass decision');
   assert.doesNotMatch(bootstrapBlock, /_CONTRIB=/, 'using-superpowers should not load contributor mode before the bypass decision');
   assert.ok(normalStackBlock, 'using-superpowers should define the post-gate normal stack');
@@ -557,7 +557,14 @@ test('repo-owned operator docs move to canonical runtime command vocabulary', ()
     'commands/write-plan.md',
     'commands/execute-plan.md',
   ]) {
-    const content = readUtf8(path.join(REPO_ROOT, relativePath));
-    assert.doesNotMatch(content, HELPER_COMMAND_PATTERN, `${relativePath} should not use helper-style executable names`);
+    const content = readUtf8(path.join(REPO_ROOT, relativePath)).replace(
+      /tests\/codex-runtime\/test-superpowers-[^\s`]+/g,
+      'tests/codex-runtime/test-runtime-contract.sh',
+    );
+    assert.doesNotMatch(
+      content,
+      HELPER_COMMAND_PATTERN,
+      `${relativePath} should not use helper-style executable names`,
+    );
   }
 });

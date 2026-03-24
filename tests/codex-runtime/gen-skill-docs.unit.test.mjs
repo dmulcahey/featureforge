@@ -71,7 +71,7 @@ test('shared shell builders detect and invoke the canonical superpowers binary',
 });
 
 test('using-superpowers bypass helpers render the decision-state contract', () => {
-  assert.equal(buildUsingSuperpowersShellLines().some((line) => line.includes('session-flags/using-superpowers')), true);
+  assert.equal(buildUsingSuperpowersShellLines().some((line) => line.includes('session-entry/using-superpowers')), true);
   const bypassGate = buildUsingSuperpowersBypassGateSection();
   assert.match(bypassGate, /superpowers session-entry resolve --message-file <path>/);
   assert.doesNotMatch(bypassGate, /superpowers-session-entry/);

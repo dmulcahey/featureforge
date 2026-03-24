@@ -29,7 +29,7 @@ _IS_SUPERPOWERS_RUNTIME_ROOT "$_REPO_ROOT" && _SUPERPOWERS_ROOT="$_REPO_ROOT"
 [ -z "$_SUPERPOWERS_ROOT" ] && _IS_SUPERPOWERS_RUNTIME_ROOT "$HOME/.codex/superpowers" && _SUPERPOWERS_ROOT="$HOME/.codex/superpowers"
 [ -z "$_SUPERPOWERS_ROOT" ] && _IS_SUPERPOWERS_RUNTIME_ROOT "$HOME/.copilot/superpowers" && _SUPERPOWERS_ROOT="$HOME/.copilot/superpowers"
 _SP_STATE_DIR="${SUPERPOWERS_STATE_DIR:-$HOME/.superpowers}"
-_SP_USING_SUPERPOWERS_DECISION_DIR="$_SP_STATE_DIR/session-flags/using-superpowers"
+_SP_USING_SUPERPOWERS_DECISION_DIR="$_SP_STATE_DIR/session-entry/using-superpowers"
 _SP_USING_SUPERPOWERS_DECISION_PATH="$_SP_USING_SUPERPOWERS_DECISION_DIR/$PPID"
 ```
 
@@ -43,7 +43,7 @@ This skill documents the supported-entry contract:
 - missing or malformed decision state fails closed
 - supported entry paths must ask the bypass question on `needs_user_choice` before the normal stack starts
 
-The session decision file lives at `~/.superpowers/session-flags/using-superpowers/$PPID`.
+The session decision file lives at `~/.superpowers/session-entry/using-superpowers/$PPID`.
 
 If no valid session decision exists yet, ask one interactive question before any normal Superpowers work happens.
 
