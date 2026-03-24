@@ -467,6 +467,25 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.doesNotMatch(sdd, /\[Dispatch final code-reviewer\]/);
 });
 
+test('planning review sync docs describe additive review summaries and richer QA handoff', () => {
+  const ceoReview = readUtf8(getSkillPath('plan-ceo-review'));
+  assert.match(ceoReview, /SELECTIVE EXPANSION/);
+  assert.match(ceoReview, /Section 11: Design & UX Review/);
+  assert.match(ceoReview, /## CEO Review Summary/);
+
+  const engReview = readUtf8(getSkillPath('plan-eng-review'));
+  assert.match(engReview, /coverage graph/i);
+  assert.match(engReview, /## Engineering Review Summary/);
+
+  const writingPlans = readUtf8(getSkillPath('writing-plans'));
+  assert.match(writingPlans, /## CEO Review Summary/);
+  assert.match(writingPlans, /additive context only/);
+
+  const qaOnly = readUtf8(getSkillPath('qa-only'));
+  assert.match(qaOnly, /## Engineering Review Summary/);
+  assert.match(qaOnly, /additive context only/);
+});
+
 test('approved workflow-state artifacts document the finalized helper contract', () => {
   const specDoc = readUtf8(path.join(REPO_ROOT, 'docs/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md'));
   assert.match(

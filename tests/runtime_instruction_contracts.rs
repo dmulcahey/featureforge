@@ -820,6 +820,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/writing-plans/SKILL.md"),
         "\"$_SUPERPOWERS_ROOT/bin/superpowers\" plan contract lint \\",
     );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "## CEO Review Summary",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "additive context only",
+    );
 
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -832,6 +840,34 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
         "**The terminal state is presenting the execution preflight handoff with the approved plan path.**",
+    );
+    assert_file_contains(
+        root.join("skills/plan-ceo-review/SKILL.md"),
+        "SELECTIVE EXPANSION",
+    );
+    assert_file_contains(
+        root.join("skills/plan-ceo-review/SKILL.md"),
+        "Section 11: Design & UX Review",
+    );
+    assert_file_contains(
+        root.join("skills/plan-ceo-review/SKILL.md"),
+        "## CEO Review Summary",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "coverage graph",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "## Engineering Review Summary",
+    );
+    assert_file_contains(
+        root.join("skills/qa-only/SKILL.md"),
+        "## Engineering Review Summary",
+    );
+    assert_file_contains(
+        root.join("skills/qa-only/SKILL.md"),
+        "additive context only",
     );
 
     assert_file_contains(

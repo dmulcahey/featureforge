@@ -341,7 +341,7 @@ fn parse_file_entries(lines: &[&str]) -> Result<Vec<TaskFileEntry>, DiagnosticEr
             collecting = true;
             continue;
         }
-        if collecting && line.starts_with("- [ ] **Step ") {
+        if collecting && parse_plan_step_line(line.trim()).is_some() {
             break;
         }
         if !collecting {
@@ -378,24 +378,24 @@ fn parse_file_entries(lines: &[&str]) -> Result<Vec<TaskFileEntry>, DiagnosticEr
 fn parse_steps(lines: &[&str]) -> Result<Vec<PlanStep>, DiagnosticError> {
     let mut steps = Vec::new();
     for line in lines {
-        let trimmed = line.trim();
-        let Some(rest) = trimmed.strip_prefix("- [ ] **Step ") else {
+        let Some((number, text)) = parse_plan_step_line(line.trim()) else {
             continue;
         };
-        let (number, text) = rest.split_once(": ").ok_or_else(|| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                format!("Malformed step entry: {trimmed}"),
-            )
-        })?;
-        steps.push(PlanStep {
-            number: number
-                .parse::<u32>()
-                .map_err(|_| missing_header("Step number"))?,
-            text: text.trim_end_matches("**").to_owned(),
-        });
+        steps.push(PlanStep { number, text });
     }
     Ok(steps)
+}
+
+fn parse_plan_step_line(line: &str) -> Option<(u32, String)> {
+    let rest = line.strip_prefix("- [")?;
+    let mark = rest.chars().next()?;
+    if mark != 'x' && mark != ' ' {
+        return None;
+    }
+    let rest = &rest[mark.len_utf8()..];
+    let rest = rest.strip_prefix("] **Step ")?;
+    let (number, text) = rest.split_once(": ")?;
+    Some((number.parse::<u32>().ok()?, text.trim_end_matches("**").to_owned()))
 }
 
 fn detect_overlapping_write_scopes(tasks: &[PlanTask]) -> Vec<OverlappingWriteScope> {
