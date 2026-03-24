@@ -1,56 +1,13 @@
-use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 use tempfile::TempDir;
 
-pub fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-pub fn compiled_superpowers_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_superpowers"))
-}
+use crate::files_support::write_file;
+use crate::process_support::{repo_root, run_checked};
 
 pub fn workflow_fixture_root() -> PathBuf {
     repo_root().join("tests/codex-runtime/fixtures/workflow-artifacts")
-}
-
-pub fn run(mut command: Command, context: &str) -> Output {
-    command
-        .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
-}
-
-pub fn run_checked(command: Command, context: &str) -> Output {
-    let output = run(command, context);
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
-pub fn parse_json(output: &Output, context: &str) -> Value {
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
-}
-
-pub fn write_file(path: &Path, contents: &str) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("parent directory should be creatable");
-    }
-    fs::write(path, contents).expect("file should be writable");
 }
 
 pub fn init_repo(name: &str) -> (TempDir, TempDir) {
@@ -74,7 +31,7 @@ pub fn init_repo(name: &str) -> (TempDir, TempDir) {
         .current_dir(repo);
     run_checked(git_config_email, "git config user.email");
 
-    fs::write(repo.join("README.md"), format!("# {name}\n")).expect("README should be writable");
+    write_file(&repo.join("README.md"), &format!("# {name}\n"));
 
     let mut git_add = Command::new("git");
     git_add.args(["add", "README.md"]).current_dir(repo);

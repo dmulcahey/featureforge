@@ -16,6 +16,7 @@ use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::git::discover_slug_identity;
 use crate::paths::{
     normalize_identifier_token, normalize_repo_relative_path, normalize_whitespace,
+    superpowers_state_dir,
 };
 
 const AMBIGUOUS_PHRASES: &[&str] = &[
@@ -1974,13 +1975,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn state_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("SUPERPOWERS_STATE_DIR") {
-        return PathBuf::from(dir);
-    }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join(".superpowers")
+    superpowers_state_dir()
 }
 
 fn current_username() -> String {

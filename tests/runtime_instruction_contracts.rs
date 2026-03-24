@@ -1,32 +1,17 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+#[path = "support/process.rs"]
+mod process_support;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+use assert_cmd::Command as AssertCommand;
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+use std::time::Duration;
+
+use process_support::{repo_root, run, run_checked};
 
 fn read_utf8(path: impl AsRef<Path>) -> String {
     fs::read_to_string(path.as_ref())
         .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.as_ref().display()))
-}
-
-fn run(mut command: Command, context: &str) -> Output {
-    command
-        .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
-}
-
-fn run_checked(command: Command, context: &str) -> Output {
-    let output = run(command, context);
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
 }
 
 fn assert_contains(content: &str, needle: &str, label: &str) {
@@ -119,6 +104,63 @@ fn make_runtime_repo(dir: &Path) {
     git_init.arg("init").current_dir(dir);
     run_checked(git_init, "git init runtime repo");
     make_runtime_root(dir);
+}
+
+#[test]
+fn repo_checkout_ships_the_canonical_runtime_launcher() {
+    let launcher = repo_root().join("bin/superpowers");
+    assert!(
+        launcher.is_file(),
+        "repo checkout should expose bin/superpowers because install docs and generated skill preambles use it as the canonical repo-local launcher"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&launcher)
+            .expect("repo-local launcher should be stat-able")
+            .permissions()
+            .mode();
+        assert!(
+            mode & 0o111 != 0,
+            "repo-local launcher should be executable on unix hosts"
+        );
+    }
+}
+
+#[test]
+fn repo_checkout_canonical_launcher_runs_without_recursive_fallback() {
+    let output = AssertCommand::new(repo_root().join("bin/superpowers"))
+        .current_dir(repo_root())
+        .timeout(Duration::from_secs(2))
+        .arg("--version")
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "repo-local launcher should resolve to a real runtime binary instead of recursing through compat wrappers\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(env!("CARGO_PKG_VERSION")),
+        "repo-local launcher should print the current runtime version, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn repo_checkout_canonical_launcher_avoids_non_binary_repo_fallbacks() {
+    let bash_launcher = repo_root().join("bin/superpowers");
+    let powershell_launcher = repo_root().join("bin/superpowers.ps1");
+
+    for path in [&bash_launcher, &powershell_launcher] {
+        assert_file_not_contains(path, "cargo run");
+        assert_file_not_contains(path, "SUPERPOWERS_COMPAT_BIN");
+        assert_file_not_contains(path, ".superpowers/install");
+        assert_file_not_contains(path, "target/debug");
+        assert_file_not_contains(path, "target/release");
+    }
 }
 
 #[test]

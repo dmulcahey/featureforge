@@ -1,9 +1,9 @@
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::config::{ConfigGetArgs, ConfigSetArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
+use crate::paths::{superpowers_state_dir, write_atomic as write_atomic_file};
 
 pub const LEGACY_CONFIG_FILE: &str = "config.yaml";
 pub const CANONICAL_CONFIG_FILE: &str = "config/config.yaml";
@@ -125,10 +125,7 @@ pub fn migrate_explicit(state_dir: &Path) -> Result<ConfigMigration, DiagnosticE
 }
 
 pub fn state_dir() -> PathBuf {
-    env::var_os("SUPERPOWERS_STATE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
-        .unwrap_or_else(|| PathBuf::from(".superpowers"))
+    superpowers_state_dir()
 }
 
 fn load_config(state_dir: &Path, access_mode: AccessMode) -> Result<ConfigAccess, DiagnosticError> {
@@ -271,42 +268,12 @@ fn write_config(path: &Path, config: &ConfigValues) -> Result<(), DiagnosticErro
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<(), DiagnosticError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            DiagnosticError::new(
-                FailureClass::InvalidConfigFormat,
-                format!(
-                    "Could not create config directory {}: {error}",
-                    parent.display()
-                ),
-            )
-        })?;
-    }
-    let tmp_path = path.with_extension(format!(
-        "{}.tmp",
-        path.extension()
-            .and_then(std::ffi::OsStr::to_str)
-            .unwrap_or("config")
-    ));
-    fs::write(&tmp_path, contents).map_err(|error| {
+    write_atomic_file(path, contents).map_err(|error| {
         DiagnosticError::new(
             FailureClass::InvalidConfigFormat,
-            format!(
-                "Could not write config temp file {}: {error}",
-                tmp_path.display()
-            ),
+            format!("Could not persist config file {}: {error}", path.display()),
         )
-    })?;
-    fs::rename(&tmp_path, path).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::InvalidConfigFormat,
-            format!(
-                "Could not move config temp file into place {}: {error}",
-                path.display()
-            ),
-        )
-    })?;
-    Ok(())
+    })
 }
 
 fn invalid_config(message: &str) -> DiagnosticError {

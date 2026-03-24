@@ -15,7 +15,7 @@ use crate::execution::state::{
     normalize_reopen_request, normalize_source, normalize_transfer_request,
     require_normalized_text, status_from_context, validate_expected_fingerprint,
 };
-use crate::paths::normalize_repo_relative_path;
+use crate::paths::{normalize_repo_relative_path, write_atomic as write_atomic_file};
 
 pub fn begin(
     runtime: &ExecutionRuntime,
@@ -810,25 +810,7 @@ fn maybe_trigger_failpoint(name: &str) -> Result<(), JsonFailure> {
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<(), JsonFailure> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            JsonFailure::new(
-                FailureClass::EvidenceWriteFailed,
-                format!("Could not create {}: {error}", parent.display()),
-            )
-        })?;
-    }
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, contents).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::EvidenceWriteFailed,
-            format!(
-                "Could not write temporary file {}: {error}",
-                tmp_path.display()
-            ),
-        )
-    })?;
-    fs::rename(&tmp_path, path).map_err(|error| {
+    write_atomic_file(path, contents).map_err(|error| {
         JsonFailure::new(
             FailureClass::EvidenceWriteFailed,
             format!("Could not persist {}: {error}", path.display()),

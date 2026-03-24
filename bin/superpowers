@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+resolve_host_target() {
+  local os arch
+  os="$(uname -s)"
+  arch="$(uname -m)"
+
+  case "$os:$arch" in
+    Darwin:arm64)
+      printf '%s\n' "darwin-arm64"
+      ;;
+    MINGW*:x86_64|MSYS*:x86_64|CYGWIN*:x86_64)
+      printf '%s\n' "windows-x64"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+find_runtime_bin() {
+  local host_target binary_name candidate
+  host_target="$(resolve_host_target)" || return 1
+
+  case "$host_target" in
+    darwin-arm64)
+      binary_name="superpowers"
+      ;;
+    windows-x64)
+      binary_name="superpowers.exe"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  candidate="$RUNTIME_ROOT/bin/prebuilt/$host_target/$binary_name"
+  if [[ -f "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  return 1
+}
+
+if runtime_bin="$(find_runtime_bin)"; then
+  exec "$runtime_bin" "$@"
+fi
+
+printf 'Checked-in Superpowers runtime binary not found for this host. Expected bin/prebuilt/{darwin-arm64,windows-x64}/superpowers(.exe).\n' >&2
+exit 127

@@ -1,6 +1,19 @@
-mod support;
+#[path = "support/bin.rs"]
+mod bin_support;
+#[path = "support/files.rs"]
+mod files_support;
+#[path = "support/json.rs"]
+mod json_support;
+#[path = "support/process.rs"]
+mod process_support;
+#[path = "support/workflow.rs"]
+mod workflow_support;
 
 use assert_cmd::cargo::cargo_bin;
+use bin_support::compiled_superpowers_path;
+use files_support::write_file;
+use json_support::parse_json;
+use process_support::{repo_root, run, run_checked};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,12 +23,10 @@ use superpowers::workflow::manifest::{
     WorkflowManifest, manifest_path, recover_slug_changed_manifest,
 };
 use superpowers::workflow::status::WorkflowRuntime;
-use support::workflow::{
-    compiled_superpowers_path, init_repo as init_workflow_repo,
-    install_full_contract_ready_artifacts, parse_json, repo_root, run, run_checked,
-    workflow_fixture_root, write_file,
-};
 use tempfile::TempDir;
+use workflow_support::{
+    init_repo as init_workflow_repo, install_full_contract_ready_artifacts, workflow_fixture_root,
+};
 
 fn workflow_status_helper_path() -> PathBuf {
     repo_root().join("bin/superpowers-workflow-status")
@@ -620,6 +631,121 @@ fn canonical_workflow_status_refresh_limits_cross_slug_manifest_recovery_scan() 
     let manifest_json = fs::read_to_string(current_manifest_path)
         .expect("current manifest should be written after refresh");
     assert!(!manifest_json.contains(expected_plan));
+}
+
+#[test]
+fn canonical_workflow_status_ignores_manifest_selected_spec_when_branch_mismatches() {
+    let (repo_dir, state_dir) = init_repo("workflow-status-manifest-branch-mismatch");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_a = "docs/superpowers/specs/2026-03-24-branch-mismatch-a.md";
+    let spec_b = "docs/superpowers/specs/2026-03-24-branch-mismatch-b.md";
+
+    for spec_path in [spec_a, spec_b] {
+        write_file(
+            &repo.join(spec_path),
+            "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+        );
+    }
+
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    write_manifest(
+        &manifest_path(&identity, state),
+        &WorkflowManifest {
+            version: 1,
+            repo_root: identity.repo_root.to_string_lossy().into_owned(),
+            branch: String::from("other-branch"),
+            expected_spec_path: spec_a.to_owned(),
+            expected_plan_path: String::new(),
+            status: String::from("spec_approved_needs_plan"),
+            next_skill: String::from("superpowers:writing-plans"),
+            reason: String::from("stale-branch-manifest"),
+            note: String::from("stale-branch-manifest"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
+    );
+
+    let status_json = parse_json(
+        &run_rust_superpowers(
+            repo,
+            state,
+            &["workflow", "status"],
+            "workflow status should ignore a branch-mismatched manifest-selected spec",
+        ),
+        "workflow status should ignore a branch-mismatched manifest-selected spec",
+    );
+
+    assert_eq!(status_json["status"], "spec_draft");
+    assert_eq!(status_json["plan_path"], "");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| value == "ambiguous_spec_candidates"),
+        "branch-mismatched manifests should not suppress ambiguous current spec candidates"
+    );
+}
+
+#[test]
+fn canonical_workflow_status_ignores_manifest_selected_plan_when_repo_root_mismatches() {
+    let (repo_dir, state_dir) = init_repo("workflow-status-manifest-root-mismatch");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/superpowers/specs/2026-03-24-root-mismatch-spec.md";
+    let plan_a = "docs/superpowers/plans/2026-03-24-root-mismatch-a.md";
+    let plan_b = "docs/superpowers/plans/2026-03-24-root-mismatch-b.md";
+
+    write_file(
+        &repo.join(spec_path),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+    for plan_path in [plan_a, plan_b] {
+        write_file(
+            &repo.join(plan_path),
+            &format!(
+                "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n"
+            ),
+        );
+    }
+
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    write_manifest(
+        &manifest_path(&identity, state),
+        &WorkflowManifest {
+            version: 1,
+            repo_root: String::from("/tmp/another-repo"),
+            branch: identity.branch_name.clone(),
+            expected_spec_path: spec_path.to_owned(),
+            expected_plan_path: plan_a.to_owned(),
+            status: String::from("plan_draft"),
+            next_skill: String::from("superpowers:plan-eng-review"),
+            reason: String::from("stale-root-manifest"),
+            note: String::from("stale-root-manifest"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
+    );
+
+    let status_json = parse_json(
+        &run_rust_superpowers(
+            repo,
+            state,
+            &["workflow", "status"],
+            "workflow status should ignore a repo-root-mismatched manifest-selected plan",
+        ),
+        "workflow status should ignore a repo-root-mismatched manifest-selected plan",
+    );
+
+    assert_eq!(status_json["status"], "spec_approved_needs_plan");
+    assert_eq!(status_json["plan_path"], "");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| value == "ambiguous_plan_candidates"),
+        "repo-root-mismatched manifests should not suppress ambiguous current plan candidates"
+    );
 }
 
 #[test]

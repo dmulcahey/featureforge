@@ -1,12 +1,19 @@
+#[path = "support/executable.rs"]
+mod executable_support;
+#[path = "support/files.rs"]
+mod files_support;
+#[path = "support/process.rs"]
+mod process_support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+use executable_support::make_executable;
+use files_support::write_file;
+use process_support::{repo_root, run, run_checked};
 
 fn skill_doc_path() -> PathBuf {
     repo_root().join("superpowers-upgrade/SKILL.md")
@@ -14,24 +21,6 @@ fn skill_doc_path() -> PathBuf {
 
 fn read_skill_doc() -> String {
     fs::read_to_string(skill_doc_path()).expect("superpowers-upgrade skill doc should be readable")
-}
-
-fn run(mut command: Command, context: &str) -> Output {
-    command
-        .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
-}
-
-fn run_checked(command: Command, context: &str) -> Output {
-    let output = run(command, context);
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
 }
 
 fn assert_contains(content: &str, needle: &str, label: &str) {
@@ -96,23 +85,6 @@ fn run_bash_block(
     }
     run(command, context)
 }
-
-fn write_file(path: &Path, contents: &str) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("parent directory should be creatable");
-    }
-    fs::write(path, contents).expect("file should be writable");
-}
-
-#[cfg(unix)]
-fn make_executable(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-        .expect("path should be executable");
-}
-
-#[cfg(not(unix))]
-fn make_executable(_: &Path) {}
 
 fn make_valid_install(dir: &Path, git_mode: &str) {
     fs::create_dir_all(dir.join("bin")).expect("install bin dir should exist");

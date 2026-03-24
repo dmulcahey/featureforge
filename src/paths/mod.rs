@@ -1,3 +1,7 @@
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use crate::diagnostics::{DiagnosticError, FailureClass};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -79,6 +83,28 @@ pub fn normalize_identifier_token(value: &str) -> String {
     }
 }
 
+pub fn superpowers_state_dir() -> PathBuf {
+    env::var_os("SUPERPOWERS_STATE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
+        .unwrap_or_else(|| PathBuf::from(".superpowers"))
+}
+
+pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temp_path = atomic_temp_path(path);
+    fs::write(&temp_path, contents)?;
+    match fs::rename(&temp_path, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temp_path);
+            Err(error)
+        }
+    }
+}
+
 fn invalid_repo_path(input: &str) -> DiagnosticError {
     DiagnosticError::new(
         FailureClass::InvalidRepoPath,
@@ -90,4 +116,17 @@ fn looks_like_windows_absolute(input: &str) -> bool {
     let bytes = input.as_bytes();
     matches!(bytes, [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic())
         || input.starts_with("\\\\")
+}
+
+fn atomic_temp_path(path: &Path) -> PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    let file_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("state");
+    path.with_file_name(format!("{file_name}.tmp-{pid}-{stamp}"))
 }

@@ -1,56 +1,25 @@
+#[path = "support/bin.rs"]
+mod bin_support;
+#[path = "support/files.rs"]
+mod files_support;
+#[path = "support/json.rs"]
+mod json_support;
+#[path = "support/process.rs"]
+mod process_support;
+
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn compiled_superpowers_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_superpowers"))
-}
+use bin_support::compiled_superpowers_path;
+use files_support::write_file;
+use json_support::parse_json;
+use process_support::{repo_root, run, run_checked};
 
 fn skill_doc_path() -> PathBuf {
     repo_root().join("skills/using-superpowers/SKILL.md")
-}
-
-fn run(mut command: Command, context: &str) -> Output {
-    command
-        .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
-}
-
-fn run_checked(command: Command, context: &str) -> Output {
-    let output = run(command, context);
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
-fn parse_json(output: &Output, context: &str) -> Value {
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
-}
-
-fn write_file(path: &Path, contents: &str) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("parent directory should be creatable");
-    }
-    fs::write(path, contents).expect("file should be writable");
 }
 
 fn read_skill_doc() -> String {
@@ -109,6 +78,22 @@ fn run_bash_block(state_dir: &Path, home_dir: &Path, script: &str, context: &str
         .env("SUPERPOWERS_STATE_DIR", state_dir)
         .env("HOME", home_dir)
         .env("SUPERPOWERS_COMPAT_BIN", compiled_superpowers_path());
+    run(command, context)
+}
+
+fn run_bash_block_without_override(
+    state_dir: &Path,
+    home_dir: &Path,
+    script: &str,
+    context: &str,
+) -> Output {
+    let mut command = Command::new("bash");
+    command
+        .arg("-lc")
+        .arg(script)
+        .current_dir(repo_root())
+        .env("SUPERPOWERS_STATE_DIR", state_dir)
+        .env("HOME", home_dir);
     run(command, context)
 }
 
@@ -272,6 +257,29 @@ fn using_superpowers_skill_documents_and_derives_the_canonical_bypass_gate() {
         "decision path should live under {:?}, got {}",
         expected_prefix,
         decision_path
+    );
+}
+
+#[test]
+fn using_superpowers_preamble_recognizes_the_repo_checkout_as_a_runtime_root() {
+    let content = read_skill_doc();
+    let preamble = extract_bash_block(&content, "## Preamble (run first)");
+    let temp_home = TempDir::new().expect("home tempdir should exist");
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let output = run_bash_block_without_override(
+        state_dir.path(),
+        temp_home.path(),
+        &format!("{preamble}\nprintf \"%s\\n\" \"$_SUPERPOWERS_ROOT\"\n"),
+        "derive using-superpowers runtime root without compat override",
+    );
+    let derived_root = extract_last_nonempty_line(
+        &output.stdout,
+        "derive using-superpowers runtime root without compat override",
+    );
+    assert_eq!(
+        PathBuf::from(&derived_root),
+        repo_root(),
+        "using-superpowers preamble should recognize the repo checkout as the runtime root without test-only launcher overrides"
     );
 }
 

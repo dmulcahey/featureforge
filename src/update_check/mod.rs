@@ -9,6 +9,7 @@ use serde::Serialize;
 use crate::cli::update_check::UpdateCheckCli;
 use crate::config;
 use crate::diagnostics::{DiagnosticError, FailureClass};
+use crate::paths::write_atomic as write_atomic_file;
 
 const UP_TO_DATE_TTL: Duration = Duration::from_secs(60 * 60);
 const UPGRADE_AVAILABLE_TTL: Duration = Duration::from_secs(60 * 60 * 12);
@@ -285,32 +286,11 @@ fn read_first_existing(
 }
 
 fn write_state_file(path: &Path, contents: &str) -> Result<(), DiagnosticError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            DiagnosticError::new(
-                FailureClass::UpdateCheckStateFailed,
-                format!(
-                    "Could not create update-check directory {}: {error}",
-                    parent.display()
-                ),
-            )
-        })?;
-    }
-    let tmp_path = path.with_extension("tmp");
-    fs::write(&tmp_path, contents).map_err(|error| {
+    write_atomic_file(path, contents).map_err(|error| {
         DiagnosticError::new(
             FailureClass::UpdateCheckStateFailed,
             format!(
-                "Could not write update-check temp file {}: {error}",
-                tmp_path.display()
-            ),
-        )
-    })?;
-    fs::rename(&tmp_path, path).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::UpdateCheckStateFailed,
-            format!(
-                "Could not move update-check file into place {}: {error}",
+                "Could not persist update-check state {}: {error}",
                 path.display()
             ),
         )

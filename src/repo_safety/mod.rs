@@ -11,7 +11,10 @@ use crate::cli::repo_safety::{RepoSafetyApproveArgs, RepoSafetyCheckArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::git::{discover_repo_identity, discover_slug_identity};
 use crate::instructions::{collect_active_instruction_files, parse_protected_branches};
-use crate::paths::{RepoPath, normalize_identifier_token, normalize_whitespace};
+use crate::paths::{
+    RepoPath, normalize_identifier_token, normalize_whitespace, superpowers_state_dir,
+    write_atomic as write_atomic_file,
+};
 
 const DEFAULT_PROTECTED_BRANCHES: &[&str] = &["main", "master", "dev", "develop"];
 const WRITE_TARGET_ALLOWLIST: &[&str] = &[
@@ -707,38 +710,17 @@ fn move_file(source: &Path, destination: &Path) -> Result<(), DiagnosticError> {
 }
 
 fn write_json_atomic(path: &Path, record: &ApprovalRecord) -> Result<(), DiagnosticError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            DiagnosticError::new(
-                FailureClass::ApprovalWriteFailed,
-                format!(
-                    "Could not create approval directory {}: {error}",
-                    parent.display()
-                ),
-            )
-        })?;
-    }
-    let tmp_path = path.with_extension("tmp");
     let payload = serde_json::to_string(record).map_err(|error| {
         DiagnosticError::new(
             FailureClass::ApprovalWriteFailed,
             format!("Could not serialize approval record: {error}"),
         )
     })?;
-    fs::write(&tmp_path, payload).map_err(|error| {
+    write_atomic_file(path, payload).map_err(|error| {
         DiagnosticError::new(
             FailureClass::ApprovalWriteFailed,
             format!(
-                "Could not write approval temp file {}: {error}",
-                tmp_path.display()
-            ),
-        )
-    })?;
-    fs::rename(&tmp_path, path).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::ApprovalWriteFailed,
-            format!(
-                "Could not move approval record into place {}: {error}",
+                "Could not persist approval record {}: {error}",
                 path.display()
             ),
         )
@@ -772,10 +754,7 @@ fn warn_if_pending(pending: bool) {
 }
 
 fn state_dir() -> PathBuf {
-    env::var_os("SUPERPOWERS_STATE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
-        .unwrap_or_else(|| PathBuf::from(".superpowers"))
+    superpowers_state_dir()
 }
 
 fn short_hash(value: &str, width: usize) -> String {

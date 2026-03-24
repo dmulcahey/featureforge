@@ -1,13 +1,23 @@
-mod support;
+#[path = "support/bin.rs"]
+mod bin_support;
+#[path = "support/files.rs"]
+mod files_support;
+#[path = "support/json.rs"]
+mod json_support;
+#[path = "support/process.rs"]
+mod process_support;
+#[path = "support/workflow.rs"]
+mod workflow_support;
 
 use assert_cmd::cargo::CommandCargoExt;
+use bin_support::compiled_superpowers_path;
+use files_support::write_file;
+use json_support::parse_json;
+use process_support::{repo_root, run};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use support::workflow::{
-    compiled_superpowers_path, init_repo, install_full_contract_ready_artifacts, parse_json,
-    repo_root, run, workflow_fixture_root, write_file,
-};
 use tempfile::TempDir;
+use workflow_support::{init_repo, install_full_contract_ready_artifacts, workflow_fixture_root};
 
 fn public_workflow_wrapper_path() -> PathBuf {
     repo_root().join("bin/superpowers-workflow")

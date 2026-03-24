@@ -11,7 +11,7 @@ use crate::contracts::plan::AnalyzePlanReport;
 use crate::contracts::runtime::analyze_contract_report;
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::git::{RepositoryIdentity, discover_repo_identity};
-use crate::paths::RepoPath;
+use crate::paths::{RepoPath, superpowers_state_dir};
 use crate::session_entry;
 use crate::workflow::manifest::{
     ManifestLoadResult, WorkflowManifest, load_manifest, load_manifest_read_only, manifest_path,
@@ -109,7 +109,7 @@ impl WorkflowRuntime {
 
     fn discover_with_loader(current_dir: &Path, read_only: bool) -> Result<Self, DiagnosticError> {
         let identity = discover_repo_identity(current_dir)?;
-        let state_dir = state_dir();
+        let state_dir = superpowers_state_dir();
         let manifest_path = manifest_path(&identity, &state_dir);
         let load = if read_only {
             load_manifest_read_only
@@ -275,7 +275,7 @@ impl WorkflowRuntime {
         let repo_path = if let Some(path) = path {
             normalize_repo_path(path)?
         } else {
-            self.manifest
+            self.matching_manifest()
                 .as_ref()
                 .and_then(|manifest| match artifact {
                     ArtifactKind::Spec if !manifest.expected_spec_path.is_empty() => {
@@ -379,6 +379,13 @@ impl WorkflowRuntime {
 }
 
 impl WorkflowRuntime {
+    fn matching_manifest(&self) -> Option<&WorkflowManifest> {
+        self.manifest.as_ref().filter(|manifest| {
+            manifest.repo_root == self.identity.repo_root.to_string_lossy()
+                && manifest.branch == self.identity.branch_name
+        })
+    }
+
     fn decorate_route_with_manifest_context(&self, mut route: WorkflowRoute) -> WorkflowRoute {
         if let Some(warning) = &self.manifest_warning {
             if !route
@@ -477,7 +484,7 @@ fn resolve_route(
     let manifest_path = runtime.manifest_path.display().to_string();
     let root = runtime.identity.repo_root.to_string_lossy().into_owned();
 
-    if let Some(manifest) = &runtime.manifest {
+    if let Some(manifest) = runtime.matching_manifest() {
         if !manifest.expected_spec_path.is_empty()
             && !runtime
                 .identity
@@ -559,7 +566,7 @@ fn resolve_route(
         });
     }
 
-    let manifest_selected_spec = runtime.manifest.as_ref().and_then(|manifest| {
+    let manifest_selected_spec = runtime.matching_manifest().and_then(|manifest| {
         if manifest.expected_spec_path.is_empty() {
             return None;
         }
@@ -630,8 +637,7 @@ fn resolve_route(
 
     let approved_spec = selected_spec;
     let manifest_selected_plan = runtime
-        .manifest
-        .as_ref()
+        .matching_manifest()
         .and_then(|manifest| {
             if manifest.expected_plan_path.is_empty() {
                 return None;
@@ -648,8 +654,7 @@ fn resolve_route(
         .filter(|plan| {
             plan.path
                 == runtime
-                    .manifest
-                    .as_ref()
+                    .matching_manifest()
                     .map_or("", |manifest| manifest.expected_plan_path.as_str())
         });
     let exact_matching_plans = plan_candidates
@@ -704,7 +709,7 @@ fn resolve_route(
             }
         });
     let preserved_plan_path = runtime
-        .manifest
+        .matching_manifest()
         .as_ref()
         .map(|manifest| manifest.expected_plan_path.clone())
         .filter(|path| !path.is_empty());
@@ -964,13 +969,6 @@ fn read_session_entry(state_dir: &Path) -> SessionEntryState {
             reason: error.message().to_owned(),
         },
     }
-}
-
-fn state_dir() -> PathBuf {
-    env::var_os("SUPERPOWERS_STATE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
-        .unwrap_or_else(|| PathBuf::from(".superpowers"))
 }
 
 pub fn sync_reason_codes(route: &WorkflowRoute) -> Vec<String> {

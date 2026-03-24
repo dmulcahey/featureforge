@@ -1,3 +1,12 @@
+#[path = "support/failure_json.rs"]
+mod failure_json_support;
+#[path = "support/files.rs"]
+mod files_support;
+#[path = "support/json.rs"]
+mod json_support;
+#[path = "support/process.rs"]
+mod process_support;
+
 use assert_cmd::cargo::CommandCargoExt;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -7,61 +16,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+use failure_json_support::parse_failure_json;
+use files_support::write_file;
+use json_support::parse_json;
+use process_support::{repo_root, run, run_checked};
 
 fn repo_safety_helper_path() -> PathBuf {
     repo_root().join("bin/superpowers-repo-safety")
-}
-
-fn run(mut command: Command, context: &str) -> Output {
-    command
-        .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
-}
-
-fn run_checked(command: Command, context: &str) -> Output {
-    let output = run(command, context);
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
-fn parse_json(output: &Output, context: &str) -> Value {
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
-}
-
-fn parse_failure_json(output: &Output, context: &str) -> Value {
-    assert!(
-        !output.status.success(),
-        "{context} should fail, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stderr)
-        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
-}
-
-fn write_file(path: &Path, contents: &str) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("parent directory should be creatable");
-    }
-    fs::write(path, contents).expect("file should be writable");
 }
 
 fn init_repo(name: &str, branch: &str, remote_url: &str) -> (TempDir, TempDir) {

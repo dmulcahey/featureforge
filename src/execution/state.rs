@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -15,6 +14,7 @@ use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::git::discover_repo_identity;
 use crate::paths::{
     RepoPath, normalize_identifier_token, normalize_repo_relative_path, normalize_whitespace,
+    superpowers_state_dir,
 };
 use crate::repo_safety::RepoSafetyRuntime;
 
@@ -1309,10 +1309,7 @@ pub fn current_head_sha(repo_root: &Path) -> Result<String, JsonFailure> {
 }
 
 pub fn state_dir() -> PathBuf {
-    env::var_os("SUPERPOWERS_STATE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
-        .unwrap_or_else(|| PathBuf::from(".superpowers"))
+    superpowers_state_dir()
 }
 
 pub fn current_file_proof(repo_root: &Path, path: &str) -> String {

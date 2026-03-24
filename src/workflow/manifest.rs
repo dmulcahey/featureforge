@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::git::RepositoryIdentity;
-use crate::paths::normalize_identifier_token;
+use crate::paths::{normalize_identifier_token, write_atomic as write_atomic_file};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct WorkflowManifest {
@@ -126,20 +126,9 @@ fn recover_slug_changed_manifest_with_loader(
 }
 
 pub fn save_manifest(path: &Path, manifest: &WorkflowManifest) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let payload = serde_json::to_string(manifest)
         .expect("workflow manifest serialization should stay valid json");
-    let temp_path = temporary_manifest_path(path);
-    fs::write(&temp_path, payload)?;
-    match fs::rename(&temp_path, path) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = fs::remove_file(&temp_path);
-            Err(error)
-        }
-    }
+    write_atomic_file(path, payload)
 }
 
 fn derive_repo_slug(identity: &RepositoryIdentity) -> String {
@@ -174,16 +163,4 @@ fn corrupt_backup_path(path: &Path) -> PathBuf {
         .and_then(std::ffi::OsStr::to_str)
         .unwrap_or("workflow-state.json");
     path.with_file_name(format!("{file_name}.corrupt-{stamp}"))
-}
-
-fn temporary_manifest_path(path: &Path) -> PathBuf {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let file_name = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("workflow-state.json");
-    path.with_file_name(format!("{file_name}.tmp-{stamp}"))
 }

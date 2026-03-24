@@ -7,7 +7,9 @@ use serde::Serialize;
 
 use crate::cli::session_entry::{SessionEntryRecordArgs, SessionEntryResolveArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::paths::normalize_identifier_token;
+use crate::paths::{
+    normalize_identifier_token, superpowers_state_dir, write_atomic as write_atomic_file,
+};
 
 const MAX_MESSAGE_BYTES: u64 = 65_536;
 const SUPERPOWERS_SKILLS: &[&str] = &[
@@ -321,32 +323,11 @@ impl SessionEntryRuntime {
     }
 
     fn write_decision(&self, decision: &str) -> Result<(), DiagnosticError> {
-        if let Some(parent) = self.canonical_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                DiagnosticError::new(
-                    FailureClass::DecisionWriteFailed,
-                    format!(
-                        "Could not create the session-entry state directory {}: {error}",
-                        parent.display()
-                    ),
-                )
-            })?;
-        }
-        let tmp_path = self.canonical_path.with_extension("tmp");
-        fs::write(&tmp_path, format!("{decision}\n")).map_err(|error| {
+        write_atomic_file(&self.canonical_path, format!("{decision}\n")).map_err(|error| {
             DiagnosticError::new(
                 FailureClass::DecisionWriteFailed,
                 format!(
-                    "Could not write the session-entry temp file {}: {error}",
-                    tmp_path.display()
-                ),
-            )
-        })?;
-        fs::rename(&tmp_path, &self.canonical_path).map_err(|error| {
-            DiagnosticError::new(
-                FailureClass::DecisionWriteFailed,
-                format!(
-                    "Could not move the session-entry decision file into place {}: {error}",
+                    "Could not persist the session-entry decision file {}: {error}",
                     self.canonical_path.display()
                 ),
             )
@@ -471,10 +452,7 @@ fn clause_requests_phrase(clause: &str, phrase: &str) -> bool {
 }
 
 fn state_dir() -> PathBuf {
-    env::var_os("SUPERPOWERS_STATE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".superpowers")))
-        .unwrap_or_else(|| PathBuf::from(".superpowers"))
+    superpowers_state_dir()
 }
 
 fn max_message_bytes() -> u64 {
