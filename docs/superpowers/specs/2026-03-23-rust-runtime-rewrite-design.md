@@ -1,7 +1,7 @@
 # Superpowers Rust Runtime Rewrite
 
 **Workflow State:** CEO Approved
-**Spec Revision:** 3
+**Spec Revision:** 4
 **Last Reviewed By:** plan-ceo-review
 
 ## Summary
@@ -1424,9 +1424,12 @@ Checked-in binary expectations:
 
 - keep checksum or equivalent integrity metadata checked in alongside the supported binaries
 - keep the `bin/prebuilt/` layout stable enough that install scripts and migration tooling can target it deterministically
-- document macOS arm64 and Windows x64 as the first-release tier-1 targets
+- document macOS arm64 as the first-release fully validated target and Windows x64 as a first-release packaged/installable target whose direct host-launch validation may follow later
 - treat Linux x64 as follow-on scope until a later release explicitly promotes it
 - keep the checked-in `bin/prebuilt/` binary set version-aligned with the Rust source revision and checked-in integrity metadata for the same runtime revision
+- treat macOS arm64 host fresh-install proof as the blocking cutover gate for the initial Rust release
+- treat Windows x64 checked-in binary refresh, manifest resolution, checksum verification, install-time provisioning, and PE artifact sanity checks as required packaging proof for the initial Rust release
+- treat direct Windows-host `superpowers.exe` launch proof as advisory follow-on validation rather than a blocker or a separately tracked release obligation for the initial cutover
 
 ## Developer Workflow
 
@@ -1671,7 +1674,7 @@ Before the rewrite can be called complete:
 - [REQ-045][decision] Helper-owned runtime state under `~/.superpowers/` should remain file-based and inspectable; this rewrite should not introduce SQLite or another embedded database for local manifests, approvals, config, caches, or session flags.
 - [REQ-046][behavior] The Rust rewrite must not be used as a general CLI UX redesign; stable command families should preserve current reviewed human-readable summaries, headings, ordering, and machine-readable field shapes unless a compatibility exception or reviewed snapshot change explicitly authorizes the difference.
 - [REQ-047][behavior] `superpowers install migrate` must surface what non-rebuildable helper-owned state changed, what was backed up, and what still needs user action instead of rewriting that state silently during unrelated command execution.
-- [REQ-048][decision] The first public Rust release contract should treat macOS arm64 and Windows x64 as the only tier-1 release-blocking targets; Linux x64 may be added in a later release rather than blocking the initial cutover.
+- [REQ-048][decision] The first Rust release contract should keep macOS arm64 and Windows x64 as the only tier-1 checked-in packaging targets, but only macOS arm64 host validation blocks the initial cutover; Windows x64 may ship as a packaged/installable target once manifest, checksum, install-provisioning, and PE artifact checks are green, while direct Windows-host launch validation remains advisory follow-on evidence.
 - [REQ-049][behavior] When pending explicit migration of non-rebuildable helper-owned state is detected, read-only and diagnostic commands may continue only with explicit warning state, while mutation paths and any command that depends on migrated non-rebuildable state must fail closed with remediation to run `superpowers install migrate`.
 - [REQ-050][behavior] Legacy repo-safety approval records should be migrated forward by `superpowers install migrate` whenever they can be parsed and rewritten safely; only unreadable or unmigratable approval records should fall back to explicit invalidation and fresh approval.
 - [REQ-051][decision] The cleaned helper-owned runtime state layout should keep stable subsystem paths directly under `~/.superpowers/`, with evolution handled by file-format or schema versioning rather than a versioned root directory.
@@ -1684,7 +1687,7 @@ Before the rewrite can be called complete:
 - [NONGOAL-004][non-goal] Do not preserve shell implementation accidents such as wrapper-side payload rewriting or listing-order artifact discovery as if they were product requirements.
 - [NONGOAL-005][non-goal] Do not require a local Rust or Cargo build, or a remote artifact fetch, as the normal skills-installation path on supported targets.
 - [VERIFY-001][verification] Release readiness must include green Rust integration coverage, green launcher or wrapper smoke coverage, and a reviewed differential report for all intentional runtime differences.
-- [VERIFY-002][verification] Packaging verification for the first Rust cutover must cover the checked-in macOS arm64 and Windows x64 binaries plus installation and clean-installed-surface sanity checks; Linux x64 verification belongs to the later release that adds Linux packaging to the supported contract.
+- [VERIFY-002][verification] Packaging verification for the first Rust cutover must cover blocking macOS arm64 fresh-install proof plus checked-in Windows x64 binary refresh, manifest resolution, checksum verification, install-time provisioning, and PE artifact sanity checks; direct Windows-host launch proof is advisory follow-on evidence rather than a cutover blocker. Linux x64 verification belongs to the later release that adds Linux packaging to the supported contract.
 - [VERIFY-003][verification] Documentation verification must confirm that runtime README, operator docs, testing docs, and release notes describe the Rust runtime, the canonical command surface, and any explicit exceptions accurately.
 - [VERIFY-004][verification] Phase exit criteria must be checked explicitly during execution planning and cutover review, with no unexplained transition to a later phase.
 - [VERIFY-005][verification] Cutover verification must include legacy-local-state migration or rebuild coverage plus rollback proof for any helper-owned state format or path that changes.
