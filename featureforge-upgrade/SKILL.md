@@ -13,27 +13,30 @@ This section is referenced by all skill preambles when they detect `UPGRADE_AVAI
 
 ### Step 1: Resolve install root
 
-Resolve the active install once and reuse it for the rest of the flow:
+Reuse the already selected runtime root when it is available. Otherwise resolve the active install once through the selected runtime binary and reuse it for the rest of the flow:
 
 ```bash
-RUNTIME_ROOT_JSON=""
-if ! RUNTIME_ROOT_JSON=$(featureforge repo runtime-root --json 2>/dev/null); then
-  echo "ERROR: featureforge runtime-root helper unavailable"
-  exit 1
+FEATUREFORGE_RUNTIME_RESOLVER="${_FEATUREFORGE_BIN:-featureforge}"
+INSTALL_DIR="${_FEATUREFORGE_ROOT:-}"
+
+if [ -z "$INSTALL_DIR" ]; then
+  if ! INSTALL_DIR=$("$FEATUREFORGE_RUNTIME_RESOLVER" repo runtime-root --path 2>/dev/null); then
+    echo "ERROR: featureforge runtime-root helper unavailable"
+    exit 1
+  fi
 fi
 
-if ! printf '%s' "$RUNTIME_ROOT_JSON" | grep -q '"resolved":true'; then
+if [ -z "$INSTALL_DIR" ]; then
   echo "ERROR: featureforge runtime root unavailable"
   exit 1
 fi
 
-INSTALL_DIR="$(printf '%s' "$RUNTIME_ROOT_JSON" | sed -n 's/.*"root":"\([^"]*\)".*/\1/p')"
-if [ -z "$INSTALL_DIR" ]; then
-  echo "ERROR: featureforge runtime-root helper returned unreadable JSON"
+FEATUREFORGE_BIN="$INSTALL_DIR/bin/featureforge"
+if [ ! -x "$FEATUREFORGE_BIN" ]; then
+  echo "ERROR: featureforge runtime root returned no executable featureforge binary"
   exit 1
 fi
 
-FEATUREFORGE_BIN="$INSTALL_DIR/bin/featureforge"
 echo "INSTALL_DIR=$INSTALL_DIR"
 ```
 

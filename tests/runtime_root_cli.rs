@@ -56,6 +56,35 @@ fn runtime_root_helper_resolves_the_repo_local_runtime() {
 }
 
 #[test]
+fn runtime_root_path_helper_resolves_the_repo_local_runtime_without_json_parsing() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let repo = repo_root();
+
+    let output = run_rust_featureforge_with_env_control(
+        Some(repo.as_path()),
+        Some(state_dir.path()),
+        Some(home_dir.path()),
+        &["FEATUREFORGE_DIR", "USERPROFILE"],
+        &[],
+        &["repo", "runtime-root", "--path"],
+        "repo runtime-root path repo-local success",
+    );
+
+    assert!(
+        output.status.success(),
+        "repo runtime-root --path should succeed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim_end(),
+        repo.to_string_lossy(),
+        "repo runtime-root --path should print the resolved root directly"
+    );
+}
+
+#[test]
 fn runtime_root_helper_reports_unresolved_without_guessing() {
     let outside_repo = TempDir::new().expect("outside repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
@@ -84,6 +113,33 @@ fn runtime_root_helper_reports_unresolved_without_guessing() {
     assert!(
         json["validation"]["has_binary"].is_boolean(),
         "unresolved helper should expose has_binary as a boolean"
+    );
+}
+
+#[test]
+fn runtime_root_path_helper_reports_unresolved_with_empty_stdout() {
+    let outside_repo = TempDir::new().expect("outside repo tempdir should exist");
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+
+    let output = run_rust_featureforge_with_env_control(
+        Some(outside_repo.path()),
+        Some(state_dir.path()),
+        None,
+        &["FEATUREFORGE_DIR", "HOME", "USERPROFILE"],
+        &[],
+        &["repo", "runtime-root", "--path"],
+        "repo runtime-root path unresolved",
+    );
+
+    assert!(
+        output.status.success(),
+        "unresolved repo runtime-root --path should exit successfully\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+        "unresolved repo runtime-root --path should print no path"
     );
 }
 
@@ -117,5 +173,41 @@ fn runtime_root_helper_rejects_invalid_featureforge_dir_without_fallback() {
     assert!(
         message.contains("FEATUREFORGE_DIR"),
         "failure output should name FEATUREFORGE_DIR, got: {message}"
+    );
+}
+
+#[test]
+fn runtime_root_path_helper_rejects_invalid_featureforge_dir_without_fallback() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let invalid_dir = TempDir::new().expect("invalid runtime tempdir should exist");
+    let repo = repo_root();
+
+    let output = run_rust_featureforge(
+        Some(repo.as_path()),
+        Some(state_dir.path()),
+        Some(home_dir.path()),
+        &[(
+            "FEATUREFORGE_DIR",
+            invalid_dir.path().to_string_lossy().as_ref(),
+        )],
+        &["repo", "runtime-root", "--path"],
+        "repo runtime-root path invalid env",
+    );
+
+    assert!(
+        !output.status.success(),
+        "invalid FEATUREFORGE_DIR should fail for --path\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ResolverContractViolation"),
+        "path failure output should name the failure class, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("FEATUREFORGE_DIR"),
+        "path failure output should name FEATUREFORGE_DIR, got: {stderr}"
     );
 }

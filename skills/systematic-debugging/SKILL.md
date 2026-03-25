@@ -18,11 +18,9 @@ _FEATUREFORGE_BIN=""
 [ -n "${FEATUREFORGE_COMPAT_BIN:-}" ] && [ -x "$FEATUREFORGE_COMPAT_BIN" ] && _FEATUREFORGE_BIN="$FEATUREFORGE_COMPAT_BIN"
 [ -z "$_FEATUREFORGE_BIN" ] && [ -x "$_REPO_ROOT/bin/featureforge" ] && _FEATUREFORGE_BIN="$_REPO_ROOT/bin/featureforge"
 [ -z "$_FEATUREFORGE_BIN" ] && command -v featureforge >/dev/null 2>&1 && _FEATUREFORGE_BIN="$(command -v featureforge)"
-_FEATUREFORGE_RUNTIME_ROOT_JSON=""
-if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_JSON=$("$_FEATUREFORGE_BIN" repo runtime-root --json 2>/dev/null); then
-  if printf '%s' "$_FEATUREFORGE_RUNTIME_ROOT_JSON" | grep -q '"resolved":true'; then
-    _FEATUREFORGE_ROOT=$(printf '%s' "$_FEATUREFORGE_RUNTIME_ROOT_JSON" | sed -n 's/.*"root":"\([^"]*\)".*/\1/p')
-  fi
+_FEATUREFORGE_RUNTIME_ROOT_PATH=""
+if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_PATH=$("$_FEATUREFORGE_BIN" repo runtime-root --path 2>/dev/null); then
+  [ -n "$_FEATUREFORGE_RUNTIME_ROOT_PATH" ] && _FEATUREFORGE_ROOT="$_FEATUREFORGE_RUNTIME_ROOT_PATH"
 fi
 _UPD=""
 [ -n "$_FEATUREFORGE_ROOT" ] && _UPD=$("$_FEATUREFORGE_ROOT/bin/featureforge" update-check 2>/dev/null || true)
@@ -36,7 +34,7 @@ _CONTRIB=""
 [ -n "$_FEATUREFORGE_ROOT" ] && _CONTRIB=$("$_FEATUREFORGE_ROOT/bin/featureforge" config get featureforge_contributor 2>/dev/null || true)
 ```
 
-If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the runtime root returned by `featureforge repo runtime-root --json` and follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.
+If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the already selected runtime root in `$_FEATUREFORGE_ROOT`; if that root is not set yet, resolve it through `$_FEATUREFORGE_BIN repo runtime-root --path` and stop instead of guessing an install path. Then follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.
 
 ## Search Before Building
 

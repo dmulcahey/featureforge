@@ -85,7 +85,7 @@ fn make_runtime_root(dir: &Path) {
     fs::create_dir_all(dir.join("bin")).expect("runtime bin dir should exist");
     fs::write(
         dir.join("bin/featureforge"),
-        "#!/usr/bin/env bash\ncase \"${1:-}\" in\n  repo)\n    if [ \"${2:-}\" = \"runtime-root\" ] && [ \"${3:-}\" = \"--json\" ]; then\n      printf '{\"resolved\":true,\"root\":\"%s\",\"source\":\"featureforge_dir\",\"validation\":{\"has_version\":true,\"has_binary\":true,\"upgrade_eligible\":true}}\\n' \"$(pwd -P)\"\n      exit 0\n    fi\n    exit 0\n    ;;\n  update-check)\n    exit 0\n    ;;\n  config)\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+        "#!/usr/bin/env bash\ncase \"${1:-}\" in\n  repo)\n    if [ \"${2:-}\" = \"runtime-root\" ] && [ \"${3:-}\" = \"--json\" ]; then\n      printf '{\"resolved\":true,\"root\":\"%s\",\"source\":\"featureforge_dir\",\"validation\":{\"has_version\":true,\"has_binary\":true,\"upgrade_eligible\":true}}\\n' \"$(pwd -P)\"\n      exit 0\n    fi\n    if [ \"${2:-}\" = \"runtime-root\" ] && [ \"${3:-}\" = \"--path\" ]; then\n      printf '%s\\n' \"$(pwd -P)\"\n      exit 0\n    fi\n    exit 0\n    ;;\n  update-check)\n    exit 0\n    ;;\n  config)\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
     )
     .expect("runtime launcher should be writable");
     #[cfg(unix)]
@@ -185,6 +185,34 @@ fn repo_checkout_canonical_launcher_supports_runtime_root_helper_contract() {
         &stdout,
         &format!("\"root\":\"{}\"", repo_root().display()),
         "bin/featureforge repo runtime-root --json",
+    );
+}
+
+#[test]
+fn repo_checkout_canonical_launcher_supports_runtime_root_path_contract() {
+    let launcher = if cfg!(windows) {
+        repo_root().join("bin/featureforge.exe")
+    } else {
+        repo_root().join("bin/featureforge")
+    };
+    let output = AssertCommand::new(launcher)
+        .current_dir(repo_root())
+        .timeout(Duration::from_secs(2))
+        .args(["repo", "runtime-root", "--path"])
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "repo-local launcher should support repo runtime-root --path\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("runtime-root --path stdout should be utf-8");
+    assert_eq!(
+        stdout.trim_end(),
+        repo_root().to_string_lossy(),
+        "bin/featureforge repo runtime-root --path should print the resolved root directly"
     );
 }
 

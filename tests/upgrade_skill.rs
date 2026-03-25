@@ -128,28 +128,23 @@ fn path_with_mock_featureforge(bin_dir: &Path) -> String {
     }
 }
 
-fn json_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn resolved_runtime_root_json(root: &Path) -> String {
-    format!(
-        "{{\"resolved\":true,\"root\":\"{}\",\"source\":\"featureforge_dir\",\"validation\":{{\"has_version\":true,\"has_binary\":true,\"upgrade_eligible\":true}}}}",
-        json_string(&root.to_string_lossy())
-    )
+fn resolved_runtime_root_path(root: &Path) -> String {
+    format!("{}\n", root.to_string_lossy())
 }
 
 #[test]
 fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let skill_doc = read_skill_doc();
     for pattern in [
-        "featureforge repo runtime-root --json",
+        "repo runtime-root --path",
+        "FEATUREFORGE_RUNTIME_RESOLVER=\"${_FEATUREFORGE_BIN:-featureforge}\"",
+        "INSTALL_DIR=\"${_FEATUREFORGE_ROOT:-}\"",
         "bin/featureforge",
         "FEATUREFORGE_BIN=\"$INSTALL_DIR/bin/featureforge\"",
         "VERSION",
         "ERROR: featureforge runtime-root helper unavailable",
         "ERROR: featureforge runtime root unavailable",
-        "ERROR: featureforge runtime-root helper returned unreadable JSON",
+        "ERROR: featureforge runtime root returned no executable featureforge binary",
         "Read `$INSTALL_DIR/RELEASE-NOTES.md`.",
         "git stash push --include-untracked",
         "git stash pop",
@@ -186,12 +181,12 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let helper_bin = tmp_root.path().join("mock-bin");
     let helper_path = path_with_mock_featureforge(&helper_bin);
     let resolved_install = tmp_root.path().join("resolved-install");
-    fs::create_dir_all(&resolved_install).expect("resolved install dir should exist");
+    make_valid_install(&resolved_install, "dir");
     write_mock_featureforge(
         &helper_bin,
         &format!(
-            "#!/usr/bin/env bash\nprintf '%s\\n' '{}'\n",
-            resolved_runtime_root_json(&resolved_install)
+            "#!/usr/bin/env bash\nprintf '%s' '{}'\n",
+            resolved_runtime_root_path(&resolved_install)
         ),
     );
 
@@ -210,12 +205,12 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     );
 
     let renamed_root = tmp_root.path().join("custom-runtime-name");
-    fs::create_dir_all(&renamed_root).expect("renamed root should exist");
+    make_valid_install(&renamed_root, "dir");
     write_mock_featureforge(
         &helper_bin,
         &format!(
-            "#!/usr/bin/env bash\nprintf '%s\\n' '{}'\n",
-            resolved_runtime_root_json(
+            "#!/usr/bin/env bash\nprintf '%s' '{}'\n",
+            resolved_runtime_root_path(
                 &renamed_root
                     .canonicalize()
                     .expect("renamed root canonicalize")
@@ -242,9 +237,71 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "upgrade skill step 1 arbitrary resolved path",
     );
 
+    let selected_runtime = tmp_root.path().join("selected-runtime");
+    make_valid_install(&selected_runtime, "dir");
     write_mock_featureforge(
         &helper_bin,
-        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"resolved\":false,\"root\":null,\"source\":\"unresolved\",\"validation\":{\"has_version\":false,\"has_binary\":false,\"upgrade_eligible\":false}}'\n",
+        "#!/usr/bin/env bash\necho '/wrong-runtime'\nexit 0\n",
+    );
+    let selected_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[
+            ("PATH", helper_path.as_str()),
+            (
+                "_FEATUREFORGE_ROOT",
+                selected_runtime.to_string_lossy().as_ref(),
+            ),
+        ],
+        "upgrade skill step 1 prefers selected runtime root",
+    );
+    let selected_stdout = String::from_utf8_lossy(&selected_output.stdout);
+    assert_contains(
+        &selected_stdout,
+        &format!("INSTALL_DIR={}", selected_runtime.display()),
+        "upgrade skill step 1 prefers selected runtime root",
+    );
+
+    let selected_bin_runtime = tmp_root.path().join("selected-bin-runtime");
+    make_valid_install(&selected_bin_runtime, "dir");
+    let selected_bin = tmp_root.path().join("selected-bin").join("featureforge");
+    write_mock_featureforge(
+        selected_bin
+            .parent()
+            .expect("selected bin parent should exist"),
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s' '{}'\n",
+            resolved_runtime_root_path(&selected_bin_runtime)
+        ),
+    );
+    write_mock_featureforge(
+        &helper_bin,
+        "#!/usr/bin/env bash\necho '/wrong-runtime'\nexit 0\n",
+    );
+    let selected_bin_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[
+            ("PATH", helper_path.as_str()),
+            (
+                "_FEATUREFORGE_BIN",
+                selected_bin.to_string_lossy().as_ref(),
+            ),
+        ],
+        "upgrade skill step 1 prefers selected runtime binary",
+    );
+    let selected_bin_stdout = String::from_utf8_lossy(&selected_bin_output.stdout);
+    assert_contains(
+        &selected_bin_stdout,
+        &format!("INSTALL_DIR={}", selected_bin_runtime.display()),
+        "upgrade skill step 1 prefers selected runtime binary",
+    );
+
+    write_mock_featureforge(
+        &helper_bin,
+        "#!/usr/bin/env bash\nexit 0\n",
     );
     let unresolved_output = run_bash_block(
         &current_root,
@@ -263,25 +320,30 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "upgrade skill step 1 unresolved helper",
     );
 
+    let non_runtime_dir = tmp_root.path().join("non-runtime");
+    fs::create_dir_all(&non_runtime_dir).expect("non-runtime dir should exist");
     write_mock_featureforge(
         &helper_bin,
-        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"resolved\":true,\"source\":\"featureforge_dir\"}'\n",
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s' '{}'\n",
+            resolved_runtime_root_path(&non_runtime_dir)
+        ),
     );
     let malformed_output = run_bash_block(
         &current_root,
         &home_dir,
         &step_one,
         &[("PATH", helper_path.as_str())],
-        "upgrade skill step 1 malformed helper",
+        "upgrade skill step 1 non-runtime helper result",
     );
     assert!(
         !malformed_output.status.success(),
-        "malformed helper output should fail closed"
+        "non-runtime helper output should fail closed"
     );
     assert_contains(
         &combined_output(&malformed_output),
-        "ERROR: featureforge runtime-root helper returned unreadable JSON",
-        "upgrade skill step 1 malformed helper",
+        "ERROR: featureforge runtime root returned no executable featureforge binary",
+        "upgrade skill step 1 non-runtime helper result",
     );
 
     fs::remove_file(helper_bin.join("featureforge")).expect("mock helper should remove");

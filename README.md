@@ -16,7 +16,7 @@ Six layers matter:
 
 - `featureforge session-entry` owns first-turn session entry.
 - `using-featureforge` is the human-readable entry router after session entry resolves to `enabled`.
-- generated skill preambles resolve the active runtime root through `featureforge repo runtime-root --json` before they run update checks or contributor-mode lookups.
+- generated skill preambles resolve the active runtime root through `featureforge repo runtime-root --path` before they run update checks or contributor-mode lookups.
 - `featureforge workflow` owns product-work routing up to `implementation_ready`.
 - `featureforge repo-safety` owns protected branches and repo-write guarantees.
 - `featureforge plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.

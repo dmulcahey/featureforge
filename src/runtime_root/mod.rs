@@ -94,6 +94,12 @@ pub fn resolve_current_output() -> Result<RuntimeRootOutput, DiagnosticError> {
         .unwrap_or_else(RuntimeRootOutput::unresolved))
 }
 
+pub fn resolve_current_path_output() -> Result<String, DiagnosticError> {
+    Ok(resolve_current_root()?
+        .map(|resolved| format!("{}\n", resolved.root.display()))
+        .unwrap_or_default())
+}
+
 pub fn resolve_current_root() -> Result<Option<ResolvedRuntimeRoot>, DiagnosticError> {
     let current_dir = env::current_dir().map_err(|error| {
         DiagnosticError::new(

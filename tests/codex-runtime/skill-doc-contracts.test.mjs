@@ -58,8 +58,9 @@ test('generated preamble bash block includes shared runtime-root, session, and c
     const content = readUtf8(getSkillPath(skill));
     const bashBlock = extractBashBlockUnderHeading(content, 'Preamble (run first)');
     assert.ok(bashBlock, `${skill} should include a preamble bash block`);
-    assert.match(bashBlock, /repo runtime-root --json/, `${skill} should resolve runtime roots through the helper contract`);
+    assert.match(bashBlock, /repo runtime-root --path/, `${skill} should resolve runtime roots through the helper contract`);
     assert.doesNotMatch(bashBlock, /_IS_FEATUREFORGE_RUNTIME_ROOT\(\)/, `${skill} should not embed its own runtime-root detector`);
+    assert.doesNotMatch(bashBlock, /sed -n/, `${skill} should not parse runtime-root JSON in shell`);
     assert.match(bashBlock, /_SESSIONS=/, `${skill} should track session count`);
     assert.match(bashBlock, /_CONTRIB=/, `${skill} should load contributor state`);
   }

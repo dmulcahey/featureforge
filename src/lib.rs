@@ -105,10 +105,12 @@ pub fn run() -> std::process::ExitCode {
             RepoCommand::RuntimeRoot(args) => {
                 if args.json {
                     emit_json(runtime_root::resolve_current_output())
+                } else if args.path {
+                    emit_text(runtime_root::resolve_current_path_output())
                 } else {
                     emit_json::<Value, JsonFailure>(Err(JsonFailure::new(
                         FailureClass::InvalidCommandInput,
-                        "repo runtime-root currently requires --json.",
+                        "repo runtime-root requires either --json or --path.",
                     )))
                 }
             }

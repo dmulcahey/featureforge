@@ -179,9 +179,7 @@ canonical validation command once Task 4 defines it
 - [x] **Step 5: Update the session-entry schema output and refresh `schemas/session-entry-resolve.schema.json`**
 - [x] **Step 6: Update `skills/using-featureforge/SKILL.md.tmpl`, `skills/dispatching-parallel-agents/SKILL.md.tmpl`, and `skills/subagent-driven-development/SKILL.md.tmpl`, then regenerate the checked-in skill docs**
 - [x] **Step 7: Run `cargo nextest run --test using_featureforge_skill --test session_config_slug --test workflow_runtime --test runtime_instruction_contracts --test packet_and_schema` until the nested-session contract is green**
-- [ ] **Step 8: Commit the phase slice with `git commit -m \"feat: make subagent bypass runtime-owned\"`**
-
-  **Execution Note:** Active - Commit the phase slice with `git commit -m \"feat: make subagent bypass runtime-owned\"`
+- [x] **Step 8: Commit the phase slice with `git commit -m \"feat: make subagent bypass runtime-owned\"`**
 ## Task 3: Remove Unsupported Legacy Surfaces and Add the Gate
 
 **Spec Coverage:** REQ-003, DEC-001, DEC-002, DEC-003, VERIFY-001, VERIFY-002, NONGOAL-001, NONGOAL-002
@@ -212,14 +210,14 @@ canonical validation command once Task 4 defines it
 - Test: `cargo nextest run --test upgrade_skill --test workflow_shell_smoke --test powershell_wrapper_resolution`
 - Test: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs`
 
-- [ ] **Step 1: Add red gate and doc-contract tests that fail on active legacy-root content, active legacy-root paths, and stale generated artifacts while allowing `docs/archive/` content**
-- [ ] **Step 2: Extend `scripts/check-featureforge-cutover.sh` to classify active versus archived hits in one repo-bounded pass and print exact offending files for active legacy-root path and content hits**
-- [ ] **Step 3: Remove remaining active legacy-root references from `scripts/gen-skill-docs.mjs`, `featureforge-upgrade/SKILL.md`, and regenerated `skills/*/SKILL.md`**
-- [ ] **Step 4: Add red install-smoke assertions for `bin/prebuilt/darwin-arm64` and `bin/prebuilt/windows-x64`, then update `tests/support/prebuilt.rs`, `tests/upgrade_skill.rs`, `tests/workflow_shell_smoke.rs`, and `tests/powershell_wrapper_resolution.rs` until the layout contract passes**
-- [ ] **Step 5: Update `scripts/refresh-prebuilt-runtime.sh` and `scripts/refresh-prebuilt-runtime.ps1` so the checked-in refresh flow matches the smoke-tested layout contract**
-- [ ] **Step 6: Update `TODOS.md` so the completed cutover items are no longer tracked as open debt**
-- [ ] **Step 7: Run `bash scripts/check-featureforge-cutover.sh`, `cargo nextest run --test upgrade_skill --test workflow_shell_smoke --test powershell_wrapper_resolution`, and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` until all cutover gates pass**
-- [ ] **Step 8: Commit the phase slice with `git commit -m \"feat: remove legacy root surfaces\"`**
+- [x] **Step 1: Add red gate and doc-contract tests that fail on active legacy-root content, active legacy-root paths, and stale generated artifacts while allowing `docs/archive/` content**
+- [x] **Step 2: Extend `scripts/check-featureforge-cutover.sh` to classify active versus archived hits in one repo-bounded pass and print exact offending files for active legacy-root path and content hits**
+- [x] **Step 3: Remove remaining active legacy-root references from `scripts/gen-skill-docs.mjs`, `featureforge-upgrade/SKILL.md`, and regenerated `skills/*/SKILL.md`**
+- [x] **Step 4: Add red install-smoke assertions for `bin/prebuilt/darwin-arm64` and `bin/prebuilt/windows-x64`, then update `tests/support/prebuilt.rs`, `tests/upgrade_skill.rs`, `tests/workflow_shell_smoke.rs`, and `tests/powershell_wrapper_resolution.rs` until the layout contract passes**
+- [x] **Step 5: Update `scripts/refresh-prebuilt-runtime.sh` and `scripts/refresh-prebuilt-runtime.ps1` so the checked-in refresh flow matches the smoke-tested layout contract**
+- [x] **Step 6: Update `TODOS.md` so the completed cutover items are no longer tracked as open debt**
+- [x] **Step 7: Run `bash scripts/check-featureforge-cutover.sh`, `cargo nextest run --test upgrade_skill --test workflow_shell_smoke --test powershell_wrapper_resolution`, and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` until all cutover gates pass**
+- [x] **Step 8: Commit the phase slice with `git commit -m \"feat: remove legacy root surfaces\"`**
 ## Task 4: Converge Docs and Validation Commands
 
 **Spec Coverage:** REQ-004, DEC-001, DEC-003, VERIFY-002
@@ -244,12 +242,12 @@ canonical validation command once Task 4 defines it
 - Test: `node --test tests/codex-runtime/*.test.mjs`
 - Test: `cargo nextest run --test runtime_instruction_contracts --test workflow_runtime`
 
-- [ ] **Step 1: Add red doc-contract assertions for the canonical validation entrypoint and generated-doc freshness mentions**
-- [ ] **Step 2: Update `docs/testing.md` to remove the duplicate `cargo nextest` line and publish the canonical validation command matrix**
-- [ ] **Step 3: Update `README.md`, `docs/README.codex.md`, `docs/README.copilot.md`, `.codex/INSTALL.md`, and `.copilot/INSTALL.md` so install, runtime-root, session-entry, and update behavior match Tasks 1 through 3**
-- [ ] **Step 4: Tighten `tests/codex-runtime/skill-doc-contracts.test.mjs` and `tests/runtime_instruction_contracts.rs` so drift in release-facing guidance fails loudly**
-- [ ] **Step 5: Run `node scripts/gen-skill-docs.mjs --check`, `node --test tests/codex-runtime/*.test.mjs`, and `cargo nextest run --test runtime_instruction_contracts --test workflow_runtime` until the doc surface is green**
-- [ ] **Step 6: Commit the phase slice with `git commit -m \"docs: converge featureforge validation guidance\"`**
+- [x] **Step 1: Add red doc-contract assertions for the canonical validation entrypoint and generated-doc freshness mentions**
+- [x] **Step 2: Update `docs/testing.md` to remove the duplicate `cargo nextest` line and publish the canonical validation command matrix**
+- [x] **Step 3: Update `README.md`, `docs/README.codex.md`, `docs/README.copilot.md`, `.codex/INSTALL.md`, and `.copilot/INSTALL.md` so install, runtime-root, session-entry, and update behavior match Tasks 1 through 3**
+- [x] **Step 4: Tighten `tests/codex-runtime/skill-doc-contracts.test.mjs` and `tests/runtime_instruction_contracts.rs` so drift in release-facing guidance fails loudly**
+- [x] **Step 5: Run `node scripts/gen-skill-docs.mjs --check`, `node --test tests/codex-runtime/*.test.mjs`, and `cargo nextest run --test runtime_instruction_contracts --test workflow_runtime` until the doc surface is green**
+- [x] **Step 6: Commit the phase slice with `git commit -m \"docs: converge featureforge validation guidance\"`**
 ## Task 5: Consolidate Shared Helpers and Narrow Hotspots
 
 **Spec Coverage:** REQ-005, DEC-001, DEC-003, VERIFY-001, VERIFY-002
@@ -279,12 +277,12 @@ canonical validation command once Task 4 defines it
 - Modify: `tests/workflow_runtime.rs`
 - Test: `cargo nextest run --test contracts_spec_plan --test plan_execution --test repo_safety --test workflow_runtime`
 
-- [ ] **Step 1: Add red tests for shared-header parity, shared markdown-scan parity, and helper-preservation behavior across workflow, execution, and repo-safety surfaces**
-- [ ] **Step 2: Extract shared header parsing into `src/contracts/headers.rs` and route `src/contracts/spec.rs`, `src/contracts/plan.rs`, and `src/contracts/evidence.rs` through it without changing accepted headers**
-- [ ] **Step 3: Consolidate repo-slug and hashing helpers across `src/git/mod.rs`, `src/workflow/manifest.rs`, `src/execution/state.rs`, and `src/repo_safety/mod.rs`**
-- [ ] **Step 4: Extract one shared markdown scan helper in `src/workflow/markdown_scan.rs` and route both `src/workflow/status.rs` and `src/execution/state.rs` through it**
-- [ ] **Step 5: Run `cargo nextest run --test contracts_spec_plan --test plan_execution --test repo_safety --test workflow_runtime` until the helper-preservation slice is green**
-- [ ] **Step 6: Commit the helper slice with `git commit -m \"refactor: consolidate featureforge helper seams\"`**
+- [x] **Step 1: Add red tests for shared-header parity, shared markdown-scan parity, and helper-preservation behavior across workflow, execution, and repo-safety surfaces**
+- [x] **Step 2: Extract shared header parsing into `src/contracts/headers.rs` and route `src/contracts/spec.rs`, `src/contracts/plan.rs`, and `src/contracts/evidence.rs` through it without changing accepted headers**
+- [x] **Step 3: Consolidate repo-slug and hashing helpers across `src/git/mod.rs`, `src/workflow/manifest.rs`, `src/execution/state.rs`, and `src/repo_safety/mod.rs`**
+- [x] **Step 4: Extract one shared markdown scan helper in `src/workflow/markdown_scan.rs` and route both `src/workflow/status.rs` and `src/execution/state.rs` through it**
+- [x] **Step 5: Run `cargo nextest run --test contracts_spec_plan --test plan_execution --test repo_safety --test workflow_runtime` until the helper-preservation slice is green**
+- [x] **Step 6: Commit the helper slice with `git commit -m \"refactor: consolidate featureforge helper seams\"`**
 ## Task 6: Harden the CLI Parse Boundary and Bare Help Behavior
 
 **Spec Coverage:** REQ-006, DEC-001, DEC-003, VERIFY-001, VERIFY-002
@@ -309,12 +307,12 @@ canonical validation command once Task 4 defines it
 - Modify: `src/session_entry/mod.rs`
 - Test: `cargo nextest run --test cli_parse_boundary`
 
-- [ ] **Step 1: Add red tests in `tests/cli_parse_boundary.rs` for invalid bounded CLI inputs and bare `featureforge` help output**
-- [ ] **Step 2: Replace bounded string parsing with typed `clap` values in `src/cli/plan_execution.rs`, `src/cli/repo_safety.rs`, and `src/cli/session_entry.rs`**
-- [ ] **Step 3: Update `src/lib.rs`, `src/workflow/operator.rs`, `src/execution/state.rs`, `src/execution/mutate.rs`, `src/repo_safety/mod.rs`, and `src/session_entry/mod.rs` to consume the typed boundary values without widening accepted inputs**
-- [ ] **Step 4: Make bare `featureforge` print help and exit cleanly**
-- [ ] **Step 5: Run `cargo nextest run --test cli_parse_boundary`, then run the full canonical validation command from `docs/testing.md`**
-- [ ] **Step 6: Commit the CLI slice with `git commit -m \"refactor: harden featureforge cli boundary\"`**
+- [x] **Step 1: Add red tests in `tests/cli_parse_boundary.rs` for invalid bounded CLI inputs and bare `featureforge` help output**
+- [x] **Step 2: Replace bounded string parsing with typed `clap` values in `src/cli/plan_execution.rs`, `src/cli/repo_safety.rs`, and `src/cli/session_entry.rs`**
+- [x] **Step 3: Update `src/lib.rs`, `src/workflow/operator.rs`, `src/execution/state.rs`, `src/execution/mutate.rs`, `src/repo_safety/mod.rs`, and `src/session_entry/mod.rs` to consume the typed boundary values without widening accepted inputs**
+- [x] **Step 4: Make bare `featureforge` print help and exit cleanly**
+- [x] **Step 5: Run `cargo nextest run --test cli_parse_boundary`, then run the full canonical validation command from `docs/testing.md`**
+- [x] **Step 6: Commit the CLI slice with `git commit -m \"refactor: harden featureforge cli boundary\"`**
 ## Evidence Expectations
 
 - Record the red test or gate failure that justified each task before the first code change in that task.
