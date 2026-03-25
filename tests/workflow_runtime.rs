@@ -8,6 +8,8 @@ mod json_support;
 mod process_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
+#[path = "../src/workflow/markdown_scan.rs"]
+mod markdown_scan_support;
 
 use assert_cmd::cargo::cargo_bin;
 use bin_support::compiled_featureforge_path;
@@ -871,6 +873,27 @@ fn canonical_workflow_status_refresh_recovers_old_manifest_after_slug_change() {
 }
 
 #[test]
+fn shared_markdown_scan_helper_collects_nested_markdown_only() {
+    let fixture = TempDir::new().expect("markdown scan fixture should exist");
+    write_file(&fixture.path().join("top.md"), "# top\n");
+    write_file(&fixture.path().join("nested/plan.md"), "# nested\n");
+    write_file(&fixture.path().join("nested/notes.txt"), "not markdown\n");
+
+    let mut actual = markdown_scan_support::markdown_files_under(fixture.path())
+        .into_iter()
+        .map(|path| {
+            path.strip_prefix(fixture.path())
+                .expect("fixture file should stay under fixture root")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect::<Vec<_>>();
+    actual.sort();
+
+    assert_eq!(actual, vec![String::from("nested/plan.md"), String::from("top.md")]);
+}
+
+#[test]
 fn canonical_manifest_path_distinguishes_exact_branch_names() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-branch-identity");
     let repo = repo_dir.path();
@@ -895,6 +918,21 @@ fn canonical_manifest_path_distinguishes_exact_branch_names() {
     assert_ne!(
         slash_manifest_path, dash_manifest_path,
         "workflow manifests should stay exact-branch scoped",
+    );
+}
+
+#[test]
+fn canonical_manifest_path_uses_canonical_repo_slug_directory() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-manifest-slug");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    let manifest = manifest_path(&identity, state);
+
+    assert_eq!(
+        manifest.parent().expect("manifest path should have a parent"),
+        state.join("projects").join(repo_slug(repo))
     );
 }
 

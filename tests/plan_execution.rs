@@ -1982,6 +1982,23 @@ fn gate_finish_ignores_overlapping_branch_artifact_decoys() {
 }
 
 #[test]
+fn canonical_execution_runtime_uses_canonical_repo_slug() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-runtime-slug");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+
+    let runtime = ExecutionRuntime::discover(repo).expect("execution runtime should resolve");
+
+    assert_eq!(runtime.repo_slug, repo_slug(repo));
+    assert_eq!(
+        project_artifact_dir(repo, state),
+        state.join("projects").join(&runtime.repo_slug)
+    );
+}
+
+#[test]
 fn gate_finish_rejects_release_artifact_head_mismatch() {
     let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-stale-release-head");
     let repo = repo_dir.path();

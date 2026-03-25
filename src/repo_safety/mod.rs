@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::cli::repo_safety::{RepoSafetyApproveArgs, RepoSafetyCheckArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::git::{discover_repo_identity, discover_slug_identity};
+use crate::git::{discover_repo_identity, discover_slug_identity, short_sha256_hex};
 use crate::instructions::{collect_active_instruction_files, parse_protected_branches};
 use crate::paths::{
     RepoPath, branch_storage_key, featureforge_state_dir, normalize_identifier_token,
@@ -712,7 +712,5 @@ fn state_dir() -> PathBuf {
 }
 
 fn short_hash(value: &str, width: usize) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    format!("{:x}", hasher.finalize())[..width].to_owned()
+    short_sha256_hex(value.as_bytes(), width)
 }

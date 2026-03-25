@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use schemars::{JsonSchema, schema_for};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use crate::cli::plan_execution::{
     BeginArgs, CompleteArgs, NoteArgs, RecommendArgs, ReopenArgs, StatusArgs, TransferArgs,
@@ -13,13 +12,14 @@ use crate::cli::plan_execution::{
 use crate::cli::repo_safety::RepoSafetyCheckArgs;
 use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::git::discover_repo_identity;
+use crate::git::{derive_repo_slug, discover_repo_identity, sha256_hex};
 use crate::paths::{
     RepoPath, branch_storage_key, featureforge_state_dir, normalize_repo_relative_path,
     normalize_whitespace,
 };
 use crate::repo_safety::RepoSafetyRuntime;
 use crate::workflow::manifest::{ManifestLoadResult, WorkflowManifest, load_manifest_read_only};
+use crate::workflow::markdown_scan::markdown_files_under;
 
 pub const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
@@ -2045,26 +2045,6 @@ fn approved_plan_candidate_paths(
     candidates
 }
 
-fn markdown_files_under(root: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    visit_markdown_files(root, &mut files);
-    files
-}
-
-fn visit_markdown_files(root: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            visit_markdown_files(&path, files);
-        } else if path.extension().and_then(std::ffi::OsStr::to_str) == Some("md") {
-            files.push(path);
-        }
-    }
-}
-
 fn parse_step_state(
     source: &str,
     plan_document: &PlanDocument,
@@ -2553,26 +2533,6 @@ fn parse_contract_render(source: &str) -> String {
     format!("{}\n", rendered.join("\n"))
 }
 
-fn derive_repo_slug(repo_root: &Path, remote_url: Option<&str>) -> String {
-    if let Some(remote_url) = remote_url {
-        let normalized = remote_url.trim_end_matches(".git").replace(':', "/");
-        let parts = normalized
-            .split('/')
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
-        if let [.., owner, repo] = parts.as_slice() {
-            return format!("{owner}-{repo}");
-        }
-    }
-
-    let repo_name = repo_root
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("repo");
-    let digest = sha256_hex(repo_root.to_string_lossy().as_bytes());
-    format!("{repo_name}-{}", &digest[..12])
-}
-
 fn tasks_are_independent(plan_document: &PlanDocument) -> bool {
     if plan_document.tasks.len() <= 1 {
         return false;
@@ -2682,9 +2642,4 @@ fn latest_branch_artifact_path(
 
 fn strip_backticks(value: &str) -> String {
     value.trim_matches('`').to_owned()
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    format!("{digest:x}")
 }

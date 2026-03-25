@@ -19,6 +19,24 @@ use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
 
+fn repo_slug(repo: &Path) -> String {
+    let output = run_checked(
+        {
+            let mut command = Command::cargo_bin("featureforge")
+                .expect("featureforge cargo binary should be available");
+            command.current_dir(repo).args(["repo", "slug"]);
+            command
+        },
+        "featureforge repo slug",
+    );
+    String::from_utf8(output.stdout)
+        .expect("repo slug output should be utf-8")
+        .lines()
+        .find_map(|line| line.strip_prefix("SLUG="))
+        .unwrap_or_else(|| panic!("repo slug output should include SLUG=..., got missing slug"))
+        .to_owned()
+}
+
 fn init_repo(name: &str, branch: &str, remote_url: &str) -> (TempDir, TempDir) {
     let repo_dir = TempDir::new().expect("repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
@@ -919,5 +937,53 @@ fn canonical_repo_safety_rejects_invalid_inputs_and_keeps_deterministic_hot_path
     assert_eq!(
         hot_path_json["approval_path"],
         Value::String(expected_path.to_string_lossy().into_owned())
+    );
+}
+
+#[test]
+fn canonical_repo_safety_approval_paths_use_canonical_repo_slug_directory() {
+    let remote_url = "https://example.com/acme/repo-safety.git";
+    let (repo_dir, state_dir) =
+        init_repo("repo-safety-slug-path", "feature/repo-safety", remote_url);
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let check_json = parse_json(
+        &run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:executing-plans",
+                "--task-id",
+                "task5-slug-parity",
+                "--path",
+                "tests/repo_safety.rs",
+                "--write-target",
+                "execution-task-slice",
+            ],
+            "repo-safety approval path canonical slug parity",
+        ),
+        "repo-safety approval path canonical slug parity",
+    );
+
+    let approval_path = PathBuf::from(
+        check_json["approval_path"]
+            .as_str()
+            .expect("approval_path should stay a string"),
+    );
+    let expected_root = state
+        .join("repo-safety")
+        .join("approvals")
+        .join(repo_slug(repo));
+    assert!(
+        approval_path.starts_with(&expected_root),
+        "approval path {} should stay under canonical slug root {}",
+        approval_path.display(),
+        expected_root.display()
     );
 }

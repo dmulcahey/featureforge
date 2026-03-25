@@ -17,6 +17,7 @@ use crate::workflow::manifest::{
     ManifestLoadResult, WorkflowManifest, load_manifest, load_manifest_read_only, manifest_path,
     recover_slug_changed_manifest, recover_slug_changed_manifest_read_only, save_manifest,
 };
+use crate::workflow::markdown_scan::markdown_files_under;
 
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
 const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
@@ -891,12 +892,6 @@ fn scan_plans(repo_root: &Path) -> Vec<WorkflowPlanCandidate> {
     candidates
 }
 
-fn markdown_files_under(root: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    visit_markdown_files(root, &mut files);
-    files
-}
-
 fn apply_fallback_limit<T>(mut candidates: Vec<T>) -> (Vec<T>, bool) {
     let Some(limit) = fallback_limit() else {
         return (candidates, false);
@@ -913,21 +908,6 @@ fn fallback_limit() -> Option<usize> {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|limit| *limit > 0)
-}
-
-fn visit_markdown_files(root: &Path, files: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            visit_markdown_files(&path, files);
-        } else if path.extension().and_then(std::ffi::OsStr::to_str) == Some("md") {
-            files.push(path);
-        }
-    }
 }
 
 fn read_session_entry(state_dir: &Path) -> SessionEntryState {

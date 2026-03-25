@@ -3,9 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-use crate::git::RepositoryIdentity;
+use crate::git::{RepositoryIdentity, derive_repo_slug};
 use crate::paths::{branch_storage_key, write_atomic as write_atomic_file};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -32,7 +31,7 @@ pub enum ManifestLoadResult {
 const CROSS_SLUG_RECOVERY_LIMIT: usize = 12;
 
 pub fn manifest_path(identity: &RepositoryIdentity, state_dir: &Path) -> PathBuf {
-    let slug = derive_repo_slug(identity);
+    let slug = derive_repo_slug(&identity.repo_root, identity.remote_url.as_deref());
     let safe_branch = branch_storage_key(&identity.branch_name);
     let user_name = env::var("USER").unwrap_or_else(|_| String::from("user"));
     state_dir
@@ -129,28 +128,6 @@ pub fn save_manifest(path: &Path, manifest: &WorkflowManifest) -> std::io::Resul
     let payload = serde_json::to_string(manifest)
         .expect("workflow manifest serialization should stay valid json");
     write_atomic_file(path, payload)
-}
-
-fn derive_repo_slug(identity: &RepositoryIdentity) -> String {
-    if let Some(remote) = identity.remote_url.as_deref() {
-        let normalized = remote.trim_end_matches(".git").replace(':', "/");
-        let parts = normalized
-            .split('/')
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
-        if let [.., owner, repo] = parts.as_slice() {
-            return format!("{owner}-{repo}");
-        }
-    }
-
-    let repo_name = identity
-        .repo_root
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("repo");
-    let digest = Sha256::digest(identity.repo_root.to_string_lossy().as_bytes());
-    let suffix = format!("{digest:x}");
-    format!("{repo_name}-{}", &suffix[..12])
 }
 
 fn corrupt_backup_path(path: &Path) -> PathBuf {

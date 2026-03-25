@@ -38,6 +38,7 @@ pub fn discover_repo_identity(start_dir: &Path) -> Result<RepositoryIdentity, Di
     let repo_root = repo
         .workdir()
         .map_or_else(|| repo.path().to_path_buf(), Path::to_path_buf);
+    let repo_root = std::fs::canonicalize(&repo_root).unwrap_or(repo_root);
     let branch_name = if head.is_detached() {
         String::from("current")
     } else {
@@ -114,8 +115,15 @@ fn slug_from_remote(remote_url: &str) -> Option<String> {
     Some(format!("{owner}-{repo}"))
 }
 
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    format!("{digest:x}")
+}
+
+pub fn short_sha256_hex(bytes: &[u8], width: usize) -> String {
+    sha256_hex(bytes)[..width].to_owned()
+}
+
 fn hash_repo_root(repo_root: &Path) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(repo_root.to_string_lossy().as_bytes());
-    format!("{:x}", hasher.finalize())[..12].to_owned()
+    short_sha256_hex(repo_root.to_string_lossy().as_bytes(), 12)
 }
