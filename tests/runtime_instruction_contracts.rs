@@ -3,7 +3,7 @@ mod process_support;
 
 use assert_cmd::Command as AssertCommand;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -31,6 +31,38 @@ fn assert_not_contains(content: &str, needle: &str, label: &str) {
     );
 }
 
+fn assert_no_runtime_fallback_execution(content: &str, label: &str) {
+    // Intentional invariant: skill installs package the runtime binary on
+    // purpose. Runtime-root resolution is for locating adjacent files from the
+    // same install, not for switching command execution to another launcher.
+    // NEVER relax these checks without an explicit product decision.
+    for needle in [
+        "$_REPO_ROOT/bin/featureforge",
+        "${_FEATUREFORGE_BIN:-featureforge}",
+        "command -v featureforge",
+    ] {
+        assert_not_contains(content, needle, label);
+    }
+    for line in content.lines().map(str::trim_start) {
+        assert!(
+            !line.starts_with("\"$_FEATUREFORGE_ROOT/bin/featureforge\""),
+            "{label} should not execute runtime commands through $_FEATUREFORGE_ROOT/bin/featureforge"
+        );
+        assert!(
+            !line.starts_with("\"$INSTALL_DIR/bin/featureforge\""),
+            "{label} should not execute runtime commands through $INSTALL_DIR/bin/featureforge"
+        );
+        assert!(
+            !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$_FEATUREFORGE_ROOT/bin/featureforge\""),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from $_FEATUREFORGE_ROOT"
+        );
+        assert!(
+            !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$INSTALL_DIR/bin/featureforge\""),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from INSTALL_DIR"
+        );
+    }
+}
+
 fn assert_file_contains(path: impl AsRef<Path>, needle: &str) {
     let path_ref = path.as_ref();
     let content = read_utf8(path_ref);
@@ -48,6 +80,16 @@ fn assert_description_contains(path: impl AsRef<Path>, needle: &str) {
     let content = read_utf8(path_ref);
     let first_lines = content.lines().take(6).collect::<Vec<_>>().join("\n");
     assert_contains(&first_lines, needle, &path_ref.display().to_string());
+}
+
+fn generated_skill_doc_paths() -> Vec<PathBuf> {
+    fs::read_dir(repo_root().join("skills"))
+        .expect("skills dir should be readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.join("SKILL.md").is_file() && path.join("SKILL.md.tmpl").is_file())
+        .map(|path| path.join("SKILL.md"))
+        .collect()
 }
 
 fn extract_bash_block(content: &str, heading: &str) -> String {
@@ -292,6 +334,19 @@ fn repo_checkout_canonical_launcher_uses_manifest_selected_binary_path() {
             "renamed prebuilt runtime asset should exist: {relative}"
         );
     }
+}
+
+#[test]
+fn shipped_runtime_docs_never_reintroduce_runtime_binary_fallbacks() {
+    for path in generated_skill_doc_paths() {
+        let label = path.display().to_string();
+        let content = read_utf8(&path);
+        assert_no_runtime_fallback_execution(&content, &label);
+    }
+
+    let upgrade_skill = repo_root().join("featureforge-upgrade/SKILL.md");
+    let upgrade_content = read_utf8(&upgrade_skill);
+    assert_no_runtime_fallback_execution(&upgrade_content, &upgrade_skill.display().to_string());
 }
 
 #[test]
@@ -1380,16 +1435,7 @@ fn using_featureforge_preamble_uses_only_the_packaged_runtime_binary() {
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
     let tmp_root = TempDir::new().expect("temp root should exist");
 
-    assert_not_contains(
-        &preamble,
-        "_REPO_ROOT/bin/featureforge",
-        "using-featureforge preamble",
-    );
-    assert_not_contains(
-        &preamble,
-        "command -v featureforge",
-        "using-featureforge preamble",
-    );
+    assert_no_runtime_fallback_execution(&preamble, "using-featureforge preamble");
 
     let shared_home = tmp_root.path().join("shared-home");
     fs::create_dir_all(&shared_home).expect("shared home should exist");

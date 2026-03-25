@@ -43,6 +43,27 @@ const RETIRED_PRODUCT = retiredProductName();
 
 const HELPER_COMMAND_PATTERN = /\bfeatureforge-(plan-contract|plan-execution|workflow-status|workflow|repo-safety|session-entry|config|slug|update-check|migrate-install)\b/;
 
+// Intentional invariant: skill installs package the runtime binary on purpose.
+// Runtime-root resolution is only for locating companion files from that same
+// install. It must NEVER be used to switch runtime command execution to
+// $_FEATUREFORGE_ROOT/bin/featureforge, $INSTALL_DIR/bin/featureforge, PATH, or
+// any other discovered binary unless product direction changes explicitly.
+const FORBIDDEN_RUNTIME_FALLBACK_EXECUTION_PATTERNS = [
+  [/\$_REPO_ROOT\/bin\/featureforge/, 'should not probe repo-local binaries from generated runtime docs'],
+  [/(?:^|\n)\s*"\$_FEATUREFORGE_ROOT\/bin\/featureforge"/, 'should not execute runtime commands through a root-selected launcher'],
+  [/(?:^|\n)\s*"\$INSTALL_DIR\/bin\/featureforge"/, 'should not execute runtime commands through an install-root-selected launcher'],
+  [/(?:^|\n)\s*FEATUREFORGE_RUNTIME_BIN="\$_FEATUREFORGE_ROOT\/bin\/featureforge"/, 'should not assign the runtime command path from $_FEATUREFORGE_ROOT'],
+  [/(?:^|\n)\s*FEATUREFORGE_RUNTIME_BIN="\$INSTALL_DIR\/bin\/featureforge"/, 'should not assign the runtime command path from INSTALL_DIR'],
+  [/\$\{_FEATUREFORGE_BIN:-featureforge\}/, 'should not fall back to PATH-selected featureforge binaries'],
+  [/command -v featureforge/, 'should not rediscover featureforge through PATH lookups'],
+];
+
+function assertNoRuntimeFallbackExecution(content, label) {
+  for (const [pattern, message] of FORBIDDEN_RUNTIME_FALLBACK_EXECUTION_PATTERNS) {
+    assert.doesNotMatch(content, pattern, `${label} ${message}`);
+  }
+}
+
 test('templates declare exactly one base or review preamble placeholder', () => {
   for (const skill of listGeneratedSkills()) {
     const template = readUtf8(getTemplatePath(skill));
@@ -62,7 +83,7 @@ test('generated preamble bash block includes shared runtime-root, session, and c
     assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" update-check/, `${skill} should run update checks through the packaged compat binary`);
     assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/, `${skill} should load contributor mode through the packaged compat binary`);
     assert.doesNotMatch(bashBlock, /_IS_FEATUREFORGE_RUNTIME_ROOT\(\)/, `${skill} should not embed its own runtime-root detector`);
-    assert.doesNotMatch(bashBlock, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/, `${skill} should never pivot from the packaged compat binary back to a root-selected launcher`);
+    assertNoRuntimeFallbackExecution(bashBlock, `${skill} preamble`);
     assert.doesNotMatch(bashBlock, /sed -n/, `${skill} should not parse runtime-root JSON in shell`);
     assert.match(bashBlock, /_SESSIONS=/, `${skill} should track session count`);
     assert.match(bashBlock, /_CONTRIB=/, `${skill} should load contributor state`);
@@ -111,7 +132,7 @@ test('using-featureforge gets a dedicated bootstrap preamble contract', () => {
   assert.match(normalStackBlock, /"\$_FEATUREFORGE_BIN" update-check/, 'using-featureforge should restore update checks after the bypass gate through the packaged compat binary');
   assert.match(normalStackBlock, /touch "\$_SP_STATE_DIR\/sessions\/\$PPID"/, 'using-featureforge should restore session markers after the bypass gate');
   assert.match(normalStackBlock, /_CONTRIB=/, 'using-featureforge should restore contributor mode after the bypass gate');
-  assert.doesNotMatch(normalStackBlock, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/, 'using-featureforge should not switch back to a root-selected launcher after the bypass gate');
+  assertNoRuntimeFallbackExecution(normalStackBlock, 'using-featureforge normal stack');
   assert.match(content, /ask one interactive question before any normal FeatureForge work happens/, 'using-featureforge should ask before the normal stack');
   assert.match(content, /do not compute `_SESSIONS`/, 'using-featureforge should exempt the opt-out gate from _SESSIONS handling');
   assert.match(content, /session-entry bootstrap ownership is runtime-owned/, 'using-featureforge should name runtime ownership for the bootstrap boundary');
@@ -127,10 +148,21 @@ test('using-featureforge gets a dedicated bootstrap preamble contract', () => {
 test('generated skill docs never execute runtime commands through root-selected launchers', () => {
   for (const skill of listGeneratedSkills()) {
     const content = readUtf8(getSkillPath(skill));
-    // Intentional invariant: skills must keep using the packaged compat binary
-    // once the runtime root has been resolved. Do not reintroduce
-    // $_FEATUREFORGE_ROOT/bin/featureforge command execution.
-    assert.doesNotMatch(content, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/, `${skill} should never execute runtime commands through a root-selected launcher`);
+    assertNoRuntimeFallbackExecution(content, `${skill} generated skill doc`);
+  }
+});
+
+test('all shipped runtime docs keep execution pinned to the packaged binary contract', () => {
+  // This is intentionally redundant with the narrower checks above. We want a
+  // broad sweep over shipped docs so fallback resolution cannot quietly return
+  // through a different surface later.
+  const runtimeDocs = [
+    ['featureforge-upgrade/SKILL.md', readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'))],
+    ...listGeneratedSkills().map((skill) => [path.join('skills', skill, 'SKILL.md'), readUtf8(getSkillPath(skill))]),
+  ];
+
+  for (const [label, content] of runtimeDocs) {
+    assertNoRuntimeFallbackExecution(content, label);
   }
 });
 

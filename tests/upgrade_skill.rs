@@ -36,6 +36,40 @@ fn assert_contains(content: &str, needle: &str, label: &str) {
     );
 }
 
+fn assert_no_runtime_fallback_execution(content: &str, label: &str) {
+    // Intentional invariant: skill installs package the runtime binary on
+    // purpose. Runtime-root resolution may locate companion files from that
+    // install, but it must NEVER redirect command execution to INSTALL_DIR,
+    // $_FEATUREFORGE_ROOT, PATH, or any other discovered binary.
+    for needle in [
+        "${_FEATUREFORGE_BIN:-featureforge}",
+        "command -v featureforge",
+    ] {
+        assert!(
+            !content.contains(needle),
+            "{label} should not contain {needle:?}"
+        );
+    }
+    for line in content.lines().map(str::trim_start) {
+        assert!(
+            !line.starts_with("\"$_FEATUREFORGE_ROOT/bin/featureforge\""),
+            "{label} should not execute runtime commands through $_FEATUREFORGE_ROOT/bin/featureforge"
+        );
+        assert!(
+            !line.starts_with("\"$INSTALL_DIR/bin/featureforge\""),
+            "{label} should not execute runtime commands through $INSTALL_DIR/bin/featureforge"
+        );
+        assert!(
+            !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$_FEATUREFORGE_ROOT/bin/featureforge\""),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from $_FEATUREFORGE_ROOT"
+        );
+        assert!(
+            !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$INSTALL_DIR/bin/featureforge\""),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from INSTALL_DIR"
+        );
+    }
+}
+
 fn combined_output(output: &Output) -> String {
     format!(
         "{}{}",
@@ -159,10 +193,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     ] {
         assert_contains(&skill_doc, pattern, "featureforge-upgrade/SKILL.md");
     }
-    assert!(
-        !skill_doc.contains("$_FEATUREFORGE_ROOT/bin/featureforge"),
-        "featureforge-upgrade/SKILL.md should keep runtime commands on the packaged compat binary"
-    );
+    assert_no_runtime_fallback_execution(&skill_doc, "featureforge-upgrade/SKILL.md");
     assert!(
         !skill_doc.contains("featureforge-update-check"),
         "featureforge-upgrade/SKILL.md should not reference removed helper binaries"
@@ -170,10 +201,6 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     assert!(
         !skill_doc.contains("featureforge-config"),
         "featureforge-upgrade/SKILL.md should not reference removed helper binaries"
-    );
-    assert!(
-        !skill_doc.contains("command -v featureforge"),
-        "featureforge-upgrade/SKILL.md should not trust PATH fallback binaries"
     );
 
     let step_one = extract_bash_block(&skill_doc, "### Step 1: Resolve install root");
