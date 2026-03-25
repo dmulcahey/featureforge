@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RuntimeRootOutput",
+  "type": "object",
+  "properties": {
+    "resolved": {
+      "type": "boolean"
+    },
+    "root": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "validation": {
+      "$ref": "#/$defs/RuntimeRootValidation"
+    }
+  },
+  "required": [
+    "resolved",
+    "source",
+    "validation"
+  ],
+  "$defs": {
+    "RuntimeRootValidation": {
+      "type": "object",
+      "properties": {
+        "has_binary": {
+          "type": "boolean"
+        },
+        "has_version": {
+          "type": "boolean"
+        },
+        "upgrade_eligible": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "has_version",
+        "has_binary",
+        "upgrade_eligible"
+      ]
+    }
+  }
+}

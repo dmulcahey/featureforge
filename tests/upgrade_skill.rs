@@ -13,7 +13,7 @@ use tempfile::TempDir;
 
 use executable_support::make_executable;
 use files_support::write_file;
-use process_support::{repo_root, run, run_checked};
+use process_support::{repo_root, run};
 
 fn skill_doc_path() -> PathBuf {
     repo_root().join("featureforge-upgrade/SKILL.md")
@@ -102,68 +102,42 @@ fn make_valid_install(dir: &Path, git_mode: &str) {
     }
 }
 
-fn make_valid_worktree_install(base_dir: &Path) -> PathBuf {
-    let main_repo = base_dir.join("main-repo");
-    let worktree_root = base_dir.join("worktree/featureforge");
-    fs::create_dir_all(&main_repo).expect("main repo dir should exist");
+fn write_mock_featureforge(bin_dir: &Path, script_body: &str) {
+    fs::create_dir_all(bin_dir).expect("mock featureforge bin dir should exist");
+    let helper_path = bin_dir.join("featureforge");
+    write_file(&helper_path, script_body);
+    make_executable(&helper_path);
+}
 
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(&main_repo);
-    run_checked(git_init, "git init runtime repo");
+fn path_with_mock_featureforge(bin_dir: &Path) -> String {
+    match std::env::var("PATH") {
+        Ok(existing) if !existing.is_empty() => format!("{}:{existing}", bin_dir.display()),
+        _ => bin_dir.display().to_string(),
+    }
+}
 
-    let mut git_config_name = Command::new("git");
-    git_config_name
-        .args(["config", "user.name", "FeatureForge Test"])
-        .current_dir(&main_repo);
-    run_checked(git_config_name, "git config user.name");
+fn json_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
 
-    let mut git_config_email = Command::new("git");
-    git_config_email
-        .args(["config", "user.email", "featureforge-tests@example.com"])
-        .current_dir(&main_repo);
-    run_checked(git_config_email, "git config user.email");
-
-    make_valid_install(&main_repo, "dir");
-    let mut git_add = Command::new("git");
-    git_add
-        .args(["add", "VERSION", "bin/featureforge"])
-        .current_dir(&main_repo);
-    run_checked(git_add, "git add runtime repo");
-
-    let mut git_commit = Command::new("git");
-    git_commit
-        .args(["commit", "-m", "init"])
-        .current_dir(&main_repo);
-    run_checked(git_commit, "git commit runtime repo");
-
-    fs::create_dir_all(
-        worktree_root
-            .parent()
-            .expect("worktree parent should exist"),
+fn resolved_runtime_root_json(root: &Path) -> String {
+    format!(
+        "{{\"resolved\":true,\"root\":\"{}\",\"source\":\"featureforge_dir\",\"validation\":{{\"has_version\":true,\"has_binary\":true,\"upgrade_eligible\":true}}}}",
+        json_string(&root.to_string_lossy())
     )
-    .expect("worktree parent should exist");
-    let mut git_worktree_add = Command::new("git");
-    git_worktree_add
-        .args(["worktree", "add"])
-        .arg(&worktree_root)
-        .args(["-b", "runtime-worktree"])
-        .current_dir(&main_repo);
-    run_checked(git_worktree_add, "git worktree add");
-
-    worktree_root
 }
 
 #[test]
 fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let skill_doc = read_skill_doc();
     for pattern in [
-        "_FEATUREFORGE_ROOT",
-        "_IS_FEATUREFORGE_RUNTIME_ROOT()",
+        "featureforge repo runtime-root --json",
         "bin/featureforge",
         "FEATUREFORGE_BIN=\"$INSTALL_DIR/bin/featureforge\"",
         "VERSION",
-        "[ -d \"$candidate/.git\" ] || [ -f \"$candidate/.git\" ]",
-        "\"$HOME/.featureforge/install\"",
+        "ERROR: featureforge runtime-root helper unavailable",
+        "ERROR: featureforge runtime root unavailable",
+        "ERROR: featureforge runtime-root helper returned unreadable JSON",
         "Read `$INSTALL_DIR/RELEASE-NOTES.md`.",
         "git stash push --include-untracked",
         "git stash pop",
@@ -195,62 +169,53 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let tmp_root = TempDir::new().expect("temp root should exist");
     let home_dir = tmp_root.path().join("home");
     fs::create_dir_all(&home_dir).expect("home should exist");
-
     let current_root = tmp_root.path().join("current-project");
     fs::create_dir_all(&current_root).expect("project root should exist");
-
-    let copilot_install = home_dir.join(".copilot/featureforge");
-    let shared_install = home_dir.join(".featureforge/install");
-    let codex_install = home_dir.join(".codex/featureforge");
-    make_valid_install(&shared_install, "dir");
-    make_valid_install(&codex_install, "dir");
-    make_valid_install(&copilot_install, "dir");
+    let helper_bin = tmp_root.path().join("mock-bin");
+    let helper_path = path_with_mock_featureforge(&helper_bin);
+    let resolved_install = tmp_root.path().join("resolved-install");
+    fs::create_dir_all(&resolved_install).expect("resolved install dir should exist");
+    write_mock_featureforge(
+        &helper_bin,
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' '{}'\n",
+            resolved_runtime_root_json(&resolved_install)
+        ),
+    );
 
     let active_output = run_bash_block(
         &current_root,
         &home_dir,
         &step_one,
-        &[(
-            "_FEATUREFORGE_ROOT",
-            copilot_install.to_string_lossy().as_ref(),
-        )],
-        "upgrade skill step 1 active root",
+        &[("PATH", helper_path.as_str())],
+        "upgrade skill step 1 resolved helper",
     );
     let active_stdout = String::from_utf8_lossy(&active_output.stdout);
     assert_contains(
         &active_stdout,
-        &format!("INSTALL_DIR={}", copilot_install.display()),
-        "upgrade skill step 1 active root",
+        &format!("INSTALL_DIR={}", resolved_install.display()),
+        "upgrade skill step 1 resolved helper",
     );
 
-    let fallback_output = run_bash_block(
+    let renamed_root = tmp_root.path().join("custom-runtime-name");
+    fs::create_dir_all(&renamed_root).expect("renamed root should exist");
+    write_mock_featureforge(
+        &helper_bin,
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' '{}'\n",
+            resolved_runtime_root_json(
+                &renamed_root
+                    .canonicalize()
+                    .expect("renamed root canonicalize")
+            )
+        ),
+    );
+    let renamed_output = run_bash_block(
         &current_root,
         &home_dir,
         &step_one,
-        &[("_FEATUREFORGE_ROOT", "")],
-        "upgrade skill step 1 shared fallback",
-    );
-    let fallback_stdout = String::from_utf8_lossy(&fallback_output.stdout);
-    assert_contains(
-        &fallback_stdout,
-        &format!("INSTALL_DIR={}", shared_install.display()),
-        "upgrade skill step 1 shared fallback",
-    );
-
-    let renamed_home = tmp_root.path().join("home-renamed");
-    fs::create_dir_all(&renamed_home).expect("renamed home should exist");
-    let renamed_root = tmp_root.path().join("custom-runtime-name");
-    fs::create_dir_all(&renamed_root).expect("renamed root should exist");
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(&renamed_root);
-    run_checked(git_init, "git init renamed root");
-    make_valid_install(&renamed_root, "dir");
-    let renamed_output = run_bash_block(
-        &renamed_root,
-        &renamed_home,
-        &step_one,
-        &[("_FEATUREFORGE_ROOT", "")],
-        "upgrade skill step 1 renamed root",
+        &[("PATH", helper_path.as_str())],
+        "upgrade skill step 1 arbitrary resolved path",
     );
     let renamed_stdout = String::from_utf8_lossy(&renamed_output.stdout);
     assert_contains(
@@ -262,52 +227,67 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
                 .expect("renamed root canonicalize")
                 .display()
         ),
-        "upgrade skill step 1 renamed root",
+        "upgrade skill step 1 arbitrary resolved path",
     );
 
-    let invalid_home = tmp_root.path().join("home-invalid");
-    fs::create_dir_all(&invalid_home).expect("invalid home should exist");
-    let invalid_root = tmp_root.path().join("invalid-current/featureforge");
-    fs::create_dir_all(&invalid_root).expect("invalid root should exist");
-    write_file(&invalid_root.join(".git"), "");
-    let invalid_output = run_bash_block(
-        &invalid_root,
-        &invalid_home,
+    write_mock_featureforge(
+        &helper_bin,
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"resolved\":false,\"root\":null,\"source\":\"unresolved\",\"validation\":{\"has_version\":false,\"has_binary\":false,\"upgrade_eligible\":false}}'\n",
+    );
+    let unresolved_output = run_bash_block(
+        &current_root,
+        &home_dir,
         &step_one,
-        &[("_FEATUREFORGE_ROOT", "")],
-        "upgrade skill step 1 invalid current repo",
+        &[("PATH", helper_path.as_str())],
+        "upgrade skill step 1 unresolved helper",
     );
     assert!(
-        !invalid_output.status.success(),
-        "invalid current repo should fail closed"
+        !unresolved_output.status.success(),
+        "unresolved helper output should fail closed"
     );
     assert_contains(
-        &combined_output(&invalid_output),
-        "ERROR: featureforge install not found",
-        "upgrade skill step 1 invalid current repo",
+        &combined_output(&unresolved_output),
+        "ERROR: featureforge runtime root unavailable",
+        "upgrade skill step 1 unresolved helper",
     );
 
-    let worktree_home = tmp_root.path().join("home-worktree");
-    fs::create_dir_all(&worktree_home).expect("worktree home should exist");
-    let worktree_root = make_valid_worktree_install(&tmp_root.path().join("worktree-current"));
-    let worktree_output = run_bash_block(
-        &worktree_root,
-        &worktree_home,
-        &step_one,
-        &[("_FEATUREFORGE_ROOT", "")],
-        "upgrade skill step 1 worktree",
+    write_mock_featureforge(
+        &helper_bin,
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"resolved\":true,\"source\":\"featureforge_dir\"}'\n",
     );
-    let worktree_stdout = String::from_utf8_lossy(&worktree_output.stdout);
+    let malformed_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[("PATH", helper_path.as_str())],
+        "upgrade skill step 1 malformed helper",
+    );
+    assert!(
+        !malformed_output.status.success(),
+        "malformed helper output should fail closed"
+    );
     assert_contains(
-        &worktree_stdout,
-        &format!(
-            "INSTALL_DIR={}",
-            worktree_root
-                .canonicalize()
-                .expect("worktree root canonicalize")
-                .display()
-        ),
-        "upgrade skill step 1 worktree",
+        &combined_output(&malformed_output),
+        "ERROR: featureforge runtime-root helper returned unreadable JSON",
+        "upgrade skill step 1 malformed helper",
+    );
+
+    fs::remove_file(helper_bin.join("featureforge")).expect("mock helper should remove");
+    let unavailable_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[("PATH", helper_path.as_str())],
+        "upgrade skill step 1 unavailable helper",
+    );
+    assert!(
+        !unavailable_output.status.success(),
+        "missing helper should fail closed"
+    );
+    assert_contains(
+        &combined_output(&unavailable_output),
+        "ERROR: featureforge runtime-root helper unavailable",
+        "upgrade skill step 1 unavailable helper",
     );
 }
 

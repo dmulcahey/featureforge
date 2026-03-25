@@ -67,6 +67,14 @@ test('gen-skill-docs --check exits successfully', () => {
   assert.match(result.stdout, /Generated skill docs are up to date\./);
 });
 
+test('upgrade instructions use the runtime-root helper instead of embedded root-search order', () => {
+  const upgradeSkill = readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'));
+
+  assert.match(upgradeSkill, /featureforge repo runtime-root --json/);
+  assert.doesNotMatch(upgradeSkill, /\.codex\/featureforge/);
+  assert.doesNotMatch(upgradeSkill, /\.copilot\/featureforge/);
+});
+
 test('workflow-status ambiguity snapshot stays checked in and is covered by workflow_runtime', () => {
   const workflowRuntime = readUtf8(path.join(REPO_ROOT, 'tests/workflow_runtime.rs'));
   const fixture = JSON.parse(readUtf8(path.join(REPO_ROOT, 'tests/fixtures/differential/workflow-status.json')));

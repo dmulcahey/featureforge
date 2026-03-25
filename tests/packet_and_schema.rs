@@ -143,6 +143,19 @@ fn checked_in_update_check_schema_matches_generated_output() {
 }
 
 #[test]
+fn checked_in_runtime_root_schema_matches_generated_output() {
+    let schemas_dir = unique_temp_dir("runtime-root-schema");
+    write_contract_schemas(&schemas_dir).expect("schemas should write");
+
+    let generated = fs::read_to_string(schemas_dir.join("repo-runtime-root.schema.json"))
+        .expect("generated runtime-root schema should read");
+    let checked_in = fs::read_to_string(repo_fixture_path("schemas/repo-runtime-root.schema.json"))
+        .expect("checked-in runtime-root schema should read");
+
+    assert_eq!(generated.trim_end(), checked_in.trim_end());
+}
+
+#[test]
 fn execution_evidence_markdown_remains_readable() {
     let repo_root = unique_temp_dir("execution-evidence");
     let evidence_path = repo_root.join(

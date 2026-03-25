@@ -17,6 +17,7 @@ pub mod instructions;
 pub mod output;
 pub mod paths;
 pub mod repo_safety;
+pub mod runtime_root;
 pub mod session_entry;
 pub mod update_check;
 pub mod workflow;
@@ -101,6 +102,16 @@ pub fn run() -> std::process::ExitCode {
             RepoCommand::Slug(_) => emit_text(render_slug_output(
                 &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             )),
+            RepoCommand::RuntimeRoot(args) => {
+                if args.json {
+                    emit_json(runtime_root::resolve_current_output())
+                } else {
+                    emit_json::<Value, JsonFailure>(Err(JsonFailure::new(
+                        FailureClass::InvalidCommandInput,
+                        "repo runtime-root currently requires --json.",
+                    )))
+                }
+            }
         },
         Some(Command::RepoSafety(repo_safety_cli)) => {
             match repo_safety::RepoSafetyRuntime::discover(

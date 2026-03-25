@@ -16,32 +16,23 @@ This section is referenced by all skill preambles when they detect `UPGRADE_AVAI
 Resolve the active install once and reuse it for the rest of the flow:
 
 ```bash
-_IS_FEATUREFORGE_RUNTIME_ROOT() {
-  local candidate="$1"
-  [ -n "$candidate" ] &&
-  [ -x "$candidate/bin/featureforge" ] &&
-  [ -f "$candidate/VERSION" ] &&
-  { [ -d "$candidate/.git" ] || [ -f "$candidate/.git" ]; }
-}
-
-INSTALL_DIR=""
-if [ -n "${_FEATUREFORGE_ROOT:-}" ] && _IS_FEATUREFORGE_RUNTIME_ROOT "$_FEATUREFORGE_ROOT"; then
-  INSTALL_DIR="$_FEATUREFORGE_ROOT"
-else
-  _ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-  if [ -n "$_ROOT" ] && _IS_FEATUREFORGE_RUNTIME_ROOT "$_ROOT"; then
-    INSTALL_DIR="$_ROOT"
-  elif _IS_FEATUREFORGE_RUNTIME_ROOT "$HOME/.featureforge/install"; then
-    INSTALL_DIR="$HOME/.featureforge/install"
-  elif _IS_FEATUREFORGE_RUNTIME_ROOT "$HOME/.codex/featureforge"; then
-    INSTALL_DIR="$HOME/.codex/featureforge"
-  elif _IS_FEATUREFORGE_RUNTIME_ROOT "$HOME/.copilot/featureforge"; then
-    INSTALL_DIR="$HOME/.copilot/featureforge"
-  else
-    echo "ERROR: featureforge install not found"
-    exit 1
-  fi
+RUNTIME_ROOT_JSON=""
+if ! RUNTIME_ROOT_JSON=$(featureforge repo runtime-root --json 2>/dev/null); then
+  echo "ERROR: featureforge runtime-root helper unavailable"
+  exit 1
 fi
+
+if ! printf '%s' "$RUNTIME_ROOT_JSON" | grep -q '"resolved":true'; then
+  echo "ERROR: featureforge runtime root unavailable"
+  exit 1
+fi
+
+INSTALL_DIR="$(printf '%s' "$RUNTIME_ROOT_JSON" | sed -n 's/.*"root":"\([^"]*\)".*/\1/p')"
+if [ -z "$INSTALL_DIR" ]; then
+  echo "ERROR: featureforge runtime-root helper returned unreadable JSON"
+  exit 1
+fi
+
 FEATUREFORGE_BIN="$INSTALL_DIR/bin/featureforge"
 echo "INSTALL_DIR=$INSTALL_DIR"
 ```

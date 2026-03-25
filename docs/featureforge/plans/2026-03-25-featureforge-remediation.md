@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-25-featureforge-remediation-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -133,18 +133,19 @@ canonical validation command once Task 4 defines it
 - Test: `cargo nextest run --test runtime_root_cli --test update_and_install --test upgrade_skill --test packet_and_schema`
 - Test: `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs`
 
-- [ ] **Step 1: Add red direct helper-contract tests in `tests/runtime_root_cli.rs` for resolved output, `resolved=false`, and named failure paths**
-- [ ] **Step 2: Add red Rust tests in `tests/update_and_install.rs` for `VERSION`-only false positives, valid repo-local runtimes, binary-adjacent runtimes, invalid `FEATUREFORGE_DIR` overrides, and cached `update-check` behavior under the existing TTL rules**
-- [ ] **Step 3: Add a red schema-parity case in `tests/packet_and_schema.rs` for `schemas/repo-runtime-root.schema.json`**
-- [ ] **Step 4: Add red Node generator tests that fail when shared preambles or upgrade instructions still embed root-search order or continue after helper failure**
-- [ ] **Step 5: Implement the bounded resolver and schema writer in `src/runtime_root/mod.rs`**
-- [ ] **Step 6: Add `repo runtime-root` CLI plumbing in `src/cli/runtime_root.rs`, `src/cli/mod.rs`, and `src/lib.rs`**
-- [ ] **Step 7: Replace `update_check::discover_paths()` with helper-backed resolution that rejects `VERSION`-only installs without changing cache/TTL fetch behavior**
-- [ ] **Step 8: Update `scripts/gen-skill-docs.mjs` and `featureforge-upgrade/SKILL.md` to call the runtime-root helper, then regenerate `skills/*/SKILL.md` with `node scripts/gen-skill-docs.mjs`**
-- [ ] **Step 9: Check in `schemas/repo-runtime-root.schema.json` and make the schema tests pass**
-- [ ] **Step 10: Run `cargo nextest run --test runtime_root_cli --test update_and_install --test upgrade_skill --test packet_and_schema` and `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` until both suites pass**
+- [x] **Step 1: Add red direct helper-contract tests in `tests/runtime_root_cli.rs` for resolved output, `resolved=false`, and named failure paths**
+- [x] **Step 2: Add red Rust tests in `tests/update_and_install.rs` for `VERSION`-only false positives, valid repo-local runtimes, binary-adjacent runtimes, invalid `FEATUREFORGE_DIR` overrides, and cached `update-check` behavior under the existing TTL rules**
+- [x] **Step 3: Add a red schema-parity case in `tests/packet_and_schema.rs` for `schemas/repo-runtime-root.schema.json`**
+- [x] **Step 4: Add red Node generator tests that fail when shared preambles or upgrade instructions still embed root-search order or continue after helper failure**
+- [x] **Step 5: Implement the bounded resolver and schema writer in `src/runtime_root/mod.rs`**
+- [x] **Step 6: Add `repo runtime-root` CLI plumbing in `src/cli/runtime_root.rs`, `src/cli/mod.rs`, and `src/lib.rs`**
+- [x] **Step 7: Replace `update_check::discover_paths()` with helper-backed resolution that rejects `VERSION`-only installs without changing cache/TTL fetch behavior**
+- [x] **Step 8: Update `scripts/gen-skill-docs.mjs` and `featureforge-upgrade/SKILL.md` to call the runtime-root helper, then regenerate `skills/*/SKILL.md` with `node scripts/gen-skill-docs.mjs`**
+- [x] **Step 9: Check in `schemas/repo-runtime-root.schema.json` and make the schema tests pass**
+- [x] **Step 10: Run `cargo nextest run --test runtime_root_cli --test update_and_install --test upgrade_skill --test packet_and_schema` and `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` until both suites pass**
 - [ ] **Step 11: Commit the phase slice with `git commit -m \"feat: add runtime-root helper contract\"`**
 
+  **Execution Note:** Active - Commit the phase slice with `git commit -m \"feat: add runtime-root helper contract\"`
 ## Task 2: Make Session-Entry Own Spawned-Subagent Bypass
 
 **Spec Coverage:** REQ-002, DEC-001, DEC-003, VERIFY-001, VERIFY-002, NONGOAL-002
@@ -181,7 +182,6 @@ canonical validation command once Task 4 defines it
 - [ ] **Step 6: Update `skills/using-featureforge/SKILL.md.tmpl`, `skills/dispatching-parallel-agents/SKILL.md.tmpl`, and `skills/subagent-driven-development/SKILL.md.tmpl`, then regenerate the checked-in skill docs**
 - [ ] **Step 7: Run `cargo nextest run --test using_featureforge_skill --test session_config_slug --test workflow_runtime --test runtime_instruction_contracts --test packet_and_schema` until the nested-session contract is green**
 - [ ] **Step 8: Commit the phase slice with `git commit -m \"feat: make subagent bypass runtime-owned\"`**
-
 ## Task 3: Remove Unsupported Legacy Surfaces and Add the Gate
 
 **Spec Coverage:** REQ-003, DEC-001, DEC-002, DEC-003, VERIFY-001, VERIFY-002, NONGOAL-001, NONGOAL-002
@@ -220,7 +220,6 @@ canonical validation command once Task 4 defines it
 - [ ] **Step 6: Update `TODOS.md` so the completed cutover items are no longer tracked as open debt**
 - [ ] **Step 7: Run `bash scripts/check-featureforge-cutover.sh`, `cargo nextest run --test upgrade_skill --test workflow_shell_smoke --test powershell_wrapper_resolution`, and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` until all cutover gates pass**
 - [ ] **Step 8: Commit the phase slice with `git commit -m \"feat: remove legacy root surfaces\"`**
-
 ## Task 4: Converge Docs and Validation Commands
 
 **Spec Coverage:** REQ-004, DEC-001, DEC-003, VERIFY-002
@@ -251,7 +250,6 @@ canonical validation command once Task 4 defines it
 - [ ] **Step 4: Tighten `tests/codex-runtime/skill-doc-contracts.test.mjs` and `tests/runtime_instruction_contracts.rs` so drift in release-facing guidance fails loudly**
 - [ ] **Step 5: Run `node scripts/gen-skill-docs.mjs --check`, `node --test tests/codex-runtime/*.test.mjs`, and `cargo nextest run --test runtime_instruction_contracts --test workflow_runtime` until the doc surface is green**
 - [ ] **Step 6: Commit the phase slice with `git commit -m \"docs: converge featureforge validation guidance\"`**
-
 ## Task 5: Consolidate Shared Helpers and Narrow Hotspots
 
 **Spec Coverage:** REQ-005, DEC-001, DEC-003, VERIFY-001, VERIFY-002
@@ -287,7 +285,6 @@ canonical validation command once Task 4 defines it
 - [ ] **Step 4: Extract one shared markdown scan helper in `src/workflow/markdown_scan.rs` and route both `src/workflow/status.rs` and `src/execution/state.rs` through it**
 - [ ] **Step 5: Run `cargo nextest run --test contracts_spec_plan --test plan_execution --test repo_safety --test workflow_runtime` until the helper-preservation slice is green**
 - [ ] **Step 6: Commit the helper slice with `git commit -m \"refactor: consolidate featureforge helper seams\"`**
-
 ## Task 6: Harden the CLI Parse Boundary and Bare Help Behavior
 
 **Spec Coverage:** REQ-006, DEC-001, DEC-003, VERIFY-001, VERIFY-002
@@ -318,7 +315,6 @@ canonical validation command once Task 4 defines it
 - [ ] **Step 4: Make bare `featureforge` print help and exit cleanly**
 - [ ] **Step 5: Run `cargo nextest run --test cli_parse_boundary`, then run the full canonical validation command from `docs/testing.md`**
 - [ ] **Step 6: Commit the CLI slice with `git commit -m \"refactor: harden featureforge cli boundary\"`**
-
 ## Evidence Expectations
 
 - Record the red test or gate failure that justified each task before the first code change in that task.

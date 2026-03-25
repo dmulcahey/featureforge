@@ -56,16 +56,17 @@ test('base and review shell builders include their expected contract lines', () 
   assert.equal(buildReviewShellLines().some((line) => line.includes('_TODOS_FORMAT=')), true);
 });
 
-test('shared shell builders detect and invoke the canonical featureforge binary', () => {
+test('shared shell builders delegate runtime-root discovery to the helper contract', () => {
   const rootDetection = buildRootDetection().join('\n');
   const baseShell = buildBaseShellLines().join('\n');
 
-  assert.match(rootDetection, /candidate\/bin\/featureforge/);
-  assert.doesNotMatch(rootDetection, /featureforge-update-check/);
-  assert.doesNotMatch(rootDetection, /featureforge-config/);
+  assert.match(rootDetection, /repo runtime-root --json/);
+  assert.doesNotMatch(rootDetection, /_IS_FEATUREFORGE_RUNTIME_ROOT/);
+  assert.doesNotMatch(rootDetection, /\.codex\/featureforge/);
+  assert.doesNotMatch(rootDetection, /\.copilot\/featureforge/);
 
-  assert.match(baseShell, /bin\/featureforge" update-check/);
-  assert.match(baseShell, /bin\/featureforge" config get featureforge_contributor/);
+  assert.match(baseShell, /repo runtime-root --json/);
+  assert.doesNotMatch(baseShell, /repo runtime-root --json.*\|\| true/);
   assert.doesNotMatch(baseShell, /featureforge-update-check/);
   assert.doesNotMatch(baseShell, /featureforge-config/);
 });
