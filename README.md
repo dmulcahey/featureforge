@@ -36,7 +36,7 @@ Shared layout:
 
 - `~/.featureforge/install` for the canonical checkout
 - `~/.agents/skills/featureforge -> ~/.featureforge/install/skills`
-- `~/.copilot/skills/featureforge -> ~/.featureforge/install/skills`
+- `~/.copilot/skills -> ~/.featureforge/install/skills`
 - `~/.codex/agents/code-reviewer.toml -> ~/.featureforge/install/.codex/agents/code-reviewer.toml`
 - `~/.copilot/agents/code-reviewer.agent.md -> ~/.featureforge/install/agents/code-reviewer.md`
 

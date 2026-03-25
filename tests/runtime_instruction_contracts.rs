@@ -570,6 +570,61 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
 }
 
 #[test]
+fn copilot_install_docs_use_the_skills_root_as_the_discovery_link() {
+    let root = repo_root();
+
+    let readme = read_utf8(root.join("README.md"));
+    assert_contains(
+        &readme,
+        "`~/.copilot/skills -> ~/.featureforge/install/skills`",
+        "README.md",
+    );
+    assert_not_contains(
+        &readme,
+        "`~/.copilot/skills/featureforge -> ~/.featureforge/install/skills`",
+        "README.md",
+    );
+
+    let copilot_overview = read_utf8(root.join("docs/README.copilot.md"));
+    assert_contains(
+        &copilot_overview,
+        "`~/.copilot/skills -> ~/.featureforge/install/skills`",
+        "docs/README.copilot.md",
+    );
+    assert_contains(
+        &copilot_overview,
+        "`ls -la ~/.copilot/skills`",
+        "docs/README.copilot.md",
+    );
+    assert_not_contains(
+        &copilot_overview,
+        "~/.copilot/skills/featureforge",
+        "docs/README.copilot.md",
+    );
+
+    let install_doc = read_utf8(root.join(".copilot/INSTALL.md"));
+    for expected in [
+        "mkdir -p ~/.copilot",
+        "ln -s ~/.featureforge/install/skills ~/.copilot/skills",
+        "ls -la ~/.copilot/skills",
+        "rm ~/.copilot/skills",
+        "Get-Item \"$env:USERPROFILE\\.copilot\\skills\"",
+        "Remove-Item \"$env:USERPROFILE\\.copilot\\skills\"",
+        "cmd /c mklink /J \"$env:USERPROFILE\\.copilot\\skills\" \"$env:USERPROFILE\\.featureforge\\install\\skills\"",
+    ] {
+        assert_contains(&install_doc, expected, ".copilot/INSTALL.md");
+    }
+    for retired in [
+        "~/.copilot/skills/featureforge",
+        "$env:USERPROFILE\\.copilot\\skills\\featureforge",
+        "mkdir -p ~/.copilot/skills",
+        "New-Item -ItemType Directory -Force -Path \"$env:USERPROFILE\\.copilot\\skills\"",
+    ] {
+        assert_not_contains(&install_doc, retired, ".copilot/INSTALL.md");
+    }
+}
+
+#[test]
 fn workflow_enhancement_contracts_are_documented_consistently() {
     let root = repo_root();
 
