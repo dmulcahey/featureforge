@@ -13,54 +13,27 @@ This section is referenced by all skill preambles when they detect `UPGRADE_AVAI
 
 ### Step 1: Resolve install root
 
-Resolve the active install once and reuse it for the rest of the flow. If the caller already selected a runtime, prefer that context over re-resolving through `PATH`:
+Resolve the active install once and reuse it for the rest of the flow:
 
 ```bash
-INSTALL_DIR="${INSTALL_DIR:-${_FEATUREFORGE_ROOT:-}}"
-FEATUREFORGE_BIN="${FEATUREFORGE_BIN:-${_FEATUREFORGE_BIN:-}}"
-[ -n "$INSTALL_DIR" ] && [ -z "$FEATUREFORGE_BIN" ] && [ -x "$INSTALL_DIR/bin/featureforge" ] && FEATUREFORGE_BIN="$INSTALL_DIR/bin/featureforge"
-
 RUNTIME_ROOT_JSON=""
-if [ -z "$INSTALL_DIR" ] || [ -z "$FEATUREFORGE_BIN" ] || [ ! -x "$FEATUREFORGE_BIN" ]; then
-  RUNTIME_ROOT_HELPER="${FEATUREFORGE_BIN:-${_FEATUREFORGE_BIN:-featureforge}}"
-  if ! RUNTIME_ROOT_JSON=$("$RUNTIME_ROOT_HELPER" repo runtime-root --json 2>/dev/null); then
-    echo "ERROR: featureforge runtime-root helper unavailable"
-    exit 1
-  fi
-
-  if ! printf '%s' "$RUNTIME_ROOT_JSON" | grep -q '"resolved":true'; then
-    echo "ERROR: featureforge runtime root unavailable"
-    exit 1
-  fi
-
-  if ! INSTALL_DIR="$(FEATUREFORGE_RUNTIME_ROOT_JSON="$RUNTIME_ROOT_JSON" python3 - <<'PY'
-import json
-import os
-import sys
-
-try:
-    payload = json.loads(os.environ["FEATUREFORGE_RUNTIME_ROOT_JSON"])
-except Exception:
-    sys.exit(1)
-
-root = payload.get("root")
-if not payload.get("resolved") or not isinstance(root, str) or not root:
-    sys.exit(1)
-
-sys.stdout.write(root)
-PY
-  )"; then
-    echo "ERROR: featureforge runtime-root helper returned unreadable JSON"
-    exit 1
-  fi
-  if [ -z "$INSTALL_DIR" ]; then
-    echo "ERROR: featureforge runtime-root helper returned unreadable JSON"
-    exit 1
-  fi
-
-  FEATUREFORGE_BIN="$INSTALL_DIR/bin/featureforge"
+if ! RUNTIME_ROOT_JSON=$(featureforge repo runtime-root --json 2>/dev/null); then
+  echo "ERROR: featureforge runtime-root helper unavailable"
+  exit 1
 fi
 
+if ! printf '%s' "$RUNTIME_ROOT_JSON" | grep -q '"resolved":true'; then
+  echo "ERROR: featureforge runtime root unavailable"
+  exit 1
+fi
+
+INSTALL_DIR="$(printf '%s' "$RUNTIME_ROOT_JSON" | sed -n 's/.*"root":"\([^"]*\)".*/\1/p')"
+if [ -z "$INSTALL_DIR" ]; then
+  echo "ERROR: featureforge runtime-root helper returned unreadable JSON"
+  exit 1
+fi
+
+FEATUREFORGE_BIN="$INSTALL_DIR/bin/featureforge"
 echo "INSTALL_DIR=$INSTALL_DIR"
 ```
 
