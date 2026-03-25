@@ -644,7 +644,7 @@ test('active eval docs use featureforge state roots', () => {
   const evalObservability = readUtf8(path.join(REPO_ROOT, 'tests/evals/helpers/eval-observability.mjs'));
   assert.match(evalObservability, /FEATUREFORGE_STATE_DIR/);
   assert.match(evalObservability, /\.featureforge/);
-  assert.doesNotMatch(evalObservability, /SUPERPOWERS_STATE_DIR/);
+  assert.doesNotMatch(evalObservability, new RegExp(String.raw`\b${RETIRED_PRODUCT.toUpperCase()}_STATE_DIR\b`));
   assert.doesNotMatch(evalObservability, new RegExp(String.raw`\.${RETIRED_PRODUCT}`));
 });
 
