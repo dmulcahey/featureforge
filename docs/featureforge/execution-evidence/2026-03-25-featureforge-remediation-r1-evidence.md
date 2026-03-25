@@ -1304,8 +1304,8 @@
 **Invalidation Reason:** scripts/check-featureforge-cutover.sh changed in the final review remediation slice
 
 #### Attempt 3
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:24:46.190863Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T20:43:07.564597Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 3
 **Step Number:** 2
@@ -1316,6 +1316,21 @@
 **Files Proven:**
 - scripts/check-featureforge-cutover.sh | sha256:faa8807f601a02695c07c6d99bff1c3da4e4be8569b4968cd4855837e0a72d0e
 **Verification Summary:** `bash scripts/check-featureforge-cutover.sh && cargo nextest run --test workflow_shell_smoke --test runtime_instruction_contracts && node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` -> bash cutover check: passed; cargo nextest: workflow_shell_smoke/runtime_instruction_contracts passed; node --test: 39 passed, 0 failed
+**Invalidation Reason:** scripts/check-featureforge-cutover.sh changed to reject punctuation-delimited legacy-root references without loosening the repo-bounded single-pass gate
+
+#### Attempt 4
+**Status:** Completed
+**Recorded At:** 2026-03-25T20:43:28.962841Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 2
+**Packet Fingerprint:** 4549878ada9169f87385f59fe45302158481835be19dceb0e99edc882c9f6e99
+**Head SHA:** fafd4f938a868384baa53eba119727796017aa6e
+**Base SHA:** fafd4f938a868384baa53eba119727796017aa6e
+**Claim:** Revalidated the repo-bounded single-pass legacy-surface cutover gate after tightening it to catch punctuation-delimited legacy-root references.
+**Files Proven:**
+- scripts/check-featureforge-cutover.sh | sha256:707109117b05d638584c1225d2b37f7c65ee312355d73775c3100cda8807e8a3
+**Verification Summary:** `bash scripts/check-featureforge-cutover.sh && cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test workflow_shell_smoke --test runtime_instruction_contracts && node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` -> bash cutover check: passed; cargo nextest: workflow_shell_smoke/runtime_instruction_contracts passed 31/31; node --test: skill doc contracts/generation passed 39/39
 **Invalidation Reason:** N/A
 
 ### Task 3 Step 3
@@ -1501,8 +1516,8 @@
 **Invalidation Reason:** upgrade_skill and workflow_shell_smoke coverage changed in the final review remediation slice
 
 #### Attempt 6
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:25:38.561627Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T20:44:02.380771Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 3
 **Step Number:** 4
@@ -1514,6 +1529,22 @@
 - tests/upgrade_skill.rs | sha256:c7c087ff311c0054650d868b63da3fc4759f25b17b819392e8beeb85ba934b62
 - tests/workflow_shell_smoke.rs | sha256:5af94bb1b35597a219fbc72751cdc5e8eeb8df7505de1bcbbb71d8689f2e78b8
 **Verification Summary:** `cargo nextest run --test upgrade_skill --test workflow_shell_smoke --test runtime_instruction_contracts` -> cargo nextest: 33 passed, 0 failed
+**Invalidation Reason:** tests/workflow_shell_smoke.rs changed to add punctuation-delimited legacy-root regression coverage while preserving the prebuilt-layout and upgrade layout contract
+
+#### Attempt 7
+**Status:** Completed
+**Recorded At:** 2026-03-25T20:44:18.316584Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 4
+**Packet Fingerprint:** 86cdfbe4672bc04eb520ba7edefa091e1ceec70cf7c00ceb531e48bdf2160369
+**Head SHA:** fafd4f938a868384baa53eba119727796017aa6e
+**Base SHA:** fafd4f938a868384baa53eba119727796017aa6e
+**Claim:** Revalidated the prebuilt-layout and upgrade regression coverage after adding punctuation-delimited legacy-root cutover coverage.
+**Files Proven:**
+- tests/upgrade_skill.rs | sha256:c7c087ff311c0054650d868b63da3fc4759f25b17b819392e8beeb85ba934b62
+- tests/workflow_shell_smoke.rs | sha256:4f31af769d5be3353d1fc1ecb1afa17f8ea0e5882f5c89c6006967a7c6e4bdfe
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test upgrade_skill --test workflow_shell_smoke --test runtime_instruction_contracts` -> cargo nextest: upgrade_skill/workflow_shell_smoke/runtime_instruction_contracts passed 35/35
 **Invalidation Reason:** N/A
 
 ### Task 3 Step 5
