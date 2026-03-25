@@ -1429,6 +1429,43 @@ fn canonical_workflow_operator_suppresses_session_entry_gate_for_spawned_subagen
 }
 
 #[test]
+fn canonical_workflow_operator_honors_spawned_subagent_opt_in_context() {
+    let (repo_dir, state_dir) = init_repo("workflow-spawned-subagent-opt-in");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-spawned-subagent-opt-in";
+
+    install_full_contract_ready_artifacts(repo);
+
+    let spawned_subagent_env = [
+        ("FEATUREFORGE_SESSION_KEY", session_key),
+        ("FEATUREFORGE_SPAWNED_SUBAGENT", "1"),
+        ("FEATUREFORGE_SPAWNED_SUBAGENT_OPT_IN", "1"),
+    ];
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &spawned_subagent_env,
+            "workflow phase should honor spawned-subagent opt-in",
+        ),
+        "workflow phase should honor spawned-subagent opt-in",
+    );
+
+    assert_eq!(phase_json["session_entry"]["outcome"], "enabled");
+    assert_eq!(
+        phase_json["session_entry"]["decision_source"],
+        "spawned_subagent_opt_in"
+    );
+    assert_eq!(phase_json["session_entry"]["persisted"], false);
+    assert_eq!(phase_json["route_status"], "implementation_ready");
+    assert_ne!(phase_json["phase"], "bypassed");
+    assert_ne!(phase_json["next_action"], "continue_outside_featureforge");
+}
+
+#[test]
 fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-ready-plan");
     let repo = repo_dir.path();

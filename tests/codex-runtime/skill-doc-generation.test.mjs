@@ -100,6 +100,9 @@ test('upgrade instructions use the runtime-root helper instead of embedded root-
   assert.match(upgradeSkill, /repo runtime-root --path/);
   assert.match(upgradeSkill, /_FEATUREFORGE_BIN/);
   assert.match(upgradeSkill, /_FEATUREFORGE_ROOT/);
+  assert.match(upgradeSkill, /FEATUREFORGE_COMPAT_BIN/);
+  assert.doesNotMatch(upgradeSkill, /\$\{_FEATUREFORGE_BIN:-featureforge\}/);
+  assert.doesNotMatch(upgradeSkill, /command -v featureforge/);
   assert.doesNotMatch(upgradeSkill, /sed -n 's\/\.\*"root"/);
   assert.doesNotMatch(upgradeSkill, /\.codex\/featureforge/);
   assert.doesNotMatch(upgradeSkill, /\.copilot\/featureforge/);

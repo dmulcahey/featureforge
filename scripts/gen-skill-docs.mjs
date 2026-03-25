@@ -18,8 +18,6 @@ export function buildRootDetection() {
     '_FEATUREFORGE_ROOT=""',
     '_FEATUREFORGE_BIN=""',
     '[ -n "${FEATUREFORGE_COMPAT_BIN:-}" ] && [ -x "$FEATUREFORGE_COMPAT_BIN" ] && _FEATUREFORGE_BIN="$FEATUREFORGE_COMPAT_BIN"',
-    '[ -z "$_FEATUREFORGE_BIN" ] && [ -x "$_REPO_ROOT/bin/featureforge" ] && _FEATUREFORGE_BIN="$_REPO_ROOT/bin/featureforge"',
-    '[ -z "$_FEATUREFORGE_BIN" ] && command -v featureforge >/dev/null 2>&1 && _FEATUREFORGE_BIN="$(command -v featureforge)"',
     '_FEATUREFORGE_RUNTIME_ROOT_PATH=""',
     'if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_PATH=$("$_FEATUREFORGE_BIN" repo runtime-root --path 2>/dev/null); then',
     '  [ -n "$_FEATUREFORGE_RUNTIME_ROOT_PATH" ] && _FEATUREFORGE_ROOT="$_FEATUREFORGE_RUNTIME_ROOT_PATH"',
@@ -62,7 +60,7 @@ export function buildReviewShellLines() {
 }
 
 export function buildUpgradeNote() {
-  return 'If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the already selected runtime root in `$_FEATUREFORGE_ROOT`; if that root is not set yet, resolve it through `$_FEATUREFORGE_BIN repo runtime-root --path` and stop instead of guessing an install path. Then follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.';
+  return 'If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the already selected runtime root in `$_FEATUREFORGE_ROOT`; if that root is not set yet, resolve it through the packaged compat binary in `$_FEATUREFORGE_BIN` and stop instead of guessing an install path. Then follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the packaged helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.';
 }
 
 export function buildSearchBeforeBuildingSection() {

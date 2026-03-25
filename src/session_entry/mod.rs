@@ -216,7 +216,7 @@ pub fn inspect(session_key: Option<&str>) -> Result<SessionEntryResolveOutput, D
     let runtime = SessionEntryRuntime::discover(session_key)?;
     let context = SessionEntryContext::from_env();
     if context.spawned_subagent {
-        return Ok(runtime.spawned_subagent_result());
+        return Ok(runtime.inspect_spawned_subagent_result(context));
     }
     let decision_state = runtime.read_decision_state_read_only()?;
 
@@ -448,6 +448,23 @@ impl SessionEntryRuntime {
             "spawned_subagent_default",
             None,
         )
+    }
+
+    fn inspect_spawned_subagent_result(
+        &self,
+        context: SessionEntryContext,
+    ) -> SessionEntryResolveOutput {
+        if context.spawned_subagent_opt_in {
+            return self.result(
+                "enabled",
+                "spawned_subagent_opt_in",
+                false,
+                "",
+                "spawned_subagent_opt_in",
+                None,
+            );
+        }
+        self.spawned_subagent_result()
     }
 }
 

@@ -1365,64 +1365,100 @@ fn spawned_subagent_marker_contracts_are_documented_consistently() {
 }
 
 #[test]
-fn using_featureforge_preamble_prefers_valid_repo_roots_and_does_not_guess_fallback_installs() {
+fn using_featureforge_preamble_uses_only_the_packaged_runtime_binary() {
     let content = read_utf8(repo_root().join("skills/using-featureforge/SKILL.md"));
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
     let tmp_root = TempDir::new().expect("temp root should exist");
 
-    let shared_home = tmp_root.path().join("shared-home");
-    fs::create_dir_all(shared_home.join(".featureforge")).expect("shared home should exist");
-    make_runtime_root(&shared_home.join(".featureforge/install"));
-    let renamed_repo = tmp_root.path().join("runtime-dev-checkout");
-    fs::create_dir_all(&renamed_repo).expect("renamed repo should exist");
-    make_runtime_repo(&renamed_repo);
-    let expected_repo_root =
-        fs::canonicalize(&renamed_repo).expect("repo root should canonicalize");
-
-    let mut command = Command::new("bash");
-    command
-        .arg("-lc")
-        .arg(format!(
-            "{preamble}\nprintf \"FEATUREFORGE_ROOT=%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"
-        ))
-        .current_dir(&renamed_repo)
-        .env("HOME", &shared_home);
-    let output = run_checked(command, "run generated using-featureforge preamble");
-    let stdout = String::from_utf8(output.stdout).expect("preamble output should be utf8");
-    assert_contains(
-        &stdout,
-        &format!("FEATUREFORGE_ROOT={}", expected_repo_root.display()),
-        "using-featureforge preamble output",
-    );
-
-    let invalid_home = tmp_root.path().join("invalid-home");
-    fs::create_dir_all(invalid_home.join(".featureforge")).expect("invalid home should exist");
-    make_runtime_root(&invalid_home.join(".featureforge/install"));
-    let invalid_repo = tmp_root.path().join("not-a-runtime");
-    fs::create_dir_all(&invalid_repo).expect("invalid repo should exist");
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(&invalid_repo);
-    run_checked(git_init, "git init invalid repo");
-
-    let mut fallback_command = Command::new("bash");
-    fallback_command
-        .arg("-lc")
-        .arg(format!(
-            "{preamble}\nprintf \"FEATUREFORGE_ROOT=%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"
-        ))
-        .current_dir(&invalid_repo)
-        .env("HOME", &invalid_home);
-    let fallback = run_checked(fallback_command, "run fallback using-featureforge preamble");
-    let fallback_stdout =
-        String::from_utf8(fallback.stdout).expect("fallback output should be utf8");
-    assert_contains(
-        &fallback_stdout,
-        "FEATUREFORGE_ROOT=",
-        "using-featureforge fallback output",
+    assert_not_contains(
+        &preamble,
+        "_REPO_ROOT/bin/featureforge",
+        "using-featureforge preamble",
     );
     assert_not_contains(
-        &fallback_stdout,
-        &invalid_home.join(".featureforge/install").display().to_string(),
-        "using-featureforge fallback output",
+        &preamble,
+        "command -v featureforge",
+        "using-featureforge preamble",
+    );
+
+    let shared_home = tmp_root.path().join("shared-home");
+    fs::create_dir_all(&shared_home).expect("shared home should exist");
+    let packaged_runtime = tmp_root.path().join("packaged-runtime");
+    fs::create_dir_all(&packaged_runtime).expect("packaged runtime should exist");
+    make_runtime_repo(&packaged_runtime);
+    let packaged_bin = packaged_runtime.join("bin/featureforge");
+    let expected_runtime_root =
+        fs::canonicalize(&packaged_runtime).expect("packaged runtime should canonicalize");
+    fs::write(
+        &packaged_bin,
+        format!(
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--path\" ]; then\n  printf '%s\\n' '{}'\n  exit 0\nfi\nexit 0\n",
+            expected_runtime_root.display()
+        ),
+    )
+    .expect("packaged runtime binary should be writable");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&packaged_bin, fs::Permissions::from_mode(0o755))
+            .expect("packaged runtime binary should stay executable");
+    }
+
+    let repo_candidate = tmp_root.path().join("repo-candidate");
+    fs::create_dir_all(&repo_candidate).expect("repo candidate should exist");
+    make_runtime_repo(&repo_candidate);
+
+    let mut packaged_command = Command::new("bash");
+    packaged_command
+        .arg("-lc")
+        .arg(format!(
+            "{preamble}\nprintf \"FEATUREFORGE_ROOT=%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"
+        ))
+        .current_dir(&repo_candidate)
+        .env("HOME", &shared_home)
+        .env("FEATUREFORGE_COMPAT_BIN", &packaged_bin);
+    let packaged = run_checked(packaged_command, "run packaged using-featureforge preamble");
+    let packaged_stdout =
+        String::from_utf8(packaged.stdout).expect("preamble output should be utf8");
+    assert_contains(
+        &packaged_stdout,
+        &format!("FEATUREFORGE_ROOT={}", expected_runtime_root.display()),
+        "using-featureforge packaged output",
+    );
+
+    let non_runtime_repo = tmp_root.path().join("non-runtime-repo");
+    fs::create_dir_all(&non_runtime_repo).expect("non-runtime repo should exist");
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(&non_runtime_repo);
+    run_checked(git_init, "git init non-runtime repo");
+
+    let mut no_fallback_command = Command::new("bash");
+    no_fallback_command
+        .arg("-lc")
+        .arg(format!(
+            "{preamble}\nprintf \"FEATUREFORGE_ROOT=%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"
+        ))
+        .current_dir(&non_runtime_repo)
+        .env("HOME", &shared_home);
+    let no_fallback = run_checked(
+        no_fallback_command,
+        "run using-featureforge preamble without packaged binary",
+    );
+    let no_fallback_stdout =
+        String::from_utf8(no_fallback.stdout).expect("no-fallback output should be utf8");
+    assert_contains(
+        &no_fallback_stdout,
+        "FEATUREFORGE_ROOT=",
+        "using-featureforge no-fallback output",
+    );
+    assert_not_contains(
+        &no_fallback_stdout,
+        &expected_runtime_root.display().to_string(),
+        "using-featureforge no-fallback output",
+    );
+    assert_not_contains(
+        &no_fallback_stdout,
+        &non_runtime_repo.display().to_string(),
+        "using-featureforge no-fallback output",
     );
 }

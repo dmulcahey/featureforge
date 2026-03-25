@@ -121,13 +121,6 @@ fn write_mock_featureforge(bin_dir: &Path, script_body: &str) {
     make_executable(&helper_path);
 }
 
-fn path_with_mock_featureforge(bin_dir: &Path) -> String {
-    match std::env::var("PATH") {
-        Ok(existing) if !existing.is_empty() => format!("{}:{existing}", bin_dir.display()),
-        _ => bin_dir.display().to_string(),
-    }
-}
-
 fn resolved_runtime_root_path(root: &Path) -> String {
     format!("{}\n", root.to_string_lossy())
 }
@@ -137,7 +130,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let skill_doc = read_skill_doc();
     for pattern in [
         "repo runtime-root --path",
-        "FEATUREFORGE_RUNTIME_RESOLVER=\"${_FEATUREFORGE_BIN:-featureforge}\"",
+        "FEATUREFORGE_RUNTIME_RESOLVER=\"${_FEATUREFORGE_BIN:-${FEATUREFORGE_COMPAT_BIN:-}}\"",
         "INSTALL_DIR=\"${_FEATUREFORGE_ROOT:-}\"",
         "bin/featureforge",
         "FEATUREFORGE_BIN=\"$INSTALL_DIR/bin/featureforge\"",
@@ -170,6 +163,10 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         !skill_doc.contains("featureforge-config"),
         "featureforge-upgrade/SKILL.md should not reference removed helper binaries"
     );
+    assert!(
+        !skill_doc.contains("command -v featureforge"),
+        "featureforge-upgrade/SKILL.md should not trust PATH fallback binaries"
+    );
 
     let step_one = extract_bash_block(&skill_doc, "### Step 1: Resolve install root");
 
@@ -179,9 +176,9 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let current_root = tmp_root.path().join("current-project");
     fs::create_dir_all(&current_root).expect("project root should exist");
     let helper_bin = tmp_root.path().join("mock-bin");
-    let helper_path = path_with_mock_featureforge(&helper_bin);
     let resolved_install = tmp_root.path().join("resolved-install");
     make_valid_install(&resolved_install, "dir");
+    let helper = helper_bin.join("featureforge");
     write_mock_featureforge(
         &helper_bin,
         &format!(
@@ -194,7 +191,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[("PATH", helper_path.as_str())],
+        &[("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref())],
         "upgrade skill step 1 resolved helper",
     );
     let active_stdout = String::from_utf8_lossy(&active_output.stdout);
@@ -221,7 +218,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[("PATH", helper_path.as_str())],
+        &[("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref())],
         "upgrade skill step 1 arbitrary resolved path",
     );
     let renamed_stdout = String::from_utf8_lossy(&renamed_output.stdout);
@@ -248,7 +245,6 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &home_dir,
         &step_one,
         &[
-            ("PATH", helper_path.as_str()),
             (
                 "_FEATUREFORGE_ROOT",
                 selected_runtime.to_string_lossy().as_ref(),
@@ -284,7 +280,6 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &home_dir,
         &step_one,
         &[
-            ("PATH", helper_path.as_str()),
             (
                 "_FEATUREFORGE_BIN",
                 selected_bin.to_string_lossy().as_ref(),
@@ -307,7 +302,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[("PATH", helper_path.as_str())],
+        &[("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref())],
         "upgrade skill step 1 unresolved helper",
     );
     assert!(
@@ -333,7 +328,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[("PATH", helper_path.as_str())],
+        &[("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref())],
         "upgrade skill step 1 non-runtime helper result",
     );
     assert!(
@@ -351,7 +346,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[("PATH", helper_path.as_str())],
+        &[],
         "upgrade skill step 1 unavailable helper",
     );
     assert!(

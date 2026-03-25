@@ -277,7 +277,7 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
 }
 
 #[test]
-fn using_featureforge_preamble_recognizes_the_repo_checkout_as_a_runtime_root() {
+fn using_featureforge_preamble_requires_the_packaged_runtime_binary() {
     let content = read_skill_doc();
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
     let temp_home = TempDir::new().expect("home tempdir should exist");
@@ -286,16 +286,14 @@ fn using_featureforge_preamble_recognizes_the_repo_checkout_as_a_runtime_root() 
         state_dir.path(),
         temp_home.path(),
         &format!("{preamble}\nprintf \"%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"),
-        "derive using-featureforge runtime root without compat override",
+        "derive using-featureforge runtime root without packaged binary",
     );
-    let derived_root = extract_last_nonempty_line(
-        &output.stdout,
-        "derive using-featureforge runtime root without compat override",
-    );
+    let stdout = String::from_utf8(output.stdout)
+        .expect("runtime root without packaged binary should emit utf8");
     assert_eq!(
-        PathBuf::from(&derived_root),
-        repo_root(),
-        "using-featureforge preamble should recognize the repo checkout as the runtime root without test-only launcher overrides"
+        stdout.trim_end(),
+        "",
+        "using-featureforge preamble should not guess a runtime root from PATH without the packaged compat binary"
     );
 }
 

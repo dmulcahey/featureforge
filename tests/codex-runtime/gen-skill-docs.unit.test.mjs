@@ -61,6 +61,9 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   const baseShell = buildBaseShellLines().join('\n');
 
   assert.match(rootDetection, /repo runtime-root --path/);
+  assert.match(rootDetection, /FEATUREFORGE_COMPAT_BIN/);
+  assert.doesNotMatch(rootDetection, /_REPO_ROOT\/bin\/featureforge/);
+  assert.doesNotMatch(rootDetection, /command -v featureforge/);
   assert.doesNotMatch(rootDetection, /_IS_FEATUREFORGE_RUNTIME_ROOT/);
   assert.doesNotMatch(rootDetection, /\.codex\/featureforge/);
   assert.doesNotMatch(rootDetection, /\.copilot\/featureforge/);

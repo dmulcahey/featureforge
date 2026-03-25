@@ -281,8 +281,8 @@
 **Invalidation Reason:** Review remediation updated recorded files while keeping the step claim intact.
 
 #### Attempt 3
-**Status:** Completed
-**Recorded At:** 2026-03-25T17:25:23.420152Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:48:40.856494Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 8
@@ -313,6 +313,41 @@
 - skills/writing-skills/SKILL.md | sha256:3ae5e93db5e9d30b5f9ced75b2426333f388cd618cc4da6935cd74d591288f87
 - tests/codex-runtime/gen-skill-docs.unit.test.mjs | sha256:b66db3cf65a6d730ead1f283b7fbb97176cf56c03fe5c3edaf0771a71fa68a94
 **Verification Summary:** Manual inspection only: Rebuilt evidence after the review-remediation slice added repo runtime-root --path, refreshed generated skill docs, updated release docs, and rebuilt the checked-in darwin and windows runtimes. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 44 passed, 0 failed; cargo nextest run --test runtime_root_cli --test upgrade_skill --test runtime_instruction_contracts --test using_featureforge_skill -> 30 passed, 0 failed; cargo nextest run --test powershell_wrapper_resolution --test runtime_instruction_contracts -> 21 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after post-review fixes updated previously proven files.
+
+#### Attempt 4
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:48:40.984959Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 8
+**Packet Fingerprint:** c2969b5db2361dca7c2a9499c2930c7584d6a5bd89b663b330c834f5f41f6876
+**Head SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Base SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Claim:** Migrated generated skill preambles and upgrade instructions to the runtime-root helper and regenerated the checked-in skill docs.
+**Files Proven:**
+- featureforge-upgrade/SKILL.md | sha256:819fe2e6c82cca4a8c09c62f1708a1d4a80277a6f4e2678de4d941b2466f5ac3
+- scripts/gen-skill-docs.mjs | sha256:dcc20f196bcbeed820130e0ebde01a1bf6fb4173a7af061d861956a691f2ce47
+- skills/brainstorming/SKILL.md | sha256:6c08a61d241534372e2f335315b154baa9a31003119c4aee4deccb46b42051aa
+- skills/dispatching-parallel-agents/SKILL.md | sha256:1ca72a75624aa6fd9fb6c4b651fd1551ca1ed2bddc16910e63f5f49f532e0723
+- skills/document-release/SKILL.md | sha256:3160e46c9bac472deed63f048f5f61359e345de6fdee884b9246f912e9edc3c3
+- skills/executing-plans/SKILL.md | sha256:25112dffcda78455b369f07d7be447c4d4144e95fa0160db1e9b069e9d5d8973
+- skills/finishing-a-development-branch/SKILL.md | sha256:2d7cd911918c910ab5e7151995c58536eeb2e27a79dffd4b4322c02f1ee525bb
+- skills/plan-ceo-review/SKILL.md | sha256:6840578ef15b371e03304617136068867096ef65bc6c1f3467255bd4619e2d4e
+- skills/plan-eng-review/SKILL.md | sha256:76651d66da588e68ba4c66a30478f62a1999b35a2e1f0cf240e7ae8118f160dc
+- skills/qa-only/SKILL.md | sha256:882c2996910630084b0e6e70c08dc117071c9dad8491c736a6b2a715030cd294
+- skills/receiving-code-review/SKILL.md | sha256:083d014ad3532a30f221a75ee7ca8f35c691b03b0b829d08ed28c28501e0b100
+- skills/requesting-code-review/SKILL.md | sha256:22b3d1f37074eefdd361a0a0c6cdb4ddbd4b188d94c9b263cf4a81a1eec56222
+- skills/subagent-driven-development/SKILL.md | sha256:2a108087117ed8c999171569473e2563346681ca4a8be08051320f4aff838187
+- skills/systematic-debugging/SKILL.md | sha256:017b22f7eb3bbfd3f8f01fd4b4da921823a7535b7897cd735af053000367b390
+- skills/test-driven-development/SKILL.md | sha256:8c23449a3216ee1ed14a43ba6e83c9303dc8f4a89ea4b48932646aa46a23a07f
+- skills/using-featureforge/SKILL.md | sha256:cc9150b910d4caa614aade27a17e5a9df02cb4cdc8b67245571295bff51f6952
+- skills/using-git-worktrees/SKILL.md | sha256:e7dae2d801b2b0d3b4f302a49dca5702087c122c842ce35a5946e1237f0dacfc
+- skills/verification-before-completion/SKILL.md | sha256:f8d566ebcaece0404fde196ab91e4d5d4775300c03fbff47f8dd23f5415c152f
+- skills/writing-plans/SKILL.md | sha256:7ccf628a7aeccaf50dbc5705ef86df5e61305018f6a0322923a8f9c8e6b78b86
+- skills/writing-skills/SKILL.md | sha256:2975c719cf63b7b1c9eab6695f31bb9392057b51c04a98194e4a519e6a1447f1
+- tests/codex-runtime/gen-skill-docs.unit.test.mjs | sha256:f7f91da057f43d3ddaa3d7ca14f2afd1b8408baf270f3df066e980eaa0e0fc89
+**Verification Summary:** Manual inspection only: Rebuilt evidence after the post-review remediation slice removed generated repo/PATH runtime fallbacks, required the packaged compat binary for skill/runtime shell flows, regenerated the checked-in skill docs, and fixed workflow inspection so spawned-subagent opt-in resolves as enabled. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 18 passed, 0 failed; node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 26 passed, 0 failed; cargo nextest run --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime -> 64 passed, 0 failed; cargo nextest run --test using_featureforge_skill --test session_config_slug -> 20 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 1 Step 9
@@ -572,8 +607,8 @@
 **Invalidation Reason:** Rebuilt evidence after later review-approved changes updated previously proven files.
 
 #### Attempt 3
-**Status:** Completed
-**Recorded At:** 2026-03-25T17:29:47.830091Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:48:41.227423Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 2
 **Step Number:** 6
@@ -590,6 +625,27 @@
 - skills/using-featureforge/SKILL.md | sha256:daa6f6a9003e4f343740dcc07eb76916b1e6d8b1cabd580fa11c7ee70f491dcd
 - skills/using-featureforge/SKILL.md.tmpl | sha256:224358a6bb86a2a154cf1992c9262c57d0389e27763817fcfb4533b9f4c0eefe
 **Verification Summary:** Manual inspection only: Rebuilt evidence after the review-remediation slice added repo runtime-root --path, refreshed generated skill docs, updated release docs, and rebuilt the checked-in darwin and windows runtimes. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 44 passed, 0 failed; cargo nextest run --test runtime_root_cli --test upgrade_skill --test runtime_instruction_contracts --test using_featureforge_skill -> 30 passed, 0 failed; cargo nextest run --test powershell_wrapper_resolution --test runtime_instruction_contracts -> 21 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after post-review fixes updated previously proven files.
+
+#### Attempt 4
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:48:41.346723Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 6
+**Packet Fingerprint:** bf3446ec968dc74650babb803153edfcd21affc8df340d18ca62eac9cb9db026
+**Head SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Base SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Claim:** Updated the shared skill-doc generator and regenerated the launcher-facing skill docs to document the spawned-subagent marker path while restoring repo-local runtime-root preamble resolution.
+**Files Proven:**
+- scripts/gen-skill-docs.mjs | sha256:dcc20f196bcbeed820130e0ebde01a1bf6fb4173a7af061d861956a691f2ce47
+- skills/dispatching-parallel-agents/SKILL.md | sha256:1ca72a75624aa6fd9fb6c4b651fd1551ca1ed2bddc16910e63f5f49f532e0723
+- skills/dispatching-parallel-agents/SKILL.md.tmpl | sha256:491c680f912b5fd48be55415357e5232f37071fe609444e919035ad5706aa858
+- skills/subagent-driven-development/SKILL.md | sha256:2a108087117ed8c999171569473e2563346681ca4a8be08051320f4aff838187
+- skills/subagent-driven-development/SKILL.md.tmpl | sha256:44a5129b7f8ca21883b6076d8b779d4b71a00852b9ac05eeabb56a947841571b
+- skills/using-featureforge/SKILL.md | sha256:cc9150b910d4caa614aade27a17e5a9df02cb4cdc8b67245571295bff51f6952
+- skills/using-featureforge/SKILL.md.tmpl | sha256:224358a6bb86a2a154cf1992c9262c57d0389e27763817fcfb4533b9f4c0eefe
+**Verification Summary:** Manual inspection only: Rebuilt evidence after the post-review remediation slice removed generated repo/PATH runtime fallbacks, required the packaged compat binary for skill/runtime shell flows, regenerated the checked-in skill docs, and fixed workflow inspection so spawned-subagent opt-in resolves as enabled. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 18 passed, 0 failed; node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 26 passed, 0 failed; cargo nextest run --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime -> 64 passed, 0 failed; cargo nextest run --test using_featureforge_skill --test session_config_slug -> 20 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 2 Step 7
@@ -690,8 +746,8 @@
 **Invalidation Reason:** Rebuilt evidence after later review-approved changes updated previously proven files.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-25T17:29:48.172553Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:48:41.577645Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 3
 **Step Number:** 3
@@ -702,6 +758,21 @@
 **Files Proven:**
 - tests/codex-runtime/skill-doc-generation.test.mjs | sha256:9c6405db49c2bbaefe83f1db208c8e55f0180e177c1349c09afc320e2af89959
 **Verification Summary:** Manual inspection only: Rebuilt evidence after the review-remediation slice added repo runtime-root --path, refreshed generated skill docs, updated release docs, and rebuilt the checked-in darwin and windows runtimes. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 44 passed, 0 failed; cargo nextest run --test runtime_root_cli --test upgrade_skill --test runtime_instruction_contracts --test using_featureforge_skill -> 30 passed, 0 failed; cargo nextest run --test powershell_wrapper_resolution --test runtime_instruction_contracts -> 21 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after post-review fixes updated previously proven files.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:48:41.671892Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 3
+**Packet Fingerprint:** 6bcb13100b40e17224c76b08e6bf0b0157a76a7cac0436c181d0e69be6d04149
+**Head SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Base SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Claim:** Pinned the clean generator and public/generated doc surfaces with an explicit legacy-root regression test.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-generation.test.mjs | sha256:383301edfb21f0896316a5cc125340f0a46292009c7e822feb9b18cf9ac2be6c
+**Verification Summary:** Manual inspection only: Rebuilt evidence after the post-review remediation slice removed generated repo/PATH runtime fallbacks, required the packaged compat binary for skill/runtime shell flows, regenerated the checked-in skill docs, and fixed workflow inspection so spawned-subagent opt-in resolves as enabled. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 18 passed, 0 failed; node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 26 passed, 0 failed; cargo nextest run --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime -> 64 passed, 0 failed; cargo nextest run --test using_featureforge_skill --test session_config_slug -> 20 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 3 Step 4
@@ -724,8 +795,8 @@
 **Invalidation Reason:** Rebuilt evidence after later review-approved changes updated previously proven files.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-25T17:29:48.501916Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:48:41.896731Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 3
 **Step Number:** 4
@@ -739,6 +810,24 @@
 - tests/upgrade_skill.rs | sha256:0f1c754bd8c814ebacac079bc912bf0614a62d1cab27760affed53dfd169f511
 - tests/workflow_shell_smoke.rs | sha256:eef66d26e553a6efb5dc1d7e224bc4c7469182854b9224c3c42b02e53b33b5c2
 **Verification Summary:** Manual inspection only: Rebuilt evidence after the review-remediation slice added repo runtime-root --path, refreshed generated skill docs, updated release docs, and rebuilt the checked-in darwin and windows runtimes. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 44 passed, 0 failed; cargo nextest run --test runtime_root_cli --test upgrade_skill --test runtime_instruction_contracts --test using_featureforge_skill -> 30 passed, 0 failed; cargo nextest run --test powershell_wrapper_resolution --test runtime_instruction_contracts -> 21 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after post-review fixes updated previously proven files.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:48:41.998234Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 4
+**Packet Fingerprint:** 86cdfbe4672bc04eb520ba7edefa091e1ceec70cf7c00ceb531e48bdf2160369
+**Head SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Base SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Claim:** Added shared darwin/windows prebuilt layout smoke coverage and wired the temp install and shell fixtures to the canonical manifest contract.
+**Files Proven:**
+- tests/powershell_wrapper_resolution.rs | sha256:c71dc00c00121ec8afe3b5cc09927f709c3082be81615f14d62aac1c0a2eb992
+- tests/support/prebuilt.rs | sha256:fc70ca0dd2ccfcc915475fb888766120c97fb202569af09ea0388892270fa5ea
+- tests/upgrade_skill.rs | sha256:d35f3b3cfd53ee981b4e2fb2cf45cf21bd48f0ed3b88bf4b387f3ce3075a4404
+- tests/workflow_shell_smoke.rs | sha256:eef66d26e553a6efb5dc1d7e224bc4c7469182854b9224c3c42b02e53b33b5c2
+**Verification Summary:** Manual inspection only: Rebuilt evidence after the post-review remediation slice removed generated repo/PATH runtime fallbacks, required the packaged compat binary for skill/runtime shell flows, regenerated the checked-in skill docs, and fixed workflow inspection so spawned-subagent opt-in resolves as enabled. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 18 passed, 0 failed; node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 26 passed, 0 failed; cargo nextest run --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime -> 64 passed, 0 failed; cargo nextest run --test using_featureforge_skill --test session_config_slug -> 20 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 3 Step 5
@@ -1221,8 +1310,8 @@
 **Invalidation Reason:** Rebuilt evidence after later tasks updated previously proven files.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-25T16:48:43.841984Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:48:42.223661Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 5
 **Step Number:** 6
@@ -1248,6 +1337,36 @@
 - tests/repo_safety.rs | sha256:8ef90e2884123d5da0da51bf04b27390ad7efcf9efb7da545ea7de56547c7786
 - tests/workflow_runtime.rs | sha256:95be22e92009fa97ac609ae5c8e3f7900d0df2b236659d63eaffd0e440ab8794
 **Verification Summary:** Manual inspection only: Rebuilt evidence after later approved tasks legitimately modified previously proven files. The step claim still holds at HEAD 5c9400b, and the final validation matrix remains green: cargo nextest run --test cli_parse_boundary -> 6 passed, 0 failed; node scripts/gen-skill-docs.mjs --check -> Generated skill docs are up to date.; node scripts/gen-agent-docs.mjs --check -> Generated agent docs are up to date.; node --test tests/codex-runtime/*.test.mjs -> 57 passed, 0 failed; cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill --test contracts_spec_plan --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill -> 164 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after post-review fixes updated previously proven files.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:48:42.321724Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 5
+**Step Number:** 6
+**Packet Fingerprint:** b11586993a3fc4030c1a7d26dae5cdd878595ffc2748d0d5a43fcd0fe87f0a99
+**Head SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Base SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Claim:** Committed the helper consolidation slice as 4b437f3 (refactor: consolidate featureforge helper seams).
+**Files Proven:**
+- src/contracts/evidence.rs | sha256:738907848ebfe34d721682f50e2464dc798765ecb2abe5e19ab2c8c74c076105
+- src/contracts/headers.rs | sha256:286aef1775f319feadf2a15b5cd742881779650ff45df5f1eadf44a47a65a959
+- src/contracts/mod.rs | sha256:0f802bde09c6b475465cb266a054618fea62c301a062049d8da84df4a5e16c6a
+- src/contracts/plan.rs | sha256:64877976044d45341f8d7bd7bc00cd97283ba342950a43c1664d93faa73d00e9
+- src/contracts/spec.rs | sha256:7cc74c323e8c90f6ac51ef037b38a75b6d6854cc21d9bcc151114cd471b13e1c
+- src/execution/state.rs | sha256:b298f45c2a4f913e14cbee3a5e121e7373eccd564e72fa37fc1a83eeb98ee8e0
+- src/git/mod.rs | sha256:d96ae776319ee4ea0e7bd3f41dc936e4f38f99f0caf73202ac9f95dea747fbee
+- src/repo_safety/mod.rs | sha256:c5157f05ffdd4f6bffa51d0ef0984224ab48c5ccbb79f578e8ca1eb62cadab24
+- src/workflow/manifest.rs | sha256:556c3391335a8b30253d564080c40f9d78854f8b5f6bd46aa6ac5a42f7e6de33
+- src/workflow/markdown_scan.rs | sha256:228d1ff05fe8e42ff5898334d242fb595a84b985f73d2002f016dbec1ca3bc6f
+- src/workflow/mod.rs | sha256:d79a3db47d3198968e117512e64286a513a870cfc7bdfe769e6ad2dae49042b8
+- src/workflow/status.rs | sha256:d2d388f755f1a128ebe2fcc3ed3fc4befe6b3ec6911f6b54ed47ab5a41ca48a2
+- tests/contracts_spec_plan.rs | sha256:acf6a43830fa7bf539a501aded39e3774a679127ec7b5100d230b53cf975acc6
+- tests/plan_execution.rs | sha256:053f8e2b01398aac0128738cd0a011b24bf422208d803492364b8033c1ffdc2d
+- tests/repo_safety.rs | sha256:8ef90e2884123d5da0da51bf04b27390ad7efcf9efb7da545ea7de56547c7786
+- tests/workflow_runtime.rs | sha256:91614ff330fcd4b696a6cff7efe6c52284a1edf6f34aaa29074e07c157f15c6c
+**Verification Summary:** Manual inspection only: Rebuilt evidence after the post-review remediation slice removed generated repo/PATH runtime fallbacks, required the packaged compat binary for skill/runtime shell flows, regenerated the checked-in skill docs, and fixed workflow inspection so spawned-subagent opt-in resolves as enabled. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 18 passed, 0 failed; node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 26 passed, 0 failed; cargo nextest run --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime -> 64 passed, 0 failed; cargo nextest run --test using_featureforge_skill --test session_config_slug -> 20 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 6 Step 1
@@ -1287,8 +1406,8 @@
 
 ### Task 6 Step 3
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-25T16:31:16.47571Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:48:42.546925Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 6
 **Step Number:** 3
@@ -1304,6 +1423,26 @@
 - src/session_entry/mod.rs | sha256:d5faf30e798f7c3fc3ac2d32ede598d559a119cd069f3c5981b2ce88ebb52656
 - src/workflow/operator.rs | sha256:432847c9cc313370bdd9873c0e87c813c67bb61320f846f2e27a9f4ebf832c1d
 **Verification Summary:** `cargo nextest run --test cli_parse_boundary` -> passed: 6 tests
+**Invalidation Reason:** Rebuilt evidence after post-review fixes updated previously proven files.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:48:42.649565Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 3
+**Packet Fingerprint:** 72f0f78bc55478225a661a46ca41e8be231bc20c9478241d68f955a48785240f
+**Head SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Base SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Claim:** Updated runtime adapters to consume typed CLI boundary values for execution recommendation, begin/note/source normalization, repo-safety checks, session-entry recording, and bare command dispatch.
+**Files Proven:**
+- src/execution/mutate.rs | sha256:44a0380938cb5f0390da36e5edfe1739a6de539ede07b02f586d4ce09f39fb15
+- src/execution/state.rs | sha256:b298f45c2a4f913e14cbee3a5e121e7373eccd564e72fa37fc1a83eeb98ee8e0
+- src/lib.rs | sha256:fcb75f709fcf36d76169d005f66959b9ea8b1672e9d05cd9f07acebc51872532
+- src/repo_safety/mod.rs | sha256:c5157f05ffdd4f6bffa51d0ef0984224ab48c5ccbb79f578e8ca1eb62cadab24
+- src/session_entry/mod.rs | sha256:1c433cdf2e5f001a309dce6ab7ad83640fc05b5582e2df393520393c65d61c7a
+- src/workflow/operator.rs | sha256:432847c9cc313370bdd9873c0e87c813c67bb61320f846f2e27a9f4ebf832c1d
+**Verification Summary:** Manual inspection only: Rebuilt evidence after the post-review remediation slice removed generated repo/PATH runtime fallbacks, required the packaged compat binary for skill/runtime shell flows, regenerated the checked-in skill docs, and fixed workflow inspection so spawned-subagent opt-in resolves as enabled. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 18 passed, 0 failed; node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 26 passed, 0 failed; cargo nextest run --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime -> 64 passed, 0 failed; cargo nextest run --test using_featureforge_skill --test session_config_slug -> 20 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 6 Step 4
@@ -1360,8 +1499,8 @@
 **Invalidation Reason:** Rebuilt evidence after later review-approved changes updated previously proven files.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-25T17:29:50.285487Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:48:42.895279Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 6
 **Step Number:** 5
@@ -1376,6 +1515,25 @@
 - tests/runtime_instruction_contracts.rs | sha256:02c1ae405f567c1a0a00d347c30dec3433e9de819e04bd2c546e42b1ba65b6af
 - tests/using_featureforge_skill.rs | sha256:3b7456299a75de14f67a604c4d2107fcaede2e99ac2f4322aeefbd5f5dc09c0e
 **Verification Summary:** Manual inspection only: Rebuilt evidence after the review-remediation slice added repo runtime-root --path, refreshed generated skill docs, updated release docs, and rebuilt the checked-in darwin and windows runtimes. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 44 passed, 0 failed; cargo nextest run --test runtime_root_cli --test upgrade_skill --test runtime_instruction_contracts --test using_featureforge_skill -> 30 passed, 0 failed; cargo nextest run --test powershell_wrapper_resolution --test runtime_instruction_contracts -> 21 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after post-review fixes updated previously proven files.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:48:43.066391Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 5
+**Packet Fingerprint:** 590d67335f64dc29e4123b0e7a8c20d37b9fe264bb25d4cd62e18baa7fae4488
+**Head SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Base SHA:** fac513f09390ad3132ec3c77d5a1d648c2d01e0f
+**Claim:** Ran the full canonical validation matrix to green and refreshed the checked-in repo launcher so runtime-root helper discovery stays current.
+**Files Proven:**
+- bin/featureforge | sha256:5ae88c9c4159e82d57b950d9c44d0baa15937966df600556dc5cba3e3085c054
+- bin/prebuilt/darwin-arm64/featureforge | sha256:5ae88c9c4159e82d57b950d9c44d0baa15937966df600556dc5cba3e3085c054
+- bin/prebuilt/darwin-arm64/featureforge.sha256 | sha256:a41658a9863584209996be365c4be099f4607a59788ad9e611b78b2f811253e9
+- tests/runtime_instruction_contracts.rs | sha256:9336cab8283a8800aac4a0bd05325bd81da37813d1919aafa6e498a147b8e42f
+- tests/using_featureforge_skill.rs | sha256:b7ef6745d9568450c94c28f4029f4783481a6ca81ddd0e22d8509858e1d5a8bb
+**Verification Summary:** Manual inspection only: Rebuilt evidence after the post-review remediation slice removed generated repo/PATH runtime fallbacks, required the packaged compat binary for skill/runtime shell flows, regenerated the checked-in skill docs, and fixed workflow inspection so spawned-subagent opt-in resolves as enabled. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 18 passed, 0 failed; node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 26 passed, 0 failed; cargo nextest run --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime -> 64 passed, 0 failed; cargo nextest run --test using_featureforge_skill --test session_config_slug -> 20 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 6 Step 6

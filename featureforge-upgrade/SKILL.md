@@ -13,13 +13,17 @@ This section is referenced by all skill preambles when they detect `UPGRADE_AVAI
 
 ### Step 1: Resolve install root
 
-Reuse the already selected runtime root when it is available. Otherwise resolve the active install once through the selected runtime binary and reuse it for the rest of the flow:
+Reuse the already selected runtime root when it is available. Otherwise resolve the active install once through the packaged compat binary and reuse it for the rest of the flow:
 
 ```bash
-FEATUREFORGE_RUNTIME_RESOLVER="${_FEATUREFORGE_BIN:-featureforge}"
+FEATUREFORGE_RUNTIME_RESOLVER="${_FEATUREFORGE_BIN:-${FEATUREFORGE_COMPAT_BIN:-}}"
 INSTALL_DIR="${_FEATUREFORGE_ROOT:-}"
 
 if [ -z "$INSTALL_DIR" ]; then
+  if [ -z "$FEATUREFORGE_RUNTIME_RESOLVER" ]; then
+    echo "ERROR: featureforge runtime-root helper unavailable"
+    exit 1
+  fi
   if ! INSTALL_DIR=$("$FEATUREFORGE_RUNTIME_RESOLVER" repo runtime-root --path 2>/dev/null); then
     echo "ERROR: featureforge runtime-root helper unavailable"
     exit 1
