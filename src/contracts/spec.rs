@@ -55,8 +55,7 @@ pub fn parse_spec_source(path: &Path, source: String) -> Result<SpecDocument, Di
 }
 
 fn parse_required_header(source: &str, header: &str) -> Result<String, DiagnosticError> {
-    headers::parse_required_header(source, header)
-        .ok_or_else(|| missing_header(header))
+    headers::parse_required_header(source, header).ok_or_else(|| missing_header(header))
 }
 
 fn parse_requirement_index(source: &str) -> Result<Vec<Requirement>, DiagnosticError> {

@@ -304,7 +304,10 @@ fn canonical_session_entry_spawned_subagent_bypasses_bootstrap_without_persistin
     let message_file = state.join("spawned-subagent-default.txt");
     let decision_path = canonical_session_entry_path(state, "spawned-subagent-default");
 
-    write_file(&message_file, "Review the approved plan and report issues.\n");
+    write_file(
+        &message_file,
+        "Review the approved plan and report issues.\n",
+    );
 
     let rust_output = run_rust_featureforge(
         None,
@@ -325,7 +328,10 @@ fn canonical_session_entry_spawned_subagent_bypasses_bootstrap_without_persistin
         "canonical session-entry spawned subagent default bypass",
     );
 
-    assert_eq!(rust_json["outcome"], Value::String(String::from("bypassed")));
+    assert_eq!(
+        rust_json["outcome"],
+        Value::String(String::from("bypassed"))
+    );
     assert_eq!(
         rust_json["decision_source"],
         Value::String(String::from("spawned_subagent_default"))
@@ -363,7 +369,10 @@ fn canonical_session_entry_spawned_subagent_opt_in_reenables_featureforge_with_d
         ],
         "canonical session-entry spawned subagent opt-in",
     );
-    let rust_json = parse_json(&rust_output, "canonical session-entry spawned subagent opt-in");
+    let rust_json = parse_json(
+        &rust_output,
+        "canonical session-entry spawned subagent opt-in",
+    );
 
     assert_eq!(rust_json["outcome"], Value::String(String::from("enabled")));
     assert_eq!(

@@ -29,7 +29,7 @@ export function buildBaseShellLines() {
   return [
     ...buildRootDetection(),
     '_UPD=""',
-    '[ -n "$_FEATUREFORGE_ROOT" ] && _UPD=$("$_FEATUREFORGE_ROOT/bin/featureforge" update-check 2>/dev/null || true)',
+    '[ -n "$_FEATUREFORGE_BIN" ] && _UPD=$("$_FEATUREFORGE_BIN" update-check 2>/dev/null || true)',
     '[ -n "$_UPD" ] && echo "$_UPD" || true',
     '_SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"',
     'mkdir -p "$_SP_STATE_DIR/sessions"',
@@ -37,7 +37,7 @@ export function buildBaseShellLines() {
     '_SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d \' \')',
     'find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true',
     '_CONTRIB=""',
-    '[ -n "$_FEATUREFORGE_ROOT" ] && _CONTRIB=$("$_FEATUREFORGE_ROOT/bin/featureforge" config get featureforge_contributor 2>/dev/null || true)',
+    '[ -n "$_FEATUREFORGE_BIN" ] && _CONTRIB=$("$_FEATUREFORGE_BIN" config get featureforge_contributor 2>/dev/null || true)',
   ];
 }
 
@@ -97,7 +97,7 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 export function buildUsingFeatureForgeBypassGateSection() {
   return `## Bypass Gate
 
-The first-turn session-entry bootstrap is owned by the runtime command \`$_FEATUREFORGE_ROOT/bin/featureforge session-entry\`, not by \`using-featureforge\` prose alone.
+The first-turn session-entry bootstrap is owned by the packaged compat binary command \`$_FEATUREFORGE_BIN session-entry\`, not by \`using-featureforge\` prose alone.
 
 This skill documents the supported-entry contract:
 
@@ -160,14 +160,14 @@ If the bypass gate resolves to \`enabled\` for this turn, run the normal shared 
 
 \`\`\`bash
 _UPD=""
-[ -n "$_FEATUREFORGE_ROOT" ] && _UPD=$("$_FEATUREFORGE_ROOT/bin/featureforge" update-check 2>/dev/null || true)
+[ -n "$_FEATUREFORGE_BIN" ] && _UPD=$("$_FEATUREFORGE_BIN" update-check 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" || true
 mkdir -p "$_SP_STATE_DIR/sessions"
 touch "$_SP_STATE_DIR/sessions/$PPID"
 _SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
 find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _CONTRIB=""
-[ -n "$_FEATUREFORGE_ROOT" ] && _CONTRIB=$("$_FEATUREFORGE_ROOT/bin/featureforge" config get featureforge_contributor 2>/dev/null || true)
+[ -n "$_FEATUREFORGE_BIN" ] && _CONTRIB=$("$_FEATUREFORGE_BIN" config get featureforge_contributor 2>/dev/null || true)
 \`\`\`
 
 ${buildUpgradeNote()}

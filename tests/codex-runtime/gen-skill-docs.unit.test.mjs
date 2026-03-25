@@ -69,8 +69,13 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   assert.doesNotMatch(rootDetection, /\.copilot\/featureforge/);
   assert.doesNotMatch(rootDetection, /sed -n/);
 
+  // Intentional invariant: generated skill runtime commands must stay on the
+  // packaged compat binary. Do not switch back to root-selected bin paths.
   assert.match(baseShell, /repo runtime-root --path/);
+  assert.match(baseShell, /"\$_FEATUREFORGE_BIN" update-check/);
+  assert.match(baseShell, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/);
   assert.doesNotMatch(baseShell, /repo runtime-root --path.*\|\| true/);
+  assert.doesNotMatch(baseShell, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(baseShell, /featureforge-update-check/);
   assert.doesNotMatch(baseShell, /featureforge-config/);
 });
@@ -83,8 +88,9 @@ test('using-featureforge bypass helpers render the decision-state contract', () 
   assert.match(bypassGate, /enabled/);
   assert.match(bypassGate, /bypassed/);
   const normalStack = buildUsingFeatureForgeNormalStackSection();
-  assert.match(normalStack, /bin\/featureforge" update-check/);
-  assert.match(normalStack, /bin\/featureforge" config get featureforge_contributor/);
+  assert.match(normalStack, /"\$_FEATUREFORGE_BIN" update-check/);
+  assert.match(normalStack, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/);
+  assert.doesNotMatch(normalStack, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(normalStack, /featureforge-update-check/);
   assert.doesNotMatch(normalStack, /featureforge-config/);
   assert.match(normalStack, /_SESSIONS=/);

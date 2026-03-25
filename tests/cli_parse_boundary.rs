@@ -196,7 +196,10 @@ fn plan_execution_begin_rejects_unknown_execution_modes_at_parse_boundary() {
     );
     let json = parse_failure_json(&output, "plan execution begin invalid execution mode");
 
-    assert_eq!(json["error_class"], Value::String(String::from("InvalidCommandInput")));
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
@@ -235,7 +238,10 @@ fn plan_execution_note_rejects_unknown_states_at_parse_boundary() {
     );
     let json = parse_failure_json(&output, "plan execution note invalid state");
 
-    assert_eq!(json["error_class"], Value::String(String::from("InvalidCommandInput")));
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
@@ -270,7 +276,10 @@ fn plan_execution_recommend_rejects_unknown_strategy_flags_at_parse_boundary() {
     );
     let json = parse_failure_json(&output, "plan execution recommend invalid strategy flags");
 
-    assert_eq!(json["error_class"], Value::String(String::from("InvalidCommandInput")));
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
@@ -353,7 +362,10 @@ fn session_entry_record_rejects_unknown_decisions_at_parse_boundary() {
     );
     let json = parse_failure_json(&output, "session-entry record invalid decision");
 
-    assert_eq!(json["error_class"], Value::String(String::from("InvalidCommandInput")));
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");

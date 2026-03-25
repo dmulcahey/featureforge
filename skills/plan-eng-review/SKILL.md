@@ -21,7 +21,7 @@ if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_PATH=$("$_FEATUREFO
   [ -n "$_FEATUREFORGE_RUNTIME_ROOT_PATH" ] && _FEATUREFORGE_ROOT="$_FEATUREFORGE_RUNTIME_ROOT_PATH"
 fi
 _UPD=""
-[ -n "$_FEATUREFORGE_ROOT" ] && _UPD=$("$_FEATUREFORGE_ROOT/bin/featureforge" update-check 2>/dev/null || true)
+[ -n "$_FEATUREFORGE_BIN" ] && _UPD=$("$_FEATUREFORGE_BIN" update-check 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" || true
 _SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 mkdir -p "$_SP_STATE_DIR/sessions"
@@ -29,7 +29,7 @@ touch "$_SP_STATE_DIR/sessions/$PPID"
 _SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
 find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _CONTRIB=""
-[ -n "$_FEATUREFORGE_ROOT" ] && _CONTRIB=$("$_FEATUREFORGE_ROOT/bin/featureforge" config get featureforge_contributor 2>/dev/null || true)
+[ -n "$_FEATUREFORGE_BIN" ] && _CONTRIB=$("$_FEATUREFORGE_BIN" config get featureforge_contributor 2>/dev/null || true)
 _TODOS_FORMAT=""
 [ -n "$_FEATUREFORGE_ROOT" ] && [ -f "$_FEATUREFORGE_ROOT/review/TODOS-format.md" ] && _TODOS_FORMAT="$_FEATUREFORGE_ROOT/review/TODOS-format.md"
 [ -z "$_TODOS_FORMAT" ] && [ -f "$_REPO_ROOT/review/TODOS-format.md" ] && _TODOS_FORMAT="$_REPO_ROOT/review/TODOS-format.md"
@@ -289,7 +289,7 @@ Before moving into the review sections:
 Before `**Workflow State:** Engineering Approved`, run:
 
 ```bash
-PLAN_ANALYSIS_JSON="$("$_FEATUREFORGE_ROOT/bin/featureforge" plan contract analyze-plan \
+PLAN_ANALYSIS_JSON="$("$_FEATUREFORGE_BIN" plan contract analyze-plan \
   --spec <source-spec-path> \
   --plan <plan-path> \
   --format json)"
@@ -397,7 +397,7 @@ For LLM or prompt changes, check the repo's prompt or evaluation docs. If this p
 After producing the coverage graph, write a QA handoff artifact for cross-session reuse:
 
 ```bash
-_SLUG_ENV=$("$_FEATUREFORGE_ROOT/bin/featureforge" repo slug 2>/dev/null || true)
+_SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
 if [ -n "$_SLUG_ENV" ]; then
   eval "$_SLUG_ENV"
 fi
@@ -594,10 +594,10 @@ Check the git log for this branch. If there are prior commits suggesting a previ
 
 ## Execution handoff
 
-Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_ROOT/bin/featureforge` is available, call `$_FEATUREFORGE_ROOT/bin/featureforge workflow status --refresh`.
+Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow status --refresh`.
 
 - If the helper returns a non-empty `next_skill`, use that route instead of re-deriving state manually.
-- If the helper returns `status` `implementation_ready`, immediately call `$_FEATUREFORGE_ROOT/bin/featureforge workflow handoff` before presenting any handoff text.
+- If the helper returns `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow handoff` before presenting any handoff text.
 - If that handoff returns `phase` `execution_preflight`, present the normal execution preflight handoff below.
 - If that handoff returns a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of reopening execution preflight.
 - Only fall back to manual artifact inspection if the helper is unavailable or fails.

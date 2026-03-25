@@ -4,16 +4,16 @@ mod bin_support;
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
+#[path = "../src/workflow/markdown_scan.rs"]
+mod markdown_scan_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
-#[path = "../src/workflow/markdown_scan.rs"]
-mod markdown_scan_support;
 
 use assert_cmd::cargo::cargo_bin;
 use bin_support::compiled_featureforge_path;
-use featureforge::git::discover_repo_identity;
+use featureforge::git::{RepositoryIdentity, discover_repo_identity};
 use featureforge::paths::branch_storage_key;
 use featureforge::workflow::manifest::{
     WorkflowManifest, manifest_path, recover_slug_changed_manifest,
@@ -68,6 +68,16 @@ fn init_repo(test_name: &str) -> (TempDir, TempDir) {
     (repo_dir, state_dir)
 }
 
+#[cfg(unix)]
+fn create_dir_symlink(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("directory symlink should be creatable");
+}
+
+#[cfg(windows)]
+fn create_dir_symlink(target: &Path, link: &Path) {
+    std::os::windows::fs::symlink_dir(target, link).expect("directory symlink should be creatable");
+}
+
 fn run_shell_status_helper(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
     let mut command = Command::new(compiled_featureforge_path());
     command
@@ -116,6 +126,14 @@ fn set_remote_url(repo: &Path, url: &str) {
         .args(["remote", "set-url", "origin", url])
         .current_dir(repo);
     run_checked(git_remote_set, "git remote set-url origin");
+}
+
+fn remove_origin_remote(repo: &Path) {
+    let mut git_remote_remove = Command::new("git");
+    git_remote_remove
+        .args(["remote", "remove", "origin"])
+        .current_dir(repo);
+    run_checked(git_remote_remove, "git remote remove origin");
 }
 
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
@@ -890,7 +908,10 @@ fn shared_markdown_scan_helper_collects_nested_markdown_only() {
         .collect::<Vec<_>>();
     actual.sort();
 
-    assert_eq!(actual, vec![String::from("nested/plan.md"), String::from("top.md")]);
+    assert_eq!(
+        actual,
+        vec![String::from("nested/plan.md"), String::from("top.md")]
+    );
 }
 
 #[test]
@@ -931,7 +952,9 @@ fn canonical_manifest_path_uses_canonical_repo_slug_directory() {
     let manifest = manifest_path(&identity, state);
 
     assert_eq!(
-        manifest.parent().expect("manifest path should have a parent"),
+        manifest
+            .parent()
+            .expect("manifest path should have a parent"),
         state.join("projects").join(repo_slug(repo))
     );
 }
@@ -1014,6 +1037,70 @@ fn canonical_workflow_status_refresh_limits_cross_slug_manifest_recovery_scan() 
     let manifest_json = fs::read_to_string(current_manifest_path)
         .expect("current manifest should be written after refresh");
     assert!(!manifest_json.contains(expected_plan));
+}
+
+#[test]
+fn canonical_workflow_status_accepts_manifest_selected_plan_with_legacy_symlink_repo_root() {
+    let (repo_dir, state_dir) = init_repo("workflow-status-symlink-manifest");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let alias_root = state.join("workflow-status-symlink-manifest-checkout");
+    create_dir_symlink(repo, &alias_root);
+
+    let spec_path = "docs/featureforge/specs/2026-03-24-symlink-manifest-spec.md";
+    let plan_a = "docs/featureforge/plans/2026-03-24-symlink-manifest-a.md";
+    let plan_b = "docs/featureforge/plans/2026-03-24-symlink-manifest-b.md";
+
+    write_file(
+        &repo.join(spec_path),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+    for plan_path in [plan_a, plan_b] {
+        write_file(
+            &repo.join(plan_path),
+            &format!(
+                "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n"
+            ),
+        );
+    }
+
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    write_manifest(
+        &manifest_path(&identity, state),
+        &WorkflowManifest {
+            version: 1,
+            repo_root: alias_root.to_string_lossy().into_owned(),
+            branch: identity.branch_name.clone(),
+            expected_spec_path: spec_path.to_owned(),
+            expected_plan_path: plan_a.to_owned(),
+            status: String::from("plan_draft"),
+            next_skill: String::from("featureforge:plan-eng-review"),
+            reason: String::from("legacy-symlink-manifest"),
+            note: String::from("legacy-symlink-manifest"),
+            updated_at: String::from("2026-03-25T00:00:00Z"),
+        },
+    );
+
+    let status_json = parse_json(
+        &run_rust_featureforge(
+            &alias_root,
+            state,
+            &["workflow", "status"],
+            "workflow status should accept legacy symlinked manifest repo roots",
+        ),
+        "workflow status should accept legacy symlinked manifest repo roots",
+    );
+
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(status_json["plan_path"], plan_a);
+    assert!(
+        !status_json["reason_codes"]
+            .as_array()
+            .unwrap_or(&Vec::new())
+            .iter()
+            .any(|value| value == "repo_root_mismatch"),
+        "legacy symlink manifests should not be treated as repo_root mismatches"
+    );
 }
 
 #[test]
@@ -1129,6 +1216,87 @@ fn canonical_workflow_status_ignores_manifest_selected_plan_when_repo_root_misma
             .any(|value| value == "ambiguous_plan_candidates"),
         "repo-root-mismatched manifests should not suppress ambiguous current plan candidates"
     );
+}
+
+#[test]
+fn canonical_workflow_status_refresh_recovers_legacy_symlinked_local_repo_manifest() {
+    let (repo_dir, state_dir) = init_repo("workflow-local-symlink-recovery");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    remove_origin_remote(repo);
+
+    let alias_root = state.join("workflow-local-symlink-checkout");
+    create_dir_symlink(repo, &alias_root);
+
+    let spec_path = "docs/featureforge/specs/2026-03-24-local-symlink-spec.md";
+    let plan_a = "docs/featureforge/plans/2026-03-24-local-symlink-a.md";
+    let plan_b = "docs/featureforge/plans/2026-03-24-local-symlink-b.md";
+
+    write_file(
+        &repo.join(spec_path),
+        "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+    for plan_path in [plan_a, plan_b] {
+        write_file(
+            &repo.join(plan_path),
+            &format!(
+                "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n"
+            ),
+        );
+    }
+
+    let current_identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    let legacy_identity = RepositoryIdentity {
+        repo_root: alias_root.clone(),
+        remote_url: None,
+        branch_name: current_identity.branch_name.clone(),
+    };
+    let current_manifest_path = manifest_path(&current_identity, state);
+    let legacy_manifest_path = manifest_path(&legacy_identity, state);
+    assert_ne!(
+        current_manifest_path, legacy_manifest_path,
+        "canonicalized local repo roots should move the manifest path"
+    );
+
+    write_manifest(
+        &legacy_manifest_path,
+        &WorkflowManifest {
+            version: 1,
+            repo_root: alias_root.to_string_lossy().into_owned(),
+            branch: current_identity.branch_name.clone(),
+            expected_spec_path: spec_path.to_owned(),
+            expected_plan_path: plan_a.to_owned(),
+            status: String::from("plan_draft"),
+            next_skill: String::from("featureforge:plan-eng-review"),
+            reason: String::from("legacy-local-symlink-manifest"),
+            note: String::from("legacy-local-symlink-manifest"),
+            updated_at: String::from("2026-03-25T00:00:00Z"),
+        },
+    );
+
+    let status_json = parse_json(
+        &run_rust_featureforge(
+            &alias_root,
+            state,
+            &["workflow", "status", "--refresh"],
+            "workflow status should recover legacy local symlink manifests",
+        ),
+        "workflow status should recover legacy local symlink manifests",
+    );
+
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(status_json["plan_path"], plan_a);
+
+    let rewritten: WorkflowManifest = serde_json::from_str(
+        &fs::read_to_string(&current_manifest_path)
+            .expect("canonical manifest should be rewritten on refresh"),
+    )
+    .expect("rewritten canonical manifest should parse");
+    assert_eq!(
+        rewritten.repo_root,
+        current_identity.repo_root.to_string_lossy().into_owned()
+    );
+    assert_eq!(rewritten.expected_plan_path, plan_a);
 }
 
 #[test]

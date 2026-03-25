@@ -104,16 +104,24 @@ pub fn resolve_current_root() -> Result<Option<ResolvedRuntimeRoot>, DiagnosticE
     let current_dir = env::current_dir().map_err(|error| {
         DiagnosticError::new(
             FailureClass::ResolverRuntimeFailure,
-            format!("Could not determine the current directory for runtime-root resolution: {error}"),
+            format!(
+                "Could not determine the current directory for runtime-root resolution: {error}"
+            ),
         )
     })?;
     let current_exe = env::current_exe().map_err(|error| {
         DiagnosticError::new(
             FailureClass::ResolverRuntimeFailure,
-            format!("Could not determine the current executable for runtime-root resolution: {error}"),
+            format!(
+                "Could not determine the current executable for runtime-root resolution: {error}"
+            ),
         )
     })?;
-    resolve_with_context(&current_dir, &current_exe, env::var_os(FEATUREFORGE_DIR_ENV).as_deref())
+    resolve_with_context(
+        &current_dir,
+        &current_exe,
+        env::var_os(FEATUREFORGE_DIR_ENV).as_deref(),
+    )
 }
 
 pub fn write_runtime_root_schema(output_dir: &Path) -> Result<(), DiagnosticError> {
@@ -126,12 +134,13 @@ pub fn write_runtime_root_schema(output_dir: &Path) -> Result<(), DiagnosticErro
             ),
         )
     })?;
-    let schema = serde_json::to_string_pretty(&schema_for!(RuntimeRootOutput)).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            format!("Could not serialize runtime-root schema: {error}"),
-        )
-    })?;
+    let schema =
+        serde_json::to_string_pretty(&schema_for!(RuntimeRootOutput)).map_err(|error| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("Could not serialize runtime-root schema: {error}"),
+            )
+        })?;
     fs::write(output_dir.join(RUNTIME_ROOT_SCHEMA_FILE), schema).map_err(|error| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
@@ -160,7 +169,8 @@ fn resolve_with_context(
         .map(|identity| identity.repo_root)
         .unwrap_or_else(|_| current_dir.to_path_buf());
     if seen.insert(repo_local.clone()) {
-        if let Some(resolved) = validate_optional_candidate(&repo_local, CandidateSource::RepoLocal)?
+        if let Some(resolved) =
+            validate_optional_candidate(&repo_local, CandidateSource::RepoLocal)?
         {
             return Ok(Some(resolved));
         }
@@ -188,10 +198,7 @@ fn resolve_with_context(
     Ok(None)
 }
 
-fn explicit_candidate_path(
-    value: &OsStr,
-    current_dir: &Path,
-) -> Result<PathBuf, DiagnosticError> {
+fn explicit_candidate_path(value: &OsStr, current_dir: &Path) -> Result<PathBuf, DiagnosticError> {
     let candidate = PathBuf::from(value);
     if candidate.as_os_str().is_empty() {
         return Err(DiagnosticError::new(
@@ -318,6 +325,9 @@ fn git_marker_present(candidate: &Path) -> Result<bool, DiagnosticError> {
 fn runtime_failure(path: &Path, error: std::io::Error) -> DiagnosticError {
     DiagnosticError::new(
         FailureClass::ResolverRuntimeFailure,
-        format!("Could not inspect {} during runtime-root resolution: {error}", path.display()),
+        format!(
+            "Could not inspect {} during runtime-root resolution: {error}",
+            path.display()
+        ),
     )
 }

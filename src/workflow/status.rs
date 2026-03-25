@@ -10,7 +10,7 @@ use crate::cli::workflow::ArtifactKind;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::contracts::runtime::analyze_contract_report;
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::git::{RepositoryIdentity, discover_repo_identity};
+use crate::git::{RepositoryIdentity, discover_repo_identity, stored_repo_root_matches_current};
 use crate::paths::{RepoPath, featureforge_state_dir};
 use crate::session_entry;
 use crate::workflow::manifest::{
@@ -140,7 +140,7 @@ impl WorkflowRuntime {
             }
             ManifestLoadResult::Loaded(manifest) => {
                 let mut reasons = Vec::new();
-                if manifest.repo_root != identity.repo_root.to_string_lossy() {
+                if !stored_repo_root_matches_current(&manifest.repo_root, &identity.repo_root) {
                     reasons.push(String::from("repo_root_mismatch"));
                 }
                 if manifest.branch != identity.branch_name {
@@ -378,7 +378,7 @@ impl WorkflowRuntime {
 impl WorkflowRuntime {
     fn matching_manifest(&self) -> Option<&WorkflowManifest> {
         self.manifest.as_ref().filter(|manifest| {
-            manifest.repo_root == self.identity.repo_root.to_string_lossy()
+            stored_repo_root_matches_current(&manifest.repo_root, &self.identity.repo_root)
                 && manifest.branch == self.identity.branch_name
         })
     }

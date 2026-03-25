@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::git::{RepositoryIdentity, derive_repo_slug};
+use crate::git::{RepositoryIdentity, derive_repo_slug, stored_repo_root_matches_current};
 use crate::paths::{branch_storage_key, write_atomic as write_atomic_file};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -110,13 +110,14 @@ fn recover_slug_changed_manifest_with_loader(
         .collect::<Vec<_>>();
     candidate_dirs.sort();
 
-    let expected_repo_root = identity.repo_root.to_string_lossy();
     for project_dir in candidate_dirs.into_iter().take(CROSS_SLUG_RECOVERY_LIMIT) {
         let candidate_path = project_dir.join(manifest_name);
         let ManifestLoadResult::Loaded(manifest) = loader(&candidate_path) else {
             continue;
         };
-        if manifest.repo_root == expected_repo_root && manifest.branch == identity.branch_name {
+        if stored_repo_root_matches_current(&manifest.repo_root, &identity.repo_root)
+            && manifest.branch == identity.branch_name
+        {
             return Some(manifest);
         }
     }

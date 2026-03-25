@@ -101,7 +101,10 @@ fn runtime_root_helper_reports_unresolved_without_guessing() {
     let json = parse_json(&output, "repo runtime-root unresolved");
 
     assert_eq!(json["resolved"], Value::Bool(false));
-    assert!(json["root"].is_null(), "unresolved helper root should be null");
+    assert!(
+        json["root"].is_null(),
+        "unresolved helper root should be null"
+    );
     assert!(
         json["source"].is_string(),
         "unresolved helper should still report a source string"

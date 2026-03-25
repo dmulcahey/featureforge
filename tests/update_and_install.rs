@@ -187,7 +187,10 @@ fn canonical_update_check_ignores_version_only_repo_roots() {
         "version-only repo should not be treated as a valid runtime root"
     );
     assert!(
-        !state_dir.path().join("update-check/last-update-check").exists(),
+        !state_dir
+            .path()
+            .join("update-check/last-update-check")
+            .exists(),
         "version-only repo should not write update-check state"
     );
 }
@@ -241,12 +244,18 @@ fn canonical_update_check_uses_a_binary_adjacent_runtime_root() {
     command
         .current_dir(work_dir.path())
         .env("FEATUREFORGE_STATE_DIR", state_dir.path())
-        .env("FEATUREFORGE_REMOTE_URL", file_url(&remote_dir.path().join("VERSION")))
+        .env(
+            "FEATUREFORGE_REMOTE_URL",
+            file_url(&remote_dir.path().join("VERSION")),
+        )
         .env_remove("FEATUREFORGE_DIR")
         .env_remove("HOME")
         .env_remove("USERPROFILE")
         .arg("update-check");
-    let output = run(command, "canonical update-check binary-adjacent runtime root");
+    let output = run(
+        command,
+        "canonical update-check binary-adjacent runtime root",
+    );
     assert!(
         output.status.success(),
         "binary-adjacent runtime root should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -301,7 +310,10 @@ fn canonical_update_check_rejects_invalid_featureforge_dir_overrides() {
         "invalid FEATUREFORGE_DIR override should not emit an upgrade banner"
     );
     assert!(
-        !state_dir.path().join("update-check/last-update-check").exists(),
+        !state_dir
+            .path()
+            .join("update-check/last-update-check")
+            .exists(),
         "invalid FEATUREFORGE_DIR override should not write update-check state"
     );
 }

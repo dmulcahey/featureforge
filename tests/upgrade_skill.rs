@@ -130,10 +130,10 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let skill_doc = read_skill_doc();
     for pattern in [
         "repo runtime-root --path",
-        "FEATUREFORGE_RUNTIME_RESOLVER=\"${_FEATUREFORGE_BIN:-${FEATUREFORGE_COMPAT_BIN:-}}\"",
+        "FEATUREFORGE_RUNTIME_BIN=\"${_FEATUREFORGE_BIN:-${FEATUREFORGE_COMPAT_BIN:-}}\"",
         "INSTALL_DIR=\"${_FEATUREFORGE_ROOT:-}\"",
         "bin/featureforge",
-        "FEATUREFORGE_BIN=\"$INSTALL_DIR/bin/featureforge\"",
+        "FEATUREFORGE_RUNTIME_BIN",
         "VERSION",
         "ERROR: featureforge runtime-root helper unavailable",
         "ERROR: featureforge runtime root unavailable",
@@ -142,7 +142,11 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "git stash push --include-untracked",
         "git stash pop",
         "ERROR: featureforge upgrade failed during git pull",
-        "Run $FEATUREFORGE_BIN config set update_check true to re-enable.",
+        "Run $FEATUREFORGE_RUNTIME_BIN config set update_check true to re-enable.",
+        "_UPDATE_CHECK_DIR=\"$_SP_STATE_DIR/update-check\"",
+        "_SNOOZE_FILE=\"$_UPDATE_CHECK_DIR/update-snoozed\"",
+        "rm -f \"$_UPDATE_CHECK_DIR/last-update-check\" \"$_UPDATE_CHECK_DIR/update-snoozed\"",
+        "echo \"$OLD_VERSION\" > \"$_UPDATE_CHECK_DIR/just-upgraded-from\"",
         "REMOTE_URL=\"${FEATUREFORGE_REMOTE_URL:-https://raw.githubusercontent.com/dmulcahey/featureforge/main/VERSION}\"",
         "REMOTE_STATUS=",
         "VERSION_RELATION=",
@@ -155,6 +159,10 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     ] {
         assert_contains(&skill_doc, pattern, "featureforge-upgrade/SKILL.md");
     }
+    assert!(
+        !skill_doc.contains("$_FEATUREFORGE_ROOT/bin/featureforge"),
+        "featureforge-upgrade/SKILL.md should keep runtime commands on the packaged compat binary"
+    );
     assert!(
         !skill_doc.contains("featureforge-update-check"),
         "featureforge-upgrade/SKILL.md should not reference removed helper binaries"
@@ -249,6 +257,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
                 "_FEATUREFORGE_ROOT",
                 selected_runtime.to_string_lossy().as_ref(),
             ),
+            ("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref()),
         ],
         "upgrade skill step 1 prefers selected runtime root",
     );
@@ -279,12 +288,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[
-            (
-                "_FEATUREFORGE_BIN",
-                selected_bin.to_string_lossy().as_ref(),
-            ),
-        ],
+        &[("_FEATUREFORGE_BIN", selected_bin.to_string_lossy().as_ref())],
         "upgrade skill step 1 prefers selected runtime binary",
     );
     let selected_bin_stdout = String::from_utf8_lossy(&selected_bin_output.stdout);
@@ -294,10 +298,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "upgrade skill step 1 prefers selected runtime binary",
     );
 
-    write_mock_featureforge(
-        &helper_bin,
-        "#!/usr/bin/env bash\nexit 0\n",
-    );
+    write_mock_featureforge(&helper_bin, "#!/usr/bin/env bash\nexit 0\n");
     let unresolved_output = run_bash_block(
         &current_root,
         &home_dir,

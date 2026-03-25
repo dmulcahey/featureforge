@@ -98,9 +98,11 @@ test('upgrade instructions use the runtime-root helper instead of embedded root-
   const upgradeSkill = readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'));
 
   assert.match(upgradeSkill, /repo runtime-root --path/);
-  assert.match(upgradeSkill, /_FEATUREFORGE_BIN/);
+  assert.match(upgradeSkill, /FEATUREFORGE_RUNTIME_BIN/);
   assert.match(upgradeSkill, /_FEATUREFORGE_ROOT/);
   assert.match(upgradeSkill, /FEATUREFORGE_COMPAT_BIN/);
+  assert.doesNotMatch(upgradeSkill, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/);
+  assert.doesNotMatch(upgradeSkill, /FEATUREFORGE_BIN="\$INSTALL_DIR\/bin\/featureforge"/);
   assert.doesNotMatch(upgradeSkill, /\$\{_FEATUREFORGE_BIN:-featureforge\}/);
   assert.doesNotMatch(upgradeSkill, /command -v featureforge/);
   assert.doesNotMatch(upgradeSkill, /sed -n 's\/\.\*"root"/);

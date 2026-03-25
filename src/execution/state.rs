@@ -7,15 +7,15 @@ use schemars::{JsonSchema, schema_for};
 use serde::Serialize;
 
 use crate::cli::plan_execution::{
-    BeginArgs, CompleteArgs, IsolatedAgentsArg, NoteArgs, NoteStateArg, RecommendArgs,
-    ReopenArgs, StatusArgs, TransferArgs,
+    BeginArgs, CompleteArgs, IsolatedAgentsArg, NoteArgs, NoteStateArg, RecommendArgs, ReopenArgs,
+    StatusArgs, TransferArgs,
 };
-use crate::cli::repo_safety::{
-    RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg,
-};
+use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
 use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::git::{derive_repo_slug, discover_repo_identity, sha256_hex};
+use crate::git::{
+    derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
+};
 use crate::paths::{
     RepoPath, branch_storage_key, featureforge_state_dir, normalize_repo_relative_path,
     normalize_whitespace,
@@ -1752,7 +1752,7 @@ fn matching_workflow_manifest(runtime: &ExecutionRuntime) -> Option<WorkflowMani
     let ManifestLoadResult::Loaded(manifest) = load_manifest_read_only(&manifest_path) else {
         return None;
     };
-    if manifest.repo_root == runtime.repo_root.to_string_lossy()
+    if stored_repo_root_matches_current(&manifest.repo_root, &runtime.repo_root)
         && manifest.branch == runtime.branch_name
     {
         Some(manifest)

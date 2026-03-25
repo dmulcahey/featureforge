@@ -21,7 +21,7 @@ if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_PATH=$("$_FEATUREFO
   [ -n "$_FEATUREFORGE_RUNTIME_ROOT_PATH" ] && _FEATUREFORGE_ROOT="$_FEATUREFORGE_RUNTIME_ROOT_PATH"
 fi
 _UPD=""
-[ -n "$_FEATUREFORGE_ROOT" ] && _UPD=$("$_FEATUREFORGE_ROOT/bin/featureforge" update-check 2>/dev/null || true)
+[ -n "$_FEATUREFORGE_BIN" ] && _UPD=$("$_FEATUREFORGE_BIN" update-check 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" || true
 _SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 mkdir -p "$_SP_STATE_DIR/sessions"
@@ -29,7 +29,7 @@ touch "$_SP_STATE_DIR/sessions/$PPID"
 _SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
 find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _CONTRIB=""
-[ -n "$_FEATUREFORGE_ROOT" ] && _CONTRIB=$("$_FEATUREFORGE_ROOT/bin/featureforge" config get featureforge_contributor 2>/dev/null || true)
+[ -n "$_FEATUREFORGE_BIN" ] && _CONTRIB=$("$_FEATUREFORGE_BIN" config get featureforge_contributor 2>/dev/null || true)
 _TODOS_FORMAT=""
 [ -n "$_FEATUREFORGE_ROOT" ] && [ -f "$_FEATUREFORGE_ROOT/review/TODOS-format.md" ] && _TODOS_FORMAT="$_FEATUREFORGE_ROOT/review/TODOS-format.md"
 [ -z "$_TODOS_FORMAT" ] && [ -f "$_REPO_ROOT/review/TODOS-format.md" ] && _TODOS_FORMAT="$_REPO_ROOT/review/TODOS-format.md"
@@ -130,7 +130,7 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 - After each spec edit (including final approval edits), runs `sync --artifact spec` for the spec path:
 
 ```bash
-"$_FEATUREFORGE_ROOT/bin/featureforge" workflow sync --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
+"$_FEATUREFORGE_BIN" workflow sync --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
 ```
 
 **Protected-Branch Repo-Write Gate:**

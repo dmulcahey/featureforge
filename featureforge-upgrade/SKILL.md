@@ -16,15 +16,16 @@ This section is referenced by all skill preambles when they detect `UPGRADE_AVAI
 Reuse the already selected runtime root when it is available. Otherwise resolve the active install once through the packaged compat binary and reuse it for the rest of the flow:
 
 ```bash
-FEATUREFORGE_RUNTIME_RESOLVER="${_FEATUREFORGE_BIN:-${FEATUREFORGE_COMPAT_BIN:-}}"
+FEATUREFORGE_RUNTIME_BIN="${_FEATUREFORGE_BIN:-${FEATUREFORGE_COMPAT_BIN:-}}"
 INSTALL_DIR="${_FEATUREFORGE_ROOT:-}"
 
+if [ -z "$FEATUREFORGE_RUNTIME_BIN" ] || [ ! -x "$FEATUREFORGE_RUNTIME_BIN" ]; then
+  echo "ERROR: featureforge runtime-root helper unavailable"
+  exit 1
+fi
+
 if [ -z "$INSTALL_DIR" ]; then
-  if [ -z "$FEATUREFORGE_RUNTIME_RESOLVER" ]; then
-    echo "ERROR: featureforge runtime-root helper unavailable"
-    exit 1
-  fi
-  if ! INSTALL_DIR=$("$FEATUREFORGE_RUNTIME_RESOLVER" repo runtime-root --path 2>/dev/null); then
+  if ! INSTALL_DIR=$("$FEATUREFORGE_RUNTIME_BIN" repo runtime-root --path 2>/dev/null); then
     echo "ERROR: featureforge runtime-root helper unavailable"
     exit 1
   fi
@@ -35,13 +36,13 @@ if [ -z "$INSTALL_DIR" ]; then
   exit 1
 fi
 
-FEATUREFORGE_BIN="$INSTALL_DIR/bin/featureforge"
-if [ ! -x "$FEATUREFORGE_BIN" ]; then
+if [ ! -x "$INSTALL_DIR/bin/featureforge" ]; then
   echo "ERROR: featureforge runtime root returned no executable featureforge binary"
   exit 1
 fi
 
 echo "INSTALL_DIR=$INSTALL_DIR"
+echo "FEATUREFORGE_RUNTIME_BIN=$FEATUREFORGE_RUNTIME_BIN"
 ```
 
 ### Step 2: Resolve versions and auto-upgrade preference
@@ -130,7 +131,7 @@ First, check if auto-upgrade is enabled:
 ```bash
 _AUTO=""
 [ "${FEATUREFORGE_AUTO_UPGRADE:-}" = "1" ] && _AUTO="true"
-[ -z "$_AUTO" ] && _AUTO=$("$FEATUREFORGE_BIN" config get auto_upgrade 2>/dev/null || true)
+[ -z "$_AUTO" ] && _AUTO=$("$FEATUREFORGE_RUNTIME_BIN" config get auto_upgrade 2>/dev/null || true)
 echo "AUTO_UPGRADE=$_AUTO"
 ```
 
@@ -148,7 +149,7 @@ Direct manual `/featureforge-upgrade` runs are explicit user intent, so they ign
 **If "Always keep me up to date":**
 
 ```bash
-"$FEATUREFORGE_BIN" config set auto_upgrade true
+"$FEATUREFORGE_RUNTIME_BIN" config set auto_upgrade true
 ```
 
 Tell the user: `Auto-upgrade enabled. Future updates will install automatically.` Then continue to Step 3.
@@ -157,7 +158,8 @@ Tell the user: `Auto-upgrade enabled. Future updates will install automatically.
 
 ```bash
 _SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
-_SNOOZE_FILE="$_SP_STATE_DIR/update-snoozed"
+_UPDATE_CHECK_DIR="$_SP_STATE_DIR/update-check"
+_SNOOZE_FILE="$_UPDATE_CHECK_DIR/update-snoozed"
 _REMOTE_VER="{new}"
 _CUR_LEVEL=0
 if [ -f "$_SNOOZE_FILE" ]; then
@@ -169,7 +171,7 @@ if [ -f "$_SNOOZE_FILE" ]; then
 fi
 _NEW_LEVEL=$((_CUR_LEVEL + 1))
 [ "$_NEW_LEVEL" -gt 3 ] && _NEW_LEVEL=3
-mkdir -p "$_SP_STATE_DIR"
+mkdir -p "$_UPDATE_CHECK_DIR"
 echo "$_REMOTE_VER $_NEW_LEVEL $(date +%s)" > "$_SNOOZE_FILE"
 ```
 
@@ -178,10 +180,10 @@ Tell the user the snooze duration and continue with the current skill.
 **If "Never ask again":**
 
 ```bash
-"$FEATUREFORGE_BIN" config set update_check false
+"$FEATUREFORGE_RUNTIME_BIN" config set update_check false
 ```
 
-Tell the user: `Update checks disabled. Run $FEATUREFORGE_BIN config set update_check true to re-enable.` Continue with the current skill.
+Tell the user: `Update checks disabled. Run $FEATUREFORGE_RUNTIME_BIN config set update_check true to re-enable.` Continue with the current skill.
 
 ### Step 3: Save old version
 
@@ -208,10 +210,11 @@ If `$STASH_OUTPUT` contains `Saved working directory`, warn the user that local 
 
 ```bash
 _SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
-mkdir -p "$_SP_STATE_DIR"
-rm -f "$_SP_STATE_DIR/last-update-check" "$_SP_STATE_DIR/update-snoozed"
+_UPDATE_CHECK_DIR="$_SP_STATE_DIR/update-check"
+mkdir -p "$_UPDATE_CHECK_DIR"
+rm -f "$_UPDATE_CHECK_DIR/last-update-check" "$_UPDATE_CHECK_DIR/update-snoozed"
 if [ "$NEW_VERSION" != "$OLD_VERSION" ] && [ "$NEW_VERSION" != "unknown" ]; then
-  echo "$OLD_VERSION" > "$_SP_STATE_DIR/just-upgraded-from"
+  echo "$OLD_VERSION" > "$_UPDATE_CHECK_DIR/just-upgraded-from"
 fi
 ```
 

@@ -195,8 +195,7 @@ pub fn parse_plan_source(path: &Path, source: String) -> Result<PlanDocument, Di
 }
 
 fn parse_required_header(source: &str, header: &str) -> Result<String, DiagnosticError> {
-    headers::parse_required_header(source, header)
-        .ok_or_else(|| missing_header(header))
+    headers::parse_required_header(source, header).ok_or_else(|| missing_header(header))
 }
 
 fn parse_coverage_matrix(source: &str) -> Result<BTreeMap<String, Vec<u32>>, DiagnosticError> {

@@ -59,7 +59,10 @@ test('generated preamble bash block includes shared runtime-root, session, and c
     const bashBlock = extractBashBlockUnderHeading(content, 'Preamble (run first)');
     assert.ok(bashBlock, `${skill} should include a preamble bash block`);
     assert.match(bashBlock, /repo runtime-root --path/, `${skill} should resolve runtime roots through the helper contract`);
+    assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" update-check/, `${skill} should run update checks through the packaged compat binary`);
+    assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/, `${skill} should load contributor mode through the packaged compat binary`);
     assert.doesNotMatch(bashBlock, /_IS_FEATUREFORGE_RUNTIME_ROOT\(\)/, `${skill} should not embed its own runtime-root detector`);
+    assert.doesNotMatch(bashBlock, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/, `${skill} should never pivot from the packaged compat binary back to a root-selected launcher`);
     assert.doesNotMatch(bashBlock, /sed -n/, `${skill} should not parse runtime-root JSON in shell`);
     assert.match(bashBlock, /_SESSIONS=/, `${skill} should track session count`);
     assert.match(bashBlock, /_CONTRIB=/, `${skill} should load contributor state`);
@@ -105,9 +108,10 @@ test('using-featureforge gets a dedicated bootstrap preamble contract', () => {
   assert.doesNotMatch(bootstrapBlock, /touch "\$_SP_STATE_DIR\/sessions\/\$PPID"/, 'using-featureforge should not write session markers before the bypass decision');
   assert.doesNotMatch(bootstrapBlock, /_CONTRIB=/, 'using-featureforge should not load contributor mode before the bypass decision');
   assert.ok(normalStackBlock, 'using-featureforge should define the post-gate normal stack');
-  assert.match(normalStackBlock, /featureforge" update-check/, 'using-featureforge should restore update checks after the bypass gate');
+  assert.match(normalStackBlock, /"\$_FEATUREFORGE_BIN" update-check/, 'using-featureforge should restore update checks after the bypass gate through the packaged compat binary');
   assert.match(normalStackBlock, /touch "\$_SP_STATE_DIR\/sessions\/\$PPID"/, 'using-featureforge should restore session markers after the bypass gate');
   assert.match(normalStackBlock, /_CONTRIB=/, 'using-featureforge should restore contributor mode after the bypass gate');
+  assert.doesNotMatch(normalStackBlock, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/, 'using-featureforge should not switch back to a root-selected launcher after the bypass gate');
   assert.match(content, /ask one interactive question before any normal FeatureForge work happens/, 'using-featureforge should ask before the normal stack');
   assert.match(content, /do not compute `_SESSIONS`/, 'using-featureforge should exempt the opt-out gate from _SESSIONS handling');
   assert.match(content, /session-entry bootstrap ownership is runtime-owned/, 'using-featureforge should name runtime ownership for the bootstrap boundary');
@@ -118,6 +122,16 @@ test('using-featureforge gets a dedicated bootstrap preamble contract', () => {
   assert.match(content, /If the user explicitly requests re-entry but the bootstrap cannot rewrite the session decision to `enabled`:/, 'using-featureforge should document re-entry write-failure handling');
   assert.match(content, /featureforge session-entry resolve --message-file <path>/, 'using-featureforge should reference the canonical session-entry command');
   assert.doesNotMatch(content, /featureforge-session-entry/, 'using-featureforge should not keep helper-style session-entry commands');
+});
+
+test('generated skill docs never execute runtime commands through root-selected launchers', () => {
+  for (const skill of listGeneratedSkills()) {
+    const content = readUtf8(getSkillPath(skill));
+    // Intentional invariant: skills must keep using the packaged compat binary
+    // once the runtime root has been resolved. Do not reintroduce
+    // $_FEATUREFORGE_ROOT/bin/featureforge command execution.
+    assert.doesNotMatch(content, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/, `${skill} should never execute runtime commands through a root-selected launcher`);
+  }
 });
 
 test('generated preambles capture _BRANCH exactly once and keep helper BRANCH out of grounding', () => {
@@ -137,16 +151,16 @@ test('generated preambles capture _BRANCH exactly once and keep helper BRANCH ou
 test('generated branch-aware helper loads are guarded through _SLUG_ENV and eval the captured output only', () => {
   for (const skill of ['qa-only', 'plan-eng-review', 'finishing-a-development-branch']) {
     const content = readUtf8(getSkillPath(skill));
-    assert.match(content, /_SLUG_ENV=\$\("\$_FEATUREFORGE_ROOT\/bin\/featureforge" repo slug 2>\/dev\/null \|\| true\)/, `${skill} should capture canonical command output into _SLUG_ENV`);
+    assert.match(content, /_SLUG_ENV=\$\("\$_FEATUREFORGE_BIN" repo slug 2>\/dev\/null \|\| true\)/, `${skill} should capture canonical command output into _SLUG_ENV`);
     assert.match(content, /if \[ -n "\$_SLUG_ENV" \]; then\n\s+eval "\$_SLUG_ENV"\nfi/, `${skill} should only eval guarded helper output`);
-    assert.doesNotMatch(content, /eval "\$\("\$_FEATUREFORGE_ROOT\/bin\/featureforge" repo slug\)/, `${skill} should not unguardedly eval command substitution`);
+    assert.doesNotMatch(content, /eval "\$\("\$_FEATUREFORGE_BIN" repo slug\)/, `${skill} should not unguardedly eval command substitution`);
   }
 });
 
 test('branch-aware skill docs consume the slug helper instead of inline sanitization fragments', () => {
   for (const skill of ['qa-only', 'plan-eng-review', 'finishing-a-development-branch']) {
     const content = readUtf8(getSkillPath(skill));
-    assert.match(content, /bin\/featureforge" repo slug/, `${skill} should use the canonical repo slug command`);
+    assert.match(content, /"\$_FEATUREFORGE_BIN" repo slug/, `${skill} should use the canonical repo slug command through the packaged compat binary`);
     assert.doesNotMatch(content, /SAFE_BRANCH=\$\(/, `${skill} should not inline branch sanitization`);
     assert.doesNotMatch(content, /(?:^|[^_])BRANCH=\$\(git rev-parse --abbrev-ref HEAD/, `${skill} should not inline raw branch capture`);
     assert.doesNotMatch(content, /SLUG=\$\(printf '%s\\n' "\$REMOTE_URL"/, `${skill} should not inline repo slug derivation`);
@@ -307,7 +321,7 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /CONTRACT_STATE=\$\(printf '%s\\n' "\$ANALYZE_JSON" \| node -e 'const fs = require\("fs"\); const parsed = JSON\.parse\(fs\.readFileSync\(0, "utf8"\)\); process\.stdout\.write\(parsed\.contract_state \|\| ""\)'/);
   assert.match(reviewSkill, /if \[ "\$CONTRACT_STATE" != "valid" \] \|\| \[ "\$PACKET_BUILDABLE_TASKS" != "\$TASK_COUNT" \]; then/);
   assert.match(reviewSkill, /if \[ -n "\$ACTIVE_TASK\$BLOCKING_TASK\$RESUME_TASK" \]; then/);
-  assert.match(reviewSkill, /REVIEW_GATE_JSON=\$\("\$_FEATUREFORGE_ROOT\/bin\/featureforge" plan execution gate-review --plan "\$APPROVED_PLAN_PATH"\)/);
+  assert.match(reviewSkill, /REVIEW_GATE_JSON=\$\("\$_FEATUREFORGE_BIN" plan execution gate-review --plan "\$APPROVED_PLAN_PATH"\)/);
   assert.match(reviewSkill, /if \[ "\$REVIEW_ALLOWED" != "true" \]; then/);
 
   const finishSkill = readUtf8(getSkillPath('finishing-a-development-branch'));
@@ -348,10 +362,10 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(writingPlans, /\*\*Task Outcome:\*\*/);
   assert.match(writingPlans, /\*\*Plan Constraints:\*\*/);
   assert.match(writingPlans, /\*\*Open Questions:\*\* none/);
-  assert.match(writingPlans, /featureforge" plan contract lint/);
+  assert.match(writingPlans, /"\$_FEATUREFORGE_BIN" plan contract lint/);
 
   const planEngReview = readUtf8(getSkillPath('plan-eng-review'));
-  assert.match(planEngReview, /featureforge" plan contract analyze-plan/);
+  assert.match(planEngReview, /"\$_FEATUREFORGE_BIN" plan contract analyze-plan/);
   assert.match(planEngReview, /contract_state == valid/);
   assert.match(planEngReview, /packet_buildable_tasks == task_count/);
   assert.match(planEngReview, /missing, stale, or non-buildable for the approved plan revision/);
@@ -444,7 +458,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /First, if `\$_FEATUREFORGE_ROOT\/bin\/featureforge` is available, call `\$_FEATUREFORGE_ROOT\/bin\/featureforge workflow status --refresh`\./,
+    /First, if `\$_FEATUREFORGE_BIN` is available, call `\$_FEATUREFORGE_BIN workflow status --refresh`\./,
   );
   assert.match(
     usingFeatureForge,
@@ -498,29 +512,29 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.match(engReview, /\*\*Head SHA:\*\* \{current-head\}/);
   assert.match(engReview, /Set `\*\*Head SHA:\*\*` to the current `git rev-parse HEAD` for the branch state that this test-plan artifact covers\./);
   assert.match(engReview, /In that late-stage lane, the terminal state is returning to the finish-gate flow with a regenerated current-branch test-plan artifact, not reopening execution preflight\./);
-  assert.match(engReview, /If the helper returns `status` `implementation_ready`, immediately call `\$_FEATUREFORGE_ROOT\/bin\/featureforge workflow handoff` before presenting any handoff text\./);
+  assert.match(engReview, /If the helper returns `status` `implementation_ready`, immediately call `\$_FEATUREFORGE_BIN workflow handoff` before presenting any handoff text\./);
   assert.match(engReview, /If that handoff returns `phase` `execution_preflight`, present the normal execution preflight handoff below\./);
   assert.match(engReview, /If that handoff returns a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of reopening execution preflight\./);
   assert.match(engReview, /Do not start implementation inside `plan-eng-review`\./);
   assert.match(
     engReview,
-    /if `\$_FEATUREFORGE_ROOT\/bin\/featureforge` is available, call `\$_FEATUREFORGE_ROOT\/bin\/featureforge workflow status --refresh`/,
+    /if `\$_FEATUREFORGE_BIN` is available, call `\$_FEATUREFORGE_BIN workflow status --refresh`/,
   );
   assert.match(engReview, /If the helper returns a non-empty `next_skill`, use that route instead of re-deriving state manually\./);
 
   const brainstorming = readUtf8(getSkillPath('brainstorming'));
   assert.match(brainstorming, /record the intended spec path with `expect`/);
-  assert.match(brainstorming, /"\$_FEATUREFORGE_ROOT\/bin\/featureforge" workflow expect --artifact spec --path/);
+  assert.match(brainstorming, /"\$_FEATUREFORGE_BIN" workflow expect --artifact spec --path/);
   assert.match(brainstorming, /runs `sync --artifact spec`/);
 
   const writingPlans = readUtf8(getSkillPath('writing-plans'));
   assert.match(writingPlans, /record the intended plan path with `expect`/);
-  assert.match(writingPlans, /"\$_FEATUREFORGE_ROOT\/bin\/featureforge" workflow expect --artifact plan --path/);
+  assert.match(writingPlans, /"\$_FEATUREFORGE_BIN" workflow expect --artifact plan --path/);
   assert.match(writingPlans, /runs `sync --artifact plan`/);
   assert.match(writingPlans, /Use the execution skill recommended by `featureforge plan execution recommend --plan <approved-plan-path>`/);
 
   const ceoReviewWithSyncPath = readUtf8(getSkillPath('plan-ceo-review'));
-  assert.match(ceoReviewWithSyncPath, /"\$_FEATUREFORGE_ROOT\/bin\/featureforge" workflow sync --artifact spec --path/);
+  assert.match(ceoReviewWithSyncPath, /"\$_FEATUREFORGE_BIN" workflow sync --artifact spec --path/);
 
   const sdd = readUtf8(getSkillPath('subagent-driven-development'));
   assert.match(sdd, /"Have engineering-approved implementation plan\?" \[shape=diamond\];/);

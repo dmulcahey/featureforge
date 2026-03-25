@@ -8,7 +8,9 @@ mod json_support;
 mod process_support;
 
 use assert_cmd::cargo::CommandCargoExt;
+use featureforge::git::derive_repo_slug;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -81,6 +83,48 @@ fn init_repo(name: &str, branch: &str, remote_url: &str) -> (TempDir, TempDir) {
     run_checked(git_remote_add, "git remote add origin");
 
     (repo_dir, state_dir)
+}
+
+#[cfg(unix)]
+fn create_dir_symlink(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("directory symlink should be creatable");
+}
+
+#[cfg(windows)]
+fn create_dir_symlink(target: &Path, link: &Path) {
+    std::os::windows::fs::symlink_dir(target, link).expect("directory symlink should be creatable");
+}
+
+fn legacy_approval_fingerprint(
+    repo_root: &str,
+    branch_name: &str,
+    stage: &str,
+    task_id: &str,
+    paths: &[&str],
+    write_targets: &[&str],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("{repo_root}\n").as_bytes());
+    hasher.update(format!("{branch_name}\n").as_bytes());
+    hasher.update(format!("{stage}\n").as_bytes());
+    hasher.update(format!("{task_id}\n").as_bytes());
+    hasher.update(b"--paths--\n");
+    if !paths.is_empty() {
+        hasher.update(paths.join("\n").as_bytes());
+    }
+    hasher.update(b"\n--targets--\n");
+    if !write_targets.is_empty() {
+        hasher.update(write_targets.join("\n").as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn remove_origin_remote(repo: &Path) {
+    let mut command = Command::new("git");
+    command
+        .args(["remote", "remove", "origin"])
+        .current_dir(repo);
+    run_checked(command, "git remote remove origin");
 }
 
 fn run_shell_repo_safety(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
@@ -943,6 +987,203 @@ fn canonical_repo_safety_rejects_invalid_inputs_and_keeps_deterministic_hot_path
     assert_eq!(
         hot_path_json["approval_path"],
         Value::String(expected_path.to_string_lossy().into_owned())
+    );
+}
+
+#[test]
+fn canonical_repo_safety_accepts_legacy_symlinked_repo_root_records() {
+    let remote_url = "https://example.com/acme/repo-safety-symlink.git";
+    let (repo_dir, state_dir) = init_repo("repo-safety-symlink", "main", remote_url);
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let alias_root = state.join("repo-safety-symlink-checkout");
+    create_dir_symlink(repo, &alias_root);
+
+    let approval_json = parse_json(
+        &run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "approve",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--reason",
+                "User explicitly approved this scope.",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "repo-safety legacy symlink approval seed",
+        ),
+        "repo-safety legacy symlink approval seed",
+    );
+    let approval_path = PathBuf::from(
+        approval_json["approval_path"]
+            .as_str()
+            .expect("approval path should be a string"),
+    );
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(&approval_path).expect("approval record should read"))
+            .expect("approval record should parse");
+    record["repo_root"] = Value::String(alias_root.to_string_lossy().into_owned());
+    record["approval_fingerprint"] = Value::String(legacy_approval_fingerprint(
+        alias_root.to_string_lossy().as_ref(),
+        "main",
+        "featureforge:brainstorming",
+        "spec-task",
+        &["docs/featureforge/specs/new-spec.md"],
+        &["spec-artifact-write"],
+    ));
+    fs::write(
+        &approval_path,
+        serde_json::to_vec(&record).expect("approval record should serialize"),
+    )
+    .expect("approval record should rewrite");
+
+    let check_json = parse_json(
+        &run_rust_featureforge(
+            &alias_root,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "repo-safety legacy symlink approval check",
+        ),
+        "repo-safety legacy symlink approval check",
+    );
+    assert_eq!(
+        check_json["outcome"],
+        Value::String(String::from("allowed"))
+    );
+}
+
+#[test]
+fn canonical_repo_safety_recovers_legacy_symlinked_local_repo_approvals() {
+    let remote_url = "https://example.com/acme/repo-safety-local.git";
+    let (repo_dir, state_dir) = init_repo("repo-safety-local", "main", remote_url);
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    remove_origin_remote(repo);
+
+    let alias_root = state.join("repo-safety-local-checkout");
+    create_dir_symlink(repo, &alias_root);
+
+    let canonical_check_json = parse_json(
+        &run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "repo-safety canonical local approval path",
+        ),
+        "repo-safety canonical local approval path",
+    );
+    let canonical_approval_path = PathBuf::from(
+        canonical_check_json["approval_path"]
+            .as_str()
+            .expect("approval path should be a string"),
+    );
+    let branch_dir = canonical_approval_path
+        .parent()
+        .and_then(Path::file_name)
+        .expect("canonical approval path should include a branch dir");
+    let legacy_approval_path = state
+        .join("repo-safety")
+        .join("approvals")
+        .join(derive_repo_slug(&alias_root, None))
+        .join(branch_dir)
+        .join(
+            canonical_approval_path
+                .file_name()
+                .expect("canonical approval path should include a filename"),
+        );
+    fs::create_dir_all(
+        legacy_approval_path
+            .parent()
+            .expect("legacy approval path should have a parent"),
+    )
+    .expect("legacy approval dir should exist");
+    fs::write(
+        &legacy_approval_path,
+        serde_json::to_vec(&serde_json::json!({
+            "repo_root": alias_root.to_string_lossy().into_owned(),
+            "branch": "main",
+            "stage": "featureforge:brainstorming",
+            "task_id": "spec-task",
+            "paths": ["docs/featureforge/specs/new-spec.md"],
+            "write_targets": ["spec-artifact-write"],
+            "approval_fingerprint": legacy_approval_fingerprint(
+                alias_root.to_string_lossy().as_ref(),
+                "main",
+                "featureforge:brainstorming",
+                "spec-task",
+                &["docs/featureforge/specs/new-spec.md"],
+                &["spec-artifact-write"],
+            ),
+            "approval_reason": "legacy symlinked local approval",
+            "protected_by": "default",
+            "approved_at": "2026-03-25T00:00:00Z",
+        }))
+        .expect("legacy approval record should serialize"),
+    )
+    .expect("legacy approval record should write");
+
+    let check_json = parse_json(
+        &run_rust_featureforge(
+            &alias_root,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "repo-safety legacy local symlink approval check",
+        ),
+        "repo-safety legacy local symlink approval check",
+    );
+    assert_eq!(
+        check_json["outcome"],
+        Value::String(String::from("allowed"))
+    );
+    assert_eq!(
+        check_json["approval_path"], canonical_check_json["approval_path"],
+        "compat fallback should still report the canonical approval path"
     );
 }
 

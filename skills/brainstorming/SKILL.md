@@ -21,7 +21,7 @@ if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_PATH=$("$_FEATUREFO
   [ -n "$_FEATUREFORGE_RUNTIME_ROOT_PATH" ] && _FEATUREFORGE_ROOT="$_FEATUREFORGE_RUNTIME_ROOT_PATH"
 fi
 _UPD=""
-[ -n "$_FEATUREFORGE_ROOT" ] && _UPD=$("$_FEATUREFORGE_ROOT/bin/featureforge" update-check 2>/dev/null || true)
+[ -n "$_FEATUREFORGE_BIN" ] && _UPD=$("$_FEATUREFORGE_BIN" update-check 2>/dev/null || true)
 [ -n "$_UPD" ] && echo "$_UPD" || true
 _SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 mkdir -p "$_SP_STATE_DIR/sessions"
@@ -29,7 +29,7 @@ touch "$_SP_STATE_DIR/sessions/$PPID"
 _SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
 find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _CONTRIB=""
-[ -n "$_FEATUREFORGE_ROOT" ] && _CONTRIB=$("$_FEATUREFORGE_ROOT/bin/featureforge" config get featureforge_contributor 2>/dev/null || true)
+[ -n "$_FEATUREFORGE_BIN" ] && _CONTRIB=$("$_FEATUREFORGE_BIN" config get featureforge_contributor 2>/dev/null || true)
 ```
 
 If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the already selected runtime root in `$_FEATUREFORGE_ROOT`; if that root is not set yet, resolve it through the packaged compat binary in `$_FEATUREFORGE_BIN` and stop instead of guessing an install path. Then follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the packaged helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.
@@ -231,7 +231,7 @@ digraph brainstorming {
 - Before writing the spec, record the intended spec path with `expect`:
 
 ```bash
-"$_FEATUREFORGE_ROOT/bin/featureforge" workflow expect --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
+"$_FEATUREFORGE_BIN" workflow expect --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
 ```
 
 - Every spec MUST include these header lines immediately below the title:
@@ -262,7 +262,7 @@ digraph brainstorming {
 - After the spec is written or updated, runs `sync --artifact spec`:
 
 ```bash
-"$_FEATUREFORGE_ROOT/bin/featureforge" workflow sync --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
+"$_FEATUREFORGE_BIN" workflow sync --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
 ```
 
 **Protected-Branch Repo-Write Gate:**

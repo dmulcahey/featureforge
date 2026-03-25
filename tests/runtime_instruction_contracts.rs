@@ -180,7 +180,11 @@ fn repo_checkout_canonical_launcher_supports_runtime_root_helper_contract() {
     );
 
     let stdout = String::from_utf8(output.stdout).expect("runtime-root stdout should be utf-8");
-    assert_contains(&stdout, "\"resolved\":true", "bin/featureforge repo runtime-root --json");
+    assert_contains(
+        &stdout,
+        "\"resolved\":true",
+        "bin/featureforge repo runtime-root --json",
+    );
     assert_contains(
         &stdout,
         &format!("\"root\":\"{}\"", repo_root().display()),
@@ -208,7 +212,8 @@ fn repo_checkout_canonical_launcher_supports_runtime_root_path_contract() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stdout = String::from_utf8(output.stdout).expect("runtime-root --path stdout should be utf-8");
+    let stdout =
+        String::from_utf8(output.stdout).expect("runtime-root --path stdout should be utf-8");
     assert_eq!(
         stdout.trim_end(),
         repo_root().to_string_lossy(),
@@ -463,7 +468,9 @@ fn runtime_docs_and_fixtures_do_not_depend_on_the_removed_differential_shell_har
     let root = repo_root();
 
     assert!(
-        !root.join("tests/differential/run_legacy_vs_rust.sh").exists(),
+        !root
+            .join("tests/differential/run_legacy_vs_rust.sh")
+            .exists(),
         "tests/differential/run_legacy_vs_rust.sh should be removed once the snapshot lives in workflow_runtime.rs"
     );
     assert!(
@@ -473,7 +480,10 @@ fn runtime_docs_and_fixtures_do_not_depend_on_the_removed_differential_shell_har
 
     assert_file_not_contains(root.join("README.md"), "run_legacy_vs_rust.sh");
     assert_file_not_contains(root.join("docs/testing.md"), "run_legacy_vs_rust.sh");
-    assert_file_not_contains(root.join("docs/test-suite-enhancement-plan.md"), "tests/differential/");
+    assert_file_not_contains(
+        root.join("docs/test-suite-enhancement-plan.md"),
+        "tests/differential/",
+    );
     assert_file_contains(
         root.join("docs/testing.md"),
         "workflow-status snapshot coverage for the ambiguous-spec route lives in `tests/workflow_runtime.rs`",
@@ -871,7 +881,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/brainstorming/SKILL.md"),
-        "\"$_FEATUREFORGE_ROOT/bin/featureforge\" workflow expect --artifact spec --path",
+        "\"$_FEATUREFORGE_BIN\" workflow expect --artifact spec --path",
     );
     assert_file_contains(
         root.join("skills/brainstorming/SKILL.md"),
@@ -904,7 +914,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "First, if `$_FEATUREFORGE_ROOT/bin/featureforge` is available, call `$_FEATUREFORGE_ROOT/bin/featureforge workflow status --refresh`.",
+        "First, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow status --refresh`.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -941,11 +951,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
 
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "\"$_FEATUREFORGE_ROOT/bin/featureforge\" workflow expect --artifact plan --path",
+        "\"$_FEATUREFORGE_BIN\" workflow expect --artifact plan --path",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "\"$_FEATUREFORGE_ROOT/bin/featureforge\" plan contract lint \\",
+        "\"$_FEATUREFORGE_BIN\" plan contract lint \\",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
@@ -1046,7 +1056,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If the helper returns `status` `implementation_ready`, immediately call `$_FEATUREFORGE_ROOT/bin/featureforge workflow handoff` before presenting any handoff text.",
+        "If the helper returns `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow handoff` before presenting any handoff text.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -1234,7 +1244,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "REVIEW_GATE_JSON=$(\"$_FEATUREFORGE_ROOT/bin/featureforge\" plan execution gate-review --plan \"$APPROVED_PLAN_PATH\")",
+        "REVIEW_GATE_JSON=$(\"$_FEATUREFORGE_BIN\" plan execution gate-review --plan \"$APPROVED_PLAN_PATH\")",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
