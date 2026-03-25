@@ -81,5 +81,5 @@ Then refresh any copied reviewer artifact if your platform does not use symlinks
 
 1. Verify the skills link exists: `ls -la ~/.copilot/skills`
 2. Verify the reviewer artifact exists: `ls -la ~/.copilot/agents/code-reviewer.agent.md`
-3. Verify the runtime responds: `~/.featureforge/install/bin/featureforge workflow help`
+3. Verify the runtime responds: run the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows) with `workflow help`
 4. Re-run the checked-in install instructions if any link or copied artifact is missing

@@ -134,6 +134,18 @@ fn run_cutover_check(repo: &Path) -> Output {
     run(command, "featureforge cutover check")
 }
 
+fn run_cutover_check_with_env(repo: &Path, extra_env: &[(&str, &str)]) -> Output {
+    let mut command = Command::new("bash");
+    command
+        .arg(repo_root().join("scripts/check-featureforge-cutover.sh"))
+        .current_dir(repo)
+        .env("FEATUREFORGE_CUTOVER_REPO_ROOT", repo);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    run(command, "featureforge cutover check with env")
+}
+
 #[test]
 fn standalone_binary_has_no_separate_workflow_wrapper_files() {
     let bin_dir = repo_root().join("bin");
@@ -283,8 +295,7 @@ fn featureforge_cutover_gate_rejects_active_legacy_root_content() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Forbidden active content references:"));
-    assert!(stderr.contains("featureforge-upgrade/SKILL.md"));
-    assert!(stderr.contains(".codex/featureforge"));
+    assert!(stderr.contains("featureforge-upgrade/SKILL.md:1"));
 }
 
 #[test]
@@ -357,5 +368,60 @@ fn featureforge_cutover_gate_allows_archived_legacy_root_history() {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
         "featureforge cutover checks passed"
+    );
+}
+
+#[test]
+fn featureforge_cutover_gate_uses_one_repo_wide_content_scan() {
+    let (repo_dir, _state_dir) = init_repo("cutover-single-pass");
+    let repo = repo_dir.path();
+    install_cutover_check_baseline(repo);
+    write_repo_file(repo, "src/one.rs", "const ONE: &str = \"clean\";\n");
+    write_repo_file(repo, "src/two.rs", "const TWO: &str = \"clean\";\n");
+    write_repo_file(repo, "docs/guide.md", "still clean\n");
+    git_add_all(repo);
+
+    let wrapper_root = TempDir::new().expect("wrapper tempdir should exist");
+    let wrapper_bin = wrapper_root.path().join("bin");
+    fs::create_dir_all(&wrapper_bin).expect("wrapper bin dir should exist");
+    let grep_log = wrapper_root.path().join("grep.log");
+    let grep_path = wrapper_bin.join("grep");
+    let real_grep = Command::new("sh")
+        .arg("-c")
+        .arg("command -v grep")
+        .output()
+        .expect("real grep path should resolve");
+    let real_grep = String::from_utf8_lossy(&real_grep.stdout).trim().to_owned();
+    assert!(!real_grep.is_empty(), "real grep path should not be empty");
+    write_repo_file(
+        wrapper_root.path(),
+        "bin/grep",
+        &format!(
+            "#!/usr/bin/env bash\nprintf 'grep %s\\n' \"$*\" >> \"{}\"\nexec \"{}\" \"$@\"\n",
+            grep_log.display(),
+            real_grep
+        ),
+    );
+    make_executable(&grep_path);
+
+    let existing_path = std::env::var("PATH").expect("PATH should exist");
+    let wrapper_path = format!("{}:{}", wrapper_bin.display(), existing_path);
+    let output = run_cutover_check_with_env(repo, &[("PATH", wrapper_path.as_str())]);
+    assert!(
+        output.status.success(),
+        "cutover check should stay green under rg instrumentation\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let grep_invocations = fs::read_to_string(&grep_log).expect("grep log should exist");
+    let content_scan_lines = grep_invocations
+        .lines()
+        .filter(|line| line.contains("grep -nH -E "))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        content_scan_lines.len(),
+        1,
+        "cutover content scanning should stay repo-bounded and single-pass instead of spawning one scan per tracked file: {content_scan_lines:?}"
     );
 }

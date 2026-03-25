@@ -17,7 +17,7 @@ use tempfile::TempDir;
 
 use executable_support::make_executable;
 use files_support::write_file;
-use install_support::canonical_install_bin;
+use install_support::{canonical_install_bin, canonical_install_root};
 use prebuilt_support::{
     DARWIN_ARM64_BINARY_REL, DARWIN_ARM64_CHECKSUM_REL, WINDOWS_X64_BINARY_REL,
     WINDOWS_X64_CHECKSUM_REL, write_canonical_prebuilt_layout,
@@ -245,6 +245,15 @@ fn install_mock_featureforge(home_dir: &Path, script_body: &str) -> PathBuf {
     helper_path
 }
 
+fn install_mock_featureforge_exe(home_dir: &Path, script_body: &str) -> PathBuf {
+    let helper_path = canonical_install_root(home_dir)
+        .join("bin")
+        .join("featureforge.exe");
+    write_file(&helper_path, script_body);
+    make_executable(&helper_path);
+    helper_path
+}
+
 fn resolved_runtime_root_path(root: &Path) -> String {
     format!("{}\n", root.to_string_lossy())
 }
@@ -254,7 +263,11 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let skill_doc = read_skill_doc();
     for pattern in [
         "repo runtime-root --path",
-        "FEATUREFORGE_RUNTIME_BIN=\"${_FEATUREFORGE_BIN:-$HOME/.featureforge/install/bin/featureforge}\"",
+        "_FEATUREFORGE_INSTALL_ROOT=\"$HOME/.featureforge/install\"",
+        "FEATUREFORGE_RUNTIME_BIN=\"${_FEATUREFORGE_BIN:-}\"",
+        "if [ -z \"$FEATUREFORGE_RUNTIME_BIN\" ]; then",
+        "if [ -x \"$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge\" ]; then",
+        "elif [ -f \"$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge.exe\" ]; then",
         "INSTALL_DIR=\"${_FEATUREFORGE_ROOT:-}\"",
         "repo runtime-root --field upgrade-eligible",
         "UPGRADE_ELIGIBLE=",
@@ -446,6 +459,56 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "upgrade skill step 1 windows-only runtime",
     );
 
+    let canonical_unix_helper = canonical_install_bin(&home_dir);
+    if canonical_unix_helper.exists() {
+        fs::remove_file(&canonical_unix_helper)
+            .expect("windows-only direct-upgrade fixture should remove the unix helper");
+    }
+    let direct_windows_install = canonical_install_root(&home_dir);
+    make_windows_only_install(&direct_windows_install, "dir");
+    install_mock_featureforge_exe(
+        &home_dir,
+        &format!(
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--path\" ]; then\n  printf '%s' '{}'\n  exit 0\nfi\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--field\" ] && [ \"${{4:-}}\" = \"upgrade-eligible\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nexit 0\n",
+            resolved_runtime_root_path(&direct_windows_install)
+        ),
+    );
+    let direct_windows_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[],
+        "upgrade skill step 1 direct windows install",
+    );
+    assert!(
+        direct_windows_output.status.success(),
+        "direct windows install should stay self-contained for manual /featureforge-upgrade use\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&direct_windows_output.stdout),
+        String::from_utf8_lossy(&direct_windows_output.stderr)
+    );
+    let direct_windows_stdout = String::from_utf8_lossy(&direct_windows_output.stdout);
+    assert_contains(
+        &direct_windows_stdout,
+        &format!("INSTALL_DIR={}", direct_windows_install.display()),
+        "upgrade skill step 1 direct windows install",
+    );
+    assert_contains(
+        &direct_windows_stdout,
+        &format!(
+            "FEATUREFORGE_RUNTIME_BIN={}",
+            direct_windows_install.join("bin/featureforge.exe").display()
+        ),
+        "upgrade skill step 1 direct windows install",
+    );
+    assert_contains(
+        &direct_windows_stdout,
+        &format!(
+            "INSTALL_RUNTIME_BIN={}",
+            direct_windows_install.join("bin/featureforge.exe").display()
+        ),
+        "upgrade skill step 1 direct windows install",
+    );
+
     install_mock_featureforge(&home_dir, "#!/usr/bin/env bash\nexit 0\n");
     let unresolved_output = run_bash_block(
         &current_root,
@@ -520,6 +583,12 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     );
 
     fs::remove_file(canonical_install_bin(&home_dir)).expect("mock helper should remove");
+    fs::remove_file(
+        canonical_install_root(&home_dir)
+            .join("bin")
+            .join("featureforge.exe"),
+    )
+    .expect("windows packaged helper should remove");
     let unavailable_output = run_bash_block(
         &current_root,
         &home_dir,

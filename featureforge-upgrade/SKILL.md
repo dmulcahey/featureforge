@@ -16,7 +16,8 @@ This section is referenced by all skill preambles when they detect `UPGRADE_AVAI
 Reuse the already selected runtime root when it is available. Otherwise resolve the active install once through the packaged install binary and reuse it for the rest of the flow:
 
 ```bash
-FEATUREFORGE_RUNTIME_BIN="${_FEATUREFORGE_BIN:-$HOME/.featureforge/install/bin/featureforge}"
+_FEATUREFORGE_INSTALL_ROOT="$HOME/.featureforge/install"
+FEATUREFORGE_RUNTIME_BIN="${_FEATUREFORGE_BIN:-}"
 INSTALL_DIR="${_FEATUREFORGE_ROOT:-}"
 UPGRADE_ELIGIBLE=""
 INSTALL_RUNTIME_BIN=""
@@ -33,7 +34,15 @@ _FEATUREFORGE_INSTALL_RUNTIME_BIN() {
   return 1
 }
 
-if [ -z "$FEATUREFORGE_RUNTIME_BIN" ] || [ ! -x "$FEATUREFORGE_RUNTIME_BIN" ]; then
+if [ -z "$FEATUREFORGE_RUNTIME_BIN" ]; then
+  if [ -x "$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge" ]; then
+    FEATUREFORGE_RUNTIME_BIN="$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge"
+  elif [ -f "$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge.exe" ]; then
+    FEATUREFORGE_RUNTIME_BIN="$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge.exe"
+  fi
+fi
+
+if [ -z "$FEATUREFORGE_RUNTIME_BIN" ] || { [ ! -x "$FEATUREFORGE_RUNTIME_BIN" ] && [ ! -f "$FEATUREFORGE_RUNTIME_BIN" ]; }; then
   echo "ERROR: featureforge runtime-root helper unavailable"
   exit 1
 fi

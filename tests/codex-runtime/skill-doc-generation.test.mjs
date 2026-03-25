@@ -104,10 +104,11 @@ test('upgrade instructions use the runtime-root helper instead of embedded root-
   // not weaken these assertions unless product direction explicitly changes.
   assert.match(upgradeSkill, /repo runtime-root --path/);
   assert.match(upgradeSkill, /repo runtime-root --field upgrade-eligible/);
+  assert.match(upgradeSkill, /_FEATUREFORGE_INSTALL_ROOT="\$HOME\/\.featureforge\/install"/);
   assert.match(upgradeSkill, /FEATUREFORGE_RUNTIME_BIN/);
   assert.match(upgradeSkill, /featureforge\.exe/);
   assert.match(upgradeSkill, /_FEATUREFORGE_ROOT/);
-  assert.match(upgradeSkill, /\$HOME\/\.featureforge\/install\/bin\/featureforge/);
+  assert.match(upgradeSkill, /\$_FEATUREFORGE_INSTALL_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$_FEATUREFORGE_ROOT\/bin\/featureforge"/);
   assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$INSTALL_DIR\/bin\/featureforge"/);
   assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$_FEATUREFORGE_ROOT\/bin\/featureforge\.exe"/);

@@ -32,6 +32,7 @@ while IFS= read -r file; do
   tracked_files+=("$file")
 done < <(git ls-files)
 
+surface_files=()
 active_path_hits=()
 archived_path_hits=()
 active_content_hits=()
@@ -44,24 +45,32 @@ for file in "${tracked_files[@]}"; do
     continue
   fi
 
-  if printf '%s\n' "$file" | rg -q "$LEGACY_ROOT_REGEX"; then
+  surface_files+=("$file")
+
+  if [[ "$file" =~ \.(codex|copilot)/featureforge(/|$) ]]; then
     if [[ "$bucket" == "active" ]]; then
       active_path_hits+=("$file")
     else
       archived_path_hits+=("$file")
     fi
   fi
+done
 
+if ((${#surface_files[@]} > 0)); then
   while IFS= read -r hit; do
     [[ -n "$hit" ]] || continue
-    formatted_hit="$file:$hit"
+    hit_file="${hit%%:*}"
+    hit_rest="${hit#*:}"
+    hit_line="${hit_rest%%:*}"
+    formatted_hit="$hit_file:$hit_line"
+    bucket="$(classify_bucket "$hit_file")"
     if [[ "$bucket" == "active" ]]; then
       active_content_hits+=("$formatted_hit")
     else
       archived_content_hits+=("$formatted_hit")
     fi
-  done < <(rg -n -H -I "$LEGACY_ROOT_REGEX" "$file" || true)
-done
+  done < <(grep -nH -E "$LEGACY_ROOT_REGEX" -- "${surface_files[@]}" || true)
+fi
 
 if ((${#active_path_hits[@]} > 0)); then
   printf 'Forbidden active path names:\n%s\n' "$(printf '%s\n' "${active_path_hits[@]}")" >&2
@@ -80,7 +89,7 @@ fi
 [[ -f bin/prebuilt/windows-x64/featureforge.exe.sha256 ]] || fail 'windows checksum must exist'
 grep -Fq 'bin/prebuilt/darwin-arm64/featureforge' bin/prebuilt/manifest.json || fail 'manifest must reference darwin featureforge binary'
 grep -Fq 'bin/prebuilt/windows-x64/featureforge.exe' bin/prebuilt/manifest.json || fail 'manifest must reference windows featureforge binary'
-if rg -n "$LEGACY_ROOT_REGEX" bin/prebuilt/manifest.json >/dev/null; then
+if grep -nE "$LEGACY_ROOT_REGEX" bin/prebuilt/manifest.json >/dev/null; then
   fail 'manifest must not reference retired legacy-root paths'
 fi
 

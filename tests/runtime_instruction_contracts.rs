@@ -788,9 +788,18 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         "Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.",
     );
     assert_file_contains(
+        root.join("docs/README.codex.md"),
+        "run the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows)",
+    );
+    assert_file_contains(
         root.join("docs/README.copilot.md"),
         "Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.",
     );
+    assert_file_contains(
+        root.join("docs/README.copilot.md"),
+        "run the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows)",
+    );
+    assert_file_contains(root.join("README.md"), "node scripts/gen-agent-docs.mjs --check");
     assert_file_contains(
         root.join("review/review-accelerator-packet-contract.md"),
         "required packet fields",
@@ -802,6 +811,30 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
     assert_file_contains(
         root.join("review/review-accelerator-packet-contract.md"),
         "main-agent-only write authority",
+    );
+}
+
+#[test]
+fn cutover_script_keeps_the_legacy_root_content_scan_repo_bounded_and_single_pass() {
+    let script = read_utf8(repo_root().join("scripts/check-featureforge-cutover.sh"));
+
+    // Intentional performance and plan-delivery contract: the cutover gate
+    // must classify active versus archived content from one repo-wide scan, not
+    // drift back into one `rg` subprocess per tracked file as the repo grows.
+    assert_contains(
+        &script,
+        "while IFS= read -r hit; do",
+        "scripts/check-featureforge-cutover.sh",
+    );
+    assert_contains(
+        &script,
+        "done < <(grep -nH -E \"$LEGACY_ROOT_REGEX\" -- \"${surface_files[@]}\" || true)",
+        "scripts/check-featureforge-cutover.sh",
+    );
+    assert_not_contains(
+        &script,
+        "done < <(rg -n -H -I \"$LEGACY_ROOT_REGEX\" \"$file\" || true)",
+        "scripts/check-featureforge-cutover.sh",
     );
 }
 
