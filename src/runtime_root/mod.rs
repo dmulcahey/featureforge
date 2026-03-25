@@ -41,6 +41,7 @@ impl RuntimeRootValidation {
 pub struct RuntimeRootOutput {
     pub resolved: bool,
     pub root: Option<String>,
+    #[schemars(with = "RuntimeRootSourceSchemaDoc")]
     pub source: String,
     pub validation: RuntimeRootValidation,
 }
@@ -54,6 +55,17 @@ impl RuntimeRootOutput {
             validation: RuntimeRootValidation::unresolved(),
         }
     }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum RuntimeRootSourceSchemaDoc {
+    Unresolved,
+    FeatureforgeDirEnv,
+    RepoLocal,
+    BinaryAdjacent,
+    CanonicalInstall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +97,7 @@ enum CandidateSource {
 impl CandidateSource {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::FeatureforgeDir => "featureforge_dir",
+            Self::FeatureforgeDir => "featureforge_dir_env",
             Self::RepoLocal => "repo_local",
             Self::BinaryAdjacent => "binary_adjacent",
             Self::CanonicalInstall => "canonical_install",

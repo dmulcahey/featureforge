@@ -13,7 +13,7 @@
       ]
     },
     "source": {
-      "type": "string"
+      "$ref": "#/$defs/RuntimeRootSourceSchemaDoc"
     },
     "validation": {
       "$ref": "#/$defs/RuntimeRootValidation"
@@ -25,6 +25,16 @@
     "validation"
   ],
   "$defs": {
+    "RuntimeRootSourceSchemaDoc": {
+      "type": "string",
+      "enum": [
+        "unresolved",
+        "featureforge_dir_env",
+        "repo_local",
+        "binary_adjacent",
+        "canonical_install"
+      ]
+    },
     "RuntimeRootValidation": {
       "type": "object",
       "properties": {

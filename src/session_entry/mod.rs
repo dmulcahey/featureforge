@@ -125,10 +125,10 @@ pub fn resolve(
     }
     let runtime = SessionEntryRuntime::discover(args.session_key.as_deref())?;
     let context = SessionEntryContext::from_resolve_args(args);
-    let message_text = runtime.load_message_text(&args.message_file)?;
     if context.spawned_subagent {
         return runtime.resolve_spawned_subagent(context);
     }
+    let message_text = runtime.load_message_text(&args.message_file)?;
     let decision_state = runtime.read_decision_state()?;
 
     match decision_state {

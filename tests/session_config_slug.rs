@@ -345,6 +345,49 @@ fn canonical_session_entry_spawned_subagent_bypasses_bootstrap_without_persistin
 }
 
 #[test]
+fn canonical_session_entry_spawned_subagent_bypasses_without_reading_message_file() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-spawned-subagent-missing-message");
+    let state = state_dir.path();
+    let missing_message_file = state.join("missing-message.txt");
+    let decision_path = canonical_session_entry_path(state, "spawned-subagent-missing-message");
+
+    let rust_output = run_rust_featureforge(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            missing_message_file
+                .to_str()
+                .expect("message file path should be utf8"),
+            "--session-key",
+            "spawned-subagent-missing-message",
+            "--spawned-subagent",
+        ],
+        "canonical session-entry spawned subagent missing-message bypass",
+    );
+    let rust_json = parse_json(
+        &rust_output,
+        "canonical session-entry spawned subagent missing-message bypass",
+    );
+
+    assert_eq!(
+        rust_json["outcome"],
+        Value::String(String::from("bypassed"))
+    );
+    assert_eq!(
+        rust_json["decision_source"],
+        Value::String(String::from("spawned_subagent_default"))
+    );
+    assert_eq!(rust_json["persisted"], Value::Bool(false));
+    assert!(
+        !decision_path.exists(),
+        "spawned-subagent bypass should not touch the decision file when message-file is unreadable"
+    );
+}
+
+#[test]
 fn canonical_session_entry_spawned_subagent_opt_in_reenables_featureforge_with_distinct_source() {
     let (_repo_dir, state_dir) = init_repo("session-entry-spawned-subagent-opt-in");
     let state = state_dir.path();
@@ -372,6 +415,49 @@ fn canonical_session_entry_spawned_subagent_opt_in_reenables_featureforge_with_d
     let rust_json = parse_json(
         &rust_output,
         "canonical session-entry spawned subagent opt-in",
+    );
+
+    assert_eq!(rust_json["outcome"], Value::String(String::from("enabled")));
+    assert_eq!(
+        rust_json["decision_source"],
+        Value::String(String::from("spawned_subagent_opt_in"))
+    );
+    assert_eq!(rust_json["persisted"], Value::Bool(true));
+    assert_eq!(
+        fs::read_to_string(&decision_path).expect("opt-in decision should persist"),
+        "enabled\n"
+    );
+}
+
+#[test]
+fn canonical_session_entry_spawned_subagent_opt_in_ignores_oversized_message_file() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-spawned-subagent-opt-in-oversized");
+    let state = state_dir.path();
+    let message_file = state.join("spawned-subagent-opt-in-oversized.txt");
+    let decision_path =
+        canonical_session_entry_path(state, "spawned-subagent-opt-in-oversized");
+
+    write_file(&message_file, &"x".repeat(70_000));
+    write_file(&decision_path, "bypassed\n");
+
+    let rust_output = run_rust_featureforge(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "spawned-subagent-opt-in-oversized",
+            "--spawned-subagent",
+            "--spawned-subagent-opt-in",
+        ],
+        "canonical session-entry spawned subagent opt-in oversized-message",
+    );
+    let rust_json = parse_json(
+        &rust_output,
+        "canonical session-entry spawned subagent opt-in oversized-message",
     );
 
     assert_eq!(rust_json["outcome"], Value::String(String::from("enabled")));

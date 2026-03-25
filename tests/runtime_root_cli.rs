@@ -278,6 +278,48 @@ fn runtime_root_helper_rejects_invalid_featureforge_dir_without_fallback() {
 }
 
 #[test]
+fn runtime_root_helper_reports_featureforge_dir_env_as_a_bounded_source() {
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let outside_repo = TempDir::new().expect("outside repo tempdir should exist");
+    let explicit_root = TempDir::new().expect("explicit runtime root should exist");
+
+    fs::create_dir_all(explicit_root.path().join("bin"))
+        .expect("explicit runtime root bin dir should exist");
+    fs::write(explicit_root.path().join("VERSION"), "1.0.0\n")
+        .expect("explicit runtime version should exist");
+    fs::write(explicit_root.path().join("bin/featureforge"), "")
+        .expect("explicit runtime binary should exist");
+    make_executable(&explicit_root.path().join("bin/featureforge"));
+
+    let output = run_rust_featureforge_with_env_control(
+        Some(outside_repo.path()),
+        Some(state_dir.path()),
+        Some(home_dir.path()),
+        &["USERPROFILE"],
+        &[(
+            "FEATUREFORGE_DIR",
+            explicit_root.path().to_str().expect("explicit root should be utf8"),
+        )],
+        &["repo", "runtime-root", "--json"],
+        "repo runtime-root explicit featureforge_dir env success",
+    );
+    let json = parse_json(&output, "repo runtime-root explicit featureforge_dir env success");
+
+    assert_eq!(json["resolved"], Value::Bool(true));
+    assert_eq!(
+        json["root"],
+        Value::String(explicit_root.path().to_string_lossy().into_owned())
+    );
+    assert_eq!(
+        json["source"],
+        Value::String(String::from("featureforge_dir_env"))
+    );
+    assert_eq!(json["validation"]["has_version"], Value::Bool(true));
+    assert_eq!(json["validation"]["has_binary"], Value::Bool(true));
+}
+
+#[test]
 fn runtime_root_path_helper_rejects_invalid_featureforge_dir_without_fallback() {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let home_dir = TempDir::new().expect("home tempdir should exist");
