@@ -210,9 +210,13 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
     let required_patterns = [
         "~/.featureforge/session-entry/using-featureforge/$PPID",
         "featureforge session-entry resolve --message-file <path>",
+        "featureforge session-entry resolve --message-file <path> --spawned-subagent",
+        "featureforge session-entry resolve --message-file <path> --spawned-subagent --spawned-subagent-opt-in",
         "if the session decision is `enabled`, continue into the normal stack",
         "if the session decision is `bypassed` and the user did not explicitly request FeatureForge, stop and bypass the rest of this skill",
         "if the user explicitly requests FeatureForge or explicitly names a FeatureForge skill, rewrite the session decision to `enabled` and continue on the same turn",
+        "default spawned-subagent bypass is ephemeral and non-persisted",
+        "supported spawned-subagent entry paths must pass the runtime marker instead of inventing prose-only bypass behavior",
         "session-entry bootstrap ownership is runtime-owned",
         "missing or malformed decision state fails closed",
         "If the session decision file exists but contains malformed content:",

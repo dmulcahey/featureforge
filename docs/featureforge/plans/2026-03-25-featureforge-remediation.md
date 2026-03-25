@@ -143,9 +143,7 @@ canonical validation command once Task 4 defines it
 - [x] **Step 8: Update `scripts/gen-skill-docs.mjs` and `featureforge-upgrade/SKILL.md` to call the runtime-root helper, then regenerate `skills/*/SKILL.md` with `node scripts/gen-skill-docs.mjs`**
 - [x] **Step 9: Check in `schemas/repo-runtime-root.schema.json` and make the schema tests pass**
 - [x] **Step 10: Run `cargo nextest run --test runtime_root_cli --test update_and_install --test upgrade_skill --test packet_and_schema` and `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` until both suites pass**
-- [ ] **Step 11: Commit the phase slice with `git commit -m \"feat: add runtime-root helper contract\"`**
-
-  **Execution Note:** Active - Commit the phase slice with `git commit -m \"feat: add runtime-root helper contract\"`
+- [x] **Step 11: Commit the phase slice with `git commit -m \"feat: add runtime-root helper contract\"`**
 ## Task 2: Make Session-Entry Own Spawned-Subagent Bypass
 
 **Spec Coverage:** REQ-002, DEC-001, DEC-003, VERIFY-001, VERIFY-002, NONGOAL-002
@@ -174,14 +172,16 @@ canonical validation command once Task 4 defines it
 - Modify: `tests/packet_and_schema.rs`
 - Test: `cargo nextest run --test using_featureforge_skill --test session_config_slug --test workflow_runtime --test runtime_instruction_contracts --test packet_and_schema`
 
-- [ ] **Step 1: Add red Rust tests for spawned-subagent default bypass, non-persistence, explicit opt-in re-entry, and nested review noise suppression**
-- [ ] **Step 2: Add red doc-contract assertions in `tests/using_featureforge_skill.rs` and `tests/runtime_instruction_contracts.rs` for the runtime-owned spawned-subagent marker path**
-- [ ] **Step 3: Extend `src/cli/session_entry.rs` with explicit spawned-subagent and opt-in inputs that are visible at the parse boundary**
-- [ ] **Step 4: Implement ephemeral spawned-subagent bypass behavior in `src/session_entry/mod.rs` and keep persistence disabled by default for nested contexts**
-- [ ] **Step 5: Update the session-entry schema output and refresh `schemas/session-entry-resolve.schema.json`**
-- [ ] **Step 6: Update `skills/using-featureforge/SKILL.md.tmpl`, `skills/dispatching-parallel-agents/SKILL.md.tmpl`, and `skills/subagent-driven-development/SKILL.md.tmpl`, then regenerate the checked-in skill docs**
-- [ ] **Step 7: Run `cargo nextest run --test using_featureforge_skill --test session_config_slug --test workflow_runtime --test runtime_instruction_contracts --test packet_and_schema` until the nested-session contract is green**
+- [x] **Step 1: Add red Rust tests for spawned-subagent default bypass, non-persistence, explicit opt-in re-entry, and nested review noise suppression**
+- [x] **Step 2: Add red doc-contract assertions in `tests/using_featureforge_skill.rs` and `tests/runtime_instruction_contracts.rs` for the runtime-owned spawned-subagent marker path**
+- [x] **Step 3: Extend `src/cli/session_entry.rs` with explicit spawned-subagent and opt-in inputs that are visible at the parse boundary**
+- [x] **Step 4: Implement ephemeral spawned-subagent bypass behavior in `src/session_entry/mod.rs` and keep persistence disabled by default for nested contexts**
+- [x] **Step 5: Update the session-entry schema output and refresh `schemas/session-entry-resolve.schema.json`**
+- [x] **Step 6: Update `skills/using-featureforge/SKILL.md.tmpl`, `skills/dispatching-parallel-agents/SKILL.md.tmpl`, and `skills/subagent-driven-development/SKILL.md.tmpl`, then regenerate the checked-in skill docs**
+- [x] **Step 7: Run `cargo nextest run --test using_featureforge_skill --test session_config_slug --test workflow_runtime --test runtime_instruction_contracts --test packet_and_schema` until the nested-session contract is green**
 - [ ] **Step 8: Commit the phase slice with `git commit -m \"feat: make subagent bypass runtime-owned\"`**
+
+  **Execution Note:** Active - Commit the phase slice with `git commit -m \"feat: make subagent bypass runtime-owned\"`
 ## Task 3: Remove Unsupported Legacy Surfaces and Add the Gate
 
 **Spec Coverage:** REQ-003, DEC-001, DEC-002, DEC-003, VERIFY-001, VERIFY-002, NONGOAL-001, NONGOAL-002

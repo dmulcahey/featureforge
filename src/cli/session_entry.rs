@@ -20,6 +20,10 @@ pub struct SessionEntryResolveArgs {
     pub message_file: PathBuf,
     #[arg(long = "session-key")]
     pub session_key: Option<String>,
+    #[arg(long = "spawned-subagent")]
+    pub spawned_subagent: bool,
+    #[arg(long = "spawned-subagent-opt-in", requires = "spawned_subagent")]
+    pub spawned_subagent_opt_in: bool,
 }
 
 #[derive(Debug, Clone, Args)]

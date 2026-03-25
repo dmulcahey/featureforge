@@ -10,14 +10,24 @@ export const GENERATOR_CMD = 'node scripts/gen-skill-docs.mjs';
 
 export function buildRootDetection() {
   return [
+    '_IS_FEATUREFORGE_RUNTIME_ROOT() {',
+    '  local candidate="$1"',
+    '  [ -n "$candidate" ] && [ -x "$candidate/bin/featureforge" ] && [ -f "$candidate/VERSION" ]',
+    '}',
     '_REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)',
     '_BRANCH_RAW=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo current)',
     '[ -n "$_BRANCH_RAW" ] || _BRANCH_RAW="current"',
     '[ "$_BRANCH_RAW" != "HEAD" ] || _BRANCH_RAW="current"',
     '_BRANCH="$_BRANCH_RAW"',
     '_FEATUREFORGE_ROOT=""',
+    '_IS_FEATUREFORGE_RUNTIME_ROOT "$_REPO_ROOT" && _FEATUREFORGE_ROOT="$_REPO_ROOT"',
+    '[ -z "$_FEATUREFORGE_ROOT" ] && _IS_FEATUREFORGE_RUNTIME_ROOT "$HOME/.featureforge/install" && _FEATUREFORGE_ROOT="$HOME/.featureforge/install"',
+    '_FEATUREFORGE_BIN=""',
+    '[ -n "${FEATUREFORGE_COMPAT_BIN:-}" ] && [ -x "$FEATUREFORGE_COMPAT_BIN" ] && _FEATUREFORGE_BIN="$FEATUREFORGE_COMPAT_BIN"',
+    '[ -z "$_FEATUREFORGE_BIN" ] && [ -x "$_REPO_ROOT/bin/featureforge" ] && _FEATUREFORGE_BIN="$_REPO_ROOT/bin/featureforge"',
+    '[ -z "$_FEATUREFORGE_BIN" ] && command -v featureforge >/dev/null 2>&1 && _FEATUREFORGE_BIN="$(command -v featureforge)"',
     '_FEATUREFORGE_RUNTIME_ROOT_JSON=""',
-    'if _FEATUREFORGE_RUNTIME_ROOT_JSON=$(featureforge repo runtime-root --json 2>/dev/null); then',
+    'if [ -z "$_FEATUREFORGE_ROOT" ] && [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_JSON=$("$_FEATUREFORGE_BIN" repo runtime-root --json 2>/dev/null); then',
     '  if printf \'%s\' "$_FEATUREFORGE_RUNTIME_ROOT_JSON" | grep -q \'"resolved":true\'; then',
     '    _FEATUREFORGE_ROOT=$(printf \'%s\' "$_FEATUREFORGE_RUNTIME_ROOT_JSON" | sed -n \'s/.*"root":"\\([^\"]*\\)".*/\\1/p\')',
     '  fi',
@@ -122,6 +132,12 @@ Supported entry paths must resolve \`featureforge session-entry resolve --messag
 - if the user explicitly requests FeatureForge or explicitly names a FeatureForge skill, rewrite the session decision to \`enabled\` and continue on the same turn
 - if the helper returns \`needs_user_choice\`, ask the opt-out question and persist either \`enabled\` or \`bypassed\`
 - if the helper returns \`runtime_failure\`, surface that failure instead of pretending the gate was resolved
+
+supported spawned-subagent entry paths must pass the runtime marker instead of inventing prose-only bypass behavior.
+
+- default spawned-subagent bypass is ephemeral and non-persisted
+- supported spawned-subagent entry paths must resolve \`featureforge session-entry resolve --message-file <path> --spawned-subagent\`
+- explicit nested opt-in uses \`featureforge session-entry resolve --message-file <path> --spawned-subagent --spawned-subagent-opt-in\`
 
 If the session decision file exists but contains malformed content:
 

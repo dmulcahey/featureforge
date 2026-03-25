@@ -1326,6 +1326,71 @@ fn canonical_workflow_operator_hides_next_skill_until_session_entry_is_resolved(
 }
 
 #[test]
+fn canonical_workflow_operator_suppresses_session_entry_gate_for_spawned_subagent_context() {
+    let (repo_dir, state_dir) = init_repo("workflow-spawned-subagent");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-spawned-subagent";
+
+    install_full_contract_ready_artifacts(repo);
+
+    let spawned_subagent_env = [
+        ("FEATUREFORGE_SESSION_KEY", session_key),
+        ("FEATUREFORGE_SPAWNED_SUBAGENT", "1"),
+    ];
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &spawned_subagent_env,
+            "workflow phase should bypass session-entry gate for spawned subagents",
+        ),
+        "workflow phase should bypass session-entry gate for spawned subagents",
+    );
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &spawned_subagent_env,
+            "workflow doctor should bypass session-entry gate for spawned subagents",
+        ),
+        "workflow doctor should bypass session-entry gate for spawned subagents",
+    );
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &spawned_subagent_env,
+            "workflow handoff should bypass session-entry gate for spawned subagents",
+        ),
+        "workflow handoff should bypass session-entry gate for spawned subagents",
+    );
+
+    assert_eq!(phase_json["session_entry"]["outcome"], "bypassed");
+    assert_eq!(
+        phase_json["session_entry"]["decision_source"],
+        "spawned_subagent_default"
+    );
+    assert_eq!(phase_json["session_entry"]["persisted"], false);
+    assert_eq!(phase_json["phase"], "bypassed");
+    assert_eq!(phase_json["next_action"], "continue_outside_featureforge");
+    assert_eq!(phase_json["next_skill"], "");
+
+    assert_eq!(doctor_json["phase"], "bypassed");
+    assert_eq!(doctor_json["next_action"], "continue_outside_featureforge");
+    assert_eq!(doctor_json["next_skill"], "");
+
+    assert_eq!(handoff_json["phase"], "bypassed");
+    assert_eq!(handoff_json["next_action"], "continue_outside_featureforge");
+    assert_eq!(handoff_json["recommended_skill"], "");
+    assert_eq!(handoff_json["recommendation"], Value::Null);
+}
+
+#[test]
 fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-ready-plan");
     let repo = repo_dir.path();

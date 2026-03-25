@@ -298,6 +298,86 @@ fn canonical_session_entry_explicit_reentry_enables_featureforge_from_canonical_
 }
 
 #[test]
+fn canonical_session_entry_spawned_subagent_bypasses_bootstrap_without_persisting() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-spawned-subagent-default");
+    let state = state_dir.path();
+    let message_file = state.join("spawned-subagent-default.txt");
+    let decision_path = canonical_session_entry_path(state, "spawned-subagent-default");
+
+    write_file(&message_file, "Review the approved plan and report issues.\n");
+
+    let rust_output = run_rust_featureforge(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "spawned-subagent-default",
+            "--spawned-subagent",
+        ],
+        "canonical session-entry spawned subagent default bypass",
+    );
+    let rust_json = parse_json(
+        &rust_output,
+        "canonical session-entry spawned subagent default bypass",
+    );
+
+    assert_eq!(rust_json["outcome"], Value::String(String::from("bypassed")));
+    assert_eq!(
+        rust_json["decision_source"],
+        Value::String(String::from("spawned_subagent_default"))
+    );
+    assert_eq!(rust_json["persisted"], Value::Bool(false));
+    assert_eq!(rust_json["prompt"], Value::Null);
+    assert!(
+        !decision_path.exists(),
+        "default spawned-subagent bypass should not write a decision file"
+    );
+}
+
+#[test]
+fn canonical_session_entry_spawned_subagent_opt_in_reenables_featureforge_with_distinct_source() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-spawned-subagent-opt-in");
+    let state = state_dir.path();
+    let message_file = state.join("spawned-subagent-opt-in.txt");
+    let decision_path = canonical_session_entry_path(state, "spawned-subagent-opt-in");
+
+    write_file(&message_file, "Review the current remediation diff.\n");
+    write_file(&decision_path, "bypassed\n");
+
+    let rust_output = run_rust_featureforge(
+        None,
+        state,
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+            "--session-key",
+            "spawned-subagent-opt-in",
+            "--spawned-subagent",
+            "--spawned-subagent-opt-in",
+        ],
+        "canonical session-entry spawned subagent opt-in",
+    );
+    let rust_json = parse_json(&rust_output, "canonical session-entry spawned subagent opt-in");
+
+    assert_eq!(rust_json["outcome"], Value::String(String::from("enabled")));
+    assert_eq!(
+        rust_json["decision_source"],
+        Value::String(String::from("spawned_subagent_opt_in"))
+    );
+    assert_eq!(rust_json["persisted"], Value::Bool(true));
+    assert_eq!(
+        fs::read_to_string(&decision_path).expect("opt-in decision should persist"),
+        "enabled\n"
+    );
+}
+
+#[test]
 fn canonical_session_entry_existing_enabled_decision_returns_enabled_without_prompt() {
     let (_repo_dir, state_dir) = init_repo("session-entry-enabled");
     let state = state_dir.path();

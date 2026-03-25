@@ -1272,6 +1272,32 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
 }
 
 #[test]
+fn spawned_subagent_marker_contracts_are_documented_consistently() {
+    let root = repo_root();
+
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "featureforge session-entry resolve --message-file <path> --spawned-subagent",
+    );
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "--spawned-subagent-opt-in",
+    );
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "default spawned-subagent bypass is ephemeral and non-persisted",
+    );
+    assert_file_contains(
+        root.join("skills/dispatching-parallel-agents/SKILL.md"),
+        "FEATUREFORGE_SPAWNED_SUBAGENT=1",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "FEATUREFORGE_SPAWNED_SUBAGENT=1",
+    );
+}
+
+#[test]
 fn using_featureforge_preamble_prefers_valid_repo_roots_over_fallback_installs() {
     let content = read_utf8(repo_root().join("skills/using-featureforge/SKILL.md"));
     let preamble = extract_bash_block(&content, "## Preamble (run first)");

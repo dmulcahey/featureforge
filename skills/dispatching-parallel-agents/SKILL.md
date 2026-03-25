@@ -8,14 +8,24 @@ description: Use when facing 2+ independent tasks that can be worked on without 
 ## Preamble (run first)
 
 ```bash
+_IS_FEATUREFORGE_RUNTIME_ROOT() {
+  local candidate="$1"
+  [ -n "$candidate" ] && [ -x "$candidate/bin/featureforge" ] && [ -f "$candidate/VERSION" ]
+}
 _REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 _BRANCH_RAW=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo current)
 [ -n "$_BRANCH_RAW" ] || _BRANCH_RAW="current"
 [ "$_BRANCH_RAW" != "HEAD" ] || _BRANCH_RAW="current"
 _BRANCH="$_BRANCH_RAW"
 _FEATUREFORGE_ROOT=""
+_IS_FEATUREFORGE_RUNTIME_ROOT "$_REPO_ROOT" && _FEATUREFORGE_ROOT="$_REPO_ROOT"
+[ -z "$_FEATUREFORGE_ROOT" ] && _IS_FEATUREFORGE_RUNTIME_ROOT "$HOME/.featureforge/install" && _FEATUREFORGE_ROOT="$HOME/.featureforge/install"
+_FEATUREFORGE_BIN=""
+[ -n "${FEATUREFORGE_COMPAT_BIN:-}" ] && [ -x "$FEATUREFORGE_COMPAT_BIN" ] && _FEATUREFORGE_BIN="$FEATUREFORGE_COMPAT_BIN"
+[ -z "$_FEATUREFORGE_BIN" ] && [ -x "$_REPO_ROOT/bin/featureforge" ] && _FEATUREFORGE_BIN="$_REPO_ROOT/bin/featureforge"
+[ -z "$_FEATUREFORGE_BIN" ] && command -v featureforge >/dev/null 2>&1 && _FEATUREFORGE_BIN="$(command -v featureforge)"
 _FEATUREFORGE_RUNTIME_ROOT_JSON=""
-if _FEATUREFORGE_RUNTIME_ROOT_JSON=$(featureforge repo runtime-root --json 2>/dev/null); then
+if [ -z "$_FEATUREFORGE_ROOT" ] && [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_JSON=$("$_FEATUREFORGE_BIN" repo runtime-root --json 2>/dev/null); then
   if printf '%s' "$_FEATUREFORGE_RUNTIME_ROOT_JSON" | grep -q '"resolved":true'; then
     _FEATUREFORGE_ROOT=$(printf '%s' "$_FEATUREFORGE_RUNTIME_ROOT_JSON" | sed -n 's/.*"root":"\([^"]*\)".*/\1/p')
   fi
@@ -113,6 +123,10 @@ When you have multiple unrelated failures (different test files, different subsy
 **Core principle:** Dispatch one agent per independent problem domain. Let them work concurrently.
 
 **Platform note:** Current Codex releases enable subagent workflows by default. In Codex, start with the built-in `explorer` agent for read-heavy investigation, switch to the built-in `worker` agent for execution-heavy fixes, and define `.codex/agents/*.toml` custom agents only when the built-ins do not fit. In GitHub Copilot local installs, use the platform's native custom-agent or sub-agent features.
+
+## Nested Session Marker
+
+When a dispatched child will start a fresh FeatureForge conversation, set `FEATUREFORGE_SPAWNED_SUBAGENT=1` in the child environment so the runtime suppresses first-turn session-entry noise by default. Add `FEATUREFORGE_SPAWNED_SUBAGENT_OPT_IN=1` only when you intentionally want the nested child to re-enter FeatureForge and permit enabled-state persistence.
 
 ## When to Use
 

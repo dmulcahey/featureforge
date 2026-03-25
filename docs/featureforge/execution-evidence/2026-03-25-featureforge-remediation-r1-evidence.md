@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-25-featureforge-remediation.md
 **Plan Revision:** 1
-**Plan Fingerprint:** 78d51265d5ac9d8a24d039478ee3904610c1d060f76b063309e3903a5711afd4
+**Plan Fingerprint:** 5c0f06cdbbd9c2f2e1e0eeb6f453fa69b712b73f25262b72af8448d69198da47
 **Source Spec Path:** docs/featureforge/specs/2026-03-25-featureforge-remediation-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** c2add7e34ba89cfc53bc22923191fc787b5761a6829a592c11a470d6bd6c23d2
@@ -179,4 +179,143 @@
 **Files Proven:**
 - __featureforge__/no-repo-files | sha256:none
 **Verification Summary:** Manual inspection only: Observed cargo nextest run --test runtime_root_cli --test update_and_install --test upgrade_skill --test packet_and_schema pass 19/19, and node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs pass 16/16.
+**Invalidation Reason:** N/A
+
+### Task 1 Step 11
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-25T15:13:01.56803Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 11
+**Packet Fingerprint:** 981a1ab60ec662a3cdc84a33f00688e3563e777d415280ff865ba2f8a44ee200
+**Head SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Base SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Claim:** Committed the full Task 1 runtime-root helper slice.
+**Files Proven:**
+- __featureforge__/no-repo-files | sha256:none
+**Verification Summary:** Manual inspection only: Created git commit 0c4d9e9 (feat: add runtime-root helper contract) after the Task 1 Rust and Node verification suites were green.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-25T15:23:06.52407Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 1
+**Packet Fingerprint:** cc5c78f010c009a44d57fd34a3dd8f1510350625ebc9910d04cccab826487467
+**Head SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Base SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Claim:** Added red Rust tests for spawned-subagent default bypass, explicit opt-in, and nested workflow noise suppression.
+**Files Proven:**
+- tests/session_config_slug.rs | sha256:38d5cecaa9675ce5c37e8a30c1888956850f25802df34e16901e13cbfca4ae74
+- tests/workflow_runtime.rs | sha256:528f494c99abd43e62530d1533c0ca054d0befb8d70096fd178f0de4e116f6c2
+**Verification Summary:** Manual inspection only: Observed cargo nextest run --test session_config_slug --test workflow_runtime fail because --spawned-subagent/--spawned-subagent-opt-in are not implemented yet, and cargo nextest run --test workflow_runtime canonical_workflow_operator_suppresses_session_entry_gate_for_spawned_subagent_context still reports phase needs_user_choice instead of bypassed.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-25T15:25:29.347574Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 2
+**Packet Fingerprint:** 3c94af1a83e977691a7186fa3d5569b66c39eff3f60525ee89a28e299a959ce1
+**Head SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Base SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Claim:** Added red doc-contract assertions for the spawned-subagent marker path across using-featureforge and launcher-facing skill docs.
+**Files Proven:**
+- tests/runtime_instruction_contracts.rs | sha256:ff5144a6b78a4f4afd3a99d65ff94dce6c7b913fbff5cb4da8f944cc0840ba53
+- tests/using_featureforge_skill.rs | sha256:0981ebd7c9556666a68cd160ffbe840e5df5c0722c97684b2a806feb7f6abd18
+**Verification Summary:** Manual inspection only: Observed cargo nextest run --test using_featureforge_skill --test runtime_instruction_contracts fail because the generated docs do not yet mention --spawned-subagent or launcher marker wiring, and the targeted run also surfaced an existing using-featureforge preamble regression where repo-local runtime-root discovery emits an empty FEATUREFORGE_ROOT when only the repo checkout is available.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-25T15:28:15.686614Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 3
+**Packet Fingerprint:** a1ab95ad854cfa1301e9e8a02d0b3d1149c071cbbae2648e6768070ebb47a3e9
+**Head SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Base SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Claim:** Added explicit spawned-subagent and spawned-subagent-opt-in resolve inputs at the session-entry CLI parse boundary.
+**Files Proven:**
+- src/cli/session_entry.rs | sha256:ba8b5259e69cac60dcd6feec59a38f8ec8fa3cb50d5b2b6065d10b51dedd034d
+**Verification Summary:** Manual inspection only: Observed cargo nextest run --test session_config_slug canonical_session_entry_spawned_subagent_bypasses_bootstrap_without_persisting canonical_session_entry_spawned_subagent_opt_in_reenables_featureforge_with_distinct_source --test workflow_runtime canonical_workflow_operator_suppresses_session_entry_gate_for_spawned_subagent_context pass after wiring the new resolve flags into clap.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-25T15:28:26.619784Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 4
+**Packet Fingerprint:** dc79bce1ee0838e5f5063ad39cb8a049f111cbf1c32987cb3cf866d2d3dcb48b
+**Head SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Base SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Claim:** Implemented runtime-owned spawned-subagent bypass with ephemeral default behavior and a distinct explicit opt-in persistence path.
+**Files Proven:**
+- src/session_entry/mod.rs | sha256:89f039013124f30001c9d86adb7e38dc4d078e81372f0e1bd7b284bbb4c653b3
+- tests/session_config_slug.rs | sha256:38d5cecaa9675ce5c37e8a30c1888956850f25802df34e16901e13cbfca4ae74
+- tests/workflow_runtime.rs | sha256:528f494c99abd43e62530d1533c0ca054d0befb8d70096fd178f0de4e116f6c2
+**Verification Summary:** Manual inspection only: Observed cargo nextest run --test session_config_slug canonical_session_entry_spawned_subagent_bypasses_bootstrap_without_persisting canonical_session_entry_spawned_subagent_opt_in_reenables_featureforge_with_distinct_source --test workflow_runtime canonical_workflow_operator_suppresses_session_entry_gate_for_spawned_subagent_context pass after the session-entry runtime began honoring nested-context markers and workflow inspection started surfacing bypassed instead of needs_user_choice.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-25T15:32:21.191014Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 5
+**Packet Fingerprint:** 0bee445f0b15b7dbcfcca3cd75a70839cc3b4645ed8b1343b32761603f71f9d5
+**Head SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Base SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Claim:** Enumerated the session-entry outcome and decision-source schema contract and refreshed the checked-in session-entry schema artifact.
+**Files Proven:**
+- schemas/session-entry-resolve.schema.json | sha256:be57b99b7ef2e0fbada33c0dbe534953b7444a26ebe07f277b8d968a9ced7f07
+- src/session_entry/mod.rs | sha256:a7a2b1201d1ac40293c76ec55a0ac896af4dc7bcaaa6dddc481452d0a28db7ea
+**Verification Summary:** Manual inspection only: Observed cargo nextest run --test packet_and_schema checked_in_repo_safety_and_session_entry_schemas_match_generated_output pass after the session-entry schema began enumerating nested-session outcomes and decision-source values.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-25T15:36:17.552157Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 6
+**Packet Fingerprint:** bf3446ec968dc74650babb803153edfcd21affc8df340d18ca62eac9cb9db026
+**Head SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Base SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Claim:** Updated the shared skill-doc generator and regenerated the launcher-facing skill docs to document the spawned-subagent marker path while restoring repo-local runtime-root preamble resolution.
+**Files Proven:**
+- scripts/gen-skill-docs.mjs | sha256:a014968ab758aa3d14f3918ca9d182ab338bd588c92e73f767d6828fc4546b4b
+- skills/dispatching-parallel-agents/SKILL.md | sha256:5e605069b974261235d28f31891a1c2df954777278292e2f065a6587714ce402
+- skills/dispatching-parallel-agents/SKILL.md.tmpl | sha256:491c680f912b5fd48be55415357e5232f37071fe609444e919035ad5706aa858
+- skills/subagent-driven-development/SKILL.md | sha256:848e0905b31f43e575d9159cb8bd7bf990bfc33755ee2bcfb46a2e5cd8606114
+- skills/subagent-driven-development/SKILL.md.tmpl | sha256:44a5129b7f8ca21883b6076d8b779d4b71a00852b9ac05eeabb56a947841571b
+- skills/using-featureforge/SKILL.md | sha256:a60b59e4b6daa25e335065819c9d18caa2ecb8422a155f449e26b559b9feeb8e
+- skills/using-featureforge/SKILL.md.tmpl | sha256:224358a6bb86a2a154cf1992c9262c57d0389e27763817fcfb4533b9f4c0eefe
+**Verification Summary:** Manual inspection only: Observed cargo nextest run --test using_featureforge_skill --test runtime_instruction_contracts using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate using_featureforge_preamble_recognizes_the_repo_checkout_as_a_runtime_root using_featureforge_preamble_prefers_valid_repo_roots_over_fallback_installs spawned_subagent_marker_contracts_are_documented_consistently pass after regenerating the skill docs from the updated generator and templates.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 7
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-25T15:36:28.586195Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 7
+**Packet Fingerprint:** 0751ce98f8357ba913c8263383adf05ab09a6185948a322143d7bb009c5b7e21
+**Head SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Base SHA:** 0c4d9e91407d31f86ed4bbf508bade77fa0797cc
+**Claim:** Ran the full Task 2 verification slice to green after landing the runtime, schema, and skill-doc contract updates.
+**Files Proven:**
+- __featureforge__/no-repo-files | sha256:none
+**Verification Summary:** Manual inspection only: Observed cargo nextest run --test using_featureforge_skill --test session_config_slug --test workflow_runtime --test runtime_instruction_contracts --test packet_and_schema pass 83/83.
 **Invalidation Reason:** N/A
