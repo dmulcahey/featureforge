@@ -143,7 +143,10 @@ fn resolved_runtime_root_json(root: &Path) -> String {
 fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let skill_doc = read_skill_doc();
     for pattern in [
-        "featureforge repo runtime-root --json",
+        "INSTALL_DIR=\"${INSTALL_DIR:-${_FEATUREFORGE_ROOT:-}}\"",
+        "FEATUREFORGE_BIN=\"${FEATUREFORGE_BIN:-${_FEATUREFORGE_BIN:-}}\"",
+        "RUNTIME_ROOT_HELPER=\"${FEATUREFORGE_BIN:-${_FEATUREFORGE_BIN:-featureforge}}\"",
+        "\"$RUNTIME_ROOT_HELPER\" repo runtime-root --json",
         "bin/featureforge",
         "FEATUREFORGE_BIN=\"$INSTALL_DIR/bin/featureforge\"",
         "VERSION",
@@ -240,6 +243,66 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
                 .display()
         ),
         "upgrade skill step 1 arbitrary resolved path",
+    );
+
+    let active_install = tmp_root.path().join("active-install");
+    fs::create_dir_all(active_install.join("bin")).expect("active install bin dir should exist");
+    write_file(&active_install.join("bin/featureforge"), "");
+    make_executable(&active_install.join("bin/featureforge"));
+    let competing_install = tmp_root.path().join("competing-install");
+    fs::create_dir_all(&competing_install).expect("competing install should exist");
+    write_mock_featureforge(
+        &helper_bin,
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' '{}'\n",
+            resolved_runtime_root_json(&competing_install)
+        ),
+    );
+    let preferred_context_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[
+            ("PATH", helper_path.as_str()),
+            ("INSTALL_DIR", active_install.to_string_lossy().as_ref()),
+            (
+                "FEATUREFORGE_BIN",
+                active_install.join("bin/featureforge").to_string_lossy().as_ref(),
+            ),
+        ],
+        "upgrade skill step 1 prefers active runtime context",
+    );
+    let preferred_context_stdout = String::from_utf8_lossy(&preferred_context_output.stdout);
+    assert_contains(
+        &preferred_context_stdout,
+        &format!("INSTALL_DIR={}", active_install.display()),
+        "upgrade skill step 1 prefers active runtime context",
+    );
+    assert!(
+        !preferred_context_stdout.contains(&format!("INSTALL_DIR={}", competing_install.display())),
+        "upgrade skill step 1 should not switch to a different PATH-selected runtime when the caller already resolved one"
+    );
+
+    write_mock_featureforge(
+        &helper_bin,
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{\"resolved\":true,\"root\":\"C:\\\\Users\\\\dm\\\\featureforge\",\"source\":\"featureforge_dir\",\"validation\":{\"has_version\":true,\"has_binary\":true,\"upgrade_eligible\":true}}'\n",
+    );
+    let windows_path_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[("PATH", helper_path.as_str())],
+        "upgrade skill step 1 decodes windows paths",
+    );
+    let windows_path_stdout = String::from_utf8_lossy(&windows_path_output.stdout);
+    assert_contains(
+        &windows_path_stdout,
+        "INSTALL_DIR=C:\\Users\\dm\\featureforge",
+        "upgrade skill step 1 decodes windows paths",
+    );
+    assert!(
+        !windows_path_stdout.contains("INSTALL_DIR=C:\\\\Users\\\\dm\\\\featureforge"),
+        "upgrade skill step 1 should decode JSON escapes before using Windows-style paths"
     );
 
     write_mock_featureforge(

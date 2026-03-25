@@ -25,7 +25,23 @@ _FEATUREFORGE_BIN=""
 _FEATUREFORGE_RUNTIME_ROOT_JSON=""
 if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_JSON=$("$_FEATUREFORGE_BIN" repo runtime-root --json 2>/dev/null); then
   if printf '%s' "$_FEATUREFORGE_RUNTIME_ROOT_JSON" | grep -q '"resolved":true'; then
-    _FEATUREFORGE_ROOT=$(printf '%s' "$_FEATUREFORGE_RUNTIME_ROOT_JSON" | sed -n 's/.*"root":"\([^"]*\)".*/\1/p')
+    _FEATUREFORGE_ROOT=$(FEATUREFORGE_RUNTIME_ROOT_JSON="$_FEATUREFORGE_RUNTIME_ROOT_JSON" python3 - <<'PY'
+import json
+import os
+import sys
+
+try:
+    payload = json.loads(os.environ["FEATUREFORGE_RUNTIME_ROOT_JSON"])
+except Exception:
+    sys.exit(1)
+
+root = payload.get("root")
+if not payload.get("resolved") or not isinstance(root, str) or not root:
+    sys.exit(1)
+
+sys.stdout.write(root)
+PY
+    ) || _FEATUREFORGE_ROOT=""
   fi
 fi
 _SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
@@ -108,7 +124,7 @@ _CONTRIB=""
 [ -n "$_FEATUREFORGE_ROOT" ] && _CONTRIB=$("$_FEATUREFORGE_ROOT/bin/featureforge" config get featureforge_contributor 2>/dev/null || true)
 ```
 
-If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the runtime root returned by `featureforge repo runtime-root --json` and follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.
+If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the active runtime context (reuse the caller's selected runtime when already known, otherwise fall back to `featureforge repo runtime-root --json`) and follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.
 
 ## Interactive User Question Format
 

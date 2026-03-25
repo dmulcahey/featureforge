@@ -97,7 +97,9 @@ test('gen-skill-docs --check fails on stale generated artifacts', () => {
 test('upgrade instructions use the runtime-root helper instead of embedded root-search order', () => {
   const upgradeSkill = readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'));
 
-  assert.match(upgradeSkill, /featureforge repo runtime-root --json/);
+  assert.match(upgradeSkill, /"\$RUNTIME_ROOT_HELPER" repo runtime-root --json/);
+  assert.match(upgradeSkill, /INSTALL_DIR="\$\{INSTALL_DIR:-\$\{_FEATUREFORGE_ROOT:-\}\}"/);
+  assert.match(upgradeSkill, /FEATUREFORGE_BIN="\$\{FEATUREFORGE_BIN:-\$\{_FEATUREFORGE_BIN:-\}\}"/);
   assert.doesNotMatch(upgradeSkill, /\.codex\/featureforge/);
   assert.doesNotMatch(upgradeSkill, /\.copilot\/featureforge/);
 });
