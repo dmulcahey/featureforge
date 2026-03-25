@@ -71,8 +71,8 @@
 **Invalidation Reason:** Post-plan packaged-runtime review slices updated previously proven files while keeping the step claim intact.
 
 #### Attempt 5
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:00:11.420737Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T21:05:18.376494Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 1
@@ -83,6 +83,21 @@
 **Files Proven:**
 - tests/runtime_root_cli.rs | sha256:1ac4a452b953828e5e94519c33677c6a87365dc64993bd53c7e87b0db831e030
 **Verification Summary:** Manual inspection only: Manual inspection only: Rebuilt evidence at HEAD b54a4ce after the post-plan packaged-runtime review slices that aligned shipped docs with the packaged-install-binary contract, tightened the legacy-surface gate, rebuilt the checked-in darwin/windows launchers, and hardened packaged-runtime fallback guards. Current verification is green: node scripts/gen-skill-docs.mjs --check -> Generated skill docs are up to date.; node scripts/gen-agent-docs.mjs --check -> Generated agent docs are up to date.; node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 48 passed, 0 failed; bash scripts/check-featureforge-cutover.sh -> featureforge cutover checks passed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema -> 7 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli --test update_and_install --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime --test using_featureforge_skill --test session_config_slug --test powershell_wrapper_resolution -> 107 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test workflow_shell_smoke --test cli_parse_boundary --test contracts_spec_plan --test plan_execution --test repo_safety -> 82 passed, 0 failed.
+**Invalidation Reason:** tests/runtime_root_cli.rs changed to cover explicit FEATUREFORGE_DIR source naming and the bounded source contract without changing the helper surface.
+
+#### Attempt 6
+**Status:** Completed
+**Recorded At:** 2026-03-25T21:05:34.125749Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 1
+**Packet Fingerprint:** bad851aa35474faac27cc65c0e07574ed7a233b614a5e0907aba2b20a28cf604
+**Head SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Base SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Claim:** Revalidated direct runtime-root helper contract coverage after adding explicit FEATUREFORGE_DIR source assertions and bounded source expectations.
+**Files Proven:**
+- tests/runtime_root_cli.rs | sha256:d9f657ced63477ca21037ce22ef50225bb74474025d886953f30537ff769f5fb
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli` -> cargo nextest: runtime_root_cli passed 10/10
 **Invalidation Reason:** N/A
 
 ### Task 1 Step 2
@@ -163,8 +178,8 @@
 **Invalidation Reason:** Post-plan packaged-runtime review slices updated previously proven files while keeping the step claim intact.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:00:11.807034Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T21:05:40.177438Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 3
@@ -175,6 +190,21 @@
 **Files Proven:**
 - tests/packet_and_schema.rs | sha256:82f46b94791661e3fb1195aee5bb11b20ba95eeaa50553efc62600c3a4a5f706
 **Verification Summary:** Manual inspection only: Manual inspection only: Rebuilt evidence at HEAD b54a4ce after the post-plan packaged-runtime review slices that aligned shipped docs with the packaged-install-binary contract, tightened the legacy-surface gate, rebuilt the checked-in darwin/windows launchers, and hardened packaged-runtime fallback guards. Current verification is green: node scripts/gen-skill-docs.mjs --check -> Generated skill docs are up to date.; node scripts/gen-agent-docs.mjs --check -> Generated agent docs are up to date.; node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 48 passed, 0 failed; bash scripts/check-featureforge-cutover.sh -> featureforge cutover checks passed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema -> 7 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli --test update_and_install --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime --test using_featureforge_skill --test session_config_slug --test powershell_wrapper_resolution -> 107 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test workflow_shell_smoke --test cli_parse_boundary --test contracts_spec_plan --test plan_execution --test repo_safety -> 82 passed, 0 failed.
+**Invalidation Reason:** tests/packet_and_schema.rs changed to require a bounded source enum in the runtime-root schema.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-25T21:05:55.180925Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 3
+**Packet Fingerprint:** 9ffbfafba29cec76dd2c5fb8f749dc0e7352b6b17876a7d56210b840fac997dd
+**Head SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Base SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Claim:** Revalidated runtime-root schema parity coverage after adding bounded source enum assertions.
+**Files Proven:**
+- tests/packet_and_schema.rs | sha256:5c18abcb6ca41290bca194790a0bdbd87f397a14e276695bf6f7e8d7f53ba43b
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema` -> cargo nextest: packet_and_schema passed 8/8
 **Invalidation Reason:** N/A
 
 ### Task 1 Step 4
@@ -308,8 +338,8 @@
 **Invalidation Reason:** Post-plan packaged-runtime review slices updated previously proven files while keeping the step claim intact.
 
 #### Attempt 5
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:00:12.292968Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T21:06:00.600575Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 5
@@ -320,6 +350,21 @@
 **Files Proven:**
 - src/runtime_root/mod.rs | sha256:cf865eaaaea06f5fcc1ac6eded9571daadc5435aeb92a63bed341c6d32c6c1ae
 **Verification Summary:** Manual inspection only: Manual inspection only: Rebuilt evidence at HEAD b54a4ce after the post-plan packaged-runtime review slices that aligned shipped docs with the packaged-install-binary contract, tightened the legacy-surface gate, rebuilt the checked-in darwin/windows launchers, and hardened packaged-runtime fallback guards. Current verification is green: node scripts/gen-skill-docs.mjs --check -> Generated skill docs are up to date.; node scripts/gen-agent-docs.mjs --check -> Generated agent docs are up to date.; node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 48 passed, 0 failed; bash scripts/check-featureforge-cutover.sh -> featureforge cutover checks passed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema -> 7 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli --test update_and_install --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime --test using_featureforge_skill --test session_config_slug --test powershell_wrapper_resolution -> 107 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test workflow_shell_smoke --test cli_parse_boundary --test contracts_spec_plan --test plan_execution --test repo_safety -> 82 passed, 0 failed.
+**Invalidation Reason:** src/runtime_root/mod.rs changed to align explicit FEATUREFORGE_DIR source naming with the approved contract while preserving bounded resolution semantics.
+
+#### Attempt 6
+**Status:** Completed
+**Recorded At:** 2026-03-25T21:06:17.099263Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 5
+**Packet Fingerprint:** b03c9b90c7ce34e0cda0d6a9a9d9c484a352e0839979c4d6a551fb882b9ac1e0
+**Head SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Base SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Claim:** Revalidated bounded runtime-root resolution and schema generation wiring after aligning explicit FEATUREFORGE_DIR source naming with the approved contract.
+**Files Proven:**
+- src/runtime_root/mod.rs | sha256:36f727423d51c64aabafc326e01b47eebaf1420eb0494dcdecb18478e83ba8cf
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli --test update_and_install --test packet_and_schema` -> cargo nextest: runtime_root_cli/update_and_install/packet_and_schema passed 23/23
 **Invalidation Reason:** N/A
 
 ### Task 1 Step 6
@@ -632,8 +677,8 @@
 **Invalidation Reason:** Post-plan packaged-runtime review slices updated previously proven files while keeping the step claim intact.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:00:13.030629Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T21:06:22.585997Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 9
@@ -644,6 +689,21 @@
 **Files Proven:**
 - schemas/repo-runtime-root.schema.json | sha256:688cbb4f6871cef68eebf28f2082f955a9542d624be7802eeb4282f87babc2fc
 **Verification Summary:** Manual inspection only: Manual inspection only: Rebuilt evidence at HEAD b54a4ce after the post-plan packaged-runtime review slices that aligned shipped docs with the packaged-install-binary contract, tightened the legacy-surface gate, rebuilt the checked-in darwin/windows launchers, and hardened packaged-runtime fallback guards. Current verification is green: node scripts/gen-skill-docs.mjs --check -> Generated skill docs are up to date.; node scripts/gen-agent-docs.mjs --check -> Generated agent docs are up to date.; node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 48 passed, 0 failed; bash scripts/check-featureforge-cutover.sh -> featureforge cutover checks passed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema -> 7 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli --test update_and_install --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime --test using_featureforge_skill --test session_config_slug --test powershell_wrapper_resolution -> 107 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test workflow_shell_smoke --test cli_parse_boundary --test contracts_spec_plan --test plan_execution --test repo_safety -> 82 passed, 0 failed.
+**Invalidation Reason:** schemas/repo-runtime-root.schema.json changed to bound the source contract and match the approved explicit FEATUREFORGE_DIR naming.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-25T21:06:39.085986Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 9
+**Packet Fingerprint:** daac290a262fa735c2e59567ced95696bbcda5a59186f375cf7580ad392c2106
+**Head SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Base SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Claim:** Revalidated the checked-in runtime-root schema after bounding the source enum and aligning explicit FEATUREFORGE_DIR naming.
+**Files Proven:**
+- schemas/repo-runtime-root.schema.json | sha256:de4fcc573a3a13c6fb271a6c66d4cdf62bc5dff710940ad9b37da00da380771b
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema` -> cargo nextest: packet_and_schema passed 8/8
 **Invalidation Reason:** N/A
 
 ### Task 1 Step 10
@@ -937,8 +997,8 @@
 **Invalidation Reason:** Post-plan packaged-runtime review slices updated previously proven files while keeping the step claim intact.
 
 #### Attempt 4
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:00:14.215928Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T21:07:20.590095Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 2
 **Step Number:** 4
@@ -951,6 +1011,22 @@
 - tests/session_config_slug.rs | sha256:89c7b334a9877d7e4e3d36ac455ae3de9273f0adaea46543b0ebe78751730508
 - tests/workflow_runtime.rs | sha256:7838d292d76fdb580289eb9b9c15223567128a7869fb975468839984062e4494
 **Verification Summary:** Manual inspection only: Manual inspection only: Rebuilt evidence at HEAD b54a4ce after the post-plan packaged-runtime review slices that aligned shipped docs with the packaged-install-binary contract, tightened the legacy-surface gate, rebuilt the checked-in darwin/windows launchers, and hardened packaged-runtime fallback guards. Current verification is green: node scripts/gen-skill-docs.mjs --check -> Generated skill docs are up to date.; node scripts/gen-agent-docs.mjs --check -> Generated agent docs are up to date.; node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 48 passed, 0 failed; bash scripts/check-featureforge-cutover.sh -> featureforge cutover checks passed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema -> 7 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli --test update_and_install --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime --test using_featureforge_skill --test session_config_slug --test powershell_wrapper_resolution -> 107 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test workflow_shell_smoke --test cli_parse_boundary --test contracts_spec_plan --test plan_execution --test repo_safety -> 82 passed, 0 failed.
+**Invalidation Reason:** src/session_entry/mod.rs and tests/session_config_slug.rs changed to make spawned-subagent bypass ignore unreadable or oversized message files before the nested bypass decision.
+
+#### Attempt 5
+**Status:** Completed
+**Recorded At:** 2026-03-25T21:07:40.578571Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 4
+**Packet Fingerprint:** dc79bce1ee0838e5f5063ad39cb8a049f111cbf1c32987cb3cf866d2d3dcb48b
+**Head SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Base SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Claim:** Revalidated runtime-owned spawned-subagent bypass after making nested bypass resolution ignore unreadable or oversized message files before the bypass decision.
+**Files Proven:**
+- src/session_entry/mod.rs | sha256:d05a08d94cd00d7611fb7dd8dc8f05e558d4609b2e7b70bf5201c3a2fc2d8110
+- tests/session_config_slug.rs | sha256:6fbe8cdd11a9ccff03fff1bf70721864a75e38a8b76efbcf36930e49ceb214e8
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test session_config_slug --test workflow_runtime` -> cargo nextest: session_config_slug/workflow_runtime passed 61/61
 **Invalidation Reason:** N/A
 
 ### Task 2 Step 5
@@ -1831,8 +1907,8 @@
 **Invalidation Reason:** runtime instruction doc-contract coverage changed in the final review remediation slice
 
 #### Attempt 7
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:26:20.029328Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T21:08:05.514779Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 4
 **Step Number:** 1
@@ -1843,6 +1919,21 @@
 **Files Proven:**
 - tests/runtime_instruction_contracts.rs | sha256:f150575bf2f144e41d5206c078f4fb8d2dd6eab68ed70c9d75334401b3045d77
 **Verification Summary:** `cargo nextest run --test runtime_instruction_contracts && node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` -> cargo nextest: runtime_instruction_contracts passed; node --test: 39 passed, 0 failed
+**Invalidation Reason:** tests/runtime_instruction_contracts.rs changed to align the runtime-root source contract with the approved bounded source naming.
+
+#### Attempt 8
+**Status:** Completed
+**Recorded At:** 2026-03-25T21:08:24.664973Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 1
+**Packet Fingerprint:** afc2b3ed90414ef65acb6c8f4a52aa9a41a8c39c54fd139aaf20b05d47566df5
+**Head SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Base SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Claim:** Revalidated the release-facing doc-contract assertions after aligning the runtime-root source contract with the approved bounded naming.
+**Files Proven:**
+- tests/runtime_instruction_contracts.rs | sha256:b1944ce68162ae34e795c59ec3a6b907e0679ce57de60912d080f31cba4dd859
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_instruction_contracts && node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` -> cargo nextest: runtime_instruction_contracts passed 17/17; node --test: skill-doc contracts/generation passed 39/39
 **Invalidation Reason:** N/A
 
 ### Task 4 Step 2
@@ -2690,8 +2781,8 @@
 **Invalidation Reason:** Post-plan packaged-runtime review slices updated previously proven files while keeping the step claim intact.
 
 #### Attempt 4
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:00:19.594446Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T21:08:51.139836Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 6
 **Step Number:** 3
@@ -2705,6 +2796,21 @@
 - src/repo_safety/mod.rs | sha256:21fed0024f05db66d65708f82ef7517970551fd5a5a71c289ec46dce450c5d5b
 - src/session_entry/mod.rs | sha256:1c433cdf2e5f001a309dce6ab7ad83640fc05b5582e2df393520393c65d61c7a
 **Verification Summary:** Manual inspection only: Manual inspection only: Rebuilt evidence at HEAD b54a4ce after the post-plan packaged-runtime review slices that aligned shipped docs with the packaged-install-binary contract, tightened the legacy-surface gate, rebuilt the checked-in darwin/windows launchers, and hardened packaged-runtime fallback guards. Current verification is green: node scripts/gen-skill-docs.mjs --check -> Generated skill docs are up to date.; node scripts/gen-agent-docs.mjs --check -> Generated agent docs are up to date.; node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 48 passed, 0 failed; bash scripts/check-featureforge-cutover.sh -> featureforge cutover checks passed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema -> 7 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli --test update_and_install --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime --test using_featureforge_skill --test session_config_slug --test powershell_wrapper_resolution -> 107 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test workflow_shell_smoke --test cli_parse_boundary --test contracts_spec_plan --test plan_execution --test repo_safety -> 82 passed, 0 failed.
+**Invalidation Reason:** src/session_entry/mod.rs changed to keep spawned-subagent bypass compatible with the typed CLI boundary while ignoring message-file validation before the nested bypass decision.
+
+#### Attempt 5
+**Status:** Completed
+**Recorded At:** 2026-03-25T21:09:06.479782Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 3
+**Packet Fingerprint:** 72f0f78bc55478225a661a46ca41e8be231bc20c9478241d68f955a48785240f
+**Head SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Base SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Claim:** Revalidated the typed CLI runtime adapters after the spawned-subagent bypass fix kept nested session resolution compatible with the typed boundary without widening accepted inputs.
+**Files Proven:**
+- src/session_entry/mod.rs | sha256:d05a08d94cd00d7611fb7dd8dc8f05e558d4609b2e7b70bf5201c3a2fc2d8110
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test cli_parse_boundary --test session_config_slug --test workflow_runtime` -> cargo nextest: cli_parse_boundary/session_config_slug/workflow_runtime passed 82/82
 **Invalidation Reason:** N/A
 
 ### Task 6 Step 4
@@ -2848,8 +2954,8 @@
 **Invalidation Reason:** Post-plan packaged-runtime review slices updated previously proven files while keeping the step claim intact.
 
 #### Attempt 5
-**Status:** Completed
-**Recorded At:** 2026-03-25T20:00:20.16773Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T21:09:51.439993Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 6
 **Step Number:** 5
@@ -2864,6 +2970,24 @@
 - bin/prebuilt/windows-x64/featureforge.exe | sha256:5b42464e66e80de39e6533f0e9a8b12885370acb340ee123e0674b6733ad6c82
 - bin/prebuilt/windows-x64/featureforge.exe.sha256 | sha256:dc5104ffe941756d2aaef548443408386e17e8bf6ab53136fed8ceab59c344a6
 **Verification Summary:** Manual inspection only: Manual inspection only: Rebuilt evidence at HEAD b54a4ce after the post-plan packaged-runtime review slices that aligned shipped docs with the packaged-install-binary contract, tightened the legacy-surface gate, rebuilt the checked-in darwin/windows launchers, and hardened packaged-runtime fallback guards. Current verification is green: node scripts/gen-skill-docs.mjs --check -> Generated skill docs are up to date.; node scripts/gen-agent-docs.mjs --check -> Generated agent docs are up to date.; node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 48 passed, 0 failed; bash scripts/check-featureforge-cutover.sh -> featureforge cutover checks passed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test packet_and_schema -> 7 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test runtime_root_cli --test update_and_install --test upgrade_skill --test runtime_instruction_contracts --test workflow_runtime --test using_featureforge_skill --test session_config_slug --test powershell_wrapper_resolution -> 107 passed, 0 failed; cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml --test workflow_shell_smoke --test cli_parse_boundary --test contracts_spec_plan --test plan_execution --test repo_safety -> 82 passed, 0 failed.
+**Invalidation Reason:** The final review fixes changed the darwin and windows prebuilt runtime artifacts and reran the full canonical validation matrix on the new HEAD.
+
+#### Attempt 6
+**Status:** Completed
+**Recorded At:** 2026-03-25T21:10:08.482455Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 5
+**Packet Fingerprint:** 590d67335f64dc29e4123b0e7a8c20d37b9fe264bb25d4cd62e18baa7fae4488
+**Head SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Base SHA:** deb831f4cbeb41766d66d4abb0b1bc0fecf438ff
+**Claim:** Ran the full canonical validation matrix to green and refreshed the checked-in darwin and windows prebuilt runtimes on the final remediation HEAD.
+**Files Proven:**
+- bin/prebuilt/darwin-arm64/featureforge | sha256:d3efc44d5bd90e049e350d7b9a52c004074628a77137048aa625ffda2e4a6a93
+- bin/prebuilt/darwin-arm64/featureforge.sha256 | sha256:3f9c4dbc0b688d8ffabc91d9a80adc3b4a23ca62d7e37582b91358053fe780ca
+- bin/prebuilt/windows-x64/featureforge.exe | sha256:adeea25713bda2e293e9c5c2a8befbf4f9eb9c6344082341d24cd0e5152b1162
+- bin/prebuilt/windows-x64/featureforge.exe.sha256 | sha256:4ca14b433196ed40a4ada7daa62c34c03f09a3e47bd742130c6491b526c31da5
+**Verification Summary:** `cargo nextest run --manifest-path /Users/dmulcahey/development/skills/superpowers/Cargo.toml && node scripts/gen-skill-docs.mjs --check && node scripts/gen-agent-docs.mjs --check && node --test tests/codex-runtime/*.test.mjs && bash scripts/check-featureforge-cutover.sh` -> cargo nextest: 213 passed, 0 failed; node scripts/gen-skill-docs.mjs --check: up to date; node scripts/gen-agent-docs.mjs --check: up to date; node --test tests/codex-runtime/*.test.mjs: 61 passed, 0 failed; bash scripts/check-featureforge-cutover.sh: passed
 **Invalidation Reason:** N/A
 
 ### Task 6 Step 6
