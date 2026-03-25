@@ -660,7 +660,8 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
             [
                 "~/.featureforge/install/bin/featureforge config set featureforge_contributor true",
                 "~/.featureforge/install/bin/featureforge config set update_check true",
-                "~/.featureforge/install/bin/featureforge update-check",
+                "featureforge.exe",
+                "for `update-check` automatically",
             ],
             [
                 "~/.featureforge/install/bin/featureforge install migrate",
@@ -675,7 +676,8 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
             [
                 "~/.featureforge/install/bin/featureforge config set featureforge_contributor true",
                 "~/.featureforge/install/bin/featureforge config set update_check true",
-                "~/.featureforge/install/bin/featureforge update-check",
+                "featureforge.exe",
+                "for `update-check` automatically",
             ],
             [
                 "~/.featureforge/install/bin/featureforge install migrate",

@@ -63,6 +63,7 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   assert.match(rootDetection, /repo runtime-root --path/);
   assert.match(rootDetection, /\$HOME\/\.featureforge\/install/);
   assert.match(rootDetection, /_FEATUREFORGE_INSTALL_ROOT/);
+  assert.match(rootDetection, /featureforge\.exe/);
   assert.doesNotMatch(rootDetection, /_REPO_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(rootDetection, /command -v featureforge/);
   assert.doesNotMatch(rootDetection, /_IS_FEATUREFORGE_RUNTIME_ROOT/);

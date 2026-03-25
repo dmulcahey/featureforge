@@ -6,32 +6,31 @@ REPO_ROOT="${FEATUREFORGE_CUTOVER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 cd "$REPO_ROOT"
 
 LEGACY_ROOT_REGEX='\.(codex|copilot)/featureforge([/[:space:]`"'"'"']|$)'
-SCAN_TARGETS=(
-  Cargo.toml
-  README.md
-  RELEASE-NOTES.md
-  TODOS.md
-  .codex
-  .copilot
-  docs/README.codex.md
-  docs/README.copilot.md
-  docs/archive
-  featureforge-upgrade
-  scripts
-  skills
-  bin/prebuilt/manifest.json
-)
 
 fail() {
   printf 'cutover check failed: %s\n' "$1" >&2
   exit 1
 }
 
+classify_bucket() {
+  case "$1" in
+    docs/archive/*)
+      printf 'archived\n'
+      ;;
+    docs/featureforge/specs/*|docs/featureforge/plans/*|docs/featureforge/execution-evidence/*|tests/*)
+      printf 'nonsurface\n'
+      ;;
+    *)
+      printf 'active\n'
+      ;;
+  esac
+}
+
 tracked_files=()
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
   tracked_files+=("$file")
-done < <(git ls-files -- "${SCAN_TARGETS[@]}")
+done < <(git ls-files)
 
 active_path_hits=()
 archived_path_hits=()
@@ -39,10 +38,10 @@ active_content_hits=()
 archived_content_hits=()
 
 for file in "${tracked_files[@]}"; do
-  if [[ "$file" == docs/archive/* ]]; then
-    bucket="archived"
-  else
-    bucket="active"
+  bucket="$(classify_bucket "$file")"
+
+  if [[ "$bucket" == "nonsurface" ]]; then
+    continue
   fi
 
   if printf '%s\n' "$file" | rg -q "$LEGACY_ROOT_REGEX"; then

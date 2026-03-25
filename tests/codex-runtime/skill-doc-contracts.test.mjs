@@ -81,6 +81,7 @@ test('generated preamble bash block includes shared runtime-root, session, and c
     assert.ok(bashBlock, `${skill} should include a preamble bash block`);
     assert.match(bashBlock, /repo runtime-root --path/, `${skill} should resolve runtime roots through the helper contract`);
     assert.match(bashBlock, /\$HOME\/\.featureforge\/install/, `${skill} should pin runtime commands to the canonical install root`);
+    assert.match(bashBlock, /featureforge\.exe/, `${skill} should keep the Windows packaged launcher path in the install-root contract`);
     assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" update-check/, `${skill} should run update checks through the packaged install binary`);
     assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/, `${skill} should load contributor mode through the packaged install binary`);
     assert.doesNotMatch(bashBlock, /_IS_FEATUREFORGE_RUNTIME_ROOT\(\)/, `${skill} should not embed its own runtime-root detector`);
@@ -96,6 +97,7 @@ test('install docs describe the path-based runtime-root helper contract', () => 
     const content = readUtf8(path.join(REPO_ROOT, relativePath));
     assert.match(content, /featureforge repo runtime-root --path/, `${relativePath} should describe the path-based helper contract`);
     assert.match(content, /~\/\.featureforge\/install\/bin\/featureforge/, `${relativePath} should describe the packaged install binary contract`);
+    assert.match(content, /featureforge\.exe/, `${relativePath} should mention the Windows packaged binary contract`);
     assert.doesNotMatch(content, /featureforge repo runtime-root --json/, `${relativePath} should not describe the retired JSON shell contract`);
   }
 });

@@ -288,6 +288,30 @@ fn featureforge_cutover_gate_rejects_active_legacy_root_content() {
 }
 
 #[test]
+fn featureforge_cutover_gate_scans_repo_wide_tracked_files() {
+    let (repo_dir, _state_dir) = init_repo("cutover-repo-bounded");
+    let repo = repo_dir.path();
+    install_cutover_check_baseline(repo);
+    write_repo_file(
+        repo,
+        "src/reintroduced.rs",
+        "legacy = \"~/.codex/featureforge/runtime\"\n",
+    );
+    git_add_all(repo);
+
+    let output = run_cutover_check(repo);
+    assert!(
+        !output.status.success(),
+        "cutover check should fail on legacy-root content anywhere in tracked active files\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Forbidden active content references:"));
+    assert!(stderr.contains("src/reintroduced.rs:"));
+}
+
+#[test]
 fn featureforge_cutover_gate_rejects_active_legacy_root_paths() {
     let (repo_dir, _state_dir) = init_repo("cutover-active-path");
     let repo = repo_dir.path();
