@@ -63,12 +63,70 @@ fn assert_no_runtime_fallback_execution(content: &str, label: &str) {
             "{label} should not execute runtime commands through $INSTALL_DIR/bin/featureforge"
         );
         assert!(
+            !line.starts_with("\"$_FEATUREFORGE_ROOT/bin/featureforge.exe\""),
+            "{label} should not execute runtime commands through $_FEATUREFORGE_ROOT/bin/featureforge.exe"
+        );
+        assert!(
+            !line.starts_with("\"$INSTALL_DIR/bin/featureforge.exe\""),
+            "{label} should not execute runtime commands through $INSTALL_DIR/bin/featureforge.exe"
+        );
+        assert!(
+            !line.starts_with("\"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN"
+        );
+        assert!(
+            !line.starts_with("if \"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN in conditionals"
+        );
+        assert!(
+            !line.starts_with("if ! \"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN in negated conditionals"
+        );
+        assert!(
+            !line.starts_with("while \"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN in loops"
+        );
+        assert!(
+            !line.starts_with("while ! \"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN in negated loops"
+        );
+        assert!(
+            !line.starts_with("until \"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN in loops"
+        );
+        assert!(
+            !line.starts_with("until ! \"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN in negated loops"
+        );
+        assert!(
+            !line.starts_with("! \"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN with negation"
+        );
+        assert!(
+            !line.contains("$(\"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not execute runtime commands through INSTALL_RUNTIME_BIN in command substitutions"
+        );
+        assert!(
             !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$_FEATUREFORGE_ROOT/bin/featureforge\""),
             "{label} should not assign FEATUREFORGE_RUNTIME_BIN from $_FEATUREFORGE_ROOT"
         );
         assert!(
             !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$INSTALL_DIR/bin/featureforge\""),
             "{label} should not assign FEATUREFORGE_RUNTIME_BIN from INSTALL_DIR"
+        );
+        assert!(
+            !line.starts_with(
+                "FEATUREFORGE_RUNTIME_BIN=\"$_FEATUREFORGE_ROOT/bin/featureforge.exe\""
+            ),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from $_FEATUREFORGE_ROOT/bin/featureforge.exe"
+        );
+        assert!(
+            !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$INSTALL_DIR/bin/featureforge.exe\""),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from INSTALL_DIR/bin/featureforge.exe"
+        );
+        assert!(
+            !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$INSTALL_RUNTIME_BIN\""),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from INSTALL_RUNTIME_BIN"
         );
     }
 }

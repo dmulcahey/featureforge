@@ -41,6 +41,7 @@ fn assert_no_runtime_fallback_execution(content: &str, label: &str) {
     // NEVER relax these checks without an explicit product decision.
     for needle in [
         "$_REPO_ROOT/bin/featureforge",
+        "$_REPO_ROOT/bin/featureforge.exe",
         "${_FEATUREFORGE_BIN:-featureforge}",
         "command -v featureforge",
     ] {
@@ -56,12 +57,30 @@ fn assert_no_runtime_fallback_execution(content: &str, label: &str) {
             "{label} should not execute runtime commands through $INSTALL_DIR/bin/featureforge"
         );
         assert!(
+            !line.starts_with("\"$_FEATUREFORGE_ROOT/bin/featureforge.exe\""),
+            "{label} should not execute runtime commands through $_FEATUREFORGE_ROOT/bin/featureforge.exe"
+        );
+        assert!(
+            !line.starts_with("\"$INSTALL_DIR/bin/featureforge.exe\""),
+            "{label} should not execute runtime commands through $INSTALL_DIR/bin/featureforge.exe"
+        );
+        assert!(
             !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$_FEATUREFORGE_ROOT/bin/featureforge\""),
             "{label} should not assign FEATUREFORGE_RUNTIME_BIN from $_FEATUREFORGE_ROOT"
         );
         assert!(
             !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$INSTALL_DIR/bin/featureforge\""),
             "{label} should not assign FEATUREFORGE_RUNTIME_BIN from INSTALL_DIR"
+        );
+        assert!(
+            !line.starts_with(
+                "FEATUREFORGE_RUNTIME_BIN=\"$_FEATUREFORGE_ROOT/bin/featureforge.exe\""
+            ),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from $_FEATUREFORGE_ROOT/bin/featureforge.exe"
+        );
+        assert!(
+            !line.starts_with("FEATUREFORGE_RUNTIME_BIN=\"$INSTALL_DIR/bin/featureforge.exe\""),
+            "{label} should not assign FEATUREFORGE_RUNTIME_BIN from INSTALL_DIR/bin/featureforge.exe"
         );
     }
 }
@@ -124,6 +143,48 @@ fn extract_bash_block(content: &str, heading: &str) -> String {
         "expected bash block under heading {heading}"
     );
     lines.join("\n")
+}
+
+fn write_executable(path: &Path, body: &str) {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("executable parent dir should exist");
+    }
+    fs::write(path, body).expect("executable should be writable");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+            .expect("executable should stay executable");
+    }
+}
+
+fn write_poison_runtime_launcher(root: &Path, marker: &str) {
+    let poison_body = format!(
+        "#!/usr/bin/env bash\nprintf '%s\\n' '{marker}' >> \"$FEATUREFORGE_TEST_LOG\"\nexit 86\n"
+    );
+    for relative in ["bin/featureforge", "bin/featureforge.exe"] {
+        write_executable(&root.join(relative), &poison_body);
+    }
+}
+
+fn write_logging_packaged_runtime(
+    packaged_bin: &Path,
+    resolved_runtime_root: &Path,
+    log_path: &Path,
+) {
+    let resolved_runtime_root = resolved_runtime_root
+        .canonicalize()
+        .unwrap_or_else(|_| resolved_runtime_root.to_path_buf());
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent).expect("log parent dir should exist");
+    }
+    write_executable(
+        packaged_bin,
+        &format!(
+            "#!/usr/bin/env bash\n: \"${{FEATUREFORGE_TEST_LOG:?}}\"\ncase \"${{1:-}}:${{2:-}}:${{3:-}}:${{4:-}}\" in\n  repo:runtime-root:--path:*)\n    printf '%s\\n' 'PACKAGED:repo-runtime-root' >> \"$FEATUREFORGE_TEST_LOG\"\n    printf '%s\\n' '{}'\n    exit 0\n    ;;\n  update-check:::)\n    printf '%s\\n' 'PACKAGED:update-check' >> \"$FEATUREFORGE_TEST_LOG\"\n    printf 'UPGRADE_AVAILABLE 1.0.0 1.1.0\\n'\n    exit 0\n    ;;\n  config:get:featureforge_contributor:*)\n    printf '%s\\n' 'PACKAGED:config-get' >> \"$FEATUREFORGE_TEST_LOG\"\n    printf 'false\\n'\n    exit 0\n    ;;\n  *)\n    printf '%s\\n' \"PACKAGED:UNEXPECTED:${{1:-}}:${{2:-}}:${{3:-}}:${{4:-}}\" >> \"$FEATUREFORGE_TEST_LOG\"\n    exit 0\n    ;;\nesac\n",
+            resolved_runtime_root.display()
+        ),
+    );
 }
 
 fn make_runtime_root(dir: &Path) {
@@ -1529,4 +1590,59 @@ fn using_featureforge_preamble_uses_only_the_packaged_runtime_binary() {
         &non_runtime_repo.display().to_string(),
         "using-featureforge no-fallback output",
     );
+}
+
+#[test]
+fn generated_skill_preamble_never_executes_repo_or_root_selected_launchers() {
+    let content = read_utf8(repo_root().join("skills/brainstorming/SKILL.md"));
+    let preamble = extract_bash_block(&content, "## Preamble (run first)");
+    let tmp_root = TempDir::new().expect("temp root should exist");
+    let home_dir = tmp_root.path().join("home");
+    let state_dir = tmp_root.path().join("state");
+    let repo_candidate = tmp_root.path().join("repo-candidate");
+    let resolved_runtime_root = tmp_root.path().join("resolved-runtime-root");
+    let packaged_log = tmp_root.path().join("packaged.log");
+
+    fs::create_dir_all(&home_dir).expect("home dir should exist");
+    fs::create_dir_all(&state_dir).expect("state dir should exist");
+    fs::create_dir_all(&repo_candidate).expect("repo candidate should exist");
+    fs::create_dir_all(&resolved_runtime_root).expect("resolved runtime root should exist");
+
+    let mut git_init = Command::new("git");
+    git_init.arg("init").current_dir(&repo_candidate);
+    run_checked(git_init, "git init repo candidate");
+
+    write_logging_packaged_runtime(&canonical_install_bin(&home_dir), &resolved_runtime_root, &packaged_log);
+    write_poison_runtime_launcher(&repo_candidate, "POISON_REPO");
+    write_poison_runtime_launcher(&resolved_runtime_root, "POISON_ROOT");
+
+    let mut command = Command::new("bash");
+    command
+        .arg("-lc")
+        .arg(preamble)
+        .current_dir(&repo_candidate)
+        .env("HOME", &home_dir)
+        .env("FEATUREFORGE_STATE_DIR", &state_dir)
+        .env("FEATUREFORGE_TEST_LOG", &packaged_log);
+    let output = run_checked(
+        command,
+        "run generated skill preamble with poisoned fallback launchers",
+    );
+    let stdout = String::from_utf8(output.stdout).expect("preamble stdout should be utf8");
+    let log = read_utf8(&packaged_log);
+
+    // Intentional invariant: skill installs package the runtime binary on
+    // purpose. Repo-local binaries and binaries discovered from the resolved
+    // runtime root are companion-file locations only. They must NEVER become
+    // command execution fallbacks unless product direction changes explicitly.
+    assert_contains(
+        &stdout,
+        "UPGRADE_AVAILABLE 1.0.0 1.1.0",
+        "generated skill preamble stdout",
+    );
+    assert_contains(&log, "PACKAGED:repo-runtime-root", "packaged runtime command log");
+    assert_contains(&log, "PACKAGED:update-check", "packaged runtime command log");
+    assert_contains(&log, "PACKAGED:config-get", "packaged runtime command log");
+    assert_not_contains(&log, "POISON_REPO", "packaged runtime command log");
+    assert_not_contains(&log, "POISON_ROOT", "packaged runtime command log");
 }

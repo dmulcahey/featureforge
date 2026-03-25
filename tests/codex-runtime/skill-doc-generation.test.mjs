@@ -96,10 +96,12 @@ test('gen-skill-docs --check fails on stale generated artifacts', () => {
 
 test('upgrade instructions use the runtime-root helper instead of embedded root-search order', () => {
   const upgradeSkill = readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'));
+  const installRuntimeExecPattern = /(?:^|\n)\s*(?:if|while|until)?\s*!?\s*"\$INSTALL_RUNTIME_BIN"\s|\$\("\$INSTALL_RUNTIME_BIN"\s/;
 
   // Intentional invariant: the packaged install binary remains the only runtime
   // command path in shipped skill docs. INSTALL_DIR is for locating companion
-  // files from the selected install, not for selecting a new executable.
+  // files from the selected install, not for selecting a new executable. Do
+  // not weaken these assertions unless product direction explicitly changes.
   assert.match(upgradeSkill, /repo runtime-root --path/);
   assert.match(upgradeSkill, /repo runtime-root --field upgrade-eligible/);
   assert.match(upgradeSkill, /FEATUREFORGE_RUNTIME_BIN/);
@@ -108,8 +110,13 @@ test('upgrade instructions use the runtime-root helper instead of embedded root-
   assert.match(upgradeSkill, /\$HOME\/\.featureforge\/install\/bin\/featureforge/);
   assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$_FEATUREFORGE_ROOT\/bin\/featureforge"/);
   assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$INSTALL_DIR\/bin\/featureforge"/);
+  assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$_FEATUREFORGE_ROOT\/bin\/featureforge\.exe"/);
+  assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$INSTALL_DIR\/bin\/featureforge\.exe"/);
   assert.doesNotMatch(upgradeSkill, /FEATUREFORGE_BIN="\$INSTALL_DIR\/bin\/featureforge"/);
   assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*FEATUREFORGE_RUNTIME_BIN="\$INSTALL_DIR\/bin\/featureforge"/);
+  assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*FEATUREFORGE_RUNTIME_BIN="\$INSTALL_DIR\/bin\/featureforge\.exe"/);
+  assert.doesNotMatch(upgradeSkill, installRuntimeExecPattern);
+  assert.doesNotMatch(upgradeSkill, /FEATUREFORGE_RUNTIME_BIN="\$INSTALL_RUNTIME_BIN"/);
   assert.doesNotMatch(upgradeSkill, /\$\{_FEATUREFORGE_BIN:-featureforge\}/);
   assert.doesNotMatch(upgradeSkill, /command -v featureforge/);
   assert.doesNotMatch(upgradeSkill, /sed -n 's\/\.\*"root"/);

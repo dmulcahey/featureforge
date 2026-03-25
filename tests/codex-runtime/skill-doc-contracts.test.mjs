@@ -52,8 +52,12 @@ const FORBIDDEN_RUNTIME_FALLBACK_EXECUTION_PATTERNS = [
   [/\$_REPO_ROOT\/bin\/featureforge/, 'should not probe repo-local binaries from generated runtime docs'],
   [/(?:^|\n)\s*"\$_FEATUREFORGE_ROOT\/bin\/featureforge"/, 'should not execute runtime commands through a root-selected launcher'],
   [/(?:^|\n)\s*"\$INSTALL_DIR\/bin\/featureforge"/, 'should not execute runtime commands through an install-root-selected launcher'],
+  [/(?:^|\n)\s*"\$_FEATUREFORGE_ROOT\/bin\/featureforge\.exe"/, 'should not execute runtime commands through a root-selected Windows launcher'],
+  [/(?:^|\n)\s*"\$INSTALL_DIR\/bin\/featureforge\.exe"/, 'should not execute runtime commands through an install-root-selected Windows launcher'],
   [/(?:^|\n)\s*FEATUREFORGE_RUNTIME_BIN="\$_FEATUREFORGE_ROOT\/bin\/featureforge"/, 'should not assign the runtime command path from $_FEATUREFORGE_ROOT'],
   [/(?:^|\n)\s*FEATUREFORGE_RUNTIME_BIN="\$INSTALL_DIR\/bin\/featureforge"/, 'should not assign the runtime command path from INSTALL_DIR'],
+  [/(?:^|\n)\s*FEATUREFORGE_RUNTIME_BIN="\$_FEATUREFORGE_ROOT\/bin\/featureforge\.exe"/, 'should not assign the runtime command path from a root-selected Windows launcher'],
+  [/(?:^|\n)\s*FEATUREFORGE_RUNTIME_BIN="\$INSTALL_DIR\/bin\/featureforge\.exe"/, 'should not assign the runtime command path from an install-root-selected Windows launcher'],
   [/\$\{_FEATUREFORGE_BIN:-featureforge\}/, 'should not fall back to PATH-selected featureforge binaries'],
   [/command -v featureforge/, 'should not rediscover featureforge through PATH lookups'],
 ];
@@ -159,7 +163,8 @@ test('generated skill docs never execute runtime commands through root-selected 
 test('all shipped runtime docs keep execution pinned to the packaged binary contract', () => {
   // This is intentionally redundant with the narrower checks above. We want a
   // broad sweep over shipped docs so fallback resolution cannot quietly return
-  // through a different surface later.
+  // through a different surface later. Do not relax this without an explicit
+  // product decision to stop shipping and trusting the packaged install binary.
   const runtimeDocs = [
     ['featureforge-upgrade/SKILL.md', readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'))],
     ...listGeneratedSkills().map((skill) => [path.join('skills', skill, 'SKILL.md'), readUtf8(getSkillPath(skill))]),
@@ -168,6 +173,19 @@ test('all shipped runtime docs keep execution pinned to the packaged binary cont
   for (const [label, content] of runtimeDocs) {
     assertNoRuntimeFallbackExecution(content, label);
   }
+});
+
+test('upgrade instructions keep runtime command execution separate from companion-file lookup', () => {
+  const upgradeSkill = readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'));
+  const installRuntimeExecPattern = /(?:^|\n)\s*(?:if|while|until)?\s*!?\s*"\$INSTALL_RUNTIME_BIN"\s|\$\("\$INSTALL_RUNTIME_BIN"\s/;
+
+  // Intentional invariant: INSTALL_RUNTIME_BIN is only for locating the
+  // packaged binary inside the resolved install root for file-oriented steps.
+  // Runtime commands must continue to flow through FEATUREFORGE_RUNTIME_BIN so
+  // a future refactor cannot silently reintroduce root-selected execution.
+  assert.match(upgradeSkill, /INSTALL_RUNTIME_BIN=/);
+  assert.doesNotMatch(upgradeSkill, installRuntimeExecPattern, 'upgrade flow should not execute runtime commands through INSTALL_RUNTIME_BIN');
+  assert.doesNotMatch(upgradeSkill, /FEATUREFORGE_RUNTIME_BIN="\$INSTALL_RUNTIME_BIN"/, 'upgrade flow should not rebind FEATUREFORGE_RUNTIME_BIN from INSTALL_RUNTIME_BIN');
 });
 
 test('generated preambles capture _BRANCH exactly once and keep helper BRANCH out of grounding', () => {

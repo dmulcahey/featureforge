@@ -63,8 +63,12 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   assert.match(rootDetection, /repo runtime-root --path/);
   assert.match(rootDetection, /\$HOME\/\.featureforge\/install/);
   assert.match(rootDetection, /_FEATUREFORGE_INSTALL_ROOT/);
+  assert.match(rootDetection, /_FEATUREFORGE_BIN="\$_FEATUREFORGE_INSTALL_ROOT\/bin\/featureforge"/);
   assert.match(rootDetection, /featureforge\.exe/);
+  assert.match(rootDetection, /_FEATUREFORGE_BIN="\$_FEATUREFORGE_INSTALL_ROOT\/bin\/featureforge\.exe"/);
   assert.doesNotMatch(rootDetection, /_REPO_ROOT\/bin\/featureforge/);
+  assert.doesNotMatch(rootDetection, /_FEATUREFORGE_ROOT\/bin\/featureforge/);
+  assert.doesNotMatch(rootDetection, /\$INSTALL_DIR\/bin\/featureforge/);
   assert.doesNotMatch(rootDetection, /command -v featureforge/);
   assert.doesNotMatch(rootDetection, /_IS_FEATUREFORGE_RUNTIME_ROOT/);
   assert.doesNotMatch(rootDetection, /\.codex\/featureforge/);
@@ -82,7 +86,9 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   assert.doesNotMatch(baseShell, /repo runtime-root --path.*\|\| true/);
   assert.doesNotMatch(baseShell, /\$_REPO_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(baseShell, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/);
+  assert.doesNotMatch(baseShell, /\$_FEATUREFORGE_ROOT\/bin\/featureforge\.exe/);
   assert.doesNotMatch(baseShell, /\$INSTALL_DIR\/bin\/featureforge/);
+  assert.doesNotMatch(baseShell, /\$INSTALL_DIR\/bin\/featureforge\.exe/);
   assert.doesNotMatch(baseShell, /\$\{_FEATUREFORGE_BIN:-featureforge\}/);
   assert.doesNotMatch(baseShell, /command -v featureforge/);
   assert.doesNotMatch(baseShell, /featureforge-update-check/);
