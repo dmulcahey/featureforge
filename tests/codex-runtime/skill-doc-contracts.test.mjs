@@ -66,6 +66,14 @@ test('generated preamble bash block includes shared runtime-root, session, and c
   }
 });
 
+test('install docs describe the path-based runtime-root helper contract', () => {
+  for (const relativePath of ['.codex/INSTALL.md', '.copilot/INSTALL.md']) {
+    const content = readUtf8(path.join(REPO_ROOT, relativePath));
+    assert.match(content, /featureforge repo runtime-root --path/, `${relativePath} should describe the path-based helper contract`);
+    assert.doesNotMatch(content, /featureforge repo runtime-root --json/, `${relativePath} should not describe the retired JSON shell contract`);
+  }
+});
+
 test('generated non-router skill docs include the shared Search Before Building section', () => {
   for (const skill of listGeneratedSkills()) {
     const content = readUtf8(getSkillPath(skill));

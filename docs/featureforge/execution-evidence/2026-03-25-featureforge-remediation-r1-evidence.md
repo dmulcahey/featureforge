@@ -959,8 +959,8 @@
 **Invalidation Reason:** Rebuilt evidence after later review-approved changes updated previously proven files.
 
 #### Attempt 3
-**Status:** Completed
-**Recorded At:** 2026-03-25T17:29:49.172322Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:56:13.200457Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 4
 **Step Number:** 1
@@ -972,6 +972,22 @@
 - tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:c43b5f0117a037572b0a9d45fb71425004dce1fe0b52c31271c70c55bb19999b
 - tests/runtime_instruction_contracts.rs | sha256:02c1ae405f567c1a0a00d347c30dec3433e9de819e04bd2c546e42b1ba65b6af
 **Verification Summary:** Manual inspection only: Rebuilt evidence after the review-remediation slice added repo runtime-root --path, refreshed generated skill docs, updated release docs, and rebuilt the checked-in darwin and windows runtimes. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 44 passed, 0 failed; cargo nextest run --test runtime_root_cli --test upgrade_skill --test runtime_instruction_contracts --test using_featureforge_skill -> 30 passed, 0 failed; cargo nextest run --test powershell_wrapper_resolution --test runtime_instruction_contracts -> 21 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after the final doc-sync fix updated previously proven files.
+
+#### Attempt 4
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:56:13.349102Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 1
+**Packet Fingerprint:** afc2b3ed90414ef65acb6c8f4a52aa9a41a8c39c54fd139aaf20b05d47566df5
+**Head SHA:** 7d4986b8848a308cf0bc50fad1cfd6e9ca44ffe9
+**Base SHA:** 7d4986b8848a308cf0bc50fad1cfd6e9ca44ffe9
+**Claim:** Added red doc-contract assertions for the canonical docs/testing entrypoint and generated-doc freshness mentions.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:cf0da71cf82c9388da7fbdf5b62f750a079b1ebe050ea5f88e082f447895dcd1
+- tests/runtime_instruction_contracts.rs | sha256:9336cab8283a8800aac4a0bd05325bd81da37813d1919aafa6e498a147b8e42f
+**Verification Summary:** Manual inspection only: Rebuilt Task 4 evidence after aligning .codex/.copilot install docs with the shipped path-based runtime-root helper contract and extending the doc-contract suite to fail if those install docs drift back to the retired JSON shell contract. Current verification is green: node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 27 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 4 Step 2
@@ -1011,8 +1027,8 @@
 **Invalidation Reason:** Rebuilt evidence after later review-approved changes updated previously proven files.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-25T17:29:49.515694Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:56:13.610155Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 4
 **Step Number:** 3
@@ -1027,6 +1043,25 @@
 - docs/README.codex.md | sha256:d8f303b0134e68f268bb5ea2e9614be90bfcc9095c9900db1f03f5123e9969a4
 - docs/README.copilot.md | sha256:679ab7c3fe6c9eee5e7b4c6bd473d649a9152f11488d45555bd08b6dec55d055
 **Verification Summary:** Manual inspection only: Rebuilt evidence after the review-remediation slice added repo runtime-root --path, refreshed generated skill docs, updated release docs, and rebuilt the checked-in darwin and windows runtimes. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 44 passed, 0 failed; cargo nextest run --test runtime_root_cli --test upgrade_skill --test runtime_instruction_contracts --test using_featureforge_skill -> 30 passed, 0 failed; cargo nextest run --test powershell_wrapper_resolution --test runtime_instruction_contracts -> 21 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after the final doc-sync fix updated previously proven files.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:56:13.754715Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 3
+**Packet Fingerprint:** f5782c8f059e3d4092cb110adb5ed4220752b8099a92714e88b6e6b5a74b7ea3
+**Head SHA:** 7d4986b8848a308cf0bc50fad1cfd6e9ca44ffe9
+**Base SHA:** 7d4986b8848a308cf0bc50fad1cfd6e9ca44ffe9
+**Claim:** Updated the README and platform install/overview docs to point at docs/testing.md and describe the runtime-root, session-entry, and update behavior consistently.
+**Files Proven:**
+- .codex/INSTALL.md | sha256:dcf808c820f2bb35b29165d8df2cc38b320bdfbf65c2d659b55a572ff2b06ca9
+- .copilot/INSTALL.md | sha256:79e9ca9408c72f8ba39f27748e39ed0b8892de9797b898995036633438ce45b7
+- README.md | sha256:f10bc813c859e9ada76153fedb83ccae65efecce2c9d7d08074fdf9b93123a82
+- docs/README.codex.md | sha256:d8f303b0134e68f268bb5ea2e9614be90bfcc9095c9900db1f03f5123e9969a4
+- docs/README.copilot.md | sha256:679ab7c3fe6c9eee5e7b4c6bd473d649a9152f11488d45555bd08b6dec55d055
+**Verification Summary:** Manual inspection only: Rebuilt Task 4 evidence after aligning .codex/.copilot install docs with the shipped path-based runtime-root helper contract and extending the doc-contract suite to fail if those install docs drift back to the retired JSON shell contract. Current verification is green: node --test tests/codex-runtime/skill-doc-contracts.test.mjs -> 27 passed, 0 failed.
 **Invalidation Reason:** N/A
 
 ### Task 4 Step 4
