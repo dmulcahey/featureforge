@@ -258,15 +258,7 @@ pub fn inspect(session_key: Option<&str>) -> Result<SessionEntryResolveOutput, D
 
 pub fn record(args: &SessionEntryRecordArgs) -> Result<SessionEntryResolveOutput, DiagnosticError> {
     let runtime = SessionEntryRuntime::discover(args.session_key.as_deref())?;
-    let decision = match args.decision.as_str() {
-        "enabled" | "bypassed" => args.decision.as_str(),
-        _ => {
-            return Err(DiagnosticError::new(
-                FailureClass::InvalidCommandInput,
-                "record requires --decision enabled|bypassed.",
-            ));
-        }
-    };
+    let decision = args.decision.as_str();
     runtime.write_decision(decision)?;
     Ok(runtime.result(
         decision,

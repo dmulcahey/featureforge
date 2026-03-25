@@ -8,6 +8,7 @@ mod json_support;
 mod process_support;
 
 use serde_json::Value;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -84,6 +85,16 @@ fn run_bash_block_without_override(
     script: &str,
     context: &str,
 ) -> Output {
+    let featureforge_bin_dir = bin_support::compiled_featureforge_path()
+        .parent()
+        .expect("compiled featureforge binary should have a parent directory")
+        .to_path_buf();
+    let mut path_entries = vec![featureforge_bin_dir];
+    if let Some(existing_path) = env::var_os("PATH") {
+        path_entries.extend(env::split_paths(&existing_path));
+    }
+    let path = env::join_paths(path_entries)
+        .expect("PATH should be joinable for using-featureforge skill tests");
     let mut command = Command::new("bash");
     command
         .arg("-lc")
@@ -91,6 +102,7 @@ fn run_bash_block_without_override(
         .current_dir(repo_root())
         .env("FEATUREFORGE_STATE_DIR", state_dir)
         .env("HOME", home_dir);
+    command.env("PATH", path);
     run(command, context)
 }
 

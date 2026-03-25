@@ -7,9 +7,12 @@ use schemars::{JsonSchema, schema_for};
 use serde::Serialize;
 
 use crate::cli::plan_execution::{
-    BeginArgs, CompleteArgs, NoteArgs, RecommendArgs, ReopenArgs, StatusArgs, TransferArgs,
+    BeginArgs, CompleteArgs, IsolatedAgentsArg, NoteArgs, NoteStateArg, RecommendArgs,
+    ReopenArgs, StatusArgs, TransferArgs,
 };
-use crate::cli::repo_safety::RepoSafetyCheckArgs;
+use crate::cli::repo_safety::{
+    RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg,
+};
 use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::git::{derive_repo_slug, discover_repo_identity, sha256_hex};
@@ -261,37 +264,19 @@ impl ExecutionRuntime {
         } else {
             "no"
         };
-        let isolated_agents_available = match args.isolated_agents.as_deref() {
-            Some("available") => "yes",
-            Some("unavailable") => "no",
-            Some(_) => {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    "isolated-agents must be available or unavailable.",
-                ));
-            }
+        let isolated_agents_available = match args.isolated_agents {
+            Some(IsolatedAgentsArg::Available) => "yes",
+            Some(IsolatedAgentsArg::Unavailable) => "no",
             None => "unknown",
         };
-        let session_intent = match args.session_intent.as_deref() {
-            Some("stay" | "separate" | "unknown") => args.session_intent.as_deref().unwrap(),
-            Some(_) => {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    "session-intent must be stay, separate, or unknown.",
-                ));
-            }
-            None => "unknown",
-        };
-        let workspace_prepared = match args.workspace_prepared.as_deref() {
-            Some("yes" | "no" | "unknown") => args.workspace_prepared.as_deref().unwrap(),
-            Some(_) => {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    "workspace-prepared must be yes, no, or unknown.",
-                ));
-            }
-            None => "unknown",
-        };
+        let session_intent = args
+            .session_intent
+            .map(|value| value.as_str())
+            .unwrap_or("unknown");
+        let workspace_prepared = args
+            .workspace_prepared
+            .map(|value| value.as_str())
+            .unwrap_or("unknown");
         let same_session_viable = if session_intent == "stay" && workspace_prepared == "yes" {
             "yes"
         } else if session_intent == "separate" || workspace_prepared == "no" {
@@ -641,11 +626,11 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
     match RepoSafetyRuntime::discover(&context.runtime.repo_root) {
         Ok(runtime) => {
             let args = RepoSafetyCheckArgs {
-                intent: String::from("write"),
+                intent: RepoSafetyIntentArg::Write,
                 stage: repo_safety_stage(context),
                 task_id: Some(context.plan_rel.clone()),
                 paths: vec![context.plan_rel.clone()],
-                write_targets: vec![String::from("execution-task-slice")],
+                write_targets: vec![RepoSafetyWriteTargetArg::ExecutionTaskSlice],
             };
             match runtime.check(&args) {
                 Ok(result) if result.outcome == "blocked" => gate.fail(
@@ -1230,7 +1215,7 @@ pub fn normalize_begin_request(args: &BeginArgs) -> BeginRequest {
     BeginRequest {
         task: args.task,
         step: args.step,
-        execution_mode: args.execution_mode.clone(),
+        execution_mode: args.execution_mode.map(|value| value.as_str().to_owned()),
         expect_execution_fingerprint: args.expect_execution_fingerprint.clone(),
     }
 }
@@ -1247,15 +1232,9 @@ pub fn normalize_note_request(args: &NoteArgs) -> Result<NoteRequest, JsonFailur
             "Execution note summaries may not exceed 120 characters.",
         ));
     }
-    let state = match args.state.as_str() {
-        "blocked" => NoteState::Blocked,
-        "interrupted" => NoteState::Interrupted,
-        _ => {
-            return Err(JsonFailure::new(
-                FailureClass::InvalidCommandInput,
-                "Execution note state must be one of: blocked, interrupted.",
-            ));
-        }
+    let state = match args.state {
+        NoteStateArg::Blocked => NoteState::Blocked,
+        NoteStateArg::Interrupted => NoteState::Interrupted,
     };
 
     Ok(NoteRequest {
@@ -1316,7 +1295,7 @@ pub fn normalize_complete_request(args: &CompleteArgs) -> Result<CompleteRequest
     Ok(CompleteRequest {
         task: args.task,
         step: args.step,
-        source: args.source.clone(),
+        source: args.source.as_str().to_owned(),
         claim,
         files: args.files.clone(),
         verification_summary,
@@ -1328,7 +1307,7 @@ pub fn normalize_reopen_request(args: &ReopenArgs) -> Result<ReopenRequest, Json
     Ok(ReopenRequest {
         task: args.task,
         step: args.step,
-        source: args.source.clone(),
+        source: args.source.as_str().to_owned(),
         reason: require_normalized_text(
             &args.reason,
             FailureClass::InvalidCommandInput,
@@ -1342,7 +1321,7 @@ pub fn normalize_transfer_request(args: &TransferArgs) -> Result<TransferRequest
     Ok(TransferRequest {
         repair_task: args.repair_task,
         repair_step: args.repair_step,
-        source: args.source.clone(),
+        source: args.source.as_str().to_owned(),
         reason: require_normalized_text(
             &args.reason,
             FailureClass::InvalidCommandInput,

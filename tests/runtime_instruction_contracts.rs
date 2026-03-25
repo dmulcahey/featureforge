@@ -160,6 +160,35 @@ fn repo_checkout_canonical_launcher_runs_without_recursive_fallback() {
 }
 
 #[test]
+fn repo_checkout_canonical_launcher_supports_runtime_root_helper_contract() {
+    let launcher = if cfg!(windows) {
+        repo_root().join("bin/featureforge.exe")
+    } else {
+        repo_root().join("bin/featureforge")
+    };
+    let output = AssertCommand::new(launcher)
+        .current_dir(repo_root())
+        .timeout(Duration::from_secs(2))
+        .args(["repo", "runtime-root", "--json"])
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "repo-local launcher should support repo runtime-root --json\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("runtime-root stdout should be utf-8");
+    assert_contains(&stdout, "\"resolved\":true", "bin/featureforge repo runtime-root --json");
+    assert_contains(
+        &stdout,
+        &format!("\"root\":\"{}\"", repo_root().display()),
+        "bin/featureforge repo runtime-root --json",
+    );
+}
+
+#[test]
 fn repo_checkout_canonical_launcher_avoids_non_binary_repo_fallbacks() {
     let root = repo_root();
     let top_level_bin_files = fs::read_dir(root.join("bin"))

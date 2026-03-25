@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 #[derive(Debug, Args)]
 pub struct SessionEntryCli {
@@ -29,7 +29,22 @@ pub struct SessionEntryResolveArgs {
 #[derive(Debug, Clone, Args)]
 pub struct SessionEntryRecordArgs {
     #[arg(long)]
-    pub decision: String,
+    pub decision: SessionDecisionArg,
     #[arg(long = "session-key")]
     pub session_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SessionDecisionArg {
+    Enabled,
+    Bypassed,
+}
+
+impl SessionDecisionArg {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Enabled => "enabled",
+            Self::Bypassed => "bypassed",
+        }
+    }
 }

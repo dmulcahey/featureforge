@@ -820,8 +820,14 @@ fn canonical_session_entry_record_and_validation_errors_match_contract() {
     let invalid_record_json =
         parse_failure_json(&invalid_record, "canonical session-entry invalid decision");
     assert_eq!(
-        invalid_record_json["failure_class"],
+        invalid_record_json["error_class"],
         Value::String(String::from("InvalidCommandInput"))
+    );
+    assert!(
+        invalid_record_json["message"]
+            .as_str()
+            .expect("invalid session-entry decision message should stay a string")
+            .contains("possible values")
     );
 
     let blank_record = run_rust_featureforge(

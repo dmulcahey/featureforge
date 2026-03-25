@@ -738,7 +738,13 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
     );
     assert_eq!(
         invalid_write_target_json["error_class"],
-        Value::String(String::from("InvalidWriteTarget"))
+        Value::String(String::from("InvalidCommandInput"))
+    );
+    assert!(
+        invalid_write_target_json["message"]
+            .as_str()
+            .expect("invalid write-target message should stay a string")
+            .contains("possible values")
     );
 }
 

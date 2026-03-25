@@ -117,20 +117,17 @@ impl RepoSafetyRuntime {
     }
 
     pub fn check(&self, args: &RepoSafetyCheckArgs) -> Result<RepoSafetyResult, DiagnosticError> {
-        let intent = match args.intent.as_str() {
-            "read" | "write" => args.intent.as_str(),
-            _ => {
-                return Err(DiagnosticError::new(
-                    FailureClass::InvalidCommandInput,
-                    "check requires --intent read|write.",
-                ));
-            }
-        };
+        let intent = args.intent.as_str();
+        let write_targets = args
+            .write_targets
+            .iter()
+            .map(|target| target.as_str().to_owned())
+            .collect::<Vec<_>>();
         let scope = self.prepare_scope(
             &args.stage,
             args.task_id.as_deref(),
             &args.paths,
-            &args.write_targets,
+            &write_targets,
         )?;
 
         if intent == "read" {
@@ -179,11 +176,16 @@ impl RepoSafetyRuntime {
         &self,
         args: &RepoSafetyApproveArgs,
     ) -> Result<RepoSafetyResult, DiagnosticError> {
+        let write_targets = args
+            .write_targets
+            .iter()
+            .map(|target| target.as_str().to_owned())
+            .collect::<Vec<_>>();
         let scope = self.prepare_scope(
             &args.stage,
             args.task_id.as_deref(),
             &args.paths,
-            &args.write_targets,
+            &write_targets,
         )?;
         let approval_reason = normalize_reason(&args.reason)?;
         let record = ApprovalRecord {

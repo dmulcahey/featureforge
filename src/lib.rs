@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::{Command, PlanCommand, RepoCommand};
 use diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use serde_json::{Value, json};
@@ -268,7 +268,12 @@ pub fn run() -> std::process::ExitCode {
                 }
             }
         }
-        None => std::process::ExitCode::SUCCESS,
+        None => {
+            let mut command = cli::Cli::command();
+            print!("{}", command.render_help());
+            println!();
+            std::process::ExitCode::SUCCESS
+        }
     }
 }
 
