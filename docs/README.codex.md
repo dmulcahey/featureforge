@@ -58,7 +58,7 @@ FeatureForge routes product work conservatively from repo-visible artifacts.
 Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.
 
 - `using-featureforge` is the human-readable entry router after `featureforge session-entry`
-- generated skill preambles resolve the active runtime root through `featureforge repo runtime-root --path` before update checks or contributor-mode reads
+- generated skill preambles always invoke `~/.featureforge/install/bin/featureforge`, and that packaged install binary resolves the active runtime root through `featureforge repo runtime-root --path` before update checks or contributor-mode reads
 - `featureforge workflow status --refresh` re-derives the safe next stage from active specs and plans
 - `featureforge plan contract` compiles approved markdown into exact execution and review inputs
 - `featureforge plan execution recommend --plan <approved-plan-path>` selects the execution mode before work starts

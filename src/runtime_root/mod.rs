@@ -15,6 +15,11 @@ const FEATUREFORGE_DIR_ENV: &str = "FEATUREFORGE_DIR";
 const RUNTIME_ROOT_SCHEMA_FILE: &str = "repo-runtime-root.schema.json";
 const RUNTIME_BINARY_NAMES: &[&str] = &["featureforge", "featureforge.exe"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeRootField {
+    UpgradeEligible,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct RuntimeRootValidation {
     pub has_version: bool,
@@ -98,6 +103,21 @@ pub fn resolve_current_path_output() -> Result<String, DiagnosticError> {
     Ok(resolve_current_root()?
         .map(|resolved| format!("{}\n", resolved.root.display()))
         .unwrap_or_default())
+}
+
+pub fn resolve_current_field_output(field: RuntimeRootField) -> Result<String, DiagnosticError> {
+    let resolved = resolve_current_root()?;
+    Ok(match field {
+        RuntimeRootField::UpgradeEligible => resolved
+            .map(|resolved| {
+                if resolved.validation.upgrade_eligible {
+                    String::from("true\n")
+                } else {
+                    String::from("false\n")
+                }
+            })
+            .unwrap_or_default(),
+    })
 }
 
 pub fn resolve_current_root() -> Result<Option<ResolvedRuntimeRoot>, DiagnosticError> {

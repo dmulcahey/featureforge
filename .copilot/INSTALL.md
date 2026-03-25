@@ -62,7 +62,7 @@ You should see the installed skills location and the code-reviewer agent file.
 
 Runtime helper state lives in `~/.featureforge/`. Generated skill preambles use this directory for session markers, contributor logs, update-check cache files, and project-scoped artifacts under `~/.featureforge/projects/`.
 
-Generated skill preambles resolve the active runtime root through `featureforge repo runtime-root --path`, so repo checkouts and `~/.featureforge/install` use the same runtime-owned contract instead of hard-coded search order.
+Generated skill preambles always invoke `~/.featureforge/install/bin/featureforge`. That packaged install binary resolves the active runtime root through `featureforge repo runtime-root --path`, so repo checkouts and `~/.featureforge/install` use the same runtime-owned contract without swapping executables.
 
 Supported first-turn entry goes through `featureforge session-entry resolve --message-file <path>`. Spawned subagents pass `--spawned-subagent` and bypass the first-turn prompt by default unless they explicitly opt back in.
 

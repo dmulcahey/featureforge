@@ -80,8 +80,9 @@ test('generated preamble bash block includes shared runtime-root, session, and c
     const bashBlock = extractBashBlockUnderHeading(content, 'Preamble (run first)');
     assert.ok(bashBlock, `${skill} should include a preamble bash block`);
     assert.match(bashBlock, /repo runtime-root --path/, `${skill} should resolve runtime roots through the helper contract`);
-    assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" update-check/, `${skill} should run update checks through the packaged compat binary`);
-    assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/, `${skill} should load contributor mode through the packaged compat binary`);
+    assert.match(bashBlock, /\$HOME\/\.featureforge\/install/, `${skill} should pin runtime commands to the canonical install root`);
+    assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" update-check/, `${skill} should run update checks through the packaged install binary`);
+    assert.match(bashBlock, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/, `${skill} should load contributor mode through the packaged install binary`);
     assert.doesNotMatch(bashBlock, /_IS_FEATUREFORGE_RUNTIME_ROOT\(\)/, `${skill} should not embed its own runtime-root detector`);
     assertNoRuntimeFallbackExecution(bashBlock, `${skill} preamble`);
     assert.doesNotMatch(bashBlock, /sed -n/, `${skill} should not parse runtime-root JSON in shell`);
@@ -94,6 +95,7 @@ test('install docs describe the path-based runtime-root helper contract', () => 
   for (const relativePath of ['.codex/INSTALL.md', '.copilot/INSTALL.md']) {
     const content = readUtf8(path.join(REPO_ROOT, relativePath));
     assert.match(content, /featureforge repo runtime-root --path/, `${relativePath} should describe the path-based helper contract`);
+    assert.match(content, /~\/\.featureforge\/install\/bin\/featureforge/, `${relativePath} should describe the packaged install binary contract`);
     assert.doesNotMatch(content, /featureforge repo runtime-root --json/, `${relativePath} should not describe the retired JSON shell contract`);
   }
 });
@@ -129,7 +131,7 @@ test('using-featureforge gets a dedicated bootstrap preamble contract', () => {
   assert.doesNotMatch(bootstrapBlock, /touch "\$_SP_STATE_DIR\/sessions\/\$PPID"/, 'using-featureforge should not write session markers before the bypass decision');
   assert.doesNotMatch(bootstrapBlock, /_CONTRIB=/, 'using-featureforge should not load contributor mode before the bypass decision');
   assert.ok(normalStackBlock, 'using-featureforge should define the post-gate normal stack');
-  assert.match(normalStackBlock, /"\$_FEATUREFORGE_BIN" update-check/, 'using-featureforge should restore update checks after the bypass gate through the packaged compat binary');
+  assert.match(normalStackBlock, /"\$_FEATUREFORGE_BIN" update-check/, 'using-featureforge should restore update checks after the bypass gate through the packaged install binary');
   assert.match(normalStackBlock, /touch "\$_SP_STATE_DIR\/sessions\/\$PPID"/, 'using-featureforge should restore session markers after the bypass gate');
   assert.match(normalStackBlock, /_CONTRIB=/, 'using-featureforge should restore contributor mode after the bypass gate');
   assertNoRuntimeFallbackExecution(normalStackBlock, 'using-featureforge normal stack');
@@ -192,7 +194,7 @@ test('generated branch-aware helper loads are guarded through _SLUG_ENV and eval
 test('branch-aware skill docs consume the slug helper instead of inline sanitization fragments', () => {
   for (const skill of ['qa-only', 'plan-eng-review', 'finishing-a-development-branch']) {
     const content = readUtf8(getSkillPath(skill));
-    assert.match(content, /"\$_FEATUREFORGE_BIN" repo slug/, `${skill} should use the canonical repo slug command through the packaged compat binary`);
+    assert.match(content, /"\$_FEATUREFORGE_BIN" repo slug/, `${skill} should use the canonical repo slug command through the packaged install binary`);
     assert.doesNotMatch(content, /SAFE_BRANCH=\$\(/, `${skill} should not inline branch sanitization`);
     assert.doesNotMatch(content, /(?:^|[^_])BRANCH=\$\(git rev-parse --abbrev-ref HEAD/, `${skill} should not inline raw branch capture`);
     assert.doesNotMatch(content, /SLUG=\$\(printf '%s\\n' "\$REMOTE_URL"/, `${skill} should not inline repo slug derivation`);

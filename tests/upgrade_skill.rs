@@ -2,6 +2,8 @@
 mod executable_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/install.rs"]
+mod install_support;
 #[path = "support/prebuilt.rs"]
 mod prebuilt_support;
 #[path = "support/process.rs"]
@@ -15,6 +17,7 @@ use tempfile::TempDir;
 
 use executable_support::make_executable;
 use files_support::write_file;
+use install_support::canonical_install_bin;
 use prebuilt_support::{
     DARWIN_ARM64_BINARY_REL, DARWIN_ARM64_CHECKSUM_REL, WINDOWS_X64_BINARY_REL,
     WINDOWS_X64_CHECKSUM_REL, write_canonical_prebuilt_layout,
@@ -155,6 +158,13 @@ fn write_mock_featureforge(bin_dir: &Path, script_body: &str) {
     make_executable(&helper_path);
 }
 
+fn install_mock_featureforge(home_dir: &Path, script_body: &str) -> PathBuf {
+    let helper_path = canonical_install_bin(home_dir);
+    write_file(&helper_path, script_body);
+    make_executable(&helper_path);
+    helper_path
+}
+
 fn resolved_runtime_root_path(root: &Path) -> String {
     format!("{}\n", root.to_string_lossy())
 }
@@ -164,14 +174,17 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     let skill_doc = read_skill_doc();
     for pattern in [
         "repo runtime-root --path",
-        "FEATUREFORGE_RUNTIME_BIN=\"${_FEATUREFORGE_BIN:-${FEATUREFORGE_COMPAT_BIN:-}}\"",
+        "FEATUREFORGE_RUNTIME_BIN=\"${_FEATUREFORGE_BIN:-$HOME/.featureforge/install/bin/featureforge}\"",
         "INSTALL_DIR=\"${_FEATUREFORGE_ROOT:-}\"",
+        "repo runtime-root --field upgrade-eligible",
+        "UPGRADE_ELIGIBLE=",
         "bin/featureforge",
         "FEATUREFORGE_RUNTIME_BIN",
         "VERSION",
         "ERROR: featureforge runtime-root helper unavailable",
         "ERROR: featureforge runtime root unavailable",
         "ERROR: featureforge runtime root returned no executable featureforge binary",
+        "ERROR: featureforge runtime root is not upgrade-eligible",
         "Read `$INSTALL_DIR/RELEASE-NOTES.md`.",
         "git stash push --include-untracked",
         "git stash pop",
@@ -210,14 +223,12 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
     fs::create_dir_all(&home_dir).expect("home should exist");
     let current_root = tmp_root.path().join("current-project");
     fs::create_dir_all(&current_root).expect("project root should exist");
-    let helper_bin = tmp_root.path().join("mock-bin");
     let resolved_install = tmp_root.path().join("resolved-install");
     make_valid_install(&resolved_install, "dir");
-    let helper = helper_bin.join("featureforge");
-    write_mock_featureforge(
-        &helper_bin,
+    install_mock_featureforge(
+        &home_dir,
         &format!(
-            "#!/usr/bin/env bash\nprintf '%s' '{}'\n",
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--path\" ]; then\n  printf '%s' '{}'\n  exit 0\nfi\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--field\" ] && [ \"${{4:-}}\" = \"upgrade-eligible\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nexit 0\n",
             resolved_runtime_root_path(&resolved_install)
         ),
     );
@@ -226,7 +237,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref())],
+        &[],
         "upgrade skill step 1 resolved helper",
     );
     let active_stdout = String::from_utf8_lossy(&active_output.stdout);
@@ -238,10 +249,10 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
 
     let renamed_root = tmp_root.path().join("custom-runtime-name");
     make_valid_install(&renamed_root, "dir");
-    write_mock_featureforge(
-        &helper_bin,
+    install_mock_featureforge(
+        &home_dir,
         &format!(
-            "#!/usr/bin/env bash\nprintf '%s' '{}'\n",
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--path\" ]; then\n  printf '%s' '{}'\n  exit 0\nfi\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--field\" ] && [ \"${{4:-}}\" = \"upgrade-eligible\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nexit 0\n",
             resolved_runtime_root_path(
                 &renamed_root
                     .canonicalize()
@@ -253,7 +264,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref())],
+        &[],
         "upgrade skill step 1 arbitrary resolved path",
     );
     let renamed_stdout = String::from_utf8_lossy(&renamed_output.stdout);
@@ -271,21 +282,18 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
 
     let selected_runtime = tmp_root.path().join("selected-runtime");
     make_valid_install(&selected_runtime, "dir");
-    write_mock_featureforge(
-        &helper_bin,
-        "#!/usr/bin/env bash\necho '/wrong-runtime'\nexit 0\n",
+    install_mock_featureforge(
+        &home_dir,
+        "#!/usr/bin/env bash\nif [ \"${1:-}\" = \"repo\" ] && [ \"${2:-}\" = \"runtime-root\" ] && [ \"${3:-}\" = \"--field\" ] && [ \"${4:-}\" = \"upgrade-eligible\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\necho '/wrong-runtime'\nexit 0\n",
     );
     let selected_output = run_bash_block(
         &current_root,
         &home_dir,
         &step_one,
-        &[
-            (
-                "_FEATUREFORGE_ROOT",
-                selected_runtime.to_string_lossy().as_ref(),
-            ),
-            ("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref()),
-        ],
+        &[(
+            "_FEATUREFORGE_ROOT",
+            selected_runtime.to_string_lossy().as_ref(),
+        )],
         "upgrade skill step 1 prefers selected runtime root",
     );
     let selected_stdout = String::from_utf8_lossy(&selected_output.stdout);
@@ -303,12 +311,12 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
             .parent()
             .expect("selected bin parent should exist"),
         &format!(
-            "#!/usr/bin/env bash\nprintf '%s' '{}'\n",
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--path\" ]; then\n  printf '%s' '{}'\n  exit 0\nfi\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--field\" ] && [ \"${{4:-}}\" = \"upgrade-eligible\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nexit 0\n",
             resolved_runtime_root_path(&selected_bin_runtime)
         ),
     );
-    write_mock_featureforge(
-        &helper_bin,
+    install_mock_featureforge(
+        &home_dir,
         "#!/usr/bin/env bash\necho '/wrong-runtime'\nexit 0\n",
     );
     let selected_bin_output = run_bash_block(
@@ -325,12 +333,12 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "upgrade skill step 1 prefers selected runtime binary",
     );
 
-    write_mock_featureforge(&helper_bin, "#!/usr/bin/env bash\nexit 0\n");
+    install_mock_featureforge(&home_dir, "#!/usr/bin/env bash\nexit 0\n");
     let unresolved_output = run_bash_block(
         &current_root,
         &home_dir,
         &step_one,
-        &[("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref())],
+        &[],
         "upgrade skill step 1 unresolved helper",
     );
     assert!(
@@ -345,10 +353,10 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
 
     let non_runtime_dir = tmp_root.path().join("non-runtime");
     fs::create_dir_all(&non_runtime_dir).expect("non-runtime dir should exist");
-    write_mock_featureforge(
-        &helper_bin,
+    install_mock_featureforge(
+        &home_dir,
         &format!(
-            "#!/usr/bin/env bash\nprintf '%s' '{}'\n",
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--path\" ]; then\n  printf '%s' '{}'\n  exit 0\nfi\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--field\" ] && [ \"${{4:-}}\" = \"upgrade-eligible\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nexit 0\n",
             resolved_runtime_root_path(&non_runtime_dir)
         ),
     );
@@ -356,7 +364,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &current_root,
         &home_dir,
         &step_one,
-        &[("FEATUREFORGE_COMPAT_BIN", helper.to_string_lossy().as_ref())],
+        &[],
         "upgrade skill step 1 non-runtime helper result",
     );
     assert!(
@@ -369,7 +377,36 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "upgrade skill step 1 non-runtime helper result",
     );
 
-    fs::remove_file(helper_bin.join("featureforge")).expect("mock helper should remove");
+    let not_upgrade_eligible = tmp_root.path().join("not-upgrade-eligible");
+    fs::create_dir_all(not_upgrade_eligible.join("bin")).expect("non-upgrade-eligible bin dir");
+    write_file(&not_upgrade_eligible.join("bin/featureforge"), "");
+    make_executable(&not_upgrade_eligible.join("bin/featureforge"));
+    write_file(&not_upgrade_eligible.join("VERSION"), "1.0.0\n");
+    install_mock_featureforge(
+        &home_dir,
+        &format!(
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--path\" ]; then\n  printf '%s' '{}'\n  exit 0\nfi\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--field\" ] && [ \"${{4:-}}\" = \"upgrade-eligible\" ]; then\n  printf 'false\\n'\n  exit 0\nfi\nexit 0\n",
+            resolved_runtime_root_path(&not_upgrade_eligible)
+        ),
+    );
+    let not_upgrade_eligible_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[],
+        "upgrade skill step 1 non-upgrade-eligible runtime",
+    );
+    assert!(
+        !not_upgrade_eligible_output.status.success(),
+        "non-upgrade-eligible runtime should fail closed"
+    );
+    assert_contains(
+        &combined_output(&not_upgrade_eligible_output),
+        "ERROR: featureforge runtime root is not upgrade-eligible",
+        "upgrade skill step 1 non-upgrade-eligible runtime",
+    );
+
+    fs::remove_file(canonical_install_bin(&home_dir)).expect("mock helper should remove");
     let unavailable_output = run_bash_block(
         &current_root,
         &home_dir,

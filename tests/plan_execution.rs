@@ -3036,6 +3036,49 @@ fn canonical_status_rejects_non_sequential_evidence_attempt_numbers() {
 }
 
 #[test]
+fn canonical_status_uses_the_freshest_completed_attempt_metadata() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-latest-completed-by-recorded-at");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "featureforge:executing-plans");
+    write_file(&repo.join("docs/example-output.md"), "verified output\n");
+    let file_digest = sha256_hex(
+        &fs::read(repo.join("docs/example-output.md")).expect("output should be readable"),
+    );
+    let plan_fingerprint =
+        sha256_hex(&fs::read(repo.join(PLAN_REL)).expect("plan should be readable for evidence"));
+    let spec_fingerprint =
+        sha256_hex(&fs::read(repo.join(SPEC_REL)).expect("spec should be readable for evidence"));
+    let newer_packet = expected_packet_fingerprint(repo, 1, 1);
+    let older_packet = expected_packet_fingerprint(repo, 1, 2);
+
+    write_file(
+        &repo.join(evidence_rel_path()),
+        &format!(
+            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n**Plan Fingerprint:** {plan_fingerprint}\n**Source Spec Path:** {SPEC_REL}\n**Source Spec Revision:** 1\n**Source Spec Fingerprint:** {spec_fingerprint}\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:45Z\n**Execution Source:** featureforge:executing-plans\n**Task Number:** 1\n**Step Number:** 1\n**Packet Fingerprint:** {newer_packet}\n**Head SHA:** 1111111111111111111111111111111111111111\n**Base SHA:** aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n**Claim:** Newer completed attempt.\n**Files Proven:**\n- docs/example-output.md | sha256:{file_digest}\n**Verification Summary:** Manual inspection only: Verified by fixture setup.\n**Invalidation Reason:** N/A\n\n### Task 1 Step 2\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** featureforge:executing-plans\n**Task Number:** 1\n**Step Number:** 2\n**Packet Fingerprint:** {older_packet}\n**Head SHA:** 2222222222222222222222222222222222222222\n**Base SHA:** bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n**Claim:** Older completed attempt recorded later in document order.\n**Files Proven:**\n- docs/example-output.md | sha256:{file_digest}\n**Verification Summary:** Manual inspection only: Verified by fixture setup.\n**Invalidation Reason:** N/A\n"
+        ),
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should prefer freshest completed attempt metadata",
+    );
+
+    assert_eq!(
+        status["latest_head_sha"],
+        "1111111111111111111111111111111111111111"
+    );
+    assert_eq!(
+        status["latest_base_sha"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(status["latest_packet_fingerprint"], newer_packet);
+}
+
+#[test]
 fn canonical_status_rejects_whitespace_only_persisted_file_entry() {
     let (repo_dir, state_dir) = init_repo("plan-execution-whitespace-only-file-entry");
     let repo = repo_dir.path();

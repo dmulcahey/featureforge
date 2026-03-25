@@ -97,13 +97,14 @@ test('gen-skill-docs --check fails on stale generated artifacts', () => {
 test('upgrade instructions use the runtime-root helper instead of embedded root-search order', () => {
   const upgradeSkill = readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'));
 
-  // Intentional invariant: the packaged compat binary remains the only runtime
+  // Intentional invariant: the packaged install binary remains the only runtime
   // command path in shipped skill docs. INSTALL_DIR is for locating companion
   // files from the selected install, not for selecting a new executable.
   assert.match(upgradeSkill, /repo runtime-root --path/);
+  assert.match(upgradeSkill, /repo runtime-root --field upgrade-eligible/);
   assert.match(upgradeSkill, /FEATUREFORGE_RUNTIME_BIN/);
   assert.match(upgradeSkill, /_FEATUREFORGE_ROOT/);
-  assert.match(upgradeSkill, /FEATUREFORGE_COMPAT_BIN/);
+  assert.match(upgradeSkill, /\$HOME\/\.featureforge\/install\/bin\/featureforge/);
   assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$_FEATUREFORGE_ROOT\/bin\/featureforge"/);
   assert.doesNotMatch(upgradeSkill, /(?:^|\n)\s*"\$INSTALL_DIR\/bin\/featureforge"/);
   assert.doesNotMatch(upgradeSkill, /FEATUREFORGE_BIN="\$INSTALL_DIR\/bin\/featureforge"/);

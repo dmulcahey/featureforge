@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser};
+use cli::runtime_root::RuntimeRootFieldCli;
 use cli::{Command, PlanCommand, RepoCommand};
 use diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use serde_json::{Value, json};
@@ -107,10 +108,17 @@ pub fn run() -> std::process::ExitCode {
                     emit_json(runtime_root::resolve_current_output())
                 } else if args.path {
                     emit_text(runtime_root::resolve_current_path_output())
+                } else if let Some(field) = args.field {
+                    let field = match field {
+                        RuntimeRootFieldCli::UpgradeEligible => {
+                            runtime_root::RuntimeRootField::UpgradeEligible
+                        }
+                    };
+                    emit_text(runtime_root::resolve_current_field_output(field))
                 } else {
                     emit_json::<Value, JsonFailure>(Err(JsonFailure::new(
                         FailureClass::InvalidCommandInput,
-                        "repo runtime-root requires either --json or --path.",
+                        "repo runtime-root requires either --json, --path, or --field.",
                     )))
                 }
             }

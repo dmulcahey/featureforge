@@ -1,20 +1,20 @@
-#[path = "support/bin.rs"]
-mod bin_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/install.rs"]
+mod install_support;
 #[path = "support/json.rs"]
 mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
 
 use serde_json::Value;
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
 use files_support::write_file;
+use install_support::install_compiled_featureforge;
 use json_support::parse_json;
 use process_support::{repo_root, run, run_checked};
 
@@ -65,17 +65,14 @@ fn canonical_decision_path(state_dir: &Path, session_key: &str) -> PathBuf {
 }
 
 fn run_bash_block(state_dir: &Path, home_dir: &Path, script: &str, context: &str) -> Output {
+    install_compiled_featureforge(home_dir);
     let mut command = Command::new("bash");
     command
         .arg("-lc")
         .arg(script)
         .current_dir(repo_root())
         .env("FEATUREFORGE_STATE_DIR", state_dir)
-        .env("HOME", home_dir)
-        .env(
-            "FEATUREFORGE_COMPAT_BIN",
-            bin_support::compiled_featureforge_path(),
-        );
+        .env("HOME", home_dir);
     run(command, context)
 }
 
@@ -85,16 +82,6 @@ fn run_bash_block_without_override(
     script: &str,
     context: &str,
 ) -> Output {
-    let featureforge_bin_dir = bin_support::compiled_featureforge_path()
-        .parent()
-        .expect("compiled featureforge binary should have a parent directory")
-        .to_path_buf();
-    let mut path_entries = vec![featureforge_bin_dir];
-    if let Some(existing_path) = env::var_os("PATH") {
-        path_entries.extend(env::split_paths(&existing_path));
-    }
-    let path = env::join_paths(path_entries)
-        .expect("PATH should be joinable for using-featureforge skill tests");
     let mut command = Command::new("bash");
     command
         .arg("-lc")
@@ -102,7 +89,6 @@ fn run_bash_block_without_override(
         .current_dir(repo_root())
         .env("FEATUREFORGE_STATE_DIR", state_dir)
         .env("HOME", home_dir);
-    command.env("PATH", path);
     run(command, context)
 }
 
@@ -131,7 +117,7 @@ fn simulate_supported_entry(
         r#"
 set -euo pipefail
 {preamble}
-_resolve_json="$("$FEATUREFORGE_COMPAT_BIN" session-entry resolve --message-file "$SP_TEST_MESSAGE_FILE" --session-key "$SP_TEST_SESSION_KEY")"
+_resolve_json="$("$_FEATUREFORGE_BIN" session-entry resolve --message-file "$SP_TEST_MESSAGE_FILE" --session-key "$SP_TEST_SESSION_KEY")"
 eval "$(
   RESOLVE_JSON="$_resolve_json" python3 - <<'PY'
 import json
@@ -193,6 +179,7 @@ PY
 "#
     );
 
+    install_compiled_featureforge(home_dir);
     let output = run_checked(
         {
             let mut command = Command::new("bash");
@@ -202,10 +189,6 @@ PY
                 .current_dir(repo_root())
                 .env("FEATUREFORGE_STATE_DIR", state_dir)
                 .env("HOME", home_dir)
-                .env(
-                    "FEATUREFORGE_COMPAT_BIN",
-                    bin_support::compiled_featureforge_path(),
-                )
                 .env("SP_TEST_MESSAGE_FILE", &message_file)
                 .env("SP_TEST_SESSION_KEY", session_key);
             command
@@ -293,7 +276,7 @@ fn using_featureforge_preamble_requires_the_packaged_runtime_binary() {
     assert_eq!(
         stdout.trim_end(),
         "",
-        "using-featureforge preamble should not guess a runtime root from PATH without the packaged compat binary"
+        "using-featureforge preamble should not guess a runtime root without the packaged install binary"
     );
 }
 

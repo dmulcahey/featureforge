@@ -1,3 +1,5 @@
+#[path = "support/install.rs"]
+mod install_support;
 #[path = "support/process.rs"]
 mod process_support;
 
@@ -8,6 +10,7 @@ use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 
+use install_support::canonical_install_bin;
 use process_support::{repo_root, run, run_checked};
 
 fn read_utf8(path: impl AsRef<Path>) -> String {
@@ -1442,7 +1445,13 @@ fn using_featureforge_preamble_uses_only_the_packaged_runtime_binary() {
     let packaged_runtime = tmp_root.path().join("packaged-runtime");
     fs::create_dir_all(&packaged_runtime).expect("packaged runtime should exist");
     make_runtime_repo(&packaged_runtime);
-    let packaged_bin = packaged_runtime.join("bin/featureforge");
+    let packaged_bin = canonical_install_bin(&shared_home);
+    fs::create_dir_all(
+        packaged_bin
+            .parent()
+            .expect("packaged install binary should have a parent"),
+    )
+    .expect("packaged install parent should exist");
     let expected_runtime_root =
         fs::canonicalize(&packaged_runtime).expect("packaged runtime should canonicalize");
     fs::write(
@@ -1471,8 +1480,7 @@ fn using_featureforge_preamble_uses_only_the_packaged_runtime_binary() {
             "{preamble}\nprintf \"FEATUREFORGE_ROOT=%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"
         ))
         .current_dir(&repo_candidate)
-        .env("HOME", &shared_home)
-        .env("FEATUREFORGE_COMPAT_BIN", &packaged_bin);
+        .env("HOME", &shared_home);
     let packaged = run_checked(packaged_command, "run packaged using-featureforge preamble");
     let packaged_stdout =
         String::from_utf8(packaged.stdout).expect("preamble output should be utf8");
@@ -1487,6 +1495,8 @@ fn using_featureforge_preamble_uses_only_the_packaged_runtime_binary() {
     let mut git_init = Command::new("git");
     git_init.arg("init").current_dir(&non_runtime_repo);
     run_checked(git_init, "git init non-runtime repo");
+    let missing_packaged_home = tmp_root.path().join("missing-packaged-home");
+    fs::create_dir_all(&missing_packaged_home).expect("missing packaged home should exist");
 
     let mut no_fallback_command = Command::new("bash");
     no_fallback_command
@@ -1495,7 +1505,7 @@ fn using_featureforge_preamble_uses_only_the_packaged_runtime_binary() {
             "{preamble}\nprintf \"FEATUREFORGE_ROOT=%s\\n\" \"$_FEATUREFORGE_ROOT\"\n"
         ))
         .current_dir(&non_runtime_repo)
-        .env("HOME", &shared_home);
+        .env("HOME", &missing_packaged_home);
     let no_fallback = run_checked(
         no_fallback_command,
         "run using-featureforge preamble without packaged binary",

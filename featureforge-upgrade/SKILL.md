@@ -13,11 +13,12 @@ This section is referenced by all skill preambles when they detect `UPGRADE_AVAI
 
 ### Step 1: Resolve install root
 
-Reuse the already selected runtime root when it is available. Otherwise resolve the active install once through the packaged compat binary and reuse it for the rest of the flow:
+Reuse the already selected runtime root when it is available. Otherwise resolve the active install once through the packaged install binary and reuse it for the rest of the flow:
 
 ```bash
-FEATUREFORGE_RUNTIME_BIN="${_FEATUREFORGE_BIN:-${FEATUREFORGE_COMPAT_BIN:-}}"
+FEATUREFORGE_RUNTIME_BIN="${_FEATUREFORGE_BIN:-$HOME/.featureforge/install/bin/featureforge}"
 INSTALL_DIR="${_FEATUREFORGE_ROOT:-}"
+UPGRADE_ELIGIBLE=""
 
 if [ -z "$FEATUREFORGE_RUNTIME_BIN" ] || [ ! -x "$FEATUREFORGE_RUNTIME_BIN" ]; then
   echo "ERROR: featureforge runtime-root helper unavailable"
@@ -41,8 +42,19 @@ if [ ! -x "$INSTALL_DIR/bin/featureforge" ]; then
   exit 1
 fi
 
+if ! UPGRADE_ELIGIBLE=$(FEATUREFORGE_DIR="$INSTALL_DIR" "$FEATUREFORGE_RUNTIME_BIN" repo runtime-root --field upgrade-eligible 2>/dev/null); then
+  echo "ERROR: featureforge runtime-root helper unavailable"
+  exit 1
+fi
+
+if [ "$UPGRADE_ELIGIBLE" != "true" ]; then
+  echo "ERROR: featureforge runtime root is not upgrade-eligible"
+  exit 1
+fi
+
 echo "INSTALL_DIR=$INSTALL_DIR"
 echo "FEATUREFORGE_RUNTIME_BIN=$FEATUREFORGE_RUNTIME_BIN"
+echo "UPGRADE_ELIGIBLE=$UPGRADE_ELIGIBLE"
 ```
 
 ### Step 2: Resolve versions and auto-upgrade preference

@@ -61,7 +61,8 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   const baseShell = buildBaseShellLines().join('\n');
 
   assert.match(rootDetection, /repo runtime-root --path/);
-  assert.match(rootDetection, /FEATUREFORGE_COMPAT_BIN/);
+  assert.match(rootDetection, /\$HOME\/\.featureforge\/install/);
+  assert.match(rootDetection, /_FEATUREFORGE_INSTALL_ROOT/);
   assert.doesNotMatch(rootDetection, /_REPO_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(rootDetection, /command -v featureforge/);
   assert.doesNotMatch(rootDetection, /_IS_FEATUREFORGE_RUNTIME_ROOT/);
@@ -70,9 +71,10 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   assert.doesNotMatch(rootDetection, /sed -n/);
 
   // Intentional invariant: generated skill runtime commands must stay on the
-  // packaged compat binary. Runtime-root resolution only selects companion
-  // files from the install. It must NEVER switch runtime execution back to a
-  // root-selected binary or a PATH-selected fallback.
+  // packaged install binary at ~/.featureforge/install/bin/featureforge.
+  // Runtime-root resolution only selects companion files from the install. It
+  // must NEVER switch runtime execution back to a root-selected binary or a
+  // PATH-selected fallback.
   assert.match(baseShell, /repo runtime-root --path/);
   assert.match(baseShell, /"\$_FEATUREFORGE_BIN" update-check/);
   assert.match(baseShell, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/);

@@ -2531,8 +2531,15 @@ fn latest_completed_attempt<'a>(evidence: &'a ExecutionEvidence) -> Option<&'a E
     evidence
         .attempts
         .iter()
-        .rev()
-        .find(|attempt| attempt.status == "Completed")
+        .enumerate()
+        .filter(|(_, attempt)| attempt.status == "Completed")
+        .max_by(|(left_index, left_attempt), (right_index, right_attempt)| {
+            left_attempt
+                .recorded_at
+                .cmp(&right_attempt.recorded_at)
+                .then_with(|| left_index.cmp(right_index))
+        })
+        .map(|(_, attempt)| attempt)
 }
 
 fn latest_attempt_for_step<'a>(

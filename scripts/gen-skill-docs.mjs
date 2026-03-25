@@ -15,9 +15,10 @@ export function buildRootDetection() {
     '[ -n "$_BRANCH_RAW" ] || _BRANCH_RAW="current"',
     '[ "$_BRANCH_RAW" != "HEAD" ] || _BRANCH_RAW="current"',
     '_BRANCH="$_BRANCH_RAW"',
+    '_FEATUREFORGE_INSTALL_ROOT="$HOME/.featureforge/install"',
     '_FEATUREFORGE_ROOT=""',
-    '_FEATUREFORGE_BIN=""',
-    '[ -n "${FEATUREFORGE_COMPAT_BIN:-}" ] && [ -x "$FEATUREFORGE_COMPAT_BIN" ] && _FEATUREFORGE_BIN="$FEATUREFORGE_COMPAT_BIN"',
+    '_FEATUREFORGE_BIN="$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge"',
+    '[ -x "$_FEATUREFORGE_BIN" ] || _FEATUREFORGE_BIN=""',
     '_FEATUREFORGE_RUNTIME_ROOT_PATH=""',
     'if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_PATH=$("$_FEATUREFORGE_BIN" repo runtime-root --path 2>/dev/null); then',
     '  [ -n "$_FEATUREFORGE_RUNTIME_ROOT_PATH" ] && _FEATUREFORGE_ROOT="$_FEATUREFORGE_RUNTIME_ROOT_PATH"',
@@ -60,7 +61,7 @@ export function buildReviewShellLines() {
 }
 
 export function buildUpgradeNote() {
-  return 'If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the already selected runtime root in `$_FEATUREFORGE_ROOT`; if that root is not set yet, resolve it through the packaged compat binary in `$_FEATUREFORGE_BIN` and stop instead of guessing an install path. Then follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the packaged helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.';
+  return 'If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the already selected runtime root in `$_FEATUREFORGE_ROOT`; if that root is not set yet, resolve it through the packaged install binary in `$_FEATUREFORGE_BIN` and stop instead of guessing an install path. Then follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the packaged helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.';
 }
 
 export function buildSearchBeforeBuildingSection() {
@@ -97,7 +98,7 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 export function buildUsingFeatureForgeBypassGateSection() {
   return `## Bypass Gate
 
-The first-turn session-entry bootstrap is owned by the packaged compat binary command \`$_FEATUREFORGE_BIN session-entry\`, not by \`using-featureforge\` prose alone.
+The first-turn session-entry bootstrap is owned by the packaged install binary command \`$_FEATUREFORGE_BIN session-entry\`, not by \`using-featureforge\` prose alone.
 
 This skill documents the supported-entry contract:
 
