@@ -775,8 +775,8 @@
 **Invalidation Reason:** Rebuilt evidence after later review-approved changes updated previously proven files.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-25T17:29:48.838199Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-25T17:32:32.395931Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 3
 **Step Number:** 6
@@ -787,6 +787,21 @@
 **Files Proven:**
 - TODOS.md | sha256:938849fa39e570df791900b3fad10c282c15974592bfae2f0581e0c8dc5f0790
 **Verification Summary:** Manual inspection only: Rebuilt evidence after the review-remediation slice added repo runtime-root --path, refreshed generated skill docs, updated release docs, and rebuilt the checked-in darwin and windows runtimes. Current verification is green: node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs -> 44 passed, 0 failed; cargo nextest run --test runtime_root_cli --test upgrade_skill --test runtime_instruction_contracts --test using_featureforge_skill -> 30 passed, 0 failed; cargo nextest run --test powershell_wrapper_resolution --test runtime_instruction_contracts -> 21 passed, 0 failed.
+**Invalidation Reason:** Rebuilt evidence after adding follow-up TODOs that changed the already-proven TODO ledger.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-25T17:32:32.518708Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 6
+**Packet Fingerprint:** fc5aeb68cba0603a5946de1628c3cfa55be0d46de523ead33845beeadf08ca08
+**Head SHA:** c04030024ad1080af1b66971d2732b29dd06e8d1
+**Base SHA:** c04030024ad1080af1b66971d2732b29dd06e8d1
+**Claim:** Removed completed cutover and nested-session items from TODOs so only the remaining first-entry session gate follow-up stays open.
+**Files Proven:**
+- TODOS.md | sha256:b9e8ecc6cee84e1036e306432fd73ba0661462beb1e0e2223106fcd975b399e7
+**Verification Summary:** Manual inspection only: Rebuilt Task 3 Step 6 evidence after adding follow-up TODOs for runtime-dependency guardrails and review-subagent enforcement; the underlying cutover cleanup remains intact, and the current targeted validation remains the same green state already recorded for the remediation follow-up slice.
 **Invalidation Reason:** N/A
 
 ### Task 3 Step 7
