@@ -105,7 +105,6 @@ Core validation:
 node scripts/gen-skill-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test contracts_spec_plan --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
-bash tests/differential/run_legacy_vs_rust.sh
 ```
 
 ## Updating

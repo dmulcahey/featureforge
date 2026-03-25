@@ -338,6 +338,11 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
     );
     assert_not_contains(
         &readme_content,
+        "bash tests/differential/run_legacy_vs_rust.sh",
+        "README.md",
+    );
+    assert_not_contains(
+        &readme_content,
         "bash tests/codex-runtime/test-runtime-instructions.sh",
         "README.md",
     );
@@ -362,7 +367,13 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
         "cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill",
         "docs/testing.md",
     );
+    assert_contains(
+        &docs_testing_content,
+        "workflow-status snapshot coverage for the ambiguous-spec route lives in `tests/workflow_runtime.rs`",
+        "docs/testing.md",
+    );
     for legacy_command in [
+        "bash tests/differential/run_legacy_vs_rust.sh",
         "bash tests/codex-runtime/test-runtime-instructions.sh",
         "bash tests/codex-runtime/test-workflow-enhancements.sh",
         "bash tests/codex-runtime/test-workflow-sequencing.sh",
@@ -377,6 +388,33 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
         &docs_testing_content,
         "Legacy `tests/codex-runtime/*.sh` harnesses have been removed",
         "docs/testing.md",
+    );
+}
+
+#[test]
+fn runtime_docs_and_fixtures_do_not_depend_on_the_removed_differential_shell_harness() {
+    let root = repo_root();
+
+    assert!(
+        !root.join("tests/differential/run_legacy_vs_rust.sh").exists(),
+        "tests/differential/run_legacy_vs_rust.sh should be removed once the snapshot lives in workflow_runtime.rs"
+    );
+    assert!(
+        !root.join("tests/differential/README.md").exists(),
+        "tests/differential/README.md should be removed once the shell harness is gone"
+    );
+
+    assert_file_not_contains(root.join("README.md"), "run_legacy_vs_rust.sh");
+    assert_file_not_contains(root.join("docs/testing.md"), "run_legacy_vs_rust.sh");
+    assert_file_not_contains(root.join("docs/test-suite-enhancement-plan.md"), "tests/differential/");
+    assert_file_contains(
+        root.join("docs/testing.md"),
+        "workflow-status snapshot coverage for the ambiguous-spec route lives in `tests/workflow_runtime.rs`",
+    );
+    assert!(
+        root.join("tests/fixtures/differential/workflow-status.json")
+            .is_file(),
+        "the checked-in workflow-status snapshot fixture should remain available"
     );
 }
 
