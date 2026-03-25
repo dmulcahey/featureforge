@@ -299,6 +299,30 @@ fn featureforge_cutover_gate_rejects_active_legacy_root_content() {
 }
 
 #[test]
+fn featureforge_cutover_gate_rejects_punctuation_delimited_legacy_root_content() {
+    let (repo_dir, _state_dir) = init_repo("cutover-punctuation-content");
+    let repo = repo_dir.path();
+    install_cutover_check_baseline(repo);
+    write_repo_file(
+        repo,
+        "docs/runtime.md",
+        "Retired paths like (~/.codex/featureforge) or ~/.copilot/featureforge, must stay blocked.\n",
+    );
+    git_add_all(repo);
+
+    let output = run_cutover_check(repo);
+    assert!(
+        !output.status.success(),
+        "cutover check should fail on punctuation-delimited legacy-root content\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Forbidden active content references:"));
+    assert!(stderr.contains("docs/runtime.md:1"));
+}
+
+#[test]
 fn featureforge_cutover_gate_scans_repo_wide_tracked_files() {
     let (repo_dir, _state_dir) = init_repo("cutover-repo-bounded");
     let repo = repo_dir.path();

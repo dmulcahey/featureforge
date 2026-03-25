@@ -5,7 +5,9 @@ DEFAULT_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="${FEATUREFORGE_CUTOVER_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 cd "$REPO_ROOT"
 
-LEGACY_ROOT_REGEX='\.(codex|copilot)/featureforge([/[:space:]`"'"'"']|$)'
+# Match the exact retired root even when prose wraps it in punctuation or
+# markdown delimiters instead of only slash-delimited path forms.
+LEGACY_ROOT_REGEX='\.(codex|copilot)/featureforg[e]([^[:alnum:]_-]|$)'
 
 fail() {
   printf 'cutover check failed: %s\n' "$1" >&2
