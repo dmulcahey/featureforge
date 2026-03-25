@@ -16,6 +16,7 @@ Six layers matter:
 
 - `featureforge session-entry` owns first-turn session entry.
 - `using-featureforge` is the human-readable entry router after session entry resolves to `enabled`.
+- generated skill preambles resolve the active runtime root through `featureforge repo runtime-root --json` before they run update checks or contributor-mode lookups.
 - `featureforge workflow` owns product-work routing up to `implementation_ready`.
 - `featureforge repo-safety` owns protected branches and repo-write guarantees.
 - `featureforge plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.
@@ -99,6 +100,8 @@ node scripts/gen-skill-docs.mjs
 node scripts/gen-agent-docs.mjs
 ```
 
+The canonical deterministic validation matrix and change-scoped commands live in [docs/testing.md](docs/testing.md).
+
 Core validation:
 
 ```bash
@@ -119,4 +122,4 @@ If your platform copies the reviewer artifact instead of symlinking it, refresh 
 
 ## Support
 
-Open an issue in the repository that hosts this checkout, or start with the checked-in install and testing docs linked above.
+Open an issue in the repository that hosts this checkout, or start with the checked-in install docs and [docs/testing.md](docs/testing.md).

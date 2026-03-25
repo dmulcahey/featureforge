@@ -85,7 +85,7 @@ fn make_runtime_root(dir: &Path) {
     fs::create_dir_all(dir.join("bin")).expect("runtime bin dir should exist");
     fs::write(
         dir.join("bin/featureforge"),
-        "#!/usr/bin/env bash\ncase \"${1:-}\" in\n  update-check)\n    exit 0\n    ;;\n  config)\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
+        "#!/usr/bin/env bash\ncase \"${1:-}\" in\n  repo)\n    if [ \"${2:-}\" = \"runtime-root\" ] && [ \"${3:-}\" = \"--json\" ]; then\n      printf '{\"resolved\":true,\"root\":\"%s\",\"source\":\"featureforge_dir\",\"validation\":{\"has_version\":true,\"has_binary\":true,\"upgrade_eligible\":true}}\\n' \"$(pwd -P)\"\n      exit 0\n    fi\n    exit 0\n    ;;\n  update-check)\n    exit 0\n    ;;\n  config)\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n",
     )
     .expect("runtime launcher should be writable");
     #[cfg(unix)]
@@ -365,6 +365,16 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
     assert_contains(
         &docs_testing_content,
         "cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "node scripts/gen-agent-docs.mjs --check",
+        "docs/testing.md",
+    );
+    assert_not_contains(
+        &docs_testing_content,
+        "cargo nextest run --test contracts_spec_plan --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill",
         "docs/testing.md",
     );
     assert_contains(
@@ -1298,7 +1308,7 @@ fn spawned_subagent_marker_contracts_are_documented_consistently() {
 }
 
 #[test]
-fn using_featureforge_preamble_prefers_valid_repo_roots_over_fallback_installs() {
+fn using_featureforge_preamble_prefers_valid_repo_roots_and_does_not_guess_fallback_installs() {
     let content = read_utf8(repo_root().join("skills/using-featureforge/SKILL.md"));
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
     let tmp_root = TempDir::new().expect("temp root should exist");
@@ -1350,10 +1360,12 @@ fn using_featureforge_preamble_prefers_valid_repo_roots_over_fallback_installs()
         String::from_utf8(fallback.stdout).expect("fallback output should be utf8");
     assert_contains(
         &fallback_stdout,
-        &format!(
-            "FEATUREFORGE_ROOT={}",
-            invalid_home.join(".featureforge/install").display()
-        ),
+        "FEATUREFORGE_ROOT=",
+        "using-featureforge fallback output",
+    );
+    assert_not_contains(
+        &fallback_stdout,
+        &invalid_home.join(".featureforge/install").display().to_string(),
         "using-featureforge fallback output",
     );
 }

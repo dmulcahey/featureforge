@@ -681,3 +681,19 @@ test('repo-owned operator docs move to canonical runtime command vocabulary', ()
     );
   }
 });
+
+test('release-facing docs point at docs/testing.md as the canonical validation entrypoint', () => {
+  for (const relativePath of [
+    'README.md',
+    'docs/README.codex.md',
+    'docs/README.copilot.md',
+    '.codex/INSTALL.md',
+    '.copilot/INSTALL.md',
+  ]) {
+    assert.match(
+      readUtf8(path.join(REPO_ROOT, relativePath)),
+      /docs\/testing\.md/,
+      `${relativePath} should point readers at docs/testing.md for the canonical validation matrix`,
+    );
+  }
+});

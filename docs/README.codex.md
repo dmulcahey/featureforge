@@ -12,6 +12,8 @@ For a fresh Codex session, the minimal instruction is:
 Follow the checked-in instructions in .codex/INSTALL.md from this repository.
 ```
 
+For the canonical validation matrix after install or update, see [docs/testing.md](testing.md).
+
 ## Discovery Layout
 
 FeatureForge installs through one shared checkout:
@@ -46,6 +48,7 @@ The supported command families are:
 - `featureforge plan execution`
 - `featureforge config`
 - `featureforge update-check`
+- `featureforge repo runtime-root`
 - `featureforge repo slug`
 
 ## Workflow Summary
@@ -55,6 +58,7 @@ FeatureForge routes product work conservatively from repo-visible artifacts.
 Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.
 
 - `using-featureforge` is the human-readable entry router after `featureforge session-entry`
+- generated skill preambles resolve the active runtime root through `featureforge repo runtime-root --json` before update checks or contributor-mode reads
 - `featureforge workflow status --refresh` re-derives the safe next stage from active specs and plans
 - `featureforge plan contract` compiles approved markdown into exact execution and review inputs
 - `featureforge plan execution recommend --plan <approved-plan-path>` selects the execution mode before work starts
