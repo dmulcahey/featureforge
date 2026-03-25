@@ -151,6 +151,28 @@ fn make_valid_install(dir: &Path, git_mode: &str) {
     }
 }
 
+fn make_windows_only_install(dir: &Path, git_mode: &str) {
+    fs::create_dir_all(dir.join("bin")).expect("windows install bin dir should exist");
+    write_file(&dir.join("bin/featureforge.exe"), "");
+    make_executable(&dir.join("bin/featureforge.exe"));
+    write_file(&dir.join("VERSION"), "1.0.0\n");
+    write_canonical_prebuilt_layout(
+        dir,
+        "1.0.0",
+        "#!/usr/bin/env bash\nprintf 'darwin runtime\\n'\n",
+        "windows runtime\n",
+    );
+    match git_mode {
+        "dir" => {
+            fs::create_dir_all(dir.join(".git")).expect(".git dir should exist");
+        }
+        "file" => {
+            write_file(&dir.join(".git"), "gitdir: /tmp/fake-worktree\n");
+        }
+        _ => panic!("unexpected git mode {git_mode}"),
+    }
+}
+
 fn write_mock_featureforge(bin_dir: &Path, script_body: &str) {
     fs::create_dir_all(bin_dir).expect("mock featureforge bin dir should exist");
     let helper_path = bin_dir.join("featureforge");
@@ -179,7 +201,9 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "repo runtime-root --field upgrade-eligible",
         "UPGRADE_ELIGIBLE=",
         "bin/featureforge",
+        "bin/featureforge.exe",
         "FEATUREFORGE_RUNTIME_BIN",
+        "INSTALL_RUNTIME_BIN=",
         "VERSION",
         "ERROR: featureforge runtime-root helper unavailable",
         "ERROR: featureforge runtime root unavailable",
@@ -331,6 +355,37 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         &selected_bin_stdout,
         &format!("INSTALL_DIR={}", selected_bin_runtime.display()),
         "upgrade skill step 1 prefers selected runtime binary",
+    );
+
+    let windows_only_runtime = tmp_root.path().join("windows-only-runtime");
+    make_windows_only_install(&windows_only_runtime, "dir");
+    install_mock_featureforge(
+        &home_dir,
+        &format!(
+            "#!/usr/bin/env bash\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--path\" ]; then\n  printf '%s' '{}'\n  exit 0\nfi\nif [ \"${{1:-}}\" = \"repo\" ] && [ \"${{2:-}}\" = \"runtime-root\" ] && [ \"${{3:-}}\" = \"--field\" ] && [ \"${{4:-}}\" = \"upgrade-eligible\" ]; then\n  printf 'true\\n'\n  exit 0\nfi\nexit 0\n",
+            resolved_runtime_root_path(&windows_only_runtime)
+        ),
+    );
+    let windows_only_output = run_bash_block(
+        &current_root,
+        &home_dir,
+        &step_one,
+        &[],
+        "upgrade skill step 1 windows-only runtime",
+    );
+    let windows_only_stdout = String::from_utf8_lossy(&windows_only_output.stdout);
+    assert_contains(
+        &windows_only_stdout,
+        &format!("INSTALL_DIR={}", windows_only_runtime.display()),
+        "upgrade skill step 1 windows-only runtime",
+    );
+    assert_contains(
+        &windows_only_stdout,
+        &format!(
+            "INSTALL_RUNTIME_BIN={}",
+            windows_only_runtime.join("bin/featureforge.exe").display()
+        ),
+        "upgrade skill step 1 windows-only runtime",
     );
 
     install_mock_featureforge(&home_dir, "#!/usr/bin/env bash\nexit 0\n");

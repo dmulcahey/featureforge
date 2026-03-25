@@ -19,6 +19,19 @@ Reuse the already selected runtime root when it is available. Otherwise resolve 
 FEATUREFORGE_RUNTIME_BIN="${_FEATUREFORGE_BIN:-$HOME/.featureforge/install/bin/featureforge}"
 INSTALL_DIR="${_FEATUREFORGE_ROOT:-}"
 UPGRADE_ELIGIBLE=""
+INSTALL_RUNTIME_BIN=""
+
+_FEATUREFORGE_INSTALL_RUNTIME_BIN() {
+  if [ -x "$INSTALL_DIR/bin/featureforge" ]; then
+    printf '%s\n' "$INSTALL_DIR/bin/featureforge"
+    return 0
+  fi
+  if [ -f "$INSTALL_DIR/bin/featureforge.exe" ]; then
+    printf '%s\n' "$INSTALL_DIR/bin/featureforge.exe"
+    return 0
+  fi
+  return 1
+}
 
 if [ -z "$FEATUREFORGE_RUNTIME_BIN" ] || [ ! -x "$FEATUREFORGE_RUNTIME_BIN" ]; then
   echo "ERROR: featureforge runtime-root helper unavailable"
@@ -37,7 +50,7 @@ if [ -z "$INSTALL_DIR" ]; then
   exit 1
 fi
 
-if [ ! -x "$INSTALL_DIR/bin/featureforge" ]; then
+if ! INSTALL_RUNTIME_BIN=$(_FEATUREFORGE_INSTALL_RUNTIME_BIN); then
   echo "ERROR: featureforge runtime root returned no executable featureforge binary"
   exit 1
 fi
@@ -54,6 +67,7 @@ fi
 
 echo "INSTALL_DIR=$INSTALL_DIR"
 echo "FEATUREFORGE_RUNTIME_BIN=$FEATUREFORGE_RUNTIME_BIN"
+echo "INSTALL_RUNTIME_BIN=$INSTALL_RUNTIME_BIN"
 echo "UPGRADE_ELIGIBLE=$UPGRADE_ELIGIBLE"
 ```
 
