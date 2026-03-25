@@ -2,6 +2,8 @@
 mod executable_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/prebuilt.rs"]
+mod prebuilt_support;
 #[path = "support/process.rs"]
 mod process_support;
 
@@ -13,6 +15,10 @@ use tempfile::TempDir;
 
 use executable_support::make_executable;
 use files_support::write_file;
+use prebuilt_support::{
+    DARWIN_ARM64_BINARY_REL, DARWIN_ARM64_CHECKSUM_REL, WINDOWS_X64_BINARY_REL,
+    WINDOWS_X64_CHECKSUM_REL, write_canonical_prebuilt_layout,
+};
 use process_support::{repo_root, run};
 
 fn skill_doc_path() -> PathBuf {
@@ -91,6 +97,12 @@ fn make_valid_install(dir: &Path, git_mode: &str) {
     write_file(&dir.join("bin/featureforge"), "");
     make_executable(&dir.join("bin/featureforge"));
     write_file(&dir.join("VERSION"), "1.0.0\n");
+    write_canonical_prebuilt_layout(
+        dir,
+        "1.0.0",
+        "#!/usr/bin/env bash\nprintf 'darwin runtime\\n'\n",
+        "windows runtime\n",
+    );
     match git_mode {
         "dir" => {
             fs::create_dir_all(dir.join(".git")).expect(".git dir should exist");
@@ -289,6 +301,25 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "ERROR: featureforge runtime-root helper unavailable",
         "upgrade skill step 1 unavailable helper",
     );
+}
+
+#[test]
+fn valid_install_fixture_includes_checked_in_prebuilt_layout() {
+    let install_root = TempDir::new().expect("install root tempdir should exist");
+    make_valid_install(install_root.path(), "dir");
+
+    for relative in [
+        DARWIN_ARM64_BINARY_REL,
+        DARWIN_ARM64_CHECKSUM_REL,
+        WINDOWS_X64_BINARY_REL,
+        WINDOWS_X64_CHECKSUM_REL,
+        "bin/prebuilt/manifest.json",
+    ] {
+        assert!(
+            install_root.path().join(relative).is_file(),
+            "valid install fixture should include {relative}"
+        );
+    }
 }
 
 #[test]

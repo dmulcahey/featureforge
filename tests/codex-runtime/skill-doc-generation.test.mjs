@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
@@ -67,12 +68,67 @@ test('gen-skill-docs --check exits successfully', () => {
   assert.match(result.stdout, /Generated skill docs are up to date\./);
 });
 
+test('gen-skill-docs --check fails on stale generated artifacts', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'featureforge-skill-docs-'));
+
+  try {
+    fs.mkdirSync(path.join(tempRoot, 'scripts'), { recursive: true });
+    fs.copyFileSync(
+      path.join(REPO_ROOT, 'scripts/gen-skill-docs.mjs'),
+      path.join(tempRoot, 'scripts/gen-skill-docs.mjs'),
+    );
+    fs.cpSync(path.join(REPO_ROOT, 'skills'), path.join(tempRoot, 'skills'), { recursive: true });
+
+    fs.appendFileSync(path.join(tempRoot, 'skills/brainstorming/SKILL.md'), '\n<!-- stale generated artifact -->\n');
+
+    const result = spawnSync('node', ['scripts/gen-skill-docs.mjs', '--check'], {
+      cwd: tempRoot,
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0, 'stale generated docs should fail the freshness check');
+    assert.match(result.stdout + result.stderr, /Generated skill docs are stale:/);
+    assert.match(result.stdout + result.stderr, /skills\/brainstorming\/SKILL\.md/);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('upgrade instructions use the runtime-root helper instead of embedded root-search order', () => {
   const upgradeSkill = readUtf8(path.join(REPO_ROOT, 'featureforge-upgrade', 'SKILL.md'));
 
   assert.match(upgradeSkill, /featureforge repo runtime-root --json/);
   assert.doesNotMatch(upgradeSkill, /\.codex\/featureforge/);
   assert.doesNotMatch(upgradeSkill, /\.copilot\/featureforge/);
+});
+
+test('active public and generated surfaces do not advertise retired legacy install roots', () => {
+  const legacyRootPattern = /\.(codex|copilot)\/featureforge\b/;
+  const surfacePaths = [
+    'scripts/gen-skill-docs.mjs',
+    'featureforge-upgrade/SKILL.md',
+    'README.md',
+    'docs/README.codex.md',
+    'docs/README.copilot.md',
+    '.codex/INSTALL.md',
+    '.copilot/INSTALL.md',
+  ];
+
+  for (const relativePath of surfacePaths) {
+    assert.doesNotMatch(
+      readUtf8(path.join(REPO_ROOT, relativePath)),
+      legacyRootPattern,
+      `${relativePath} should not mention retired legacy install roots`,
+    );
+  }
+
+  for (const skill of listGeneratedSkills()) {
+    assert.doesNotMatch(
+      readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md')),
+      legacyRootPattern,
+      `${skill} generated skill doc should not mention retired legacy install roots`,
+    );
+  }
 });
 
 test('workflow-status ambiguity snapshot stays checked in and is covered by workflow_runtime', () => {
