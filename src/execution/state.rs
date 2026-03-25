@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::cli::plan_execution::{
     BeginArgs, CompleteArgs, NoteArgs, RecommendArgs, ReopenArgs, StatusArgs, TransferArgs,
 };
+use crate::cli::repo_safety::RepoSafetyCheckArgs;
 use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::git::discover_repo_identity;
@@ -17,6 +19,7 @@ use crate::paths::{
     normalize_whitespace,
 };
 use crate::repo_safety::RepoSafetyRuntime;
+use crate::workflow::manifest::{ManifestLoadResult, WorkflowManifest, load_manifest_read_only};
 
 pub const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
@@ -448,17 +451,20 @@ pub fn load_execution_context(
             "Approved plan source spec does not exist.",
         )
     })?;
+    let matching_manifest = matching_workflow_manifest(&runtime);
     validate_source_spec(
         &source_spec_source,
         &plan_document.source_spec_path,
         plan_document.source_spec_revision,
-        &runtime.repo_root,
+        &runtime,
+        matching_manifest.as_ref(),
     )?;
     validate_unique_approved_plan(
         &plan_rel,
         &plan_document.source_spec_path,
         plan_document.source_spec_revision,
-        &runtime.repo_root,
+        &runtime,
+        matching_manifest.as_ref(),
     )?;
 
     let evidence_rel = derive_evidence_rel_path(&plan_rel, plan_document.plan_revision);
@@ -632,13 +638,37 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
             "Restore repository availability before continuing execution.",
         ),
     }
-    if let Err(error) = RepoSafetyRuntime::discover(&context.runtime.repo_root) {
-        gate.fail(
+    match RepoSafetyRuntime::discover(&context.runtime.repo_root) {
+        Ok(runtime) => {
+            let args = RepoSafetyCheckArgs {
+                intent: String::from("write"),
+                stage: repo_safety_stage(context),
+                task_id: Some(context.plan_rel.clone()),
+                paths: vec![context.plan_rel.clone()],
+                write_targets: vec![String::from("execution-task-slice")],
+            };
+            match runtime.check(&args) {
+                Ok(result) if result.outcome == "blocked" => gate.fail(
+                    FailureClass::WorkspaceNotSafe,
+                    &result.reason,
+                    repo_safety_preflight_message(&result),
+                    repo_safety_preflight_remediation(&result),
+                ),
+                Ok(_) => {}
+                Err(error) => gate.fail(
+                    FailureClass::WorkspaceNotSafe,
+                    "repo_safety_unavailable",
+                    error.message(),
+                    "Restore repo-safety availability before continuing execution.",
+                ),
+            }
+        }
+        Err(error) => gate.fail(
             FailureClass::WorkspaceNotSafe,
             "repo_safety_unavailable",
             error.message(),
             "Restore repo-safety availability before continuing execution.",
-        );
+        ),
     }
     match repo_has_tracked_worktree_changes(&context.runtime.repo_root) {
         Ok(true) => gate.fail(
@@ -1651,7 +1681,8 @@ fn validate_source_spec(
     source: &str,
     expected_path: &str,
     expected_revision: u32,
-    repo_root: &Path,
+    runtime: &ExecutionRuntime,
+    matching_manifest: Option<&WorkflowManifest>,
 ) -> Result<(), JsonFailure> {
     let headers = parse_headers(source);
     if headers.get("Workflow State") != Some(&String::from("CEO Approved")) {
@@ -1679,14 +1710,19 @@ fn validate_source_spec(
             ));
         }
     }
-    let approved_spec_candidates = approved_spec_candidate_paths(repo_root);
-    if approved_spec_candidates.len() > 1 {
+    let approved_spec_candidates = approved_spec_candidate_paths(&runtime.repo_root);
+    let manifest_selected_spec =
+        matching_manifest.is_some_and(|manifest| manifest.expected_spec_path == expected_path);
+    if approved_spec_candidates.len() > 1 && !manifest_selected_spec {
         return Err(JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             "Approved spec candidates are ambiguous.",
         ));
     }
-    if approved_spec_candidates.first().map(String::as_str) != Some(expected_path) {
+    if !approved_spec_candidates
+        .iter()
+        .any(|candidate| candidate == expected_path)
+    {
         return Err(JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             "Approved plan source spec path or revision is stale.",
@@ -1699,23 +1735,87 @@ fn validate_unique_approved_plan(
     expected_plan_path: &str,
     source_spec_path: &str,
     source_spec_revision: u32,
-    repo_root: &Path,
+    runtime: &ExecutionRuntime,
+    matching_manifest: Option<&WorkflowManifest>,
 ) -> Result<(), JsonFailure> {
     let approved_plan_candidates =
-        approved_plan_candidate_paths(repo_root, source_spec_path, source_spec_revision);
-    if approved_plan_candidates.len() > 1 {
+        approved_plan_candidate_paths(&runtime.repo_root, source_spec_path, source_spec_revision);
+    let manifest_selected_plan =
+        matching_manifest.is_some_and(|manifest| manifest.expected_plan_path == expected_plan_path);
+    if approved_plan_candidates.len() > 1 && !manifest_selected_plan {
         return Err(JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             "Approved plan candidates are ambiguous.",
         ));
     }
-    if approved_plan_candidates.first().map(String::as_str) != Some(expected_plan_path) {
+    if !approved_plan_candidates
+        .iter()
+        .any(|candidate| candidate == expected_plan_path)
+    {
         return Err(JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             "Approved plan is not the unique current approved plan for its source spec.",
         ));
     }
     Ok(())
+}
+
+fn matching_workflow_manifest(runtime: &ExecutionRuntime) -> Option<WorkflowManifest> {
+    let user_name = env::var("USER").unwrap_or_else(|_| String::from("user"));
+    let manifest_path = runtime
+        .state_dir
+        .join("projects")
+        .join(&runtime.repo_slug)
+        .join(format!(
+            "{user_name}-{}-workflow-state.json",
+            runtime.safe_branch
+        ));
+    let ManifestLoadResult::Loaded(manifest) = load_manifest_read_only(&manifest_path) else {
+        return None;
+    };
+    if manifest.repo_root == runtime.repo_root.to_string_lossy()
+        && manifest.branch == runtime.branch_name
+    {
+        Some(manifest)
+    } else {
+        None
+    }
+}
+
+fn repo_safety_stage(context: &ExecutionContext) -> String {
+    match context.plan_document.execution_mode.as_str() {
+        "featureforge:executing-plans" | "featureforge:subagent-driven-development" => {
+            context.plan_document.execution_mode.clone()
+        }
+        _ => String::from("featureforge:execution-preflight"),
+    }
+}
+
+fn repo_safety_preflight_message(result: &crate::repo_safety::RepoSafetyResult) -> String {
+    match result.failure_class.as_str() {
+        "ProtectedBranchDetected" => format!(
+            "Execution preflight cannot continue on protected branch {} without explicit approval.",
+            result.branch
+        ),
+        "ApprovalScopeMismatch" => String::from(
+            "Execution preflight repo-safety approval does not match the current scope.",
+        ),
+        "ApprovalFingerprintMismatch" => String::from(
+            "Execution preflight repo-safety approval does not match the current branch or write scope.",
+        ),
+        _ => String::from("Execution preflight is blocked by repo-safety policy."),
+    }
+}
+
+fn repo_safety_preflight_remediation(result: &crate::repo_safety::RepoSafetyResult) -> String {
+    if !result.suggested_next_skill.is_empty() {
+        format!(
+            "Use {} or explicitly approve the protected-branch execution scope before continuing.",
+            result.suggested_next_skill
+        )
+    } else {
+        String::from("Resolve the repo-safety blocker before continuing execution.")
+    }
 }
 
 fn repo_has_unresolved_index_entries(repo_root: &Path) -> Result<bool, JsonFailure> {

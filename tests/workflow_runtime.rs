@@ -107,14 +107,6 @@ fn set_remote_url(repo: &Path, url: &str) {
     run_checked(git_remote_set, "git remote set-url origin");
 }
 
-fn checkout_branch(repo: &Path, branch: &str) {
-    let mut git_checkout = Command::new("git");
-    git_checkout
-        .args(["checkout", "-B", branch])
-        .current_dir(repo);
-    run_checked(git_checkout, "git checkout branch");
-}
-
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
     let mut command = Command::new(compiled_featureforge_path());
     command
@@ -837,11 +829,19 @@ fn canonical_manifest_path_distinguishes_exact_branch_names() {
     let repo = repo_dir.path();
     let state = state_dir.path();
 
-    checkout_branch(repo, "feature/x");
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "feature/x"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout feature/x");
     let slash_identity = discover_repo_identity(repo).expect("feature/x identity should resolve");
     let slash_manifest_path = manifest_path(&slash_identity, state);
 
-    checkout_branch(repo, "feature-x");
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "feature-x"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout feature-x");
     let dash_identity = discover_repo_identity(repo).expect("feature-x identity should resolve");
     let dash_manifest_path = manifest_path(&dash_identity, state);
 
@@ -1047,6 +1047,99 @@ fn canonical_workflow_status_ignores_manifest_selected_plan_when_repo_root_misma
 }
 
 #[test]
+fn canonical_workflow_operator_accepts_manifest_selected_ready_route_with_extra_approved_candidates()
+ {
+    let (repo_dir, state_dir) = init_repo("workflow-manifest-selected-ready-route");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-manifest-selected-ready-route";
+    let spec_path = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
+    let plan_path = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let extra_spec_path = "docs/featureforge/specs/2026-03-24-extra-approved-spec.md";
+    let extra_plan_path = "docs/featureforge/plans/2026-03-24-extra-approved-plan.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-manifest-ready"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout workflow-manifest-ready");
+
+    install_full_contract_ready_artifacts(repo);
+    enable_session_decision(state, session_key);
+    write_file(
+        &repo.join(extra_spec_path),
+        "# Extra Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+    write_file(
+        &repo.join(extra_plan_path),
+        &format!(
+            "# Extra Approved Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n"
+        ),
+    );
+
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    write_manifest(
+        &manifest_path(&identity, state),
+        &WorkflowManifest {
+            version: 1,
+            repo_root: fs::canonicalize(repo)
+                .expect("repo root should canonicalize")
+                .to_string_lossy()
+                .into_owned(),
+            branch: identity.branch_name.clone(),
+            expected_spec_path: String::from(spec_path),
+            expected_plan_path: String::from(plan_path),
+            status: String::from("implementation_ready"),
+            next_skill: String::new(),
+            reason: String::from("implementation_ready"),
+            note: String::from("implementation_ready"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
+    );
+
+    let status_json = parse_json(
+        &run_rust_featureforge(
+            repo,
+            state,
+            &["workflow", "status"],
+            "workflow status for manifest-selected ready route",
+        ),
+        "workflow status for manifest-selected ready route",
+    );
+    assert_eq!(status_json["status"], "implementation_ready");
+    assert_eq!(status_json["spec_path"], spec_path);
+    assert_eq!(status_json["plan_path"], plan_path);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for manifest-selected ready route",
+        ),
+        "workflow phase for manifest-selected ready route",
+    );
+    assert_eq!(phase_json["phase"], "execution_preflight");
+    assert_eq!(phase_json["route_status"], "implementation_ready");
+    assert_eq!(phase_json["plan_path"], plan_path);
+
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff for manifest-selected ready route",
+        ),
+        "workflow handoff for manifest-selected ready route",
+    );
+    assert_eq!(handoff_json["phase"], "execution_preflight");
+    assert_eq!(handoff_json["route_status"], "implementation_ready");
+    assert_eq!(handoff_json["plan_path"], plan_path);
+}
+
+#[test]
 fn canonical_workflow_status_treats_ceo_approved_specs_without_ceo_review_as_draft() {
     let (repo_dir, state_dir) = init_repo("workflow-status-approved-spec-reviewer-mismatch");
     let repo = repo_dir.path();
@@ -1136,6 +1229,56 @@ fn canonical_workflow_phase_reads_canonical_session_entry_state() {
 }
 
 #[test]
+fn canonical_workflow_operator_hides_next_skill_until_session_entry_is_resolved() {
+    let (repo_dir, state_dir) = init_repo("workflow-needs-user-choice");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-needs-user-choice";
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase should hide next_skill while session-entry is unresolved",
+        ),
+        "workflow phase should hide next_skill while session-entry is unresolved",
+    );
+    assert_eq!(phase_json["phase"], "needs_user_choice");
+    assert_eq!(phase_json["next_action"], "session_entry_gate");
+    assert_eq!(phase_json["next_skill"], "");
+
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow doctor should hide next_skill while session-entry is unresolved",
+        ),
+        "workflow doctor should hide next_skill while session-entry is unresolved",
+    );
+    assert_eq!(doctor_json["phase"], "needs_user_choice");
+    assert_eq!(doctor_json["next_action"], "session_entry_gate");
+    assert_eq!(doctor_json["next_skill"], "");
+
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff should hide next_skill while session-entry is unresolved",
+        ),
+        "workflow handoff should hide next_skill while session-entry is unresolved",
+    );
+    assert_eq!(handoff_json["phase"], "needs_user_choice");
+    assert_eq!(handoff_json["next_action"], "session_entry_gate");
+    assert_eq!(handoff_json["next_skill"], "");
+}
+
+#[test]
 fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-ready-plan");
     let repo = repo_dir.path();
@@ -1145,6 +1288,12 @@ fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
         .join("session-entry")
         .join("using-featureforge")
         .join(session_key);
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-phase-ready"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout workflow-phase-ready");
 
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "enabled\n");
@@ -1356,6 +1505,12 @@ fn canonical_workflow_public_text_commands_work_for_ready_plan() {
         .join("using-featureforge")
         .join(session_key);
 
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-public-text"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout workflow-public-text");
+
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "enabled\n");
 
@@ -1442,6 +1597,12 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
         .join("using-featureforge")
         .join(session_key);
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-public-json"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout workflow-public-json");
 
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "enabled\n");
@@ -1730,6 +1891,10 @@ fn canonical_workflow_routes_blocked_preflight_back_to_execution_handoff() {
     assert_eq!(handoff_json["next_action"], "execution_preflight");
     assert_eq!(handoff_json["recommended_skill"], "");
     assert_eq!(handoff_json["recommendation"], Value::Null);
+    assert_eq!(
+        handoff_json["recommendation_reason"],
+        "The approved plan is ready, but execution preflight is still blocked by the current workspace state."
+    );
 
     let next_output = run_rust_featureforge_with_env(
         repo,
@@ -1975,6 +2140,81 @@ fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
     assert!(
         String::from_utf8_lossy(&gate_finish_output.stdout).contains("Finish gate\nAllowed: false")
     );
+}
+
+#[test]
+fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-gate-review-evidence-failure");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-gate-review-evidence-failure";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    enable_session_decision(state, session_key);
+
+    let execution_status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for workflow gate-review evidence failure fixture",
+    );
+    let evidence_path = repo.join(
+        execution_status["evidence_path"]
+            .as_str()
+            .expect("execution status should expose evidence_path"),
+    );
+    replace_in_file(
+        &evidence_path,
+        "**Plan Fingerprint:** ",
+        "**Plan Fingerprint:** stale-",
+    );
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for gate-review evidence failure fixture",
+        ),
+        "workflow phase for gate-review evidence failure fixture",
+    );
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff for gate-review evidence failure fixture",
+        ),
+        "workflow handoff for gate-review evidence failure fixture",
+    );
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow doctor for gate-review evidence failure fixture",
+        ),
+        "workflow doctor for gate-review evidence failure fixture",
+    );
+
+    assert_eq!(doctor_json["gate_review"]["allowed"], false);
+    assert_eq!(
+        doctor_json["gate_review"]["failure_class"],
+        "StaleExecutionEvidence"
+    );
+    assert_eq!(phase_json["phase"], "review_blocked");
+    assert_eq!(phase_json["next_action"], "return_to_execution");
+    assert_eq!(handoff_json["phase"], "review_blocked");
+    assert_eq!(handoff_json["next_action"], "return_to_execution");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:executing-plans"
+    );
+    assert_eq!(handoff_json["recommendation"], Value::Null);
 }
 
 #[test]

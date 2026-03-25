@@ -1064,6 +1064,37 @@ fn canonical_preflight_rejects_detached_head_workspaces() {
 }
 
 #[test]
+fn canonical_preflight_blocks_protected_default_branches() {
+    let (repo_dir, _state_dir) = init_repo("plan-execution-preflight-protected-branch");
+    let repo = repo_dir.path();
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "main"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout main");
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+
+    let runtime =
+        ExecutionRuntime::discover(repo).expect("execution runtime should discover fixture");
+    let context = load_execution_context(&runtime, Path::new(PLAN_REL))
+        .expect("execution context should load for protected-branch preflight");
+
+    let preflight = preflight_from_context(&context);
+
+    assert!(!preflight.allowed);
+    assert_eq!(preflight.failure_class, "WorkspaceNotSafe");
+    assert!(
+        preflight
+            .reason_codes
+            .iter()
+            .any(|code| code == "protected_branch_requires_approval"),
+        "protected-branch preflight should require approval, got {:?}",
+        preflight.reason_codes
+    );
+}
+
+#[test]
 fn canonical_preflight_blocks_active_blocked_and_interrupted_steps() {
     for (case_name, note_state, expected_reason) in [
         ("active", None, "active_step_in_progress"),

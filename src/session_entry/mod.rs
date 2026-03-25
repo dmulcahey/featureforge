@@ -13,6 +13,13 @@ use crate::paths::{
 
 const MAX_MESSAGE_BYTES: u64 = 65_536;
 const ACTIVE_SESSION_ENTRY_SKILL: &str = "using-featureforge";
+const FEATUREFORGE_REENTRY_PHRASES: &[&str] = &[
+    "use featureforge",
+    "enable featureforge",
+    "route this through featureforge",
+    "run this through featureforge",
+    "run this in featureforge",
+];
 const FEATUREFORGE_SKILLS: &[&str] = &[
     "brainstorming",
     "dispatching-parallel-agents",
@@ -414,8 +421,9 @@ fn message_requests_reentry(message: &str) -> bool {
         if clause == "featureforge please" {
             return true;
         }
-        if clause_requests_phrase(clause, "use featureforge")
-            || clause_requests_phrase(clause, "enable featureforge")
+        if FEATUREFORGE_REENTRY_PHRASES
+            .iter()
+            .any(|phrase| clause_requests_phrase(clause, phrase))
             || clause_requests_skill_reentry(clause)
         {
             return true;

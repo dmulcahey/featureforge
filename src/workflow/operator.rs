@@ -102,15 +102,10 @@ pub fn render_explain(current_dir: &Path) -> Result<String, JsonFailure> {
 
 pub fn phase(current_dir: &Path) -> Result<WorkflowPhase, JsonFailure> {
     let context = build_context(current_dir)?;
-    let next_skill = if context.phase == "bypassed" {
-        String::new()
-    } else {
-        context.route.next_skill.clone()
-    };
     Ok(WorkflowPhase {
         phase: context.phase.clone(),
         route_status: context.route.status.clone(),
-        next_skill,
+        next_skill: public_next_skill(&context),
         next_action: next_action_for_context(&context).to_owned(),
         spec_path: context.route.spec_path.clone(),
         plan_path: context.route.plan_path.clone(),
@@ -142,11 +137,7 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
     Ok(WorkflowDoctor {
         phase: context.phase.clone(),
         route_status: context.route.status.clone(),
-        next_skill: if context.phase == "bypassed" {
-            String::new()
-        } else {
-            context.route.next_skill.clone()
-        },
+        next_skill: public_next_skill(&context),
         next_action: next_action_for_context(&context).to_owned(),
         spec_path: context.route.spec_path.clone(),
         plan_path: context.route.plan_path.clone(),
@@ -232,6 +223,15 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
                     ),
                 )
             }
+            "implementation_handoff" => (String::new(), reason_text(&context)),
+            "review_blocked" if review_requires_execution_reentry(&context) => {
+                let skill = context
+                    .execution_status
+                    .as_ref()
+                    .map(|status| status.execution_mode.clone())
+                    .unwrap_or_default();
+                (skill, reason_text(&context))
+            }
             "review_blocked" => (
                 String::from("featureforge:requesting-code-review"),
                 reason_text(&context),
@@ -269,11 +269,7 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
     Ok(WorkflowHandoff {
         phase: context.phase.clone(),
         route_status: context.route.status.clone(),
-        next_skill: if context.phase == "bypassed" {
-            String::new()
-        } else {
-            context.route.next_skill.clone()
-        },
+        next_skill: public_next_skill(&context),
         contract_state,
         spec_path: context.route.spec_path.clone(),
         plan_path: context.route.plan_path.clone(),
@@ -497,6 +493,15 @@ fn next_step_text(context: &OperatorContext) -> String {
             context.route.plan_path
         );
     }
+    if review_requires_execution_reentry(context) {
+        if context.route.plan_path.is_empty() {
+            return String::from("Return to the current execution flow for the approved plan.");
+        }
+        return format!(
+            "Return to the current execution flow for the approved plan: {}",
+            context.route.plan_path
+        );
+    }
     next_text_for_phase(
         &context.phase,
         &context.route.status,
@@ -599,6 +604,14 @@ fn display_or_none(value: &str) -> &str {
     if value.is_empty() { "none" } else { value }
 }
 
+fn public_next_skill(context: &OperatorContext) -> String {
+    if matches!(context.phase.as_str(), "needs_user_choice" | "bypassed") {
+        String::new()
+    } else {
+        context.route.next_skill.clone()
+    }
+}
+
 fn next_action_for_phase(phase: &str) -> &'static str {
     match phase {
         "needs_user_choice" => "session_entry_gate",
@@ -621,7 +634,9 @@ fn next_action_for_phase(phase: &str) -> &'static str {
 }
 
 fn next_action_for_context(context: &OperatorContext) -> &'static str {
-    if context.phase == "qa_pending" && finish_requires_test_plan_refresh(context) {
+    if review_requires_execution_reentry(context) {
+        "return_to_execution"
+    } else if context.phase == "qa_pending" && finish_requires_test_plan_refresh(context) {
         "refresh_test_plan"
     } else {
         next_action_for_phase(&context.phase)
@@ -637,6 +652,14 @@ fn finish_requires_test_plan_refresh(context: &OperatorContext) -> bool {
             "test_plan_artifact_stale",
         ],
     )
+}
+
+fn review_requires_execution_reentry(context: &OperatorContext) -> bool {
+    context.phase == "review_blocked"
+        && context
+            .gate_review
+            .as_ref()
+            .is_some_and(|gate| !gate.allowed)
 }
 
 fn gate_has_any_reason(gate: Option<&GateResult>, expected_codes: &[&str]) -> bool {

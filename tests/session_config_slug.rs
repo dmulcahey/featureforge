@@ -405,6 +405,18 @@ fn canonical_session_entry_bypassed_and_clause_reentry_matrix_matches_contract()
             "explicit_reentry",
         ),
         (
+            "route-through-featureforge",
+            "Please route this through FeatureForge.\n",
+            "enabled",
+            "explicit_reentry",
+        ),
+        (
+            "run-in-featureforge",
+            "Run this in FeatureForge.\n",
+            "enabled",
+            "explicit_reentry",
+        ),
+        (
             "canonical-skill-id-reentry",
             "featureforge:writing-plans\n",
             "enabled",
