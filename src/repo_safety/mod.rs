@@ -12,9 +12,8 @@ use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::git::{discover_repo_identity, discover_slug_identity};
 use crate::instructions::{collect_active_instruction_files, parse_protected_branches};
 use crate::paths::{
-    RepoPath, branch_storage_key, normalize_identifier_token, normalize_whitespace,
-    featureforge_state_dir,
-    write_atomic as write_atomic_file,
+    RepoPath, branch_storage_key, featureforge_state_dir, normalize_identifier_token,
+    normalize_whitespace, write_atomic as write_atomic_file,
 };
 
 const DEFAULT_PROTECTED_BRANCHES: &[&str] = &["main", "master", "dev", "develop"];
@@ -151,8 +150,7 @@ impl RepoSafetyRuntime {
                 "featureforge:using-git-worktrees",
             )),
             ApprovalLookup::Found(record) => {
-                if !record_matches_scope(&record, &self.repo_root, &self.branch_name, &scope)
-                {
+                if !record_matches_scope(&record, &self.repo_root, &self.branch_name, &scope) {
                     return Ok(self.result(
                         "blocked",
                         intent,

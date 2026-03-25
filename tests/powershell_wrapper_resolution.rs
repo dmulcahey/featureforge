@@ -6,30 +6,31 @@ fn repo_root() -> PathBuf {
 }
 
 fn read_utf8(path: impl AsRef<Path>) -> String {
-    fs::read_to_string(path.as_ref()).unwrap_or_else(|error| {
-        panic!("{} should be readable: {error}", path.as_ref().display())
-    })
+    fs::read_to_string(path.as_ref())
+        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.as_ref().display()))
 }
 
 #[test]
-fn legacy_powershell_wrapper_entrypoints_are_removed() {
+fn standalone_runtime_has_no_powershell_wrapper_entrypoints() {
     let root = repo_root();
-    for relative in [
-        "bin/superpowers.ps1",
-        "bin/superpowers-config.ps1",
-        "bin/superpowers-migrate-install.ps1",
-        "bin/superpowers-plan-contract.ps1",
-        "bin/superpowers-plan-execution.ps1",
-        "bin/superpowers-repo-safety.ps1",
-        "bin/superpowers-session-entry.ps1",
-        "bin/superpowers-update-check.ps1",
-        "bin/superpowers-workflow-status.ps1",
-        "bin/superpowers-workflow.ps1",
-        "compat/powershell/superpowers.ps1",
-    ] {
+    let powershell_entries = fs::read_dir(root.join("bin"))
+        .expect("bin dir should be readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".ps1"))
+        .collect::<Vec<_>>();
+    assert!(
+        powershell_entries.is_empty(),
+        "standalone runtime should not ship PowerShell wrapper entrypoints: {powershell_entries:?}"
+    );
+    let compat_powershell = root.join("compat/powershell");
+    if compat_powershell.exists() {
         assert!(
-            !root.join(relative).exists(),
-            "legacy PowerShell wrapper should be removed: {relative}"
+            fs::read_dir(&compat_powershell)
+                .expect("compat/powershell should be readable")
+                .next()
+                .is_none(),
+            "compat/powershell should be empty in the standalone runtime"
         );
     }
 }
@@ -49,15 +50,25 @@ fn canonical_prebuilt_manifest_and_assets_use_featureforge_names() {
             "bin/prebuilt/manifest.json should contain {needle:?}"
         );
     }
-    for retired in [
-        "bin/prebuilt/darwin-arm64/superpowers",
-        "bin/prebuilt/darwin-arm64/superpowers.sha256",
-        "bin/prebuilt/windows-x64/superpowers.exe",
-        "bin/prebuilt/windows-x64/superpowers.exe.sha256",
-    ] {
+    let manifest_json: serde_json::Value =
+        serde_json::from_str(&manifest).expect("manifest json should parse");
+    let targets = manifest_json["targets"]
+        .as_object()
+        .expect("manifest targets should be an object");
+    for entry in targets.values() {
+        let runtime_path = entry["binary_path"]
+            .as_str()
+            .expect("manifest binary path should be a string");
+        let checksum_path = entry["checksum_path"]
+            .as_str()
+            .expect("manifest checksum path should be a string");
         assert!(
-            !manifest.contains(retired),
-            "bin/prebuilt/manifest.json should not contain {retired:?}"
+            runtime_path.contains("featureforge"),
+            "prebuilt runtime path should stay on the FeatureForge basename: {runtime_path}"
+        );
+        assert!(
+            checksum_path.contains("featureforge"),
+            "prebuilt checksum path should stay on the FeatureForge basename: {checksum_path}"
         );
     }
     for relative in [

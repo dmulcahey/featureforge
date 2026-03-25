@@ -233,20 +233,20 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
                 )
             }
             "review_blocked" => (
-                String::from("superpowers:requesting-code-review"),
+                String::from("featureforge:requesting-code-review"),
                 reason_text(&context),
             ),
             "qa_pending" if finish_requires_test_plan_refresh(&context) => (
-                String::from("superpowers:plan-eng-review"),
+                String::from("featureforge:plan-eng-review"),
                 reason_text(&context),
             ),
-            "qa_pending" => (String::from("superpowers:qa-only"), reason_text(&context)),
+            "qa_pending" => (String::from("featureforge:qa-only"), reason_text(&context)),
             "document_release_pending" => (
-                String::from("superpowers:document-release"),
+                String::from("featureforge:document-release"),
                 reason_text(&context),
             ),
             "ready_for_branch_completion" => (
-                String::from("superpowers:finishing-a-development-branch"),
+                String::from("featureforge:finishing-a-development-branch"),
                 reason_text(&context),
             ),
             _ if execution_started == "yes" => {
@@ -489,11 +489,11 @@ fn next_step_text(context: &OperatorContext) -> String {
     if context.phase == "qa_pending" && finish_requires_test_plan_refresh(context) {
         if context.route.plan_path.is_empty() {
             return String::from(
-                "Regenerate the current-branch test-plan artifact via superpowers:plan-eng-review before browser QA or branch completion.",
+                "Regenerate the current-branch test-plan artifact via featureforge:plan-eng-review before browser QA or branch completion.",
             );
         }
         return format!(
-            "Regenerate the current-branch test-plan artifact via superpowers:plan-eng-review for the approved plan before browser QA or branch completion: {}",
+            "Regenerate the current-branch test-plan artifact via featureforge:plan-eng-review for the approved plan before browser QA or branch completion: {}",
             context.route.plan_path
         );
     }
@@ -534,27 +534,27 @@ fn next_text_for_phase(
         }
         "review_blocked" => {
             if plan_path.is_empty() {
-                String::from("Use superpowers:requesting-code-review for the final review gate.")
+                String::from("Use featureforge:requesting-code-review for the final review gate.")
             } else {
                 format!(
-                    "Use superpowers:requesting-code-review for the approved plan before branch completion: {plan_path}"
+                    "Use featureforge:requesting-code-review for the approved plan before branch completion: {plan_path}"
                 )
             }
         }
         "qa_pending" => String::from(
-            "Run superpowers:qa-only and return with a fresh QA result artifact before branch completion.",
+            "Run featureforge:qa-only and return with a fresh QA result artifact before branch completion.",
         ),
         "document_release_pending" => String::from(
-            "Run superpowers:document-release and return with a fresh release-readiness artifact before branch completion.",
+            "Run featureforge:document-release and return with a fresh release-readiness artifact before branch completion.",
         ),
         "ready_for_branch_completion" => {
-            String::from("Use superpowers:finishing-a-development-branch.")
+            String::from("Use featureforge:finishing-a-development-branch.")
         }
         _ => {
             if !next_skill.is_empty() {
                 format!("Use {next_skill}")
             } else if route_status == "needs_brainstorming" {
-                String::from("Use superpowers:brainstorming")
+                String::from("Use featureforge:brainstorming")
             } else {
                 String::from("Inspect the workflow state again after resolving the current issue.")
             }
@@ -602,7 +602,7 @@ fn display_or_none(value: &str) -> &str {
 fn next_action_for_phase(phase: &str) -> &'static str {
     match phase {
         "needs_user_choice" => "session_entry_gate",
-        "bypassed" => "continue_outside_superpowers",
+        "bypassed" => "continue_outside_featureforge",
         "needs_brainstorming"
         | "brainstorming"
         | "spec_review"
@@ -662,7 +662,7 @@ fn execution_status_args(args: &PlanArgs) -> ExecutionStatusArgs {
 }
 
 fn session_key() -> Option<String> {
-    env::var("SUPERPOWERS_SESSION_KEY")
+    env::var("FEATUREFORGE_SESSION_KEY")
         .ok()
         .or_else(|| env::var("PPID").ok())
         .filter(|value| !value.trim().is_empty())

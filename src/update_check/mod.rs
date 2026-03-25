@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::cli::update_check::UpdateCheckCli;
 use crate::config;
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::paths::{superpowers_home_dir, write_atomic as write_atomic_file};
+use crate::paths::{featureforge_home_dir, write_atomic as write_atomic_file};
 
 const UP_TO_DATE_TTL: Duration = Duration::from_secs(60 * 60);
 const UPGRADE_AVAILABLE_TTL: Duration = Duration::from_secs(60 * 60 * 12);
@@ -214,7 +214,7 @@ fn default_install_dir() -> Option<PathBuf> {
     if current_dir.join("VERSION").is_file() {
         return Some(current_dir);
     }
-    superpowers_home_dir().map(|home| home.join(".featureforge").join("install"))
+    featureforge_home_dir().map(|home| home.join(".featureforge").join("install"))
 }
 
 fn read_local_version(install_dir: &Path) -> Result<String, DiagnosticError> {

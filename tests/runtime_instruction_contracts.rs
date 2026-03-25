@@ -161,40 +161,32 @@ fn repo_checkout_canonical_launcher_runs_without_recursive_fallback() {
 
 #[test]
 fn repo_checkout_canonical_launcher_avoids_non_binary_repo_fallbacks() {
-    for relative in [
-        "bin/superpowers",
-        "bin/superpowers-config",
-        "bin/superpowers-config.ps1",
-        "bin/superpowers-migrate-install",
-        "bin/superpowers-migrate-install.ps1",
-        "bin/superpowers-plan-contract",
-        "bin/superpowers-plan-contract.ps1",
-        "bin/superpowers-plan-execution",
-        "bin/superpowers-plan-execution.ps1",
-        "bin/superpowers-plan-structure-common",
-        "bin/superpowers-pwsh-common.ps1",
-        "bin/superpowers-repo-safety",
-        "bin/superpowers-repo-safety.ps1",
-        "bin/superpowers-runtime-common.sh",
-        "bin/superpowers-session-entry",
-        "bin/superpowers-session-entry.ps1",
-        "bin/superpowers-slug",
-        "bin/superpowers-update-check",
-        "bin/superpowers-update-check.ps1",
-        "bin/superpowers-workflow",
-        "bin/superpowers-workflow-status",
-        "bin/superpowers-workflow-status.ps1",
-        "bin/superpowers-workflow.ps1",
-        "bin/superpowers.ps1",
-        "compat/bash/superpowers",
-        "compat/powershell/superpowers.ps1",
-        "commands/brainstorm.md",
-        "commands/execute-plan.md",
-        "commands/write-plan.md",
-    ] {
+    let root = repo_root();
+    let top_level_bin_files = fs::read_dir(root.join("bin"))
+        .expect("bin dir should be readable")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            path.is_file()
+                .then(|| entry.file_name().to_string_lossy().into_owned())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        top_level_bin_files,
+        vec![String::from("featureforge")],
+        "repo checkout should expose only the standalone featureforge binary at bin/"
+    );
+    for relative in ["commands", "compat/bash", "compat/powershell"] {
+        let dir = root.join(relative);
+        if !dir.exists() {
+            continue;
+        }
         assert!(
-            !repo_root().join(relative).exists(),
-            "legacy shim surface should be removed: {relative}"
+            fs::read_dir(&dir)
+                .expect("compat/commands dir should be readable")
+                .next()
+                .is_none(),
+            "{relative} should be empty in the standalone runtime"
         );
     }
 }
@@ -212,13 +204,20 @@ fn repo_checkout_canonical_launcher_uses_manifest_selected_binary_path() {
     ] {
         assert_contains(&manifest, needle, "bin/prebuilt/manifest.json");
     }
-    for retired in [
-        "bin/prebuilt/darwin-arm64/superpowers",
-        "bin/prebuilt/darwin-arm64/superpowers.sha256",
-        "bin/prebuilt/windows-x64/superpowers.exe",
-        "bin/prebuilt/windows-x64/superpowers.exe.sha256",
-    ] {
-        assert_not_contains(&manifest, retired, "bin/prebuilt/manifest.json");
+    let manifest_json: serde_json::Value =
+        serde_json::from_str(&manifest).expect("manifest json should parse");
+    let targets = manifest_json["targets"]
+        .as_object()
+        .expect("manifest targets should be an object");
+    for entry in targets.values() {
+        let runtime_path = entry["binary_path"]
+            .as_str()
+            .expect("manifest binary path should be a string");
+        let checksum_path = entry["checksum_path"]
+            .as_str()
+            .expect("manifest checksum path should be a string");
+        assert_contains(runtime_path, "featureforge", "bin/prebuilt/manifest.json");
+        assert_contains(checksum_path, "featureforge", "bin/prebuilt/manifest.json");
     }
     for relative in [
         "bin/prebuilt/darwin-arm64/featureforge",
@@ -237,8 +236,7 @@ fn repo_checkout_canonical_launcher_uses_manifest_selected_binary_path() {
 fn repo_checkout_canonical_launcher_rejects_stale_prebuilt_checksum() {
     let root = repo_root();
     let darwin_checksum = read_utf8(root.join("bin/prebuilt/darwin-arm64/featureforge.sha256"));
-    let windows_checksum =
-        read_utf8(root.join("bin/prebuilt/windows-x64/featureforge.exe.sha256"));
+    let windows_checksum = read_utf8(root.join("bin/prebuilt/windows-x64/featureforge.exe.sha256"));
     assert_contains(
         &darwin_checksum,
         "  featureforge",
@@ -253,51 +251,66 @@ fn repo_checkout_canonical_launcher_rejects_stale_prebuilt_checksum() {
 
 #[test]
 fn repo_checkout_powershell_launcher_uses_manifest_selected_binary_path() {
-    for relative in [
-        "bin/superpowers.ps1",
-        "bin/superpowers-pwsh-common.ps1",
-        "compat/powershell/superpowers.ps1",
-    ] {
+    let root = repo_root();
+    let powershell_files = fs::read_dir(root.join("bin"))
+        .expect("bin dir should be readable")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.ends_with(".ps1").then_some(name)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        powershell_files.is_empty(),
+        "standalone runtime should not ship PowerShell wrapper surfaces: {powershell_files:?}"
+    );
+    let compat_powershell = root.join("compat/powershell");
+    if compat_powershell.exists() {
         assert!(
-            !repo_root().join(relative).exists(),
-            "legacy PowerShell wrapper surface should be removed: {relative}"
+            fs::read_dir(&compat_powershell)
+                .expect("compat/powershell should be readable")
+                .next()
+                .is_none(),
+            "compat/powershell should be empty in the standalone runtime"
         );
     }
 }
 
 #[test]
 fn repo_checkout_powershell_launcher_rejects_stale_prebuilt_checksum() {
-    for relative in [
-        "compat/bash/superpowers",
-        "bin/superpowers-runtime-common.sh",
-    ] {
-        assert!(
-            !repo_root().join(relative).exists(),
-            "legacy bash compat surface should be removed: {relative}"
-        );
-    }
+    let root = repo_root();
+    let shell_helper_files = fs::read_dir(root.join("bin"))
+        .expect("bin dir should be readable")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (name.ends_with("runtime-common.sh") || name.ends_with("pwsh-common.ps1"))
+                .then_some(name)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        shell_helper_files.is_empty(),
+        "standalone runtime should not ship shell helper files: {shell_helper_files:?}"
+    );
 }
 
 #[test]
 fn repo_checkout_powershell_launcher_preserves_native_exit_code_with_psnative_preference() {
-    for relative in [
-        "bin/superpowers",
-        "bin/superpowers-config",
-        "bin/superpowers-migrate-install",
-        "bin/superpowers-plan-contract",
-        "bin/superpowers-plan-execution",
-        "bin/superpowers-repo-safety",
-        "bin/superpowers-session-entry",
-        "bin/superpowers-slug",
-        "bin/superpowers-update-check",
-        "bin/superpowers-workflow",
-        "bin/superpowers-workflow-status",
-    ] {
-        assert!(
-            !repo_root().join(relative).exists(),
-            "legacy bash wrapper entrypoint should be removed: {relative}"
-        );
-    }
+    let root = repo_root();
+    let top_level_bin_files = fs::read_dir(root.join("bin"))
+        .expect("bin dir should be readable")
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            path.is_file()
+                .then(|| entry.file_name().to_string_lossy().into_owned())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        top_level_bin_files,
+        vec![String::from("featureforge")],
+        "native exit-code handling should rely on the standalone featureforge binary only"
+    );
 }
 
 #[test]
@@ -340,7 +353,7 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
     );
     assert_not_contains(
         &readme_content,
-        "bash tests/codex-runtime/test-superpowers-upgrade-skill.sh",
+        "bash tests/codex-runtime/test-upgrade-skill.sh",
         "README.md",
     );
 
@@ -354,9 +367,9 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
         "bash tests/codex-runtime/test-workflow-enhancements.sh",
         "bash tests/codex-runtime/test-workflow-sequencing.sh",
         "bash tests/codex-runtime/test-using-featureforge-bypass.sh",
-        "bash tests/codex-runtime/test-superpowers-session-entry-gate.sh",
+        "bash tests/codex-runtime/test-session-entry-gate.sh",
         "bash tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh",
-        "bash tests/codex-runtime/test-superpowers-upgrade-skill.sh",
+        "bash tests/codex-runtime/test-upgrade-skill.sh",
     ] {
         assert_not_contains(&docs_testing_content, legacy_command, "docs/testing.md");
     }
@@ -452,7 +465,7 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
     windows_docs_check
         .args([
             "-nP",
-            r"bin\\superpowers-(migrate-install|config|update-check)(?!\.ps1)",
+            r"bin\\featureforge-(migrate-install|config|update-check)(?!\.ps1)",
             "README.md",
             ".codex/INSTALL.md",
             ".copilot/INSTALL.md",

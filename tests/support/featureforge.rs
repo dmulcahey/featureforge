@@ -4,7 +4,7 @@ use std::process::{Command, Output};
 
 use crate::process_support::run;
 
-pub fn run_rust_superpowers(
+pub fn run_rust_featureforge(
     repo: Option<&Path>,
     state_dir: Option<&Path>,
     home_dir: Option<&Path>,
@@ -12,10 +12,10 @@ pub fn run_rust_superpowers(
     args: &[&str],
     context: &str,
 ) -> Output {
-    run_rust_superpowers_with_env_control(repo, state_dir, home_dir, &[], envs, args, context)
+    run_rust_featureforge_with_env_control(repo, state_dir, home_dir, &[], envs, args, context)
 }
 
-pub fn run_rust_superpowers_with_env_control(
+pub fn run_rust_featureforge_with_env_control(
     repo: Option<&Path>,
     state_dir: Option<&Path>,
     home_dir: Option<&Path>,

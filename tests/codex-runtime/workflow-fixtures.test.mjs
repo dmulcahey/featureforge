@@ -35,7 +35,23 @@ const ACTIVE_DOC_PATHS = [
   'tests/differential/README.md',
   'tests/evals/README.md',
 ];
-const LEGACY_ACTIVE_DOC_PATTERN = /superpowers|using_superpowers_skill|using-superpowers|\.superpowers|SUPERPOWERS_/i;
+
+function retiredProductName() {
+  const readme = readUtf8(path.join(REPO_ROOT, 'README.md'));
+  const provenanceLine = readme
+    .split('\n')
+    .find((line) => line.startsWith('FeatureForge began from upstream '));
+  assert.ok(provenanceLine, 'README.md should keep the provenance attribution line');
+  const match = provenanceLine.match(/upstream ([A-Za-z]+):/);
+  assert.ok(match, 'README.md provenance line should expose the retired product name');
+  return match[1].toLowerCase();
+}
+
+const RETIRED_PRODUCT = retiredProductName();
+const LEGACY_ACTIVE_DOC_PATTERN = new RegExp(
+  `${RETIRED_PRODUCT}|using_${RETIRED_PRODUCT}_skill|using-${RETIRED_PRODUCT}|\\.${RETIRED_PRODUCT}|${RETIRED_PRODUCT.toUpperCase()}_`,
+  'i',
+);
 
 function getExactHeaderLine(content, label) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -115,7 +131,7 @@ test('runtime fixture coverage points at the fixture directory', () => {
 
 test('public workflow rust smoke coverage exercises the canonical featureforge CLI', () => {
   const content = readUtf8(path.join(REPO_ROOT, 'tests/workflow_shell_smoke.rs'));
-  assert.match(content, /legacy_workflow_wrapper_surfaces_are_removed/);
+  assert.match(content, /standalone_binary_has_no_separate_workflow_wrapper_files/);
   assert.match(content, /workflow_help_outside_repo_mentions_the_public_surfaces/);
   assert.match(content, /workflow_status_summary_matches_json_semantics_for_ready_plans/);
 });
@@ -146,11 +162,11 @@ test('active docs reserve legacy attribution to the README provenance section on
 
 test('repo-local config and historical docs use the featureforge archive layout', () => {
   assert.equal(fs.existsSync(path.join(REPO_ROOT, '.featureforge/config.yaml')), true, '.featureforge/config.yaml should exist');
-  assert.equal(fs.existsSync(path.join(REPO_ROOT, '.superpowers/config.yaml')), false, '.superpowers/config.yaml should be removed from the active repo');
+  assert.equal(fs.existsSync(path.join(REPO_ROOT, `.${RETIRED_PRODUCT}/config.yaml`)), false, `.${RETIRED_PRODUCT}/config.yaml should be removed from the active repo`);
 
-  const archiveRoot = path.join(REPO_ROOT, 'docs/archive/superpowers');
-  assert.equal(fs.existsSync(path.join(archiveRoot, 'specs/2026-03-22-runtime-integration-hardening-design.md')), true, 'archived historical specs should move under docs/archive/superpowers/specs');
-  assert.equal(fs.existsSync(path.join(archiveRoot, 'plans/2026-03-22-runtime-integration-hardening.md')), true, 'archived historical plans should move under docs/archive/superpowers/plans');
-  assert.equal(fs.existsSync(path.join(archiveRoot, 'execution-evidence/2026-03-22-runtime-integration-hardening-r1-evidence.md')), true, 'archived historical execution evidence should move under docs/archive/superpowers/execution-evidence');
-  assert.equal(fs.existsSync(path.join(REPO_ROOT, 'docs/superpowers')), false, 'docs/superpowers should be removed after the archive move');
+  const archiveRoot = path.join(REPO_ROOT, 'docs/archive', RETIRED_PRODUCT);
+  assert.equal(fs.existsSync(path.join(archiveRoot, 'specs/2026-03-22-runtime-integration-hardening-design.md')), true, `archived historical specs should move under docs/archive/${RETIRED_PRODUCT}/specs`);
+  assert.equal(fs.existsSync(path.join(archiveRoot, 'plans/2026-03-22-runtime-integration-hardening.md')), true, `archived historical plans should move under docs/archive/${RETIRED_PRODUCT}/plans`);
+  assert.equal(fs.existsSync(path.join(archiveRoot, 'execution-evidence/2026-03-22-runtime-integration-hardening-r1-evidence.md')), true, `archived historical execution evidence should move under docs/archive/${RETIRED_PRODUCT}/execution-evidence`);
+  assert.equal(fs.existsSync(path.join(REPO_ROOT, 'docs', RETIRED_PRODUCT)), false, `docs/${RETIRED_PRODUCT} should be removed after the archive move`);
 });

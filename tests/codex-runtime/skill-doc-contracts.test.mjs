@@ -28,6 +28,19 @@ function getSkillDescription(skill) {
   return frontmatter.description;
 }
 
+function retiredProductName() {
+  const readme = readUtf8(path.join(REPO_ROOT, 'README.md'));
+  const provenanceLine = readme
+    .split('\n')
+    .find((line) => line.startsWith('FeatureForge began from upstream '));
+  assert.ok(provenanceLine, 'README.md should keep the provenance attribution line');
+  const match = provenanceLine.match(/upstream ([A-Za-z]+):/);
+  assert.ok(match, 'README.md provenance line should expose the retired product name');
+  return match[1].toLowerCase();
+}
+
+const RETIRED_PRODUCT = retiredProductName();
+
 const HELPER_COMMAND_PATTERN = /\bfeatureforge-(plan-contract|plan-execution|workflow-status|workflow|repo-safety|session-entry|config|slug|update-check|migrate-install)\b/;
 
 test('templates declare exactly one base or review preamble placeholder', () => {
@@ -562,10 +575,10 @@ test('planning review sync docs describe additive review summaries and richer QA
 });
 
 test('approved workflow-state artifacts document the finalized helper contract', () => {
-  const specDoc = readUtf8(path.join(REPO_ROOT, 'docs/archive/superpowers/specs/2026-03-22-runtime-integration-hardening-design.md'));
+  const specDoc = readUtf8(path.join(REPO_ROOT, 'docs/archive', RETIRED_PRODUCT, 'specs/2026-03-22-runtime-integration-hardening-design.md'));
   assert.match(
     specDoc,
-    /`superpowers-workflow-status` must emit schema-versioned structured diagnostics including `contract_state`, `reason_codes`, `diagnostics`, `scan_truncated`, and candidate counts/,
+    new RegExp(String.raw`\`${RETIRED_PRODUCT}-workflow-status\` must emit schema-versioned structured diagnostics including \`contract_state\`, \`reason_codes\`, \`diagnostics\`, \`scan_truncated\`, and candidate counts`),
     'approved spec should describe structured route-time diagnostics',
   );
   assert.match(
@@ -575,11 +588,11 @@ test('approved workflow-state artifacts document the finalized helper contract',
   );
   assert.match(
     specDoc,
-    /`superpowers-plan-execution` must expose read-only `preflight`, `gate-review`, and `gate-finish` commands/,
+    new RegExp(String.raw`\`${RETIRED_PRODUCT}-plan-execution\` must expose read-only \`preflight\`, \`gate-review\`, and \`gate-finish\` commands`),
     'approved spec should describe helper-owned execution gates',
   );
 
-  const planDoc = readUtf8(path.join(REPO_ROOT, 'docs/archive/superpowers/plans/2026-03-22-runtime-integration-hardening.md'));
+  const planDoc = readUtf8(path.join(REPO_ROOT, 'docs/archive', RETIRED_PRODUCT, 'plans/2026-03-22-runtime-integration-hardening.md'));
   assert.match(
     planDoc,
     /Route-time readiness and JSON diagnostics are driven by the same canonical approved-plan contract/,
@@ -622,17 +635,17 @@ test('active eval docs use featureforge state roots', () => {
   const evalReadme = readUtf8(path.join(REPO_ROOT, 'tests/evals/README.md'));
   assert.match(evalReadme, /\$FEATUREFORGE_STATE_DIR\/evals\/` or `~\/\.featureforge\/evals\//);
   assert.match(evalReadme, /~\/\.featureforge\/projects\/<slug>\//);
-  assert.doesNotMatch(evalReadme, /~\/\.superpowers\/(?:evals|projects)\//);
+  assert.doesNotMatch(evalReadme, new RegExp(String.raw`~\/\.${RETIRED_PRODUCT}\/(?:evals|projects)\/`));
 
   const searchBeforeBuildingOrchestrator = readUtf8(path.join(REPO_ROOT, 'tests/evals/search-before-building-contract.orchestrator.md'));
   assert.match(searchBeforeBuildingOrchestrator, /~\/\.featureforge\/projects\/<slug>\/search-before-building-contract-r2\//);
-  assert.doesNotMatch(searchBeforeBuildingOrchestrator, /~\/\.superpowers\/projects\//);
+  assert.doesNotMatch(searchBeforeBuildingOrchestrator, new RegExp(String.raw`~\/\.${RETIRED_PRODUCT}\/projects\/`));
 
   const evalObservability = readUtf8(path.join(REPO_ROOT, 'tests/evals/helpers/eval-observability.mjs'));
   assert.match(evalObservability, /FEATUREFORGE_STATE_DIR/);
   assert.match(evalObservability, /\.featureforge/);
   assert.doesNotMatch(evalObservability, /SUPERPOWERS_STATE_DIR/);
-  assert.doesNotMatch(evalObservability, /\.superpowers/);
+  assert.doesNotMatch(evalObservability, new RegExp(String.raw`\.${RETIRED_PRODUCT}`));
 });
 
 test('legacy command shim docs are removed from the active repo', () => {

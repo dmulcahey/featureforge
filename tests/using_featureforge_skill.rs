@@ -73,7 +73,7 @@ fn run_bash_block(state_dir: &Path, home_dir: &Path, script: &str, context: &str
         .env("HOME", home_dir)
         .env(
             "FEATUREFORGE_COMPAT_BIN",
-            bin_support::compiled_superpowers_path(),
+            bin_support::compiled_featureforge_path(),
         );
     run(command, context)
 }
@@ -192,7 +192,7 @@ PY
                 .env("HOME", home_dir)
                 .env(
                     "FEATUREFORGE_COMPAT_BIN",
-                    bin_support::compiled_superpowers_path(),
+                    bin_support::compiled_featureforge_path(),
                 )
                 .env("SP_TEST_MESSAGE_FILE", &message_file)
                 .env("SP_TEST_SESSION_KEY", session_key);

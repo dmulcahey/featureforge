@@ -1,5 +1,5 @@
-use superpowers::compat::argv0::canonical_command_from_argv0;
-use superpowers::paths::RepoPath;
+use featureforge::compat::argv0::canonical_command_from_argv0;
+use featureforge::paths::RepoPath;
 
 #[test]
 fn repo_paths_normalize_backslashes_and_dot_segments() {

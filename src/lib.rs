@@ -263,7 +263,9 @@ pub fn run() -> std::process::ExitCode {
 
 fn canonicalized_args() -> Vec<OsString> {
     let mut args = std::env::args_os();
-    let argv0 = args.next().unwrap_or_else(|| OsString::from("featureforge"));
+    let argv0 = args
+        .next()
+        .unwrap_or_else(|| OsString::from("featureforge"));
     let user_args = args.collect::<Vec<_>>();
     let injected = compat::argv0::canonical_command_from_argv0(&argv0.to_string_lossy());
     let mut canonicalized = vec![argv0.clone()];

@@ -126,11 +126,7 @@ fn make_valid_worktree_install(base_dir: &Path) -> PathBuf {
     make_valid_install(&main_repo, "dir");
     let mut git_add = Command::new("git");
     git_add
-        .args([
-            "add",
-            "VERSION",
-            "bin/featureforge",
-        ])
+        .args(["add", "VERSION", "bin/featureforge"])
         .current_dir(&main_repo);
     run_checked(git_add, "git add runtime repo");
 

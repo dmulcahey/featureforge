@@ -8,7 +8,7 @@ description = "Rust runtime for the FeatureForge workflow toolkit"
 license = "MIT"
 
 [lib]
-name = "superpowers"
+name = "featureforge"
 
 [workspace]
 resolver = "2"

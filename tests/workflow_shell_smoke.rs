@@ -78,19 +78,18 @@ fn run_featureforge_with_env(
 }
 
 #[test]
-fn legacy_workflow_wrapper_surfaces_are_removed() {
-    let root = repo_root();
-    for relative in [
-        "bin/superpowers-workflow",
-        "bin/superpowers-workflow-status",
-        "bin/superpowers-workflow.ps1",
-        "bin/superpowers-workflow-status.ps1",
-    ] {
-        assert!(
-            !root.join(relative).exists(),
-            "legacy workflow wrapper should be removed: {relative}"
-        );
-    }
+fn standalone_binary_has_no_separate_workflow_wrapper_files() {
+    let bin_dir = repo_root().join("bin");
+    let workflow_entries = std::fs::read_dir(&bin_dir)
+        .expect("bin dir should be readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "featureforge" && name.contains("workflow"))
+        .collect::<Vec<_>>();
+    assert!(
+        workflow_entries.is_empty(),
+        "workflow wrapper files should not exist alongside the standalone featureforge binary: {workflow_entries:?}"
+    );
 }
 
 #[test]
@@ -168,7 +167,7 @@ fn workflow_operator_commands_work_for_ready_plan() {
         repo,
         state,
         &["workflow", "next"],
-        &[("SUPERPOWERS_SESSION_KEY", session_key)],
+        &[("FEATUREFORGE_SESSION_KEY", session_key)],
         "workflow next",
     );
     let next_stdout = String::from_utf8_lossy(&next_output.stdout);
@@ -181,7 +180,7 @@ fn workflow_operator_commands_work_for_ready_plan() {
         repo,
         state,
         &["workflow", "artifacts"],
-        &[("SUPERPOWERS_SESSION_KEY", session_key)],
+        &[("FEATUREFORGE_SESSION_KEY", session_key)],
         "workflow artifacts",
     );
     let artifacts_stdout = String::from_utf8_lossy(&artifacts_output.stdout);
@@ -198,7 +197,7 @@ fn workflow_operator_commands_work_for_ready_plan() {
         repo,
         state,
         &["workflow", "explain"],
-        &[("SUPERPOWERS_SESSION_KEY", session_key)],
+        &[("FEATUREFORGE_SESSION_KEY", session_key)],
         "workflow explain",
     );
     let explain_stdout = String::from_utf8_lossy(&explain_output.stdout);

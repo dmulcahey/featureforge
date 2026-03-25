@@ -1,25 +1,17 @@
 use assert_cmd::cargo::CommandCargoExt;
+use featureforge::execution::state::{
+    ExecutionRuntime, gate_finish_from_context, load_execution_context, preflight_from_context,
+};
+use featureforge::paths::branch_storage_key;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use superpowers::execution::state::{
-    ExecutionRuntime, gate_finish_from_context, load_execution_context, preflight_from_context,
-};
-use superpowers::paths::branch_storage_key;
 use tempfile::TempDir;
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-plan.md";
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-17-example-execution-plan-design.md";
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn execution_helper_path() -> PathBuf {
-    repo_root().join("bin/superpowers-plan-execution")
-}
 
 fn run(mut command: Command, context: &str) -> Output {
     command
@@ -69,13 +61,13 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
 
     let mut git_config_name = Command::new("git");
     git_config_name
-        .args(["config", "user.name", "Superpowers Test"])
+        .args(["config", "user.name", "FeatureForge Test"])
         .current_dir(repo);
     run_checked(git_config_name, "git config user.name");
 
     let mut git_config_email = Command::new("git");
     git_config_email
-        .args(["config", "user.email", "superpowers-tests@example.com"])
+        .args(["config", "user.email", "featureforge-tests@example.com"])
         .current_dir(repo);
     run_checked(git_config_email, "git config user.email");
 
@@ -155,7 +147,7 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 
 **Files:**
 - Modify: `docs/example-output.md`
-- Test: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
+- Test: `cargo test --test plan_execution`
 
 - [ ] **Step 1: Prepare workspace for execution**
 - [ ] **Step 2: Validate the generated output**
@@ -171,7 +163,7 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 
 **Files:**
 - Modify: `docs/example-output.md`
-- Test: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
+- Test: `cargo test --test plan_execution`
 
 - [ ] **Step 1: Repair an invalidated prior step**
 - [ ] **Step 2: Finalize the execution handoff**
@@ -297,7 +289,7 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
 
 **Files:**
 - Modify: `docs/example-output.md`
-- Test: `bash tests/codex-runtime/test-superpowers-plan-execution.sh`
+- Test: `cargo test --test plan_execution`
 
 - [ ] **Step 1: Complete the single-step fixture**
 "#
@@ -470,7 +462,7 @@ fn write_v2_completed_attempts_for_finished_plan(repo: &Path) {
     for task in 1..=2 {
         for step in 1..=2 {
             attempts.push_str(&format!(
-                "### Task {task} Step {step}\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:3{task}{step}Z\n**Execution Source:** superpowers:executing-plans\n**Task Number:** {task}\n**Step Number:** {step}\n**Packet Fingerprint:** {}\n**Head SHA:** {head_sha}\n**Base SHA:** {base_sha}\n**Claim:** Completed task {task} step {step}.\n**Files Proven:**\n- docs/example-output.md | sha256:{file_digest}\n**Verification Summary:** Manual inspection only: Verified by fixture setup.\n**Invalidation Reason:** N/A\n\n",
+                "### Task {task} Step {step}\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:3{task}{step}Z\n**Execution Source:** featureforge:executing-plans\n**Task Number:** {task}\n**Step Number:** {step}\n**Packet Fingerprint:** {}\n**Head SHA:** {head_sha}\n**Base SHA:** {base_sha}\n**Claim:** Completed task {task} step {step}.\n**Files Proven:**\n- docs/example-output.md | sha256:{file_digest}\n**Verification Summary:** Manual inspection only: Verified by fixture setup.\n**Invalidation Reason:** N/A\n\n",
                 expected_packet_fingerprint(repo, task, step)
             ));
         }
@@ -500,7 +492,7 @@ fn write_single_step_v2_completed_attempt(repo: &Path, packet_fingerprint: &str)
     write_file(
         &evidence_path,
         &format!(
-            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n**Plan Fingerprint:** {plan_fingerprint}\n**Source Spec Path:** {SPEC_REL}\n**Source Spec Revision:** 1\n**Source Spec Fingerprint:** {spec_fingerprint}\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** superpowers:executing-plans\n**Task Number:** 1\n**Step Number:** 1\n**Packet Fingerprint:** {packet_fingerprint}\n**Head SHA:** {head_sha}\n**Base SHA:** {base_sha}\n**Claim:** Prepared the workspace for execution.\n**Files Proven:**\n- docs/example-output.md | sha256:{file_digest}\n**Verification Summary:** Manual inspection only: Verified by fixture setup.\n**Invalidation Reason:** N/A\n"
+            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n**Plan Fingerprint:** {plan_fingerprint}\n**Source Spec Path:** {SPEC_REL}\n**Source Spec Revision:** 1\n**Source Spec Fingerprint:** {spec_fingerprint}\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** featureforge:executing-plans\n**Task Number:** 1\n**Step Number:** 1\n**Packet Fingerprint:** {packet_fingerprint}\n**Head SHA:** {head_sha}\n**Base SHA:** {base_sha}\n**Claim:** Prepared the workspace for execution.\n**Files Proven:**\n- docs/example-output.md | sha256:{file_digest}\n**Verification Summary:** Manual inspection only: Verified by fixture setup.\n**Invalidation Reason:** N/A\n"
         ),
     );
 }
@@ -534,12 +526,12 @@ fn normalize_identifier(value: &str) -> String {
 fn repo_slug(repo: &Path) -> String {
     let output = run_checked(
         {
-            let mut command =
-                Command::cargo_bin("superpowers").expect("superpowers binary should be available");
+            let mut command = Command::cargo_bin("featureforge")
+                .expect("featureforge binary should be available");
             command.current_dir(repo).args(["repo", "slug"]);
             command
         },
-        "superpowers repo slug",
+        "featureforge repo slug",
     );
     String::from_utf8(output.stdout)
         .expect("repo slug output should be utf-8")
@@ -575,7 +567,7 @@ fn write_test_plan_artifact(repo: &Path, state: &Path, browser_required: &str) -
     write_file(
         &artifact_path,
         &format!(
-            "# Test Plan\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Head SHA:** {head_sha}\n**Browser QA Required:** {browser_required}\n**Generated By:** superpowers:plan-eng-review\n**Generated At:** 2026-03-22T17:05:00Z\n\n## Affected Pages / Routes\n- /runtime-hardening - verify helper-backed finish gating\n\n## Key Interactions\n- finish-gate handoff on /runtime-hardening\n\n## Edge Cases\n- stale or missing release-readiness evidence\n\n## Critical Paths\n- approved-plan finish handoff stays blocked until QA and release artifacts are fresh\n",
+            "# Test Plan\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Head SHA:** {head_sha}\n**Browser QA Required:** {browser_required}\n**Generated By:** featureforge:plan-eng-review\n**Generated At:** 2026-03-22T17:05:00Z\n\n## Affected Pages / Routes\n- /runtime-hardening - verify helper-backed finish gating\n\n## Key Interactions\n- finish-gate handoff on /runtime-hardening\n\n## Edge Cases\n- stale or missing release-readiness evidence\n\n## Critical Paths\n- approved-plan finish handoff stays blocked until QA and release artifacts are fresh\n",
             repo_slug(repo)
         ),
     );
@@ -591,7 +583,7 @@ fn write_rich_test_plan_artifact(repo: &Path, state: &Path, browser_required: &s
     write_file(
         &artifact_path,
         &format!(
-            "# Test Plan\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Head SHA:** {head_sha}\n**Browser QA Required:** {browser_required}\n**Generated By:** superpowers:plan-eng-review\n**Generated At:** 2026-03-24T16:08:00Z\n\n## Affected Pages / Routes\n- none\n\n## Key Interactions\n- review-summary writeback on authoritative artifacts\n\n## Edge Cases\n- additive sections present without changing finish-gate authority\n\n## Critical Paths\n- planning-review sync stays compatible with helper-owned finish gating\n\n## Coverage Graph\n- plan-ceo-review summary write -> automated contract tests\n- plan-eng-review additive QA artifact -> manual QA not required\n\n## E2E Test Decision Matrix\n- planning review handoff -> required no (non-browser) -> contract and helper coverage\n\n## Browser Matrix\n- none\n\n## Non-Browser Contract Checks\n- cargo test --test plan_execution -> helper-owned finish-gate compatibility\n\n## Regression Risks\n- richer QA artifact sections accidentally become approval truth\n\n## Manual QA Notes\n- none\n\n## Engineering Review Summary\n- Review outcome captured separately in the source plan.\n",
+            "# Test Plan\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Head SHA:** {head_sha}\n**Browser QA Required:** {browser_required}\n**Generated By:** featureforge:plan-eng-review\n**Generated At:** 2026-03-24T16:08:00Z\n\n## Affected Pages / Routes\n- none\n\n## Key Interactions\n- review-summary writeback on authoritative artifacts\n\n## Edge Cases\n- additive sections present without changing finish-gate authority\n\n## Critical Paths\n- planning-review sync stays compatible with helper-owned finish gating\n\n## Coverage Graph\n- plan-ceo-review summary write -> automated contract tests\n- plan-eng-review additive QA artifact -> manual QA not required\n\n## E2E Test Decision Matrix\n- planning review handoff -> required no (non-browser) -> contract and helper coverage\n\n## Browser Matrix\n- none\n\n## Non-Browser Contract Checks\n- cargo test --test plan_execution -> helper-owned finish-gate compatibility\n\n## Regression Risks\n- richer QA artifact sections accidentally become approval truth\n\n## Manual QA Notes\n- none\n\n## Engineering Review Summary\n- Review outcome captured separately in the source plan.\n",
             repo_slug(repo)
         ),
     );
@@ -608,7 +600,7 @@ fn write_qa_result_artifact(repo: &Path, state: &Path, test_plan_path: &Path) ->
     write_file(
         &artifact_path,
         &format!(
-            "# QA Result\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Source Test Plan:** `{}`\n**Branch:** {branch}\n**Repo:** {}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** superpowers:qa-only\n**Generated At:** 2026-03-22T17:09:00Z\n\n## Summary\n- Browser QA artifact fixture for gate-finish coverage.\n",
+            "# QA Result\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Source Test Plan:** `{}`\n**Branch:** {branch}\n**Repo:** {}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** featureforge:qa-only\n**Generated At:** 2026-03-22T17:09:00Z\n\n## Summary\n- Browser QA artifact fixture for gate-finish coverage.\n",
             test_plan_path.display(),
             repo_slug(repo)
         ),
@@ -626,7 +618,7 @@ fn write_code_review_artifact(repo: &Path, state: &Path, base_branch: &str) -> P
     write_file(
         &artifact_path,
         &format!(
-            "# Code Review Result\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** superpowers:requesting-code-review\n**Generated At:** 2026-03-22T17:11:00Z\n\n## Summary\n- Final whole-diff review artifact fixture for finish-gate coverage.\n",
+            "# Code Review Result\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-22T17:11:00Z\n\n## Summary\n- Final whole-diff review artifact fixture for finish-gate coverage.\n",
             repo_slug(repo)
         ),
     );
@@ -643,7 +635,7 @@ fn write_release_readiness_artifact(repo: &Path, state: &Path, base_branch: &str
     write_file(
         &artifact_path,
         &format!(
-            "# Release Readiness Result\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** superpowers:document-release\n**Generated At:** 2026-03-22T17:15:00Z\n\n## Summary\n- Release-readiness artifact fixture for finish-gate coverage.\n",
+            "# Release Readiness Result\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** featureforge:document-release\n**Generated At:** 2026-03-22T17:15:00Z\n\n## Summary\n- Release-readiness artifact fixture for finish-gate coverage.\n",
             repo_slug(repo)
         ),
     );
@@ -670,7 +662,7 @@ fn prepare_finished_single_step_finish_gate_fixture(
     base_branch: &str,
 ) -> (PathBuf, Option<PathBuf>, PathBuf, PathBuf) {
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
     let test_plan = write_test_plan_artifact(repo, state, browser_required);
@@ -685,13 +677,15 @@ fn prepare_finished_single_step_finish_gate_fixture(
 }
 
 fn run_shell(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
-    let mut command = Command::new(execution_helper_path());
+    let mut command =
+        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
     let compat_bin =
         std::env::var_os("CARGO_BIN_EXE_featureforge").expect("featureforge test binary path");
     command
         .current_dir(repo)
-        .env("SUPERPOWERS_COMPAT_BIN", compat_bin)
+        .env("FEATUREFORGE_COMPAT_BIN", compat_bin)
         .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["plan", "execution"])
         .args(args);
     run(command, context)
 }
@@ -773,7 +767,7 @@ fn canonical_status_accepts_checked_steps_with_fenced_step_details() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_plan(repo, "superpowers:executing-plans");
+    write_plan(repo, "featureforge:executing-plans");
     add_fenced_step_details(repo);
     mark_all_plan_steps_checked(repo);
 
@@ -967,7 +961,7 @@ fn canonical_gate_review_returns_blocking_result_for_newer_sibling_spec() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
     write_newer_approved_spec_same_revision_different_path(repo);
@@ -1010,7 +1004,7 @@ fn canonical_recommend_matches_helper_for_independent_plan() {
     assert_eq!(rust["decision_flags"], helper["decision_flags"]);
     assert_eq!(
         rust["recommended_skill"],
-        Value::String(String::from("superpowers:subagent-driven-development"))
+        Value::String(String::from("featureforge:subagent-driven-development"))
     );
     assert_eq!(rust["decision_flags"]["tasks_independent"], "yes");
     assert_eq!(rust["decision_flags"]["same_session_viable"], "yes");
@@ -1085,7 +1079,7 @@ fn canonical_preflight_blocks_active_blocked_and_interrupted_steps() {
         let repo = repo_dir.path();
         let state = state_dir.path();
         write_approved_spec(repo);
-        write_single_step_plan(repo, "superpowers:executing-plans");
+        write_single_step_plan(repo, "featureforge:executing-plans");
 
         let before = run_rust_json(
             repo,
@@ -1105,7 +1099,7 @@ fn canonical_preflight_blocks_active_blocked_and_interrupted_steps() {
                 "--step",
                 "1",
                 "--execution-mode",
-                "superpowers:executing-plans",
+                "featureforge:executing-plans",
                 "--expect-execution-fingerprint",
                 before["execution_fingerprint"]
                     .as_str()
@@ -1259,7 +1253,7 @@ fn canonical_preflight_reports_repo_safety_discovery_failures() {
             state,
             &["preflight", "--plan", PLAN_REL],
             &[(
-                "SUPERPOWERS_REPO_SAFETY_TEST_FAILPOINT",
+                "FEATUREFORGE_REPO_SAFETY_TEST_FAILPOINT",
                 "instruction_parse_failure",
             )],
             "rust preflight with repo-safety failpoint",
@@ -1284,7 +1278,7 @@ fn canonical_gate_review_and_finish_match_helper() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_plan(repo, "superpowers:executing-plans");
+    write_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_v2_completed_attempts_for_finished_plan(repo);
     let test_plan = write_test_plan_artifact(repo, state, "yes");
@@ -1328,7 +1322,7 @@ fn gate_finish_accepts_richer_additive_test_plan_sections() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_plan(repo, "superpowers:executing-plans");
+    write_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_v2_completed_attempts_for_finished_plan(repo);
     let test_plan = write_rich_test_plan_artifact(repo, state, "yes");
@@ -1374,7 +1368,7 @@ fn gate_review_blocks_active_blocked_and_interrupted_steps() {
         let repo = repo_dir.path();
         let state = state_dir.path();
         write_approved_spec(repo);
-        write_single_step_plan(repo, "superpowers:executing-plans");
+        write_single_step_plan(repo, "featureforge:executing-plans");
 
         let before = run_rust_json(
             repo,
@@ -1394,7 +1388,7 @@ fn gate_review_blocks_active_blocked_and_interrupted_steps() {
                 "--step",
                 "1",
                 "--execution-mode",
-                "superpowers:executing-plans",
+                "featureforge:executing-plans",
                 "--expect-execution-fingerprint",
                 before["execution_fingerprint"]
                     .as_str()
@@ -1477,7 +1471,7 @@ fn gate_review_rejects_checked_step_without_execution_evidence() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
 
     let gate_review = run_rust_json(
@@ -1507,7 +1501,7 @@ fn gate_finish_requires_qa_result_when_browser_qa_is_required() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
     write_test_plan_artifact(repo, state, "yes");
@@ -1539,7 +1533,7 @@ fn gate_finish_requires_fresh_code_review_result_before_qa_or_release() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
     write_test_plan_artifact(repo, state, "no");
@@ -1670,7 +1664,7 @@ fn gate_finish_rejects_code_review_artifact_regressions() {
             "review_generator_mismatch" => {
                 replace_in_file(
                     &review_path,
-                    "**Generated By:** superpowers:requesting-code-review",
+                    "**Generated By:** featureforge:requesting-code-review",
                     "**Generated By:** made-up-generator",
                 );
             }
@@ -1881,14 +1875,14 @@ fn gate_finish_rejects_test_plan_and_qa_artifact_regressions() {
             "test_plan_generator_mismatch" => {
                 replace_in_file(
                     &test_plan_path,
-                    "**Generated By:** superpowers:plan-eng-review",
+                    "**Generated By:** featureforge:plan-eng-review",
                     "**Generated By:** made-up-generator",
                 );
             }
             "qa_generator_mismatch" => {
                 replace_in_file(
                     &qa_path,
-                    "**Generated By:** superpowers:qa-only",
+                    "**Generated By:** featureforge:qa-only",
                     "**Generated By:** made-up-generator",
                 );
             }
@@ -1924,7 +1918,9 @@ fn gate_finish_ignores_overlapping_branch_artifact_decoys() {
     run_checked(
         {
             let mut command = Command::new("git");
-            command.args(["checkout", "-b", "feature"]).current_dir(repo);
+            command
+                .args(["checkout", "-b", "feature"])
+                .current_dir(repo);
             command
         },
         "git checkout feature branch",
@@ -1937,7 +1933,7 @@ fn gate_finish_ignores_overlapping_branch_artifact_decoys() {
     write_file(
         &artifact_dir.join("tester-my-feature-code-review-99999999-999999.md"),
         &format!(
-            "# Code Review Result\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** my-feature\n**Repo:** {}\n**Base Branch:** not-the-base\n**Head SHA:** 0000000000000000000000000000000000000000\n**Result:** blocked\n**Generated By:** superpowers:requesting-code-review\n**Generated At:** 2026-03-24T23:59:59Z\n\n## Summary\n- decoy review artifact for another branch.\n",
+            "# Code Review Result\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** my-feature\n**Repo:** {}\n**Base Branch:** not-the-base\n**Head SHA:** 0000000000000000000000000000000000000000\n**Result:** blocked\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-24T23:59:59Z\n\n## Summary\n- decoy review artifact for another branch.\n",
             repo_slug(repo)
         ),
     );
@@ -1960,7 +1956,7 @@ fn gate_finish_rejects_release_artifact_head_mismatch() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
     write_test_plan_artifact(repo, state, "no");
@@ -2094,7 +2090,7 @@ fn gate_finish_rejects_release_artifact_regressions() {
             "release_generator_mismatch" => {
                 replace_in_file(
                     &release_path,
-                    "**Generated By:** superpowers:document-release",
+                    "**Generated By:** featureforge:document-release",
                     "**Generated By:** made-up-generator",
                 );
             }
@@ -2201,13 +2197,13 @@ fn status_and_gate_review_warn_on_legacy_evidence_format() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_file(&repo.join("docs/example-output.md"), "legacy output\n");
     write_file(
         &repo.join(evidence_rel_path()),
         &format!(
-            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** superpowers:executing-plans\n**Claim:** Prepared the workspace for execution.\n**Files:**\n- docs/example-output.md\n**Verification:**\n- Manual verification recorded in fixture setup.\n**Invalidation Reason:** N/A\n"
+            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** featureforge:executing-plans\n**Claim:** Prepared the workspace for execution.\n**Files:**\n- docs/example-output.md\n**Verification:**\n- Manual verification recorded in fixture setup.\n**Invalidation Reason:** N/A\n"
         ),
     );
 
@@ -2249,7 +2245,7 @@ fn gate_review_warns_on_legacy_packet_provenance_in_v2_evidence() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     let legacy_packet = legacy_packet_fingerprint(repo, 1, 1);
     write_single_step_v2_completed_attempt(repo, &legacy_packet);
@@ -2272,7 +2268,7 @@ fn gate_review_rejects_v2_plan_fingerprint_mismatch() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
 
@@ -2302,7 +2298,7 @@ fn gate_review_rejects_v2_source_spec_fingerprint_mismatch() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
 
@@ -2338,7 +2334,7 @@ fn gate_review_accepts_latest_proof_for_shared_file() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_two_step_shared_file_plan(repo, "superpowers:executing-plans");
+    write_two_step_shared_file_plan(repo, "featureforge:executing-plans");
     write_file(&repo.join("docs/example-output.md"), "step 1\n");
 
     let before_step_one = run_rust_json(
@@ -2359,7 +2355,7 @@ fn gate_review_accepts_latest_proof_for_shared_file() {
             "--step",
             "1",
             "--execution-mode",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--expect-execution-fingerprint",
             before_step_one["execution_fingerprint"]
                 .as_str()
@@ -2385,7 +2381,7 @@ fn gate_review_accepts_latest_proof_for_shared_file() {
             "--step",
             "1",
             "--source",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--claim",
             "Completed step 1.",
             "--manual-verify-summary",
@@ -2420,7 +2416,7 @@ fn gate_review_accepts_latest_proof_for_shared_file() {
             "--step",
             "2",
             "--execution-mode",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--expect-execution-fingerprint",
             before_step_two["execution_fingerprint"]
                 .as_str()
@@ -2446,7 +2442,7 @@ fn gate_review_accepts_latest_proof_for_shared_file() {
             "--step",
             "2",
             "--source",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--claim",
             "Completed step 2.",
             "--manual-verify-summary",
@@ -2503,7 +2499,7 @@ fn canonical_complete_normalizes_evidence_and_rejects_stale_mutation() {
             "--step",
             "1",
             "--execution-mode",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--expect-execution-fingerprint",
             &before_fp,
         ],
@@ -2526,7 +2522,7 @@ fn canonical_complete_normalizes_evidence_and_rejects_stale_mutation() {
             "--step",
             "1",
             "--source",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--claim",
             "Prepared the workspace",
             "--manual-verify-summary",
@@ -2562,7 +2558,7 @@ fn canonical_complete_normalizes_evidence_and_rejects_stale_mutation() {
             "--step",
             "1",
             "--source",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--claim",
             "  Prepared\tworkspace \n thoroughly  ",
             "--file",
@@ -2624,7 +2620,7 @@ fn canonical_note_blocks_active_step_and_updates_plan_summary() {
             "--step",
             "1",
             "--execution-mode",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--expect-execution-fingerprint",
             before["execution_fingerprint"]
                 .as_str()
@@ -2693,7 +2689,7 @@ fn canonical_note_rejects_blank_summary_without_mutating_active_step() {
             "--step",
             "1",
             "--execution-mode",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--expect-execution-fingerprint",
             before["execution_fingerprint"]
                 .as_str()
@@ -2760,7 +2756,7 @@ fn canonical_reopen_invalidates_completed_attempt_and_sets_resume_state() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_single_step_plan(repo, "superpowers:executing-plans");
+    write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
 
@@ -2782,7 +2778,7 @@ fn canonical_reopen_invalidates_completed_attempt_and_sets_resume_state() {
             "--step",
             "1",
             "--source",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--reason",
             "Claim is stale after later repo changes",
             "--expect-execution-fingerprint",
@@ -2837,7 +2833,7 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
             "--step",
             "1",
             "--execution-mode",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--expect-execution-fingerprint",
             before_repair_begin["execution_fingerprint"]
                 .as_str()
@@ -2863,7 +2859,7 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
             "--step",
             "1",
             "--source",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--claim",
             "Completed the repair step once.",
             "--manual-verify-summary",
@@ -2896,7 +2892,7 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
             "--step",
             "1",
             "--execution-mode",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--expect-execution-fingerprint",
             before_active_begin["execution_fingerprint"]
                 .as_str()
@@ -2923,7 +2919,7 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
             "--repair-step",
             "1",
             "--source",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--reason",
             "Current work invalidated an earlier completed step",
             "--expect-execution-fingerprint",
@@ -2960,11 +2956,11 @@ fn canonical_status_rejects_non_sequential_evidence_attempt_numbers() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_plan(repo, "superpowers:executing-plans");
+    write_plan(repo, "featureforge:executing-plans");
     write_file(
         &repo.join(evidence_rel_path()),
         &format!(
-            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 2\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** superpowers:executing-plans\n**Claim:** Prepared the workspace for execution.\n**Files:**\n- docs/example-output.md\n**Verification:**\n- `bash tests/codex-runtime/test-superpowers-plan-execution.sh` -> passed in fixture setup\n**Invalidation Reason:** N/A\n"
+            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 2\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** featureforge:executing-plans\n**Claim:** Prepared the workspace for execution.\n**Files:**\n- docs/example-output.md\n**Verification:**\n- `cargo test --test plan_execution` -> passed in fixture setup\n**Invalidation Reason:** N/A\n"
         ),
     );
 
@@ -2997,11 +2993,11 @@ fn canonical_status_rejects_whitespace_only_persisted_file_entry() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
-    write_plan(repo, "superpowers:executing-plans");
+    write_plan(repo, "featureforge:executing-plans");
     write_file(
         &repo.join(evidence_rel_path()),
         &format!(
-            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** superpowers:executing-plans\n**Claim:** Prepared the workspace for execution.\n**Files:**\n-   \n**Verification:**\n- `bash tests/codex-runtime/test-superpowers-plan-execution.sh` -> passed in fixture setup\n**Invalidation Reason:** N/A\n"
+            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {PLAN_REL}\n**Plan Revision:** 1\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** featureforge:executing-plans\n**Claim:** Prepared the workspace for execution.\n**Files:**\n-   \n**Verification:**\n- `cargo test --test plan_execution` -> passed in fixture setup\n**Invalidation Reason:** N/A\n"
         ),
     );
 
@@ -3073,7 +3069,7 @@ fn canonical_complete_canonicalizes_rename_backed_paths() {
             "--step",
             "1",
             "--execution-mode",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--expect-execution-fingerprint",
             before["execution_fingerprint"]
                 .as_str()
@@ -3094,7 +3090,7 @@ fn canonical_complete_canonicalizes_rename_backed_paths() {
             "--step",
             "1",
             "--source",
-            "superpowers:executing-plans",
+            "featureforge:executing-plans",
             "--claim",
             "Prepared the workspace",
             "--file",

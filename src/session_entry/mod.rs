@@ -8,12 +8,12 @@ use serde::Serialize;
 use crate::cli::session_entry::{SessionEntryRecordArgs, SessionEntryResolveArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::paths::{
-    normalize_identifier_token, superpowers_state_dir, write_atomic as write_atomic_file,
+    featureforge_state_dir, normalize_identifier_token, write_atomic as write_atomic_file,
 };
 
 const MAX_MESSAGE_BYTES: u64 = 65_536;
 const ACTIVE_SESSION_ENTRY_SKILL: &str = "using-featureforge";
-const SUPERPOWERS_SKILLS: &[&str] = &[
+const FEATUREFORGE_SKILLS: &[&str] = &[
     "brainstorming",
     "dispatching-parallel-agents",
     "document-release",
@@ -33,7 +33,7 @@ const SUPERPOWERS_SKILLS: &[&str] = &[
     "writing-plans",
     "writing-skills",
 ];
-const SUPERPOWERS_COMMAND_ALIASES: &[&str] = &["brainstorm", "write-plan", "execute-plan"];
+const FEATUREFORGE_COMMAND_ALIASES: &[&str] = &["brainstorm", "write-plan", "execute-plan"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SessionPromptOption {
@@ -74,7 +74,7 @@ pub fn resolve(
     args: &SessionEntryResolveArgs,
 ) -> Result<SessionEntryResolveOutput, DiagnosticError> {
     if matches!(
-        env::var("SUPERPOWERS_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
+        env::var("FEATUREFORGE_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
         Ok("instruction_parse_failure")
     ) {
         return Err(DiagnosticError::new(
@@ -97,7 +97,7 @@ pub fn resolve(
         )),
         DecisionState::Bypassed if message_requests_reentry(&message_text) => {
             if matches!(
-                env::var("SUPERPOWERS_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
+                env::var("FEATUREFORGE_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
                 Ok("reentry_write_failure")
             ) {
                 return Ok(runtime.result(
@@ -160,7 +160,7 @@ pub fn resolve(
 
 pub fn inspect(session_key: Option<&str>) -> Result<SessionEntryResolveOutput, DiagnosticError> {
     if matches!(
-        env::var("SUPERPOWERS_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
+        env::var("FEATUREFORGE_SESSION_ENTRY_TEST_FAILPOINT").as_deref(),
         Ok("instruction_parse_failure")
     ) {
         return Err(DiagnosticError::new(
@@ -353,7 +353,7 @@ impl SessionEntryRuntime {
 fn derive_session_key(raw_session_key: Option<&str>) -> Result<String, DiagnosticError> {
     let candidate = raw_session_key
         .map(str::to_owned)
-        .or_else(|| env::var("SUPERPOWERS_SESSION_KEY").ok())
+        .or_else(|| env::var("FEATUREFORGE_SESSION_KEY").ok())
         .or_else(|| env::var("PPID").ok())
         .unwrap_or_else(|| String::from("current"));
     let normalized = normalize_identifier_token(&candidate);
@@ -425,13 +425,13 @@ fn message_requests_reentry(message: &str) -> bool {
 }
 
 fn clause_requests_skill_reentry(clause: &str) -> bool {
-    SUPERPOWERS_SKILLS.iter().any(|skill| {
+    FEATUREFORGE_SKILLS.iter().any(|skill| {
         clause_requests_phrase(clause, &format!("use {skill}"))
-            || clause_requests_phrase(clause, &format!("use superpowers:{skill}"))
-            || clause_requests_phrase(clause, &format!("superpowers:{skill}"))
+            || clause_requests_phrase(clause, &format!("use featureforge:{skill}"))
+            || clause_requests_phrase(clause, &format!("featureforge:{skill}"))
             || clause_requests_phrase(clause, &format!("/{skill}"))
             || clause_requests_phrase(clause, &format!("${skill}"))
-    }) || SUPERPOWERS_COMMAND_ALIASES
+    }) || FEATUREFORGE_COMMAND_ALIASES
         .iter()
         .any(|alias| clause_requests_phrase(clause, &format!("/{alias}")))
 }
@@ -453,11 +453,11 @@ fn prefix_contains_negation(prefix: &str) -> bool {
 }
 
 fn state_dir() -> PathBuf {
-    superpowers_state_dir()
+    featureforge_state_dir()
 }
 
 fn max_message_bytes() -> u64 {
-    env::var("SUPERPOWERS_SESSION_ENTRY_MAX_MESSAGE_BYTES")
+    env::var("FEATUREFORGE_SESSION_ENTRY_MAX_MESSAGE_BYTES")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(MAX_MESSAGE_BYTES)

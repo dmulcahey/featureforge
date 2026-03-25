@@ -21,13 +21,13 @@ pub fn init_repo(name: &str) -> (TempDir, TempDir) {
 
     let mut git_config_name = Command::new("git");
     git_config_name
-        .args(["config", "user.name", "Superpowers Test"])
+        .args(["config", "user.name", "FeatureForge Test"])
         .current_dir(repo);
     run_checked(git_config_name, "git config user.name");
 
     let mut git_config_email = Command::new("git");
     git_config_email
-        .args(["config", "user.email", "superpowers-tests@example.com"])
+        .args(["config", "user.email", "featureforge-tests@example.com"])
         .current_dir(repo);
     run_checked(git_config_email, "git config user.email");
 
