@@ -3,17 +3,21 @@
 > **For Codex and GitHub Copilot workers:** REQUIRED: Use the execution skill recommended by `featureforge plan execution recommend --plan <approved-plan-path>` after engineering approval; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Workflow State:** Engineering Approved
-**Plan Revision:** 1
+**Plan Revision:** 2
 **Execution Mode:** none
 **Source Spec:** `docs/featureforge/specs/2026-03-25-featureforge-execution-harness-spec.md`
-**Source Spec Revision:** 1
+**Source Spec Revision:** 2
 **Last Reviewed By:** plan-eng-review
 
-**Goal:** Implement the Rust-owned execution harness inside `featureforge plan execution` so approved-plan execution becomes contract-driven, policy-driven, provenance-rich, and fail-closed without changing the outer FeatureForge workflow.
+**Goal:** Implement the Rust-owned execution harness inside `featureforge plan execution` so approved-plan execution becomes contract-driven, policy-driven, provenance-rich, and fail-closed without changing the outer FeatureForge workflow, while keeping the spec as the only source of public contract truth.
 
 **Architecture:** The work lands in vertical slices. First extend the run-scoped execution state, storage, and observability surfaces; then add canonical local artifact contracts and gate enforcement; then bind the new macro-state engine to the current step-level commands; then wire workflow/operator, downstream gates, and skill prompts to the new runtime truth. The runtime remains authoritative for phase legality, policy acceptance, provenance, and state advancement, while skills emit candidate artifacts and consume operator handoffs inside that law.
 
 **Tech Stack:** Rust CLI runtime (`clap`, `serde`, `schemars`), local markdown artifact parsing and fingerprinting, branch-scoped state under `~/.featureforge/projects/`, checked-in JSON schema parity tests, Rust integration tests with `cargo nextest`, Node-based codex-runtime contract tests
+
+## Plan Contract
+
+This plan owns **implementation order, task boundaries, and done criteria**. It does **not** redefine the public runtime contract. Public phases, artifact schemas, failure classes, reason codes, policy semantics, and cutover behavior are owned by the spec. If the plan and spec drift, the spec wins and the plan must be updated in the same change.
 
 ---
 
@@ -38,6 +42,20 @@
 - Preserve the existing step-level command family. The new harness adds macro-state law above it; it does not replace it.
 - Preserve existing status fields while extending the schema so current consumers fail only on intentional contract changes.
 - Use red-green-refactor inside every task. Refresh checked-in schema files and generated skill docs in the same task that changes their source.
+- Keep detailed task sequencing in this plan, not in the spec, so the public contract and implementation order do not drift together.
+
+## Cross-Task Invariants
+
+These rules apply to every task in this plan:
+
+- Runtime truth stays Rust-owned. Skills may draft candidate artifacts, but only runtime commands may create or advance authoritative harness state.
+- Hard cutover remains in force. Do not add migration logic, dual-read behavior, or fallback continuation paths.
+- Branch scope remains authoritative. Same-branch worktrees share one authoritative state, one dependency index, and one run-identity space.
+- Artifact identity remains fingerprint-based. Do not let path-only, name-only, or browse-order lookup become authoritative.
+- Downstream review, QA, and release-doc outputs keep their existing artifact shapes in v1; index them instead of cloning them into a second downstream artifact family.
+- Public strings are centralized. Phase names, failure classes, reason codes, evaluator kinds, and gate names must come from shared runtime-owned constants, not ad hoc re-spellings.
+- Generated artifacts ship with their source changes. Schema files, generated `SKILL.md` docs, and fixture expectations must be refreshed in the same task that changes the source contract.
+- `src/execution/state.rs` remains orchestration glue after Task 1. Later harness law belongs in focused modules.
 
 ## Change Surface
 
@@ -51,7 +69,7 @@
 
 ## Preconditions
 
-- Start from the approved spec at `docs/featureforge/specs/2026-03-25-featureforge-execution-harness-spec.md` with `Spec Revision: 1`.
+- Start from the approved spec at `docs/featureforge/specs/2026-03-25-featureforge-execution-harness-spec.md` with `Spec Revision: 2`.
 - Run all commands from the repo root so schema writers, skill-doc generation, and fixture-relative tests resolve the checked-in files correctly.
 - Treat `schemas/plan-execution-status.schema.json` and generated `skills/*/SKILL.md` files as first-class artifacts that must stay in sync with the runtime changes that require them.
 - Keep commits task-scoped. Do not mix later workflow/operator or skill-doc work into the earlier state and artifact tasks.
@@ -83,6 +101,7 @@
 ## Validation Strategy
 
 - Each task ends with targeted Rust tests and the relevant Node contract tests for the surfaces it changes.
+- No task is done until checked-in schemas, generated docs, fixture payloads, and machine-readable strings match the spec revision this plan targets.
 - The final regression gate for this plan is:
   - `cargo nextest run --test contracts_execution_harness --test execution_harness_state --test plan_execution --test workflow_runtime --test packet_and_schema --test runtime_instruction_contracts`
   - `node --test tests/codex-runtime/workflow-fixtures.test.mjs tests/codex-runtime/eval-observability.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs`
@@ -209,6 +228,7 @@ Task 8  fixture matrix and full regression gate
 **Spec Coverage:** REQ-002, REQ-008, REQ-022, REQ-024, REQ-036, REQ-037, REQ-038, REQ-039, REQ-040, REQ-052, REQ-053, REQ-055, REQ-056, REQ-058, REQ-060, REQ-061
 **Task Outcome:** The runtime has the exact minimum public `HarnessPhase` set from the spec, a run-scoped harness state model with `execution_run_id`, run-scoped `authoritative_sequence`, frozen policy snapshots, dependency-index state, append-only authoritative artifact storage with authoritative-only active pointers, a documented retention-window default, evaluator-set arrays, aggregate evaluation state, retry and handoff fields, repo-state baseline and drift fields, downstream freshness plus last-indexed downstream fingerprints, and branch-scoped write-authority diagnostics plus machine-readable observability telemetry and minimum structured event fields exposed through `PlanExecutionStatus` and harness observability surfaces.
 **Plan Constraints:**
+
 - Keep authoritative state branch-scoped under the existing project artifact root.
 - Preserve current `PlanExecutionStatus` fields while adding the new run-scoped fields and schema output.
 - Keep `write_authority_worktree` diagnostic only; it must not participate in authoritative scope identity.
@@ -230,6 +250,7 @@ Task 8  fixture matrix and full regression gate
 **Open Questions:** none
 
 **Files:**
+
 - Create: `src/execution/harness.rs`
 - Create: `src/execution/dependency_index.rs`
 - Create: `src/execution/observability.rs`
@@ -259,6 +280,7 @@ Task 8  fixture matrix and full regression gate
 **Spec Coverage:** REQ-004, REQ-006, REQ-007, REQ-014, REQ-026, REQ-027, REQ-030, REQ-041, REQ-042, REQ-043, REQ-044, REQ-045, REQ-046, REQ-047, REQ-048, REQ-049, REQ-050, REQ-051
 **Task Outcome:** The repo has canonical markdown contracts for `ExecutionContract`, `EvaluationReport`, `ExecutionHandoff`, and `EvidenceArtifact`, with the full minimum v1 schemas treated as normative for all four artifact families, plus deterministic parsing, version checks, artifact-level `authoritative_sequence`, full spec/plan/task-packet provenance fields, explicit empty-list handling where the spec requires it, full handoff-schema coverage, full contract/report/evidence-artifact schema coverage, candidate-versus-authoritative markers, durable dirty-worktree evidence resolution rules, and extended execution evidence provenance fields.
 **Plan Constraints:**
+
 - Keep markdown authoritative and treat JSON mirrors as optional helpers rather than the v1 contract.
 - Reject unsupported artifact versions fail closed instead of best-effort parsing.
 - Resolve artifact-backed evidence by canonical fingerprint, not by path or filename.
@@ -279,6 +301,7 @@ Task 8  fixture matrix and full regression gate
 **Open Questions:** none
 
 **Files:**
+
 - Create: `src/contracts/harness.rs`
 - Create: `tests/contracts_execution_harness.rs`
 - Create: `tests/codex-runtime/fixtures/workflow-artifacts/harness/valid-execution-contract.md`
@@ -305,6 +328,7 @@ Task 8  fixture matrix and full regression gate
 **Spec Coverage:** REQ-010, REQ-023, REQ-025, REQ-028, REQ-029, REQ-030, REQ-031, REQ-033, REQ-034, REQ-035, REQ-041, REQ-042, REQ-043, REQ-044, REQ-045, REQ-046, REQ-047, REQ-048, REQ-049, REQ-050, REQ-052, REQ-053, REQ-060
 **Task Outcome:** `gate-contract`, `gate-evaluator`, `gate-handoff`, and authoritative `record-*` flows enforce stable failure classes, single-writer authority, advisory-only `recommended_action` semantics, idempotent replay, repo-state drift checks, approved-work contradiction checks, chunking-strategy legality, shared atomic publication helpers for every authoritative mutation family, dependency-index updates, dependency-aware post-commit pruning, and deterministic all-required evaluator aggregation.
 **Plan Constraints:**
+
 - Gate commands must accept authoritative artifacts only.
 - Keep write authority branch-scoped across same-branch worktrees and fail closed on concurrent mutation attempts.
 - Reject replay mismatch instead of mutating authoritative state twice.
@@ -330,6 +354,7 @@ Task 8  fixture matrix and full regression gate
 **Open Questions:** none
 
 **Files:**
+
 - Create: `src/execution/authority.rs`
 - Create: `src/execution/gates.rs`
 - Modify: `src/execution/dependency_index.rs`
@@ -359,6 +384,7 @@ Task 8  fixture matrix and full regression gate
 **Spec Coverage:** REQ-003, REQ-005, REQ-009, REQ-011, REQ-016, REQ-032, REQ-033
 **Task Outcome:** The new macro-state engine governs `begin`, `note`, `complete`, `reopen`, and `transfer`, keeps execution inside the active contract scope, applies the same atomic publication and crash-recovery rules as the `record-*` flows, extends per-step evidence with full harness-written completion provenance, and applies deterministic invalidation cascades for reopen, contract pivot, and plan pivot.
 **Plan Constraints:**
+
 - Preserve the existing step-level command family and extend it rather than replacing it with a second tracker.
 - Reject out-of-contract task or step targets before any authoritative mutation occurs.
 - Keep `chunk_id` stable until the active contract definition changes.
@@ -374,6 +400,7 @@ Task 8  fixture matrix and full regression gate
 **Open Questions:** none
 
 **Files:**
+
 - Create: `src/execution/transitions.rs`
 - Modify: `src/execution/state.rs`
 - Modify: `src/execution/mutate.rs`
@@ -396,6 +423,7 @@ Task 8  fixture matrix and full regression gate
 **Spec Coverage:** REQ-012, REQ-013, REQ-018, REQ-036, REQ-056, REQ-057, REQ-058, REQ-059
 **Task Outcome:** `recommend` preserves the existing skill-choice contract while returning the full proposed harness policy tuple, including `recommended_skill`, `reason`, `decision_flags`, and `policy_reason_codes[]`; `execution_preflight` becomes the sole policy-acceptance and runtime-owned resume boundary with exact-replay idempotency, legal new-run boundaries mint new run identities, required handoff and interrupted-mutation checks gate resume, and active execution rejects pre-harness continuation.
 **Plan Constraints:**
+
 - Keep `recommend` side-effect free.
 - Preserve and test the existing `recommend` output contract while adding harness policy fields, so `recommended_skill`, `reason`, `decision_flags`, and `policy_reason_codes[]` remain stable and machine-readable.
 - Mint a new `execution_run_id` only on a new approved plan revision or a recorded policy reset boundary that changes the accepted snapshot.
@@ -412,6 +440,7 @@ Task 8  fixture matrix and full regression gate
 **Open Questions:** none
 
 **Files:**
+
 - Modify: `src/execution/authority.rs`
 - Modify: `src/execution/dependency_index.rs`
 - Modify: `src/execution/state.rs`
@@ -436,6 +465,7 @@ Task 8  fixture matrix and full regression gate
 **Spec Coverage:** REQ-001, REQ-015, REQ-017, REQ-024, REQ-034, REQ-037, REQ-040, REQ-053, REQ-054, REQ-055, REQ-061
 **Task Outcome:** Workflow phase, doctor, handoff, and downstream gate behavior become harness-aware, use the exact public phase model, surface stable evaluator identity and reason codes, compute downstream freshness from fingerprint-indexed review, QA, and release-doc inputs, and fail closed on downstream repo-drift and artifact-integrity mismatches without adding a new public writer-conflict phase.
 **Plan Constraints:**
+
 - Keep final review, browser QA, release docs, and finish readiness as downstream authoritative gates.
 - Index existing downstream artifacts instead of cloning them into a second harness-owned artifact family.
 - Surface writer conflict inside the current public phase via `next_action`, `reason_codes[]`, and write-authority metadata.
@@ -448,6 +478,7 @@ Task 8  fixture matrix and full regression gate
 **Open Questions:** none
 
 **Files:**
+
 - Modify: `src/workflow/status.rs`
 - Modify: `src/workflow/operator.rs`
 - Modify: `src/execution/state.rs`
@@ -469,6 +500,7 @@ Task 8  fixture matrix and full regression gate
 **Spec Coverage:** REQ-013, REQ-015, REQ-017, REQ-020, REQ-034
 **Task Outcome:** Execution skills emit candidate contracts, evaluations, and handoffs inside runtime-approved scope, while review and QA skills stay downstream gates, checked-in evaluator references and exemplars remain aligned with those gate contracts, and the checked-in prompts and skill docs match the runtime-owned harness contract.
 **Plan Constraints:**
+
 - Skills may emit candidate artifacts, but they must not claim authoritative state transitions.
 - Keep downstream review and QA outside chunk-level verifier aggregation.
 - Regenerate checked-in `SKILL.md` files in the same task that changes template or prompt wording.
@@ -478,6 +510,7 @@ Task 8  fixture matrix and full regression gate
 **Open Questions:** none
 
 **Files:**
+
 - Modify: `skills/executing-plans/SKILL.md.tmpl`
 - Modify: `skills/executing-plans/SKILL.md`
 - Modify: `skills/subagent-driven-development/SKILL.md.tmpl`
@@ -507,6 +540,7 @@ Task 8  fixture matrix and full regression gate
 **Spec Coverage:** REQ-019, REQ-020, REQ-021
 **Task Outcome:** Rust and Node fixture suites cover happy path, repair, pivot, handoff, cutover, candidate-versus-authoritative boundaries, stale contract/evaluation cases, non-harness provenance rejection, repo-state drift, incomplete authoritative mutation, dependency-index mismatch, retention eligibility and maintenance behavior, downstream freshness, and distinct observability event families plus telemetry surfaces so the approved harness contract is pinned end to end.
 **Plan Constraints:**
+
 - Add fixture-backed cases for authoritative and stale artifact states, not prose-only examples.
 - Keep the full regression gate split between Rust runtime suites and Node contract suites.
 - Refresh fixture README text in the same task that adds or renames fixture families.
@@ -520,6 +554,7 @@ Task 8  fixture matrix and full regression gate
 **Open Questions:** none
 
 **Files:**
+
 - Create: `tests/codex-runtime/fixtures/workflow-artifacts/harness/pivot-required-status.json`
 - Create: `tests/codex-runtime/fixtures/workflow-artifacts/harness/handoff-required-status.json`
 - Create: `tests/codex-runtime/fixtures/workflow-artifacts/harness/candidate-execution-contract.md`
@@ -563,10 +598,10 @@ Task 8  fixture matrix and full regression gate
 ## Engineering Review Summary
 
 **Review Status:** clear
-**Reviewed At:** 2026-03-26T13:14:09Z
+**Reviewed At:** 2026-03-26T14:34:23Z
 **Review Mode:** small_change
-**Reviewed Plan Revision:** 1
+**Reviewed Plan Revision:** 2
 **Critical Gaps:** 0
 **Browser QA Required:** no
-**Test Plan Artifact:** `/Users/dmulcahey/.featureforge/projects/dmulcahey-superpowers/dmulcahey-dm-workflow-enhancement-f8fb7449491f-test-plan-20260326-130847.md`
+**Test Plan Artifact:** `/Users/dmulcahey/.featureforge/projects/dmulcahey-superpowers/dmulcahey-dm-workflow-enhancement-f8fb7449491f-test-plan-20260326-143423.md`
 **Outside Voice:** skipped
