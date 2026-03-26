@@ -2377,6 +2377,22 @@ fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_workt
                 .is_some(),
             "same-branch worktrees should expose numeric authoritative sequence diagnostics once execution starts"
         );
+        let reason_codes = doctor["execution_status"]["reason_codes"]
+            .as_array()
+            .expect("same-branch worktrees should expose execution reason_codes as an array");
+        if reason_codes
+            .iter()
+            .any(|value| value == &Value::String(String::from("write_authority_conflict")))
+        {
+            assert!(
+                doctor["execution_status"]["write_authority_holder"].is_string(),
+                "write_authority_conflict should keep authority holder metadata visible"
+            );
+            assert!(
+                doctor["execution_status"]["write_authority_worktree"].is_string(),
+                "write_authority_conflict should keep authority worktree metadata visible"
+            );
+        }
     }
 
     let run_id_a = doctor_a["execution_status"]["execution_run_id"]
@@ -2871,9 +2887,9 @@ fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
         doctor_json["gate_finish"]["failure_class"],
         "ReviewArtifactNotFresh"
     );
-    assert_eq!(phase_json["phase"], "review_blocked");
+    assert_eq!(phase_json["phase"], "final_review_pending");
     assert_eq!(phase_json["next_action"], "request_code_review");
-    assert_eq!(handoff_json["phase"], "review_blocked");
+    assert_eq!(handoff_json["phase"], "final_review_pending");
     assert_eq!(handoff_json["route_status"], "implementation_ready");
     assert_eq!(handoff_json["execution_started"], "yes");
     assert_eq!(handoff_json["next_action"], "request_code_review");
@@ -2903,7 +2919,7 @@ fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
     );
     assert!(phase_output.status.success());
     let phase_stdout = String::from_utf8_lossy(&phase_output.stdout);
-    assert!(phase_stdout.contains("Workflow phase: review_blocked"));
+    assert!(phase_stdout.contains("Workflow phase: final_review_pending"));
     assert!(phase_stdout.contains("Route status: implementation_ready"));
     assert!(phase_stdout.contains("Next: Use featureforge:requesting-code-review for the approved plan before branch completion: docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md"));
 
@@ -2917,7 +2933,7 @@ fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
     assert!(doctor_output.status.success());
     let doctor_stdout = String::from_utf8_lossy(&doctor_output.stdout);
     assert!(doctor_stdout.contains("Workflow doctor"));
-    assert!(doctor_stdout.contains("Phase: review_blocked"));
+    assert!(doctor_stdout.contains("Phase: final_review_pending"));
     assert!(doctor_stdout.contains("Route status: implementation_ready"));
 
     let handoff_output = run_rust_featureforge_with_env(
@@ -2930,7 +2946,7 @@ fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
     assert!(handoff_output.status.success());
     let handoff_stdout = String::from_utf8_lossy(&handoff_output.stdout);
     assert!(handoff_stdout.contains("Workflow handoff"));
-    assert!(handoff_stdout.contains("Phase: review_blocked"));
+    assert!(handoff_stdout.contains("Phase: final_review_pending"));
     assert!(handoff_stdout.contains("Next action: request_code_review"));
     assert!(handoff_stdout.contains("Recommended skill: featureforge:requesting-code-review"));
     assert!(
@@ -3038,9 +3054,9 @@ fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
         doctor_json["gate_review"]["failure_class"],
         "StaleExecutionEvidence"
     );
-    assert_eq!(phase_json["phase"], "review_blocked");
+    assert_eq!(phase_json["phase"], "final_review_pending");
     assert_eq!(phase_json["next_action"], "return_to_execution");
-    assert_eq!(handoff_json["phase"], "review_blocked");
+    assert_eq!(handoff_json["phase"], "final_review_pending");
     assert_eq!(handoff_json["next_action"], "return_to_execution");
     assert_eq!(
         handoff_json["recommended_skill"],
@@ -3294,7 +3310,7 @@ fn canonical_workflow_phase_routes_stale_review_back_to_requesting_code_review()
         "workflow gate finish for stale-review routing fixture",
     );
 
-    assert_eq!(phase_json["phase"], "review_blocked");
+    assert_eq!(phase_json["phase"], "final_review_pending");
     assert_eq!(phase_json["next_action"], "request_code_review");
     assert_eq!(
         handoff_json["recommended_skill"],

@@ -10,7 +10,7 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
-use crate::execution::harness::ExecutionRunId;
+use crate::execution::harness::{EvaluatorKind, ExecutionRunId};
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus, RecommendOutput};
 use crate::session_entry::{self, SessionEntryResolveOutput};
 use crate::workflow::status::{SessionEntryState, WorkflowPhase, WorkflowRoute, WorkflowRuntime};
@@ -74,6 +74,9 @@ struct OperatorContext {
 pub fn render_next(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
     let mut output = String::new();
+    output.push_str("Next action: ");
+    output.push_str(next_action_for_context(&context));
+    output.push('\n');
     output.push_str("Next safe step: ");
     output.push_str(&next_step_text(&context));
     output.push('\n');
@@ -120,9 +123,10 @@ pub fn phase(current_dir: &Path) -> Result<WorkflowPhase, JsonFailure> {
 pub fn render_phase(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
     Ok(format!(
-        "Workflow phase: {}\nRoute status: {}\nNext: {}\nSpec: {}\nPlan: {}\n",
+        "Workflow phase: {}\nRoute status: {}\nNext action: {}\nNext: {}\nSpec: {}\nPlan: {}\n",
         context.phase,
         context.route.status,
+        next_action_for_context(&context),
         next_step_text(&context),
         display_or_none(&context.route.spec_path),
         display_or_none(&context.route.plan_path)
@@ -158,15 +162,38 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
 
 pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
     let doctor = doctor(current_dir)?;
-    Ok(format!(
-        "Workflow doctor\nPhase: {}\nSession entry: {}\nRoute status: {}\nContract state: {}\nSpec: {}\nPlan: {}\n",
+    let mut output = format!(
+        "Workflow doctor\nPhase: {}\nSession entry: {}\nRoute status: {}\nNext action: {}\nContract state: {}\nSpec: {}\nPlan: {}\n",
         doctor.phase,
         doctor.session_entry.outcome,
         doctor.route_status,
+        doctor.next_action,
         doctor.contract_state,
         display_or_none(&doctor.spec_path),
         display_or_none(&doctor.plan_path)
-    ))
+    );
+    if let Some(execution_status) = doctor.execution_status.as_ref() {
+        append_execution_status_metadata(&mut output, execution_status);
+    }
+    if let Some(preflight) = doctor.preflight.as_ref() {
+        output.push_str(&format!(
+            "Preflight reason codes: {}\n",
+            reason_codes_text(&preflight.reason_codes)
+        ));
+    }
+    if let Some(gate_review) = doctor.gate_review.as_ref() {
+        output.push_str(&format!(
+            "Review gate reason codes: {}\n",
+            reason_codes_text(&gate_review.reason_codes)
+        ));
+    }
+    if let Some(gate_finish) = doctor.gate_finish.as_ref() {
+        output.push_str(&format!(
+            "Finish gate reason codes: {}\n",
+            reason_codes_text(&gate_finish.reason_codes)
+        ));
+    }
+    Ok(output)
 }
 
 pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
@@ -228,7 +255,7 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
                 )
             }
             "implementation_handoff" => (String::new(), reason_text(&context)),
-            "review_blocked" if review_requires_execution_reentry(&context) => {
+            "final_review_pending" if review_requires_execution_reentry(&context) => {
                 let skill = context
                     .execution_status
                     .as_ref()
@@ -236,7 +263,7 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
                     .unwrap_or_default();
                 (skill, reason_text(&context))
             }
-            "review_blocked" => (
+            "final_review_pending" => (
                 String::from("featureforge:requesting-code-review"),
                 reason_text(&context),
             ),
@@ -306,6 +333,9 @@ pub fn render_handoff(current_dir: &Path) -> Result<String, JsonFailure> {
     }
     if !handoff.recommendation_reason.is_empty() {
         output.push_str(&format!("Reason: {}\n", handoff.recommendation_reason));
+    }
+    if let Some(execution_status) = handoff.execution_status.as_ref() {
+        append_execution_status_metadata(&mut output, execution_status);
     }
     Ok(output)
 }
@@ -595,12 +625,12 @@ fn derive_phase(
 
     if let Some(gate_review) = gate_review {
         if !gate_review.allowed {
-            return String::from("review_blocked");
+            return String::from("final_review_pending");
         }
     }
 
     let Some(gate_finish) = gate_finish else {
-        return String::from("review_blocked");
+        return String::from("final_review_pending");
     };
 
     if gate_finish.allowed {
@@ -608,10 +638,10 @@ fn derive_phase(
     }
 
     match gate_finish.failure_class.as_str() {
-        "ReviewArtifactNotFresh" => String::from("review_blocked"),
+        "ReviewArtifactNotFresh" => String::from("final_review_pending"),
         "QaArtifactNotFresh" => String::from("qa_pending"),
         "ReleaseArtifactNotFresh" => String::from("document_release_pending"),
-        _ => String::from("review_blocked"),
+        _ => String::from("final_review_pending"),
     }
 }
 
@@ -688,7 +718,7 @@ fn next_text_for_phase(
                 format!("Return to the current execution flow for the approved plan: {plan_path}")
             }
         }
-        "review_blocked" => {
+        "final_review_pending" => {
             if plan_path.is_empty() {
                 String::from("Use featureforge:requesting-code-review for the final review gate.")
             } else {
@@ -729,7 +759,7 @@ fn reason_text(context: &OperatorContext) -> String {
         "executing" => String::from(
             "Execution already started for the approved plan and should continue through the current execution flow.",
         ),
-        "review_blocked" => gate_first_diagnostic_message(context.gate_review.as_ref())
+        "final_review_pending" => gate_first_diagnostic_message(context.gate_review.as_ref())
             .or_else(|| gate_first_diagnostic_message(context.gate_finish.as_ref()))
             .unwrap_or_else(|| {
                 String::from("Execution is blocked on the final review gate for the approved plan.")
@@ -776,7 +806,7 @@ fn next_action_for_phase(phase: &str) -> &'static str {
         | "workflow_unresolved" => "use_next_skill",
         "implementation_handoff" | "execution_preflight" => "execution_preflight",
         "executing" => "return_to_execution",
-        "review_blocked" => "request_code_review",
+        "final_review_pending" => "request_code_review",
         "qa_pending" => "run_qa_only",
         "document_release_pending" => "run_document_release",
         "ready_for_branch_completion" => "finish_branch",
@@ -806,7 +836,7 @@ fn finish_requires_test_plan_refresh(context: &OperatorContext) -> bool {
 }
 
 fn review_requires_execution_reentry(context: &OperatorContext) -> bool {
-    context.phase == "review_blocked"
+    context.phase == "final_review_pending"
         && context
             .gate_review
             .as_ref()
@@ -827,6 +857,83 @@ fn gate_first_diagnostic_message(gate: Option<&GateResult>) -> Option<String> {
             .first()
             .map(|diagnostic| diagnostic.message.clone())
     })
+}
+
+fn append_execution_status_metadata(output: &mut String, status: &PlanExecutionStatus) {
+    output.push_str(&format!(
+        "Execution reason codes: {}\n",
+        reason_codes_text(&status.reason_codes)
+    ));
+    output.push_str(&format!(
+        "Evaluator required kinds: {}\n",
+        evaluator_kinds_text(&status.required_evaluator_kinds)
+    ));
+    output.push_str(&format!(
+        "Evaluator completed kinds: {}\n",
+        evaluator_kinds_text(&status.completed_evaluator_kinds)
+    ));
+    output.push_str(&format!(
+        "Evaluator pending kinds: {}\n",
+        evaluator_kinds_text(&status.pending_evaluator_kinds)
+    ));
+    output.push_str(&format!(
+        "Evaluator non-passing kinds: {}\n",
+        evaluator_kinds_text(&status.non_passing_evaluator_kinds)
+    ));
+    output.push_str(&format!(
+        "Evaluator last kind: {}\n",
+        optional_evaluator_kind_text(status.last_evaluation_evaluator_kind)
+    ));
+    output.push_str(&format!(
+        "Write authority state: {}\n",
+        status.write_authority_state
+    ));
+    output.push_str(&format!(
+        "Write authority holder: {}\n",
+        optional_text(status.write_authority_holder.as_deref())
+    ));
+    output.push_str(&format!(
+        "Write authority worktree: {}\n",
+        optional_text(status.write_authority_worktree.as_deref())
+    ));
+}
+
+fn reason_codes_text(reason_codes: &[String]) -> String {
+    if reason_codes.is_empty() {
+        String::from("none")
+    } else {
+        reason_codes.join(", ")
+    }
+}
+
+fn evaluator_kinds_text(kinds: &[EvaluatorKind]) -> String {
+    if kinds.is_empty() {
+        String::from("none")
+    } else {
+        kinds
+            .iter()
+            .map(evaluator_kind_text)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn evaluator_kind_text(kind: &EvaluatorKind) -> &'static str {
+    match kind {
+        EvaluatorKind::SpecCompliance => "spec_compliance",
+        EvaluatorKind::CodeQuality => "code_quality",
+    }
+}
+
+fn optional_evaluator_kind_text(value: Option<EvaluatorKind>) -> &'static str {
+    match value {
+        Some(value) => evaluator_kind_text(&value),
+        None => "none",
+    }
+}
+
+fn optional_text(value: Option<&str>) -> &str {
+    value.filter(|value| !value.trim().is_empty()).unwrap_or("none")
 }
 
 fn execution_status_args(args: &PlanArgs) -> ExecutionStatusArgs {
