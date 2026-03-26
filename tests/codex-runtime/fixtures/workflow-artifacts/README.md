@@ -26,3 +26,30 @@ Only the minimum content needed by the test is kept here:
 
 This keeps the sequencing test self-contained and avoids coupling it to
 repository-root documentation that may be reorganized or deleted.
+
+## Observability Matrix (Planned Slice)
+
+This README-only slice documents missing runtime `event_kind` literals that
+the harness fixture/status families will cover next. It mirrors the
+`OBSERVABILITY_CASES` family model in
+`tests/codex-runtime/eval-observability.test.mjs`.
+
+| Observability family (from tests) | Planned harness fixture/status family | Missing runtime `event_kind` literals to cover |
+| --- | --- | --- |
+| `proposal_policy` | execution preflight recommendation/policy acceptance states | `recommendation_proposed`, `policy_accepted` |
+| `gate_result` | gate outcome statuses for `gate-contract`, `gate-evaluator`, `gate-handoff`, `gate-review`, `gate-finish` | `gate_result` |
+| `blocked_state` | blocked entry/exit transitions (`handoff_required` -> `executing`) | `blocked_state_entered`, `blocked_state_cleared` |
+| `replay_outcome` | replay acceptance/conflict reconciliation statuses | `replay_accepted`, `replay_conflict` |
+| `repo_state_drift` | repo drift detection/reconciliation statuses | `repo_state_drift_detected`, `repo_state_reconciled` |
+| `artifact_integrity_mismatch` | artifact integrity mismatch status | `integrity_mismatch_detected` |
+| `partial_authoritative_mutation_recovery` | partial authoritative mutation recovery status family | `partial_mutation_recovered`, `authoritative_mutation_recorded` |
+| `downstream_gate_rejection` | downstream provenance rejection statuses | `downstream_gate_rejected` |
+| `dependency_index_pruning_skip` | dependency-index pruning skip/status continuity family | `ordering_gap_detected`, `authoritative_mutation_recorded` |
+| `write_authority` | write-authority conflict/reclaim lifecycle statuses | `write_authority_reclaimed` |
+
+Notes:
+- `authoritative_mutation_recorded` is intentionally shared across
+  `partial_authoritative_mutation_recovery` and
+  `dependency_index_pruning_skip`.
+- This section is a planning map only; fixture files and runtime wiring are
+  intentionally out of scope for this slice.
