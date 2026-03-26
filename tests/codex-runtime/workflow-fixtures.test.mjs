@@ -25,6 +25,27 @@ const PLAN_FIXTURES = [
 ];
 
 const STALE_PATH_PLAN_FIXTURE = 'plans/2026-01-22-document-review-system-stale-path.md';
+const REQUIRED_HARNESS_AWARE_DOWNSTREAM_PHASES = [
+  'final_review_pending',
+  'qa_pending',
+  'document_release_pending',
+  'ready_for_branch_completion',
+];
+const REQUIRED_DOWNSTREAM_FRESHNESS_FIELDS = [
+  'final_review_state',
+  'browser_qa_state',
+  'release_docs_state',
+  'last_final_review_artifact_fingerprint',
+  'last_browser_qa_artifact_fingerprint',
+  'last_release_docs_artifact_fingerprint',
+];
+const REQUIRED_EVALUATOR_VISIBILITY_FIELDS = [
+  'last_evaluation_evaluator_kind',
+  'required_evaluator_kinds',
+  'completed_evaluator_kinds',
+  'pending_evaluator_kinds',
+  'non_passing_evaluator_kinds',
+];
 const ACTIVE_DOC_PATHS = [
   'RELEASE-NOTES.md',
   'TODOS.md',
@@ -139,6 +160,69 @@ test('workflow runtime coverage retains argv0 alias and public operator parity',
   const content = readUtf8(path.join(REPO_ROOT, 'tests/workflow_runtime.rs'));
   assert.match(content, /workflow_status_argv0_alias_dispatches_to_canonical_tree/);
   assert.match(content, /canonical_workflow_public_json_commands_work_for_ready_plan/);
+});
+
+test('workflow fixture coverage pins harness-aware downstream phase/freshness/operator surfaces', () => {
+  const runtime = readUtf8(path.join(REPO_ROOT, 'tests/workflow_runtime.rs'));
+  const shellSmoke = readUtf8(path.join(REPO_ROOT, 'tests/workflow_shell_smoke.rs'));
+
+  for (const phase of REQUIRED_HARNESS_AWARE_DOWNSTREAM_PHASES) {
+    assert.match(
+      runtime,
+      new RegExp(`"${phase}"`),
+      `workflow runtime coverage should exercise harness-aware downstream phase ${phase}`,
+    );
+  }
+  assert.doesNotMatch(
+    runtime,
+    /"review_blocked"/,
+    'workflow runtime coverage should stop using the legacy review_blocked public phase label',
+  );
+
+  for (const field of REQUIRED_DOWNSTREAM_FRESHNESS_FIELDS) {
+    assert.match(
+      runtime,
+      new RegExp(`"${field}"`),
+      `workflow runtime coverage should expose downstream freshness/status field ${field}`,
+    );
+  }
+
+  for (const field of REQUIRED_EVALUATOR_VISIBILITY_FIELDS) {
+    assert.match(
+      runtime,
+      new RegExp(`"${field}"`),
+      `workflow runtime coverage should expose evaluator-kind surface ${field}`,
+    );
+  }
+
+  assert.match(runtime, /"next_action"/, 'workflow runtime coverage should keep next_action visible');
+  assert.match(runtime, /"reason_codes"/, 'workflow runtime coverage should keep reason_codes visible');
+  assert.match(
+    runtime,
+    /write_authority_holder/,
+    'workflow runtime coverage should keep write-authority metadata visible',
+  );
+  assert.match(
+    runtime,
+    /write_authority_conflict/,
+    'workflow runtime coverage should keep writer conflict visible through metadata and reason codes',
+  );
+  assert.doesNotMatch(
+    runtime,
+    /writer_conflict_pending|writer_conflict_phase|phase.*writer_conflict/,
+    'workflow runtime coverage should not introduce a dedicated writer-conflict public phase',
+  );
+
+  assert.match(
+    shellSmoke,
+    /workflow_phase_text_and_json_surfaces_match_harness_downstream_freshness/,
+    'workflow shell smoke coverage should pin phase text/JSON parity for harness downstream freshness',
+  );
+  assert.match(
+    shellSmoke,
+    /workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_and_reason_metadata/,
+    'workflow shell smoke coverage should pin handoff/doctor text/JSON parity for evaluator and reason metadata',
+  );
 });
 
 test('active docs reserve legacy attribution to the README provenance section only', () => {

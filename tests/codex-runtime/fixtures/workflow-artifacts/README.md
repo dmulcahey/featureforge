@@ -18,6 +18,11 @@ Only the minimum content needed by the test is kept here:
 - canonical `## Task N:` plus parseable `**Files:**` blocks where execution-stage sequencing coverage needs it
 - a stale source-spec path case where a newer approved spec path exists at the same revision
 - a full approved-plan-contract pair with `Plan Revision`, `Execution Mode`, `Requirement Coverage Matrix`, and canonical task structure for route-time hardening coverage
+- harness-aware downstream phase expectations anchored on `final_review_pending`, `qa_pending`, `document_release_pending`, and `ready_for_branch_completion`
+- downstream freshness/status surfaces for final review, browser QA, and release docs, including indexed fingerprint fields
+- evaluator-kind visibility where workflow runtime/operator tests expose status metadata
+- fixture-level text/JSON operator parity hooks for downstream freshness and evaluator/reason metadata
+- writer-conflict visibility through `next_action`, `reason_codes`, and write-authority metadata without introducing a dedicated public writer-conflict phase
 
 This keeps the sequencing test self-contained and avoids coupling it to
 repository-root documentation that may be reorganized or deleted.
