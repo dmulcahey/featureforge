@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 2
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-25-featureforge-execution-harness-spec.md`
 **Source Spec Revision:** 2
 **Last Reviewed By:** plan-eng-review
@@ -264,17 +264,16 @@ Task 8  fixture matrix and full regression gate
 - Modify: `tests/paths_identity.rs`
 - Modify: `tests/workflow_runtime.rs`
 
-- [ ] **Step 1: Add red status and state tests in `tests/execution_harness_state.rs`, `tests/plan_execution.rs`, and `tests/workflow_runtime.rs` for the exact public phase set, run identity, `latest_authoritative_sequence`, authoritative-only active pointers, `active_contract_path`, `last_evaluation_report_path`, `last_evaluation_report_fingerprint`, `last_evaluation_evaluator_kind`, `write_authority_holder`, pre-start/non-skill-readable status, evaluator-kind arrays, aggregate evaluation state, retry and handoff fields, repo-state baseline and drift, downstream freshness plus last-indexed downstream fingerprints, frozen policy snapshots, stable minimum reason codes, and same-branch worktree diagnostics**
-- [ ] **Step 2: Add red schema-parity assertions in `tests/packet_and_schema.rs` for the expanded `plan-execution-status` schema**
-- [ ] **Step 3: Create `src/execution/harness.rs` with the exact minimum `HarnessPhase` enum from the spec, run-identity types, frozen policy snapshot types, and authoritative state structs**
-- [ ] **Step 4: Create `src/execution/dependency_index.rs` with the runtime-owned dependency graph model, index-health state, candidate-artifact dependency tracking, and retention-eligibility helpers**
-- [ ] **Step 5: Create `src/execution/observability.rs` with the minimum structured event payload fields, stable reason-code constants, evaluator-identity fields, and machine-readable telemetry/counter helpers for phase transitions, blocked-state entries by reason, gate failures, retry and pivot counts, authoritative mutation counts, evaluator outcomes, ordering gaps, replay outcomes, write-authority conflicts and reclaims, drift, integrity mismatches, and recovery**
-- [ ] **Step 6: Extend `src/paths/mod.rs` and `tests/paths_identity.rs` with branch-scoped harness state, dependency-index, and authoritative-artifact path helpers plus atomic-publish path coverage**
-- [ ] **Step 7: Thread the new state model through `src/execution/state.rs` and `src/execution/mod.rs` without removing the existing status fields**
-- [ ] **Step 8: Refresh `schemas/plan-execution-status.schema.json` through the existing schema writer path and make the schema-parity tests pass**
-- [ ] **Step 9: Run `cargo nextest run --test execution_harness_state --test plan_execution --test workflow_runtime --test packet_and_schema --test paths_identity` and fix failures until the slice is green**
-- [ ] **Step 10: Commit the slice with `git commit -m "feat: add execution harness state model"`**
-
+- [x] **Step 1: Add red status and state tests in `tests/execution_harness_state.rs`, `tests/plan_execution.rs`, and `tests/workflow_runtime.rs` for the exact public phase set, run identity, `latest_authoritative_sequence`, authoritative-only active pointers, `active_contract_path`, `last_evaluation_report_path`, `last_evaluation_report_fingerprint`, `last_evaluation_evaluator_kind`, `write_authority_holder`, pre-start/non-skill-readable status, evaluator-kind arrays, aggregate evaluation state, retry and handoff fields, repo-state baseline and drift, downstream freshness plus last-indexed downstream fingerprints, frozen policy snapshots, stable minimum reason codes, and same-branch worktree diagnostics**
+- [x] **Step 2: Add red schema-parity assertions in `tests/packet_and_schema.rs` for the expanded `plan-execution-status` schema**
+- [x] **Step 3: Create `src/execution/harness.rs` with the exact minimum `HarnessPhase` enum from the spec, run-identity types, frozen policy snapshot types, and authoritative state structs**
+- [x] **Step 4: Create `src/execution/dependency_index.rs` with the runtime-owned dependency graph model, index-health state, candidate-artifact dependency tracking, and retention-eligibility helpers**
+- [x] **Step 5: Create `src/execution/observability.rs` with the minimum structured event payload fields, stable reason-code constants, evaluator-identity fields, and machine-readable telemetry/counter helpers for phase transitions, blocked-state entries by reason, gate failures, retry and pivot counts, authoritative mutation counts, evaluator outcomes, ordering gaps, replay outcomes, write-authority conflicts and reclaims, drift, integrity mismatches, and recovery**
+- [x] **Step 6: Extend `src/paths/mod.rs` and `tests/paths_identity.rs` with branch-scoped harness state, dependency-index, and authoritative-artifact path helpers plus atomic-publish path coverage**
+- [x] **Step 7: Thread the new state model through `src/execution/state.rs` and `src/execution/mod.rs` without removing the existing status fields**
+- [x] **Step 8: Refresh `schemas/plan-execution-status.schema.json` through the existing schema writer path and make the schema-parity tests pass**
+- [x] **Step 9: Run `cargo nextest run --test execution_harness_state --test plan_execution --test workflow_runtime --test packet_and_schema --test paths_identity` and fix failures until the slice is green**
+- [x] **Step 10: Commit the slice with `git commit -m "feat: add execution harness state model"`**
 ## Task 2: Add Canonical Harness Artifact Contracts
 
 **Spec Coverage:** REQ-004, REQ-006, REQ-007, REQ-014, REQ-026, REQ-027, REQ-030, REQ-041, REQ-042, REQ-043, REQ-044, REQ-045, REQ-046, REQ-047, REQ-048, REQ-049, REQ-050, REQ-051
@@ -313,16 +312,15 @@ Task 8  fixture matrix and full regression gate
 - Modify: `src/contracts/packet.rs`
 - Modify: `tests/packet_and_schema.rs`
 
-- [ ] **Step 1: Add red parsing and validation tests in `tests/contracts_execution_harness.rs` for valid and invalid contract, evaluation, handoff, and evidence artifacts, including exact minimum-schema coverage for `ExecutionContract`, `EvaluationReport`, `ExecutionHandoff`, and `EvidenceArtifact`; approved-work traceability fields that `gate-contract` later validates against spec, plan, and task-packet provenance; artifact-level `authoritative_sequence`; full handoff-schema requirements; explicit empty-list handling; operationally empty contract rejection; stable `all_of` / `any_of` / `per_step` semantics; and unsupported `satisfaction_rule` cases that must surface the stable machine-readable failure or reason mapping**
-- [ ] **Step 2: Add red evidence-locator and durable-resolution tests in `tests/contracts_execution_harness.rs` for supported locator grammar, canonical fingerprint targets, authoritative repo-state baselines, locator canonicalization before fingerprinting, rejection of path-only, ambiguous, unresolved, candidate-only, or non-canonical artifact targeting, exact `evidence_ref` field validation, and durable dirty-worktree reread behavior through authoritative `EvidenceArtifact` resolution**
-- [ ] **Step 3: Extend `src/contracts/packet.rs` only where the harness needs reusable task-packet provenance helpers**
-- [ ] **Step 4: Implement the canonical artifact structs, parsers, canonical renderers, and fingerprint helpers in `src/contracts/harness.rs`**
-- [ ] **Step 5: Extend `src/contracts/evidence.rs` with contract, evaluation, handoff, and repo-state provenance fields for harness-written execution evidence**
-- [ ] **Step 6: Export the new contract module from `src/contracts/mod.rs` and keep the artifact readers testable without the CLI layer**
-- [ ] **Step 7: Check in representative valid harness artifact fixtures under `tests/codex-runtime/fixtures/workflow-artifacts/harness/`**
-- [ ] **Step 8: Run `cargo nextest run --test contracts_execution_harness --test packet_and_schema` and fix failures until the slice is green**
-- [ ] **Step 9: Commit the slice with `git commit -m "feat: add execution harness artifact contracts"`**
-
+- [x] **Step 1: Add red parsing and validation tests in `tests/contracts_execution_harness.rs` for valid and invalid contract, evaluation, handoff, and evidence artifacts, including exact minimum-schema coverage for `ExecutionContract`, `EvaluationReport`, `ExecutionHandoff`, and `EvidenceArtifact`; approved-work traceability fields that `gate-contract` later validates against spec, plan, and task-packet provenance; artifact-level `authoritative_sequence`; full handoff-schema requirements; explicit empty-list handling; operationally empty contract rejection; stable `all_of` / `any_of` / `per_step` semantics; and unsupported `satisfaction_rule` cases that must surface the stable machine-readable failure or reason mapping**
+- [x] **Step 2: Add red evidence-locator and durable-resolution tests in `tests/contracts_execution_harness.rs` for supported locator grammar, canonical fingerprint targets, authoritative repo-state baselines, locator canonicalization before fingerprinting, rejection of path-only, ambiguous, unresolved, candidate-only, or non-canonical artifact targeting, exact `evidence_ref` field validation, and durable dirty-worktree reread behavior through authoritative `EvidenceArtifact` resolution**
+- [x] **Step 3: Extend `src/contracts/packet.rs` only where the harness needs reusable task-packet provenance helpers**
+- [x] **Step 4: Implement the canonical artifact structs, parsers, canonical renderers, and fingerprint helpers in `src/contracts/harness.rs`**
+- [x] **Step 5: Extend `src/contracts/evidence.rs` with contract, evaluation, handoff, and repo-state provenance fields for harness-written execution evidence**
+- [x] **Step 6: Export the new contract module from `src/contracts/mod.rs` and keep the artifact readers testable without the CLI layer**
+- [x] **Step 7: Check in representative valid harness artifact fixtures under `tests/codex-runtime/fixtures/workflow-artifacts/harness/`**
+- [x] **Step 8: Run `cargo nextest run --test contracts_execution_harness --test packet_and_schema` and fix failures until the slice is green**
+- [x] **Step 9: Commit the slice with `git commit -m "feat: add execution harness artifact contracts"`**
 ## Task 3: Implement Gates, Authority, and Authoritative Mutation Rules
 
 **Spec Coverage:** REQ-010, REQ-023, REQ-025, REQ-028, REQ-029, REQ-030, REQ-031, REQ-033, REQ-034, REQ-035, REQ-041, REQ-042, REQ-043, REQ-044, REQ-045, REQ-046, REQ-047, REQ-048, REQ-049, REQ-050, REQ-052, REQ-053, REQ-060
@@ -370,15 +368,14 @@ Task 8  fixture matrix and full regression gate
 - Modify: `tests/support/workflow.rs`
 - Modify: `tests/workflow_runtime.rs`
 
-- [ ] **Step 1: Add red CLI and runtime tests for `gate-contract`, `record-contract`, `gate-evaluator`, `record-evaluation`, `gate-handoff`, and `record-handoff`, including concurrent writer conflict, accepted identical replay, replay-conflict, direct subagent/helper mutation attempts, chunking-strategy legality, approved-work contradiction, operationally empty contract rejection, exact `record-*` auto-transition behavior, retry-counter mutation and threshold routing, advisory-only `recommended_action` legality, full handoff resume validation, gate-evaluator per-report legality checks, the full minimum failure-class taxonomy, and shared deterministic failure-path helpers in `tests/support/workflow.rs` for replay-conflict, writer-conflict, repo-drift, artifact-integrity mismatch, and partial-authoritative-mutation coverage**
-- [ ] **Step 2: Add red evaluator-aggregation tests for missing, failed, and blocked required evaluator kinds plus rejection of downstream gate modes inside contract-level `verifiers[]`, `missing_required_evidence`, stable `all_of` / `any_of` / `per_step` evidence semantics, same-contract evaluator supersession by higher `authoritative_sequence`, and related stable reason-code output**
-- [ ] **Step 3: Create `src/execution/authority.rs` with write-authority claim, release, reclaim, replay-detection, and atomic-publication helpers**
-- [ ] **Step 4: Create `src/execution/gates.rs` with gate validators, stable failure-class mapping, dependency-index-aware artifact checks, approved-work contradiction checks, operationally empty contract rejection, per-report evaluator legality checks, and chunking-strategy legality checks**
-- [ ] **Step 5: Extend `src/cli/plan_execution.rs`, `src/cli/mod.rs`, and `src/lib.rs` with the new gate and record subcommands plus explicit request/response types for contract, evaluation, and handoff flows**
-- [ ] **Step 6: Thread gate enforcement, read-time authoritative fingerprint verification, repo-state drift checks, authoritative recording, authoritative retry-counter mutation, and safe post-commit pruning through `src/execution/state.rs`, `src/execution/mutate.rs`, `src/execution/dependency_index.rs`, and `src/execution/mod.rs`**
-- [ ] **Step 7: Run `cargo nextest run --test contracts_execution_harness --test execution_harness_state --test plan_execution --test workflow_runtime` and fix failures until the slice is green**
-- [ ] **Step 8: Commit the slice with `git commit -m "feat: add execution harness gates and authority"`**
-
+- [x] **Step 1: Add red CLI and runtime tests for `gate-contract`, `record-contract`, `gate-evaluator`, `record-evaluation`, `gate-handoff`, and `record-handoff`, including concurrent writer conflict, accepted identical replay, replay-conflict, direct subagent/helper mutation attempts, chunking-strategy legality, approved-work contradiction, operationally empty contract rejection, exact `record-*` auto-transition behavior, retry-counter mutation and threshold routing, advisory-only `recommended_action` legality, full handoff resume validation, gate-evaluator per-report legality checks, the full minimum failure-class taxonomy, and shared deterministic failure-path helpers in `tests/support/workflow.rs` for replay-conflict, writer-conflict, repo-drift, artifact-integrity mismatch, and partial-authoritative-mutation coverage**
+- [x] **Step 2: Add red evaluator-aggregation tests for missing, failed, and blocked required evaluator kinds plus rejection of downstream gate modes inside contract-level `verifiers[]`, `missing_required_evidence`, stable `all_of` / `any_of` / `per_step` evidence semantics, same-contract evaluator supersession by higher `authoritative_sequence`, and related stable reason-code output**
+- [x] **Step 3: Create `src/execution/authority.rs` with write-authority claim, release, reclaim, replay-detection, and atomic-publication helpers**
+- [x] **Step 4: Create `src/execution/gates.rs` with gate validators, stable failure-class mapping, dependency-index-aware artifact checks, approved-work contradiction checks, operationally empty contract rejection, per-report evaluator legality checks, and chunking-strategy legality checks**
+- [x] **Step 5: Extend `src/cli/plan_execution.rs`, `src/cli/mod.rs`, and `src/lib.rs` with the new gate and record subcommands plus explicit request/response types for contract, evaluation, and handoff flows**
+- [x] **Step 6: Thread gate enforcement, read-time authoritative fingerprint verification, repo-state drift checks, authoritative recording, authoritative retry-counter mutation, and safe post-commit pruning through `src/execution/state.rs`, `src/execution/mutate.rs`, `src/execution/dependency_index.rs`, and `src/execution/mod.rs`**
+- [x] **Step 7: Run `cargo nextest run --test contracts_execution_harness --test execution_harness_state --test plan_execution --test workflow_runtime` and fix failures until the slice is green**
+- [x] **Step 8: Commit the slice with `git commit -m "feat: add execution harness gates and authority"`**
 ## Task 4: Bind the Macro-State Engine to Step-Level Execution
 
 **Spec Coverage:** REQ-003, REQ-005, REQ-009, REQ-011, REQ-016, REQ-032, REQ-033
@@ -410,14 +407,13 @@ Task 8  fixture matrix and full regression gate
 - Modify: `tests/workflow_runtime.rs`
 - Modify: `tests/support/workflow.rs`
 
-- [ ] **Step 1: Add red transition tests for happy path, repair path, retry-budget versus pivot-threshold routing, blocked handoff path, chunk-boundary and adaptive-handoff triggers, `note --state Blocked|Interrupted` macro-state implications, pivot path with `blocked_on_plan_revision`, task/task-group/whole-run contract-scope rejection, step-command write-authority rejection, step-command stable failure classes, chunk-id rollover boundaries, step-level atomicity, interrupted-mutation recovery, and stale-cascade behavior in `tests/plan_execution.rs` and `tests/workflow_runtime.rs`**
-- [ ] **Step 2: Add red per-step evidence tests for source contract path, source evaluation fingerprint, evaluator verdict, source handoff fingerprint, repo-state provenance when applicable, and failing-criterion provenance in `tests/execution_harness_state.rs`**
-- [ ] **Step 3: Create `src/execution/transitions.rs` with the legal `HarnessPhase` transition table and macro-state guard helpers**
-- [ ] **Step 4: Bind `begin`, `note`, `complete`, `reopen`, and `transfer` to the transition rules, reset-policy handoff triggers, write-authority validation, stable failure-class mapping, and shared atomic-publication helpers in `src/execution/mutate.rs` and `src/execution/state.rs`**
-- [ ] **Step 5: Extend `src/contracts/evidence.rs` and `tests/support/workflow.rs` so reopened and repaired steps preserve the full harness provenance fields, including source contract path, source evaluation fingerprint, evaluator verdict, source handoff fingerprint, and repo-state provenance when applicable**
-- [ ] **Step 6: Run `cargo nextest run --test execution_harness_state --test plan_execution --test workflow_runtime` and fix failures until the slice is green**
-- [ ] **Step 7: Commit the slice with `git commit -m "feat: bind harness phases to execution steps"`**
-
+- [x] **Step 1: Add red transition tests for happy path, repair path, retry-budget versus pivot-threshold routing, blocked handoff path, chunk-boundary and adaptive-handoff triggers, `note --state Blocked|Interrupted` macro-state implications, pivot path with `blocked_on_plan_revision`, task/task-group/whole-run contract-scope rejection, step-command write-authority rejection, step-command stable failure classes, chunk-id rollover boundaries, step-level atomicity, interrupted-mutation recovery, and stale-cascade behavior in `tests/plan_execution.rs` and `tests/workflow_runtime.rs`**
+- [x] **Step 2: Add red per-step evidence tests for source contract path, source evaluation fingerprint, evaluator verdict, source handoff fingerprint, repo-state provenance when applicable, and failing-criterion provenance in `tests/execution_harness_state.rs`**
+- [x] **Step 3: Create `src/execution/transitions.rs` with the legal `HarnessPhase` transition table and macro-state guard helpers**
+- [x] **Step 4: Bind `begin`, `note`, `complete`, `reopen`, and `transfer` to the transition rules, reset-policy handoff triggers, write-authority validation, stable failure-class mapping, and shared atomic-publication helpers in `src/execution/mutate.rs` and `src/execution/state.rs`**
+- [x] **Step 5: Extend `src/contracts/evidence.rs` and `tests/support/workflow.rs` so reopened and repaired steps preserve the full harness provenance fields, including source contract path, source evaluation fingerprint, evaluator verdict, source handoff fingerprint, and repo-state provenance when applicable**
+- [x] **Step 6: Run `cargo nextest run --test execution_harness_state --test plan_execution --test workflow_runtime` and fix failures until the slice is green**
+- [x] **Step 7: Commit the slice with `git commit -m "feat: bind harness phases to execution steps"`**
 ## Task 5: Expand Recommend and Make Preflight the Policy Acceptance Boundary
 
 **Spec Coverage:** REQ-012, REQ-013, REQ-018, REQ-036, REQ-056, REQ-057, REQ-058, REQ-059
@@ -453,13 +449,12 @@ Task 8  fixture matrix and full regression gate
 - Modify: `tests/workflow_runtime.rs`
 - Modify: `tests/workflow_shell_smoke.rs`
 
-- [ ] **Step 1: Add red recommend and preflight tests for preserved `recommended_skill` / `reason` / `decision_flags` output, `policy_reason_codes[]`, policy-tuple output, exact replay defined by plan revision plus accepted policy snapshot plus authoritative baseline, `execution_preflight` policy computation when no snapshot is supplied, legal new-run boundaries, illegal mid-chunk policy resets, required-handoff rejection, write-authority reconciliation, interrupted authoritative mutation recovery, candidate-artifact-safe pruning maintenance points, and hard-cutover rejection of pre-harness execution evidence**
-- [ ] **Step 2: Extend `src/execution/state.rs` and `src/execution/authority.rs` so `recommend` returns the preserved skill-choice fields plus the proposed chunking, evaluator, reset, review-stack, and policy-reason fields without mutating accepted state, emits distinct recommendation-proposal observability, and `execution_preflight` reconciles resume authority and computes policy when needed before exposing active execution**
-- [ ] **Step 3: Extend `src/execution/dependency_index.rs`, `src/execution/observability.rs`, and `src/cli/plan_execution.rs` so `execution_preflight` records accepted policy snapshots in reconstructive policy-acceptance events, explicit policy-reset boundaries, preflight replay and new-run outcomes keyed to the authoritative baseline, required-handoff or recovery blocks, maintenance pruning or pruning-skip outcomes, and new-run creation with stable event and telemetry fields distinct from recommendation proposals**
-- [ ] **Step 4: Update `src/workflow/status.rs`, `src/workflow/operator.rs`, and `tests/workflow_shell_smoke.rs` so preflight and cutover truth are routed from the accepted harness state instead of the old thin execution model**
-- [ ] **Step 5: Run `cargo nextest run --test execution_harness_state --test plan_execution --test workflow_runtime --test workflow_shell_smoke` and fix failures until the slice is green**
-- [ ] **Step 6: Commit the slice with `git commit -m "feat: make preflight accept execution policy"`**
-
+- [x] **Step 1: Add red recommend and preflight tests for preserved `recommended_skill` / `reason` / `decision_flags` output, `policy_reason_codes[]`, policy-tuple output, exact replay defined by plan revision plus accepted policy snapshot plus authoritative baseline, `execution_preflight` policy computation when no snapshot is supplied, legal new-run boundaries, illegal mid-chunk policy resets, required-handoff rejection, write-authority reconciliation, interrupted authoritative mutation recovery, candidate-artifact-safe pruning maintenance points, and hard-cutover rejection of pre-harness execution evidence**
+- [x] **Step 2: Extend `src/execution/state.rs` and `src/execution/authority.rs` so `recommend` returns the preserved skill-choice fields plus the proposed chunking, evaluator, reset, review-stack, and policy-reason fields without mutating accepted state, emits distinct recommendation-proposal observability, and `execution_preflight` reconciles resume authority and computes policy when needed before exposing active execution**
+- [x] **Step 3: Extend `src/execution/dependency_index.rs`, `src/execution/observability.rs`, and `src/cli/plan_execution.rs` so `execution_preflight` records accepted policy snapshots in reconstructive policy-acceptance events, explicit policy-reset boundaries, preflight replay and new-run outcomes keyed to the authoritative baseline, required-handoff or recovery blocks, maintenance pruning or pruning-skip outcomes, and new-run creation with stable event and telemetry fields distinct from recommendation proposals**
+- [x] **Step 4: Update `src/workflow/status.rs`, `src/workflow/operator.rs`, and `tests/workflow_shell_smoke.rs` so preflight and cutover truth are routed from the accepted harness state instead of the old thin execution model**
+- [x] **Step 5: Run `cargo nextest run --test execution_harness_state --test plan_execution --test workflow_runtime --test workflow_shell_smoke` and fix failures until the slice is green**
+- [x] **Step 6: Commit the slice with `git commit -m "feat: make preflight accept execution policy"`**
 ## Task 6: Integrate Workflow Operator and Downstream Gate Truth
 
 **Spec Coverage:** REQ-001, REQ-015, REQ-017, REQ-024, REQ-034, REQ-037, REQ-040, REQ-053, REQ-054, REQ-055, REQ-061
@@ -488,13 +483,12 @@ Task 8  fixture matrix and full regression gate
 - Modify: `tests/codex-runtime/eval-observability.test.mjs`
 - Modify: `tests/codex-runtime/fixtures/workflow-artifacts/README.md`
 
-- [ ] **Step 1: Add red workflow and downstream-gate tests for the exact harness-aware public phases, downstream freshness states, evaluator-kind visibility, writer-conflict visibility without a new phase, operator `next_action` for plan-pivot blockage and incomplete-authoritative-mutation recovery, unresolved harness failure rejection, stale or non-harness execution-provenance rejection, candidate-artifact rejection, and downstream `RepoStateDrift` / `ArtifactIntegrityMismatch` rejection**
-- [ ] **Step 2: Extend `src/workflow/status.rs` and `src/workflow/operator.rs` to map the exact new harness phases, full status surface, and downstream freshness fields into status, phase, doctor, and handoff outputs**
-- [ ] **Step 3: Extend `src/execution/state.rs` so final review, QA, release-doc, and finish gates read fingerprint-indexed downstream inputs from the dependency index and fail closed on unresolved harness failures, stale, non-harness, or candidate contract/evaluation provenance, downstream repo-drift, or artifact-integrity mismatch**
-- [ ] **Step 4: Update `tests/codex-runtime/workflow-fixtures.test.mjs`, `tests/codex-runtime/eval-observability.test.mjs`, and the fixture README to pin the new JSON and text surfaces**
-- [ ] **Step 5: Run `cargo nextest run --test plan_execution --test workflow_runtime` and `node --test tests/codex-runtime/workflow-fixtures.test.mjs tests/codex-runtime/eval-observability.test.mjs` until the slice is green**
-- [ ] **Step 6: Commit the slice with `git commit -m "feat: wire workflow operator into harness state"`**
-
+- [x] **Step 1: Add red workflow and downstream-gate tests for the exact harness-aware public phases, downstream freshness states, evaluator-kind visibility, writer-conflict visibility without a new phase, operator `next_action` for plan-pivot blockage and incomplete-authoritative-mutation recovery, unresolved harness failure rejection, stale or non-harness execution-provenance rejection, candidate-artifact rejection, and downstream `RepoStateDrift` / `ArtifactIntegrityMismatch` rejection**
+- [x] **Step 2: Extend `src/workflow/status.rs` and `src/workflow/operator.rs` to map the exact new harness phases, full status surface, and downstream freshness fields into status, phase, doctor, and handoff outputs**
+- [x] **Step 3: Extend `src/execution/state.rs` so final review, QA, release-doc, and finish gates read fingerprint-indexed downstream inputs from the dependency index and fail closed on unresolved harness failures, stale, non-harness, or candidate contract/evaluation provenance, downstream repo-drift, or artifact-integrity mismatch**
+- [x] **Step 4: Update `tests/codex-runtime/workflow-fixtures.test.mjs`, `tests/codex-runtime/eval-observability.test.mjs`, and the fixture README to pin the new JSON and text surfaces**
+- [x] **Step 5: Run `cargo nextest run --test plan_execution --test workflow_runtime` and `node --test tests/codex-runtime/workflow-fixtures.test.mjs tests/codex-runtime/eval-observability.test.mjs` until the slice is green**
+- [x] **Step 6: Commit the slice with `git commit -m "feat: wire workflow operator into harness state"`**
 ## Task 7: Normalize Execution, Review, and QA Skills to the Harness
 
 **Spec Coverage:** REQ-013, REQ-015, REQ-017, REQ-020, REQ-034
@@ -528,13 +522,12 @@ Task 8  fixture matrix and full regression gate
 - Modify: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 - Modify: `tests/codex-runtime/skill-doc-generation.test.mjs`
 
-- [ ] **Step 1: Add red runtime-instruction and skill-doc tests for candidate artifact emission, forbidden direct authoritative mutation attempts by helpers/subagents, authoritative recording boundaries, downstream gate boundaries, checked-in evaluator references/exemplars, and harness-aware handoff wording**
-- [ ] **Step 2: Update the execution skill templates and subagent prompts to emit candidate contracts, evaluations, and handoffs that match the approved runtime contract**
-- [ ] **Step 3: Update the review and QA skill templates plus their checked-in reference/exemplar docs so they stay downstream gates and consume harness provenance without entering chunk-level verifier aggregation**
-- [ ] **Step 4: Regenerate the checked-in `SKILL.md` files and verify the generated docs match the updated templates**
-- [ ] **Step 5: Run `cargo nextest run --test runtime_instruction_contracts` and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` until the slice is green**
-- [ ] **Step 6: Commit the slice with `git commit -m "docs: align execution skills with harness runtime"`**
-
+- [x] **Step 1: Add red runtime-instruction and skill-doc tests for candidate artifact emission, forbidden direct authoritative mutation attempts by helpers/subagents, authoritative recording boundaries, downstream gate boundaries, checked-in evaluator references/exemplars, and harness-aware handoff wording**
+- [x] **Step 2: Update the execution skill templates and subagent prompts to emit candidate contracts, evaluations, and handoffs that match the approved runtime contract**
+- [x] **Step 3: Update the review and QA skill templates plus their checked-in reference/exemplar docs so they stay downstream gates and consume harness provenance without entering chunk-level verifier aggregation**
+- [x] **Step 4: Regenerate the checked-in `SKILL.md` files and verify the generated docs match the updated templates**
+- [x] **Step 5: Run `cargo nextest run --test runtime_instruction_contracts` and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` until the slice is green**
+- [x] **Step 6: Commit the slice with `git commit -m "docs: align execution skills with harness runtime"`**
 ## Task 8: Finish the Fixture Matrix and Full Regression Gate
 
 **Spec Coverage:** REQ-019, REQ-020, REQ-021
@@ -586,15 +579,14 @@ Task 8  fixture matrix and full regression gate
 - Modify: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 - Modify: `tests/codex-runtime/fixtures/workflow-artifacts/README.md`
 
-- [ ] **Step 1: Add red fixture-backed cases for happy path, repair path, pivot path, handoff path, hard cutover, authoritative and candidate contract/evaluation/handoff artifacts, stale contract/evaluation cases, non-harness provenance, repo-state drift, incomplete authoritative mutation, dependency-index clean/stale/malformed cases, downstream indexed-gate inputs, candidate-artifact-safe retention, active authoritative retention, safely-prunable stale retention, and retention eligibility**
-- [ ] **Step 2: Add red observability cases for phase-transition prev/next and trigger-detail events, proposal versus policy-acceptance, gate-result events for every gate, blocked-state entry and exit events, write-authority conflict and reclaim events, accepted replay versus replay-conflict, repo-state drift detection and reconciliation, artifact-integrity mismatch, partial-authoritative-mutation recovery, downstream gate rejection events, dependency-index pruning-skip events, minimum event payload fields including `event_kind` and `timestamp`, and machine-readable telemetry/counter surfaces for phase transitions, blocked-state entries by reason, authoritative mutation counts, gate failures, retry and pivot counts, evaluator outcomes, ordering gaps, replay outcomes, write-authority conflicts and reclaims, drift, integrity mismatches, and recovery**
-- [ ] **Step 3: Check in the new harness fixture payloads under `tests/codex-runtime/fixtures/workflow-artifacts/harness/` and document their intended authoritative, candidate, stale, non-harness, drifted, interrupted-mutation, dependency-index, and downstream-indexed states**
-- [ ] **Step 4: Extend `tests/support/workflow.rs` so Rust tests can load and compare the new harness fixture families without ad hoc parsing**
-- [ ] **Step 5: Run `cargo nextest run --test contracts_execution_harness --test execution_harness_state --test plan_execution --test workflow_runtime --test packet_and_schema --test runtime_instruction_contracts` and fix failures until the Rust gate is green**
-- [ ] **Step 6: Run `node --test tests/codex-runtime/workflow-fixtures.test.mjs tests/codex-runtime/eval-observability.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` and fix failures until the Node gate is green**
-- [ ] **Step 7: Run the full regression gate from `Validation Strategy` and keep fixing failures until the entire harness plan is green**
-- [ ] **Step 8: Commit the slice with `git commit -m "test: add execution harness regression matrix"`**
-
+- [x] **Step 1: Add red fixture-backed cases for happy path, repair path, pivot path, handoff path, hard cutover, authoritative and candidate contract/evaluation/handoff artifacts, stale contract/evaluation cases, non-harness provenance, repo-state drift, incomplete authoritative mutation, dependency-index clean/stale/malformed cases, downstream indexed-gate inputs, candidate-artifact-safe retention, active authoritative retention, safely-prunable stale retention, and retention eligibility**
+- [x] **Step 2: Add red observability cases for phase-transition prev/next and trigger-detail events, proposal versus policy-acceptance, gate-result events for every gate, blocked-state entry and exit events, write-authority conflict and reclaim events, accepted replay versus replay-conflict, repo-state drift detection and reconciliation, artifact-integrity mismatch, partial-authoritative-mutation recovery, downstream gate rejection events, dependency-index pruning-skip events, minimum event payload fields including `event_kind` and `timestamp`, and machine-readable telemetry/counter surfaces for phase transitions, blocked-state entries by reason, authoritative mutation counts, gate failures, retry and pivot counts, evaluator outcomes, ordering gaps, replay outcomes, write-authority conflicts and reclaims, drift, integrity mismatches, and recovery**
+- [x] **Step 3: Check in the new harness fixture payloads under `tests/codex-runtime/fixtures/workflow-artifacts/harness/` and document their intended authoritative, candidate, stale, non-harness, drifted, interrupted-mutation, dependency-index, and downstream-indexed states**
+- [x] **Step 4: Extend `tests/support/workflow.rs` so Rust tests can load and compare the new harness fixture families without ad hoc parsing**
+- [x] **Step 5: Run `cargo nextest run --test contracts_execution_harness --test execution_harness_state --test plan_execution --test workflow_runtime --test packet_and_schema --test runtime_instruction_contracts` and fix failures until the Rust gate is green**
+- [x] **Step 6: Run `node --test tests/codex-runtime/workflow-fixtures.test.mjs tests/codex-runtime/eval-observability.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs` and fix failures until the Node gate is green**
+- [x] **Step 7: Run the full regression gate from `Validation Strategy` and keep fixing failures until the entire harness plan is green**
+- [x] **Step 8: Commit the slice with `git commit -m "test: add execution harness regression matrix"`**
 ## Engineering Review Summary
 
 **Review Status:** clear
