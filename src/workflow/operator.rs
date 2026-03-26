@@ -1,5 +1,7 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -8,6 +10,7 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
+use crate::execution::harness::ExecutionRunId;
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus, RecommendOutput};
 use crate::session_entry::{self, SessionEntryResolveOutput};
 use crate::workflow::status::{SessionEntryState, WorkflowPhase, WorkflowRoute, WorkflowRuntime};
@@ -128,6 +131,7 @@ pub fn render_phase(current_dir: &Path) -> Result<String, JsonFailure> {
 
 pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
     let context = build_context(current_dir)?;
+    let doctor_phase = doctor_phase_for_context(&context);
     let contract_state = context
         .plan_contract
         .as_ref()
@@ -135,7 +139,7 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
         .unwrap_or_else(|| context.route.contract_state.clone());
 
     Ok(WorkflowDoctor {
-        phase: context.phase.clone(),
+        phase: doctor_phase,
         route_status: context.route.status.clone(),
         next_skill: public_next_skill(&context),
         next_action: next_action_for_context(&context).to_owned(),
@@ -349,7 +353,15 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
             let status_args = ExecutionStatusArgs {
                 plan: PathBuf::from(&route.plan_path),
             };
-            let status = runtime.status(&status_args)?;
+            let mut status = runtime.status(&status_args)?;
+            if let Some(shared_status) = started_status_from_same_branch_worktree(
+                &PathBuf::from(&route.root),
+                &route.plan_path,
+                &status,
+            ) {
+                status = shared_status;
+            }
+            synthesize_missing_execution_run_id(&mut status);
             if status.execution_started == "yes" {
                 if !execution_state_has_open_steps(&status) {
                     let review = runtime.gate_review(&status_args)?;
@@ -384,6 +396,145 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
         gate_finish,
         phase,
     })
+}
+
+fn doctor_phase_for_context(context: &OperatorContext) -> String {
+    if context.route.status == "implementation_ready"
+        && context.session_entry.outcome == "enabled"
+        && context
+            .execution_status
+            .as_ref()
+            .is_some_and(|status| status.execution_started != "yes")
+    {
+        return String::from("execution_preflight");
+    }
+
+    context.phase.clone()
+}
+
+fn synthesize_missing_execution_run_id(status: &mut PlanExecutionStatus) {
+    if status.execution_started == "yes"
+        && status.execution_run_id.is_none()
+        && !status.execution_fingerprint.trim().is_empty()
+    {
+        status.execution_run_id = Some(ExecutionRunId::new(status.execution_fingerprint.clone()));
+    }
+}
+
+fn started_status_from_same_branch_worktree(
+    current_repo_root: &Path,
+    plan_path: &str,
+    local_status: &PlanExecutionStatus,
+) -> Option<PlanExecutionStatus> {
+    if local_status.execution_started == "yes" || plan_path.is_empty() {
+        return None;
+    }
+
+    let current_root = fs::canonicalize(current_repo_root)
+        .unwrap_or_else(|_| current_repo_root.to_path_buf());
+    for worktree_root in same_branch_worktree_roots(current_repo_root) {
+        let canonical_root =
+            fs::canonicalize(&worktree_root).unwrap_or_else(|_| worktree_root.clone());
+        if canonical_root == current_root {
+            continue;
+        }
+
+        let runtime = match ExecutionRuntime::discover(&worktree_root) {
+            Ok(runtime) => runtime,
+            Err(_) => continue,
+        };
+        let mut status = match runtime.status(&ExecutionStatusArgs {
+                plan: PathBuf::from(plan_path),
+            }) {
+            Ok(status) => status,
+            Err(_) => continue,
+        };
+        if status.execution_started == "yes" {
+            synthesize_missing_execution_run_id(&mut status);
+            return Some(status);
+        }
+    }
+    None
+}
+
+fn same_branch_worktree_roots(current_repo_root: &Path) -> Vec<PathBuf> {
+    let output = match Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(current_repo_root)
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+
+    let mut entries: Vec<(PathBuf, Option<String>)> = Vec::new();
+    let mut worktree_root: Option<PathBuf> = None;
+    let mut branch_ref: Option<String> = None;
+
+    let flush_entry = |entries: &mut Vec<(PathBuf, Option<String>)>,
+                       worktree_root: &mut Option<PathBuf>,
+                       branch_ref: &mut Option<String>| {
+        if let Some(root) = worktree_root.take() {
+            entries.push((root, branch_ref.take()));
+        }
+    };
+
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if line.is_empty() {
+            flush_entry(&mut entries, &mut worktree_root, &mut branch_ref);
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("worktree ") {
+            flush_entry(&mut entries, &mut worktree_root, &mut branch_ref);
+            worktree_root = Some(PathBuf::from(path));
+            continue;
+        }
+        if let Some(branch) = line.strip_prefix("branch ") {
+            branch_ref = Some(branch.to_owned());
+        }
+    }
+    flush_entry(&mut entries, &mut worktree_root, &mut branch_ref);
+
+    let current_root = fs::canonicalize(current_repo_root)
+        .unwrap_or_else(|_| current_repo_root.to_path_buf());
+    let mut current_branch_ref = entries.iter().find_map(|(root, branch)| {
+        let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+        if canonical_root == current_root {
+            branch.clone()
+        } else {
+            None
+        }
+    });
+
+    if current_branch_ref.is_none() {
+        let branch_output = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(current_repo_root)
+            .output();
+        if let Ok(output) = branch_output {
+            if output.status.success() {
+                let branch = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                if !branch.is_empty() && branch != "HEAD" {
+                    current_branch_ref = Some(format!("refs/heads/{branch}"));
+                }
+            }
+        }
+    }
+
+    let Some(current_branch_ref) = current_branch_ref else {
+        return Vec::new();
+    };
+
+    entries
+        .into_iter()
+        .filter_map(|(root, branch)| {
+            if branch.as_deref() == Some(current_branch_ref.as_str()) {
+                Some(root)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn analyze_plan_if_available(
