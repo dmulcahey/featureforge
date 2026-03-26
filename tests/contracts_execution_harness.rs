@@ -6,7 +6,10 @@ mod process_support;
 use featureforge::contracts::harness::{
     read_evaluation_report, read_evidence_artifact, read_execution_contract, read_execution_handoff,
 };
-use featureforge::contracts::packet::build_task_packet_with_timestamp;
+use featureforge::contracts::evidence::read_execution_evidence;
+use featureforge::contracts::packet::{
+    build_harness_contract_provenance, build_task_packet_with_timestamp, TaskPacket,
+};
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::contracts::spec::parse_spec_file;
 use files_support::write_file;
@@ -147,6 +150,13 @@ fn task_packet(repo: &Path) -> String {
     build_task_packet_with_timestamp(&spec, &plan, 1, "2026-03-25T12:00:00Z")
         .expect("task packet should build")
         .packet_fingerprint
+}
+
+fn task_packet_document(repo: &Path) -> TaskPacket {
+    let spec = parse_spec_file(repo.join(SPEC_REL)).expect("spec should parse");
+    let plan = parse_plan_file(repo.join(PLAN_REL)).expect("plan should parse");
+    build_task_packet_with_timestamp(&spec, &plan, 1, "2026-03-25T12:00:00Z")
+        .expect("task packet should build")
 }
 
 fn git_head_sha(repo: &Path) -> String {
@@ -1229,5 +1239,111 @@ fn evidence_artifact_parser_rejects_unsupported_version() {
     assert!(
         error.message().contains("evidence_artifact_version"),
         "unsupported evidence artifact versions should fail with evidence_artifact_version diagnostics"
+    );
+}
+
+#[test]
+fn execution_evidence_parser_preserves_harness_provenance_fields_when_present() {
+    let (repo_dir, state_dir, _packet_fingerprint) =
+        harness_fixture("contracts-harness-execution-evidence-harness-provenance");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let evidence_path = state.join("artifacts/valid-execution-evidence.md");
+    let head_sha = git_head_sha(repo);
+    let worktree_fingerprint = sha256_hex("harness-worktree-provenance");
+
+    write_file(
+        &evidence_path,
+        &format!(
+            r#"# Execution Evidence: execution-harness
+
+**Plan Path:** {PLAN_REL}
+**Plan Revision:** 1
+**Source Spec Path:** {SPEC_REL}
+**Source Spec Revision:** 2
+
+## Step Evidence
+
+### Task 1 Step 1
+**Status:** Completed
+**Claim:** Harness provenance is attached to execution evidence.
+**Source Contract Path:** artifacts/contract-17.md
+**Source Contract Fingerprint:** `contract-fingerprint-17`
+**Source Evaluation Report Fingerprint:** `evaluation-fingerprint-19`
+**Evaluator Verdict:** fail
+**Failing Criterion IDs:**
+- criterion-1
+- criterion-2
+**Source Handoff Fingerprint:** `handoff-fingerprint-21`
+**Repo State Baseline Head SHA:** {head_sha}
+**Repo State Baseline Worktree Fingerprint:** {worktree_fingerprint}
+"#
+        ),
+    );
+
+    let evidence =
+        read_execution_evidence(&evidence_path).expect("execution evidence should parse");
+    let step = evidence
+        .steps
+        .first()
+        .expect("execution evidence should contain one step");
+
+    assert_eq!(step.source_contract_path.as_deref(), Some("artifacts/contract-17.md"));
+    assert_eq!(
+        step.source_contract_fingerprint.as_deref(),
+        Some("contract-fingerprint-17")
+    );
+    assert_eq!(
+        step.source_evaluation_report_fingerprint.as_deref(),
+        Some("evaluation-fingerprint-19")
+    );
+    assert_eq!(step.evaluator_verdict.as_deref(), Some("fail"));
+    assert_eq!(
+        step.failing_criterion_ids,
+        vec![String::from("criterion-1"), String::from("criterion-2")]
+    );
+    assert_eq!(
+        step.source_handoff_fingerprint.as_deref(),
+        Some("handoff-fingerprint-21")
+    );
+    assert_eq!(step.repo_state_baseline_head_sha.as_deref(), Some(head_sha.as_str()));
+    assert_eq!(
+        step.repo_state_baseline_worktree_fingerprint.as_deref(),
+        Some(worktree_fingerprint.as_str())
+    );
+}
+
+#[test]
+fn task_packet_helper_builds_harness_contract_provenance_for_matching_packets() {
+    let (repo_dir, _state_dir, _packet_fingerprint) =
+        harness_fixture("contracts-harness-packet-provenance-helper");
+    let packet = task_packet_document(repo_dir.path());
+    let expected_fingerprint = packet.packet_fingerprint.clone();
+
+    let provenance = build_harness_contract_provenance(&[packet])
+        .expect("matching packet provenance should build for harness contracts");
+
+    assert_eq!(provenance.source_plan_path, PLAN_REL);
+    assert_eq!(provenance.source_spec_path, SPEC_REL);
+    assert_eq!(
+        provenance.source_task_packet_fingerprints,
+        vec![expected_fingerprint]
+    );
+}
+
+#[test]
+fn task_packet_helper_rejects_mismatched_plan_or_spec_provenance() {
+    let (repo_dir, _state_dir, _packet_fingerprint) =
+        harness_fixture("contracts-harness-packet-provenance-mismatch");
+    let first = task_packet_document(repo_dir.path());
+    let mut mismatched = first.clone();
+    mismatched.source_spec_revision += 1;
+
+    let error = build_harness_contract_provenance(&[first, mismatched])
+        .expect_err("mismatched packet provenance should fail closed");
+
+    assert!(
+        error.message().contains("task packet provenance"),
+        "mismatched packet provenance should return a clear provenance mismatch diagnostic"
     );
 }
