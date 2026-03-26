@@ -12,6 +12,22 @@ use tempfile::TempDir;
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-plan.md";
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-17-example-execution-plan-design.md";
+const EXPECTED_PUBLIC_HARNESS_PHASES: &[&str] = &[
+    "implementation_handoff",
+    "execution_preflight",
+    "contract_drafting",
+    "contract_pending_approval",
+    "contract_approved",
+    "executing",
+    "evaluating",
+    "repairing",
+    "pivot_required",
+    "handoff_required",
+    "final_review_pending",
+    "qa_pending",
+    "document_release_pending",
+    "ready_for_branch_completion",
+];
 
 fn run(mut command: Command, context: &str) -> Output {
     command
@@ -41,6 +57,68 @@ fn parse_json(output: &Output, context: &str) -> Value {
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+}
+
+fn missing_null_fields(object: &Value, fields: &[&str]) -> Vec<String> {
+    fields
+        .iter()
+        .copied()
+        .filter(|field| !object.get(*field).is_some_and(Value::is_null))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn missing_string_fields(object: &Value, fields: &[&str]) -> Vec<String> {
+    fields
+        .iter()
+        .copied()
+        .filter(|field| {
+            object
+                .get(*field)
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty)
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+fn assert_exact_public_harness_phase_set() {
+    let spec = include_str!(
+        "../docs/featureforge/specs/2026-03-25-featureforge-execution-harness-spec.md"
+    );
+    let public_harness_phases: Vec<String> = spec
+        .lines()
+        .scan(false, |in_phase_section, line| {
+            let trimmed = line.trim();
+            if trimmed == "### Public phase model" {
+                *in_phase_section = true;
+                return Some(None);
+            }
+            if *in_phase_section && trimmed.starts_with("### ") {
+                *in_phase_section = false;
+                return Some(None);
+            }
+            if *in_phase_section {
+                return Some(
+                    trimmed
+                        .strip_prefix("- `")
+                        .and_then(|value| value.strip_suffix('`'))
+                        .map(str::to_owned),
+                );
+            }
+            Some(None)
+        })
+        .flatten()
+        .collect();
+
+    assert_eq!(
+        public_harness_phases,
+        EXPECTED_PUBLIC_HARNESS_PHASES
+            .iter()
+            .map(|phase| (*phase).to_owned())
+            .collect::<Vec<_>>(),
+        "status should pin the exact public HarnessPhase vocabulary from the spec"
+    );
 }
 
 fn write_file(path: &Path, contents: &str) {
@@ -759,6 +837,210 @@ fn canonical_status_matches_helper_for_clean_plan() {
             .as_str()
             .is_some_and(|value| !value.is_empty())
     );
+}
+
+#[test]
+fn canonical_status_exposes_harness_state_surface_before_execution_starts() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-harness-state");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+
+    assert_exact_public_harness_phase_set();
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "rust status for harness state",
+    );
+
+    let harness_phase = status["harness_phase"]
+        .as_str()
+        .expect("status should expose harness_phase");
+    assert_eq!(
+        harness_phase, "implementation_handoff",
+        "status should expose the exact pre-execution harness phase"
+    );
+    let chunk_id = status
+        .get("chunk_id")
+        .expect("status should expose chunk_id");
+    assert!(
+        chunk_id.as_str().is_some_and(|value| !value.is_empty()),
+        "status should expose chunk_id as a non-empty string before execution starts, got {chunk_id:?}"
+    );
+    let execution_run_id = status
+        .get("execution_run_id")
+        .expect("status should expose execution_run_id");
+    assert!(
+        execution_run_id.is_null(),
+        "status should keep execution_run_id null before execution_preflight accepts a run identity, got {execution_run_id:?}"
+    );
+    assert_eq!(status["latest_authoritative_sequence"], Value::from(0));
+    assert_eq!(status["active_task"], Value::Null);
+    assert_eq!(status["blocking_task"], Value::Null);
+    assert_eq!(status["resume_task"], Value::Null);
+
+    for field in ["chunking_strategy", "evaluator_policy", "reset_policy"] {
+        let value = status
+            .get(field)
+            .unwrap_or_else(|| panic!("status should expose {field}"));
+        assert!(
+            value.is_null(),
+            "status should keep {field} null before execution_preflight accepts authoritative policy, got {value:?}"
+        );
+    }
+
+    let missing_string_fields = missing_string_fields(
+        &status,
+        &[
+            "aggregate_evaluation_state",
+            "repo_state_drift_state",
+            "dependency_index_state",
+            "final_review_state",
+            "browser_qa_state",
+            "release_docs_state",
+        ],
+    );
+    assert!(
+        missing_string_fields.is_empty(),
+        "status should expose the frozen policy and downstream freshness fields as strings, missing: {missing_string_fields:?}"
+    );
+
+    for field in [
+        "repo_state_baseline_head_sha",
+        "repo_state_baseline_worktree_fingerprint",
+    ] {
+        let value = status
+            .get(field)
+            .unwrap_or_else(|| panic!("status should expose {field}"));
+        assert!(
+            value.is_null() || value.as_str().is_some_and(|value| !value.is_empty()),
+            "status should expose {field} as null before execution_preflight acceptance or as a non-empty string after acceptance, got {value:?}"
+        );
+    }
+
+    let write_authority_state = status
+        .get("write_authority_state")
+        .expect("status should expose write_authority_state");
+    assert!(
+        write_authority_state
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "status should expose write_authority_state as a non-empty string before execution starts, got {write_authority_state:?}"
+    );
+
+    for field in ["write_authority_holder", "write_authority_worktree"] {
+        let value = status
+            .get(field)
+            .unwrap_or_else(|| panic!("status should expose {field}"));
+        assert!(
+            value.is_null() || value.as_str().is_some_and(|value| !value.is_empty()),
+            "status should expose {field} as null when unknown pre-start or as non-empty diagnostic metadata once known, got {value:?}"
+        );
+    }
+
+    let missing_null_fields = missing_null_fields(
+        &status,
+        &[
+            "active_contract_path",
+            "active_contract_fingerprint",
+            "last_evaluation_report_path",
+            "last_evaluation_report_fingerprint",
+            "last_evaluation_evaluator_kind",
+            "last_evaluation_verdict",
+        ],
+    );
+    assert!(
+        missing_null_fields.is_empty(),
+        "status should keep active pointers null before execution starts, missing: {missing_null_fields:?}"
+    );
+
+    for field in [
+        "required_evaluator_kinds",
+        "completed_evaluator_kinds",
+        "pending_evaluator_kinds",
+        "non_passing_evaluator_kinds",
+        "open_failed_criteria",
+        "reason_codes",
+    ] {
+        assert!(
+            status.get(field).and_then(Value::as_array).is_some(),
+            "status should expose array field {field} for harness state"
+        );
+    }
+
+    for field in [
+        "current_chunk_retry_count",
+        "current_chunk_retry_budget",
+        "current_chunk_pivot_threshold",
+    ] {
+        assert!(
+            status.get(field).and_then(Value::as_u64).is_some(),
+            "status should expose numeric field {field} for harness state"
+        );
+    }
+
+    assert!(
+        status
+            .get("handoff_required")
+            .and_then(Value::as_bool)
+            .is_some(),
+        "status should expose handoff_required for harness state"
+    );
+
+    let reason_codes = status["reason_codes"]
+        .as_array()
+        .expect("status should expose reason_codes as an array");
+    assert!(
+        reason_codes.is_empty(),
+        "pre-start status should not surface blocking reason codes, got: {reason_codes:?}"
+    );
+
+    let review_stack = status
+        .get("review_stack")
+        .expect("status should expose review_stack");
+    assert!(
+        review_stack.is_null(),
+        "status should keep review_stack null before execution_preflight accepts authoritative policy, got {review_stack:?}"
+    );
+
+    for field in ["final_review_state", "browser_qa_state", "release_docs_state"] {
+        let freshness = status[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("status should expose {field} as a freshness string"));
+        assert!(
+            matches!(freshness, "not_required" | "missing" | "fresh" | "stale"),
+            "status should keep {field} on the stable freshness vocabulary, got {freshness:?}"
+        );
+    }
+
+    for (state_field, fingerprint_field) in [
+        ("final_review_state", "last_final_review_artifact_fingerprint"),
+        ("browser_qa_state", "last_browser_qa_artifact_fingerprint"),
+        ("release_docs_state", "last_release_docs_artifact_fingerprint"),
+    ] {
+        let freshness = status
+            .get(state_field)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("status should expose {state_field} as a freshness string"));
+        let fingerprint = status
+            .get(fingerprint_field)
+            .unwrap_or_else(|| panic!("status should expose {fingerprint_field}"));
+        match freshness {
+            "fresh" | "stale" => assert!(
+                fingerprint.as_str().is_some_and(|value| !value.is_empty()),
+                "status should expose non-empty {fingerprint_field} when {state_field} is {freshness}"
+            ),
+            "not_required" | "missing" => assert!(
+                fingerprint.is_null()
+                    || fingerprint.as_str().is_some_and(|value| !value.is_empty()),
+                "status should expose {fingerprint_field} as null or a non-empty authoritative fingerprint while {state_field} is {freshness}"
+            ),
+            freshness => panic!("unexpected freshness value for {state_field}: {freshness}"),
+        }
+    }
 }
 
 #[test]

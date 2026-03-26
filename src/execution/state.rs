@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use schemars::{JsonSchema, schema_for};
+use schemars::{schema_for, JsonSchema};
 use serde::Serialize;
 
 use crate::cli::plan_execution::{
@@ -11,17 +11,22 @@ use crate::cli::plan_execution::{
     StatusArgs, TransferArgs,
 };
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
-use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
+use crate::contracts::plan::{parse_plan_file, PlanDocument, PlanTask};
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::harness::{
+    AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
+    EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
+    INITIAL_AUTHORITATIVE_SEQUENCE, ResetPolicy,
+};
 use crate::git::{
     derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
 };
 use crate::paths::{
-    RepoPath, branch_storage_key, featureforge_state_dir, normalize_repo_relative_path,
-    normalize_whitespace,
+    branch_storage_key, featureforge_state_dir, normalize_repo_relative_path, normalize_whitespace,
+    RepoPath,
 };
 use crate::repo_safety::RepoSafetyRuntime;
-use crate::workflow::manifest::{ManifestLoadResult, WorkflowManifest, load_manifest_read_only};
+use crate::workflow::manifest::{load_manifest_read_only, ManifestLoadResult, WorkflowManifest};
 use crate::workflow::markdown_scan::markdown_files_under;
 
 pub const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
@@ -32,6 +37,44 @@ const ACTIVE_EVIDENCE_ROOT: &str = "docs/featureforge/execution-evidence";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanExecutionStatus {
     pub plan_revision: u32,
+    pub execution_run_id: Option<ExecutionRunId>,
+    pub latest_authoritative_sequence: u64,
+    pub harness_phase: HarnessPhase,
+    pub chunk_id: ChunkId,
+    pub chunking_strategy: Option<ChunkingStrategy>,
+    pub evaluator_policy: Option<EvaluatorPolicyName>,
+    pub reset_policy: Option<ResetPolicy>,
+    pub review_stack: Option<Vec<String>>,
+    pub active_contract_path: Option<String>,
+    pub active_contract_fingerprint: Option<String>,
+    pub required_evaluator_kinds: Vec<EvaluatorKind>,
+    pub completed_evaluator_kinds: Vec<EvaluatorKind>,
+    pub pending_evaluator_kinds: Vec<EvaluatorKind>,
+    pub non_passing_evaluator_kinds: Vec<EvaluatorKind>,
+    pub aggregate_evaluation_state: AggregateEvaluationState,
+    pub last_evaluation_report_path: Option<String>,
+    pub last_evaluation_report_fingerprint: Option<String>,
+    pub last_evaluation_evaluator_kind: Option<EvaluatorKind>,
+    pub last_evaluation_verdict: Option<EvaluationVerdict>,
+    pub current_chunk_retry_count: u32,
+    pub current_chunk_retry_budget: u32,
+    pub current_chunk_pivot_threshold: u32,
+    pub handoff_required: bool,
+    pub open_failed_criteria: Vec<String>,
+    pub write_authority_state: String,
+    pub write_authority_holder: Option<String>,
+    pub write_authority_worktree: Option<String>,
+    pub repo_state_baseline_head_sha: Option<String>,
+    pub repo_state_baseline_worktree_fingerprint: Option<String>,
+    pub repo_state_drift_state: String,
+    pub dependency_index_state: String,
+    pub final_review_state: DownstreamFreshnessState,
+    pub browser_qa_state: DownstreamFreshnessState,
+    pub release_docs_state: DownstreamFreshnessState,
+    pub last_final_review_artifact_fingerprint: Option<String>,
+    pub last_browser_qa_artifact_fingerprint: Option<String>,
+    pub last_release_docs_artifact_fingerprint: Option<String>,
+    pub reason_codes: Vec<String>,
     pub execution_mode: String,
     pub execution_fingerprint: String,
     pub evidence_path: String,
@@ -538,6 +581,7 @@ pub fn validate_expected_fingerprint(
 }
 
 pub fn status_from_context(context: &ExecutionContext) -> PlanExecutionStatus {
+    let started = execution_started(context);
     let latest_completed = latest_completed_attempt(&context.evidence);
     let warning_codes = if context.evidence.format == EvidenceFormat::Legacy
         && !context.evidence.attempts.is_empty()
@@ -549,10 +593,52 @@ pub fn status_from_context(context: &ExecutionContext) -> PlanExecutionStatus {
 
     PlanExecutionStatus {
         plan_revision: context.plan_document.plan_revision,
+        execution_run_id: None,
+        latest_authoritative_sequence: INITIAL_AUTHORITATIVE_SEQUENCE,
+        harness_phase: if started {
+            HarnessPhase::Executing
+        } else {
+            HarnessPhase::ImplementationHandoff
+        },
+        chunk_id: derived_chunk_id(context),
+        chunking_strategy: None,
+        evaluator_policy: None,
+        reset_policy: None,
+        review_stack: None,
+        active_contract_path: None,
+        active_contract_fingerprint: None,
+        required_evaluator_kinds: Vec::new(),
+        completed_evaluator_kinds: Vec::new(),
+        pending_evaluator_kinds: Vec::new(),
+        non_passing_evaluator_kinds: Vec::new(),
+        aggregate_evaluation_state: AggregateEvaluationState::Pending,
+        last_evaluation_report_path: None,
+        last_evaluation_report_fingerprint: None,
+        last_evaluation_evaluator_kind: None,
+        last_evaluation_verdict: None,
+        current_chunk_retry_count: 0,
+        current_chunk_retry_budget: 0,
+        current_chunk_pivot_threshold: 0,
+        handoff_required: false,
+        open_failed_criteria: Vec::new(),
+        write_authority_state: String::from("preflight_pending"),
+        write_authority_holder: None,
+        write_authority_worktree: None,
+        repo_state_baseline_head_sha: None,
+        repo_state_baseline_worktree_fingerprint: None,
+        repo_state_drift_state: String::from("preflight_pending"),
+        dependency_index_state: String::from("missing"),
+        final_review_state: DownstreamFreshnessState::NotRequired,
+        browser_qa_state: DownstreamFreshnessState::NotRequired,
+        release_docs_state: DownstreamFreshnessState::NotRequired,
+        last_final_review_artifact_fingerprint: None,
+        last_browser_qa_artifact_fingerprint: None,
+        last_release_docs_artifact_fingerprint: None,
+        reason_codes: Vec::new(),
         execution_mode: context.plan_document.execution_mode.clone(),
         execution_fingerprint: context.execution_fingerprint.clone(),
         evidence_path: context.evidence_rel.clone(),
-        execution_started: if execution_started(context) {
+        execution_started: if started {
             String::from("yes")
         } else {
             String::from("no")
@@ -569,6 +655,11 @@ pub fn status_from_context(context: &ExecutionContext) -> PlanExecutionStatus {
         resume_task: active_step(context, NoteState::Interrupted).map(|step| step.task_number),
         resume_step: active_step(context, NoteState::Interrupted).map(|step| step.step_number),
     }
+}
+
+fn derived_chunk_id(context: &ExecutionContext) -> ChunkId {
+    let width = context.execution_fingerprint.len().min(12);
+    ChunkId::new(format!("chunk-{}", &context.execution_fingerprint[..width]))
 }
 
 pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
