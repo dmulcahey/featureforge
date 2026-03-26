@@ -10,7 +10,7 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
-use crate::execution::harness::{EvaluatorKind, ExecutionRunId};
+use crate::execution::harness::EvaluatorKind;
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus, RecommendOutput};
 use crate::session_entry::{self, SessionEntryResolveOutput};
 use crate::workflow::status::{SessionEntryState, WorkflowPhase, WorkflowRoute, WorkflowRuntime};
@@ -391,7 +391,6 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
             ) {
                 status = shared_status;
             }
-            synthesize_missing_execution_run_id(&mut status);
             if status.execution_started == "yes" {
                 if !execution_state_has_open_steps(&status) {
                     let review = runtime.gate_review(&status_args)?;
@@ -401,7 +400,7 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
                     gate_review = Some(review);
                 }
             } else {
-                preflight = Some(runtime.preflight(&status_args)?);
+                preflight = Some(runtime.preflight_read_only(&status_args)?);
             }
             execution_status = Some(status);
         }
@@ -442,15 +441,6 @@ fn doctor_phase_for_context(context: &OperatorContext) -> String {
     context.phase.clone()
 }
 
-fn synthesize_missing_execution_run_id(status: &mut PlanExecutionStatus) {
-    if status.execution_started == "yes"
-        && status.execution_run_id.is_none()
-        && !status.execution_fingerprint.trim().is_empty()
-    {
-        status.execution_run_id = Some(ExecutionRunId::new(status.execution_fingerprint.clone()));
-    }
-}
-
 fn started_status_from_same_branch_worktree(
     current_repo_root: &Path,
     plan_path: &str,
@@ -473,14 +463,13 @@ fn started_status_from_same_branch_worktree(
             Ok(runtime) => runtime,
             Err(_) => continue,
         };
-        let mut status = match runtime.status(&ExecutionStatusArgs {
+        let status = match runtime.status(&ExecutionStatusArgs {
                 plan: PathBuf::from(plan_path),
             }) {
             Ok(status) => status,
             Err(_) => continue,
         };
         if status.execution_started == "yes" {
-            synthesize_missing_execution_run_id(&mut status);
             return Some(status);
         }
     }

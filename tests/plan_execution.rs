@@ -636,6 +636,28 @@ fn project_artifact_dir(repo: &Path, state: &Path) -> PathBuf {
     state.join("projects").join(repo_slug(repo))
 }
 
+fn harness_branch_dir(repo: &Path, state: &Path) -> PathBuf {
+    let branch = branch_name(repo);
+    let safe_branch = normalize_identifier(&branch);
+    state
+        .join("projects")
+        .join(repo_slug(repo))
+        .join("branches")
+        .join(safe_branch)
+}
+
+fn harness_state_file_path(repo: &Path, state: &Path) -> PathBuf {
+    harness_branch_dir(repo, state)
+        .join("execution-harness")
+        .join("state.json")
+}
+
+fn preflight_acceptance_state_path(repo: &Path, state: &Path) -> PathBuf {
+    harness_branch_dir(repo, state)
+        .join("execution-preflight")
+        .join("acceptance-state.json")
+}
+
 fn write_test_plan_artifact(repo: &Path, state: &Path, browser_required: &str) -> PathBuf {
     let branch = branch_name(repo);
     let safe_branch = normalize_identifier(&branch);
@@ -805,6 +827,23 @@ fn run_rust_with_env(
 
 fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     parse_json(&run_rust(repo, state, args, context), context)
+}
+
+fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) -> Value {
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout execution-preflight-fixture");
+
+    let preflight = run_rust_json(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "execution preflight acceptance",
+    );
+    assert_eq!(preflight["allowed"], true);
+    preflight
 }
 
 #[test]
@@ -1319,6 +1358,222 @@ fn canonical_preflight_matches_helper_for_clean_plan() {
 }
 
 #[test]
+fn begin_requires_preflight_acceptance_before_execution_starts() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-begin-requires-preflight");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+
+    let before = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before begin without preflight acceptance",
+    );
+    let begin_without_preflight = run_rust(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            before["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "begin before preflight acceptance",
+    );
+    assert!(
+        !begin_without_preflight.status.success(),
+        "begin should fail closed before preflight acceptance, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        begin_without_preflight.status,
+        String::from_utf8_lossy(&begin_without_preflight.stdout),
+        String::from_utf8_lossy(&begin_without_preflight.stderr)
+    );
+    let begin_payload = if begin_without_preflight.stdout.is_empty() {
+        &begin_without_preflight.stderr
+    } else {
+        &begin_without_preflight.stdout
+    };
+    let begin_error: Value =
+        serde_json::from_slice(begin_payload).expect("begin failure should emit json");
+    assert_eq!(begin_error["error_class"], "ExecutionStateNotReady");
+
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let accepted_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after preflight acceptance",
+    );
+    assert!(
+        accepted_status["execution_run_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "status should expose a non-empty execution_run_id after preflight acceptance"
+    );
+
+    let begin_after_preflight = run_rust_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            accepted_status["execution_fingerprint"]
+                .as_str()
+                .expect("accepted status fingerprint should be present"),
+        ],
+        "begin after preflight acceptance",
+    );
+    assert_eq!(begin_after_preflight["active_task"], 1);
+    assert_eq!(begin_after_preflight["active_step"], 1);
+}
+
+#[test]
+fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_changes() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-stable-identities");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+
+    let before_preflight = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before preflight identity acceptance",
+    );
+    assert!(
+        before_preflight["execution_run_id"].is_null(),
+        "execution_run_id should be null before preflight acceptance"
+    );
+
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let accepted_status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after preflight identity acceptance",
+    );
+    let accepted_run_id = accepted_status["execution_run_id"]
+        .as_str()
+        .expect("execution_run_id should be present after preflight acceptance")
+        .to_owned();
+    let accepted_chunk_id = accepted_status["chunk_id"]
+        .as_str()
+        .expect("chunk_id should be present after preflight acceptance")
+        .to_owned();
+
+    let begin = run_rust_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            accepted_status["execution_fingerprint"]
+                .as_str()
+                .expect("accepted status fingerprint should be present"),
+        ],
+        "begin after preflight identity acceptance",
+    );
+    assert_ne!(
+        begin["execution_fingerprint"], accepted_status["execution_fingerprint"],
+        "begin should mutate execution fingerprint after activating work"
+    );
+    assert_eq!(
+        begin["execution_run_id"],
+        Value::String(accepted_run_id),
+        "execution_run_id should stay stable after preflight acceptance"
+    );
+    assert_eq!(
+        begin["chunk_id"],
+        Value::String(accepted_chunk_id),
+        "chunk_id should stay stable after preflight acceptance"
+    );
+}
+
+#[test]
+fn preflight_acceptance_persists_without_overwriting_harness_state_file() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-harness-state-coexist");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout execution-preflight-fixture");
+
+    let harness_state_path = harness_state_file_path(repo, state);
+    let harness_state_payload = r#"{"schema_version":1,"harness_phase":"execution_preflight","authoritative_sequence":7}"#;
+    write_file(&harness_state_path, harness_state_payload);
+
+    let preflight = run_rust_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight with populated harness state file",
+    );
+    assert_eq!(preflight["allowed"], true);
+
+    let harness_state_after = fs::read_to_string(&harness_state_path)
+        .expect("harness state file should remain readable after preflight");
+    assert_eq!(
+        harness_state_after, harness_state_payload,
+        "preflight acceptance must not overwrite harness state.json"
+    );
+
+    let acceptance_path = preflight_acceptance_state_path(repo, state);
+    assert!(
+        acceptance_path.is_file(),
+        "preflight acceptance should persist to a dedicated file path"
+    );
+    let acceptance_payload = fs::read_to_string(&acceptance_path)
+        .expect("acceptance file should be readable after preflight");
+    let acceptance_json: Value =
+        serde_json::from_str(&acceptance_payload).expect("acceptance payload should be valid json");
+    assert_eq!(acceptance_json["schema_version"], 1);
+    assert_eq!(acceptance_json["plan_path"], PLAN_REL);
+    assert_eq!(acceptance_json["plan_revision"], 1);
+    assert!(
+        acceptance_json["execution_run_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(
+        acceptance_json["chunk_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+}
+
+#[test]
 fn canonical_preflight_rejects_detached_head_workspaces() {
     let (repo_dir, state_dir) = init_repo("plan-execution-preflight-detached-head");
     let repo = repo_dir.path();
@@ -1393,6 +1648,7 @@ fn canonical_preflight_blocks_active_blocked_and_interrupted_steps() {
         let state = state_dir.path();
         write_approved_spec(repo);
         write_single_step_plan(repo, "featureforge:executing-plans");
+        accept_execution_preflight(repo, state, PLAN_REL);
 
         let before = run_rust_json(
             repo,
@@ -1682,6 +1938,7 @@ fn gate_review_blocks_active_blocked_and_interrupted_steps() {
         let state = state_dir.path();
         write_approved_spec(repo);
         write_single_step_plan(repo, "featureforge:executing-plans");
+        accept_execution_preflight(repo, state, PLAN_REL);
 
         let before = run_rust_json(
             repo,
@@ -2522,7 +2779,7 @@ fn gate_finish_rejects_dirty_tracked_worktree_after_artifact_generation() {
 }
 
 #[test]
-fn status_and_gate_review_warn_on_legacy_evidence_format() {
+fn status_and_gate_review_fail_closed_on_legacy_evidence_format() {
     let (repo_dir, state_dir) = init_repo("plan-execution-legacy-evidence-format");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2537,36 +2794,49 @@ fn status_and_gate_review_warn_on_legacy_evidence_format() {
         ),
     );
 
-    let status = run_rust_json(
+    let status = run_rust(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
         "status with legacy evidence format",
     );
-    let status_warning_codes = status["warning_codes"]
-        .as_array()
-        .expect("status warning_codes should stay an array");
     assert!(
-        status_warning_codes
-            .iter()
-            .any(|value| value == &Value::String(String::from("legacy_evidence_format")))
+        !status.status.success(),
+        "status should fail closed on legacy evidence format, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        status.status,
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
     );
+    let status_payload = if status.stdout.is_empty() {
+        &status.stderr
+    } else {
+        &status.stdout
+    };
+    let status_error: Value =
+        serde_json::from_slice(status_payload).expect("status failure should be json");
+    assert_eq!(status_error["error_class"], "MalformedExecutionState");
 
-    let gate_review = run_rust_json(
+    let gate_review = run_rust(
         repo,
         state,
         &["gate-review", "--plan", PLAN_REL],
         "gate review with legacy evidence format",
     );
-    assert_eq!(gate_review["allowed"], true);
-    let gate_warning_codes = gate_review["warning_codes"]
-        .as_array()
-        .expect("gate-review warning_codes should stay an array");
     assert!(
-        gate_warning_codes
-            .iter()
-            .any(|value| value == &Value::String(String::from("legacy_evidence_format")))
+        !gate_review.status.success(),
+        "gate-review should fail closed on legacy evidence format, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        gate_review.status,
+        String::from_utf8_lossy(&gate_review.stdout),
+        String::from_utf8_lossy(&gate_review.stderr)
     );
+    let gate_payload = if gate_review.stdout.is_empty() {
+        &gate_review.stderr
+    } else {
+        &gate_review.stdout
+    };
+    let gate_error: Value =
+        serde_json::from_slice(gate_payload).expect("gate-review failure should be json");
+    assert_eq!(gate_error["error_class"], "MalformedExecutionState");
 }
 
 #[test]
@@ -2666,6 +2936,7 @@ fn gate_review_accepts_latest_proof_for_shared_file() {
     write_approved_spec(repo);
     write_two_step_shared_file_plan(repo, "featureforge:executing-plans");
     write_file(&repo.join("docs/example-output.md"), "step 1\n");
+    accept_execution_preflight(repo, state, PLAN_REL);
 
     let before_step_one = run_rust_json(
         repo,
@@ -2806,6 +3077,7 @@ fn canonical_complete_normalizes_evidence_and_rejects_stale_mutation() {
     write_approved_spec(repo);
     write_single_step_plan(repo, "none");
     write_file(&repo.join("docs/output.md"), "normalized output\n");
+    accept_execution_preflight(repo, state, PLAN_REL);
 
     let before = run_rust_json(
         repo,
@@ -2931,6 +3203,7 @@ fn canonical_note_blocks_active_step_and_updates_plan_summary() {
     let state = state_dir.path();
     write_approved_spec(repo);
     write_single_step_plan(repo, "none");
+    accept_execution_preflight(repo, state, PLAN_REL);
 
     let before = run_rust_json(
         repo,
@@ -3000,6 +3273,7 @@ fn canonical_note_rejects_blank_summary_without_mutating_active_step() {
     let state = state_dir.path();
     write_approved_spec(repo);
     write_single_step_plan(repo, "none");
+    accept_execution_preflight(repo, state, PLAN_REL);
 
     let before = run_rust_json(
         repo,
@@ -3144,6 +3418,7 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
     write_approved_spec(repo);
     write_plan(repo, "none");
     write_file(&repo.join("docs/example-output.md"), "initial output\n");
+    accept_execution_preflight(repo, state, PLAN_REL);
 
     let before_repair_begin = run_rust_json(
         repo,
@@ -3404,6 +3679,7 @@ fn canonical_complete_canonicalizes_rename_backed_paths() {
     let state = state_dir.path();
     write_approved_spec(repo);
     write_single_step_plan(repo, "none");
+    accept_execution_preflight(repo, state, PLAN_REL);
     write_file(&repo.join("docs/old-output.md"), "tracked output\n");
 
     let mut git_add = Command::new("git");

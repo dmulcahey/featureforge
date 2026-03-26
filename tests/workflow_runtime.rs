@@ -318,12 +318,21 @@ fn replace_in_file(path: &Path, from: &str, to: &str) {
     fs::write(path, updated).expect("fixture file should be writable for mutation");
 }
 
+fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", branch_name])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout preflight acceptance branch");
+}
+
 fn complete_workflow_fixture_execution(repo: &Path, state: &Path, plan_rel: &str) {
     install_full_contract_ready_artifacts(repo);
     write_file(
         &repo.join("tests/workflow_runtime.rs"),
         "synthetic route proof\n",
     );
+    prepare_preflight_acceptance_workspace(repo, "workflow-runtime-fixture");
 
     let status_json = run_plan_execution_json(
         repo,
@@ -331,6 +340,13 @@ fn complete_workflow_fixture_execution(repo: &Path, state: &Path, plan_rel: &str
         &["status", "--plan", plan_rel],
         "plan execution status before workflow routing fixture",
     );
+    let preflight_json = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "plan execution preflight before workflow routing fixture",
+    );
+    assert_eq!(preflight_json["allowed"], true);
     let begin_json = run_plan_execution_json(
         repo,
         state,
@@ -1723,6 +1739,150 @@ fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
 }
 
 #[test]
+fn workflow_read_commands_do_not_persist_preflight_acceptance() {
+    let (repo_dir, state_dir) = init_repo("workflow-read-only-preflight-boundary");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-read-only-preflight-boundary";
+    let decision_path = state
+        .join("session-entry")
+        .join("using-featureforge")
+        .join(session_key);
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-read-only-preflight"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout workflow-read-only-preflight");
+
+    install_full_contract_ready_artifacts(repo);
+    write_file(&decision_path, "enabled\n");
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase should not persist preflight acceptance",
+        ),
+        "workflow phase should not persist preflight acceptance",
+    );
+    assert_eq!(phase_json["phase"], "execution_preflight");
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow doctor should not persist preflight acceptance",
+        ),
+        "workflow doctor should not persist preflight acceptance",
+    );
+    assert_eq!(doctor_json["preflight"]["allowed"], true);
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff should not persist preflight acceptance",
+        ),
+        "workflow handoff should not persist preflight acceptance",
+    );
+    assert_eq!(handoff_json["next_action"], "execution_preflight");
+    let next_output = run_rust_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "next"],
+        &[("FEATUREFORGE_SESSION_KEY", session_key)],
+        "workflow next should not persist preflight acceptance",
+    );
+    assert!(next_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&next_output.stdout).contains("Return to execution preflight"),
+        "workflow next should continue recommending explicit preflight"
+    );
+
+    let status_after_reads = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status after workflow read commands",
+    );
+    assert!(
+        status_after_reads["execution_run_id"].is_null(),
+        "workflow read commands must not persist preflight acceptance"
+    );
+    assert_eq!(
+        status_after_reads["harness_phase"],
+        "implementation_handoff",
+        "without explicit preflight acceptance, harness phase should stay implementation_handoff"
+    );
+
+    let begin_without_preflight = run_rust_featureforge_with_env(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_after_reads["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        &[("FEATUREFORGE_SESSION_KEY", session_key)],
+        "begin should remain blocked before explicit preflight acceptance",
+    );
+    assert!(
+        !begin_without_preflight.status.success(),
+        "begin should fail before explicit preflight acceptance, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        begin_without_preflight.status,
+        String::from_utf8_lossy(&begin_without_preflight.stdout),
+        String::from_utf8_lossy(&begin_without_preflight.stderr)
+    );
+    let begin_payload = if begin_without_preflight.stdout.is_empty() {
+        &begin_without_preflight.stderr
+    } else {
+        &begin_without_preflight.stdout
+    };
+    let begin_error: Value =
+        serde_json::from_slice(begin_payload).expect("begin failure should emit json");
+    assert_eq!(begin_error["error_class"], "ExecutionStateNotReady");
+
+    let preflight_json = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "explicit plan execution preflight acceptance",
+    );
+    assert_eq!(preflight_json["allowed"], true);
+
+    let status_after_preflight = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status after explicit plan execution preflight acceptance",
+    );
+    assert!(
+        status_after_preflight["execution_run_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "explicit plan execution preflight should persist execution_run_id"
+    );
+}
+
+#[test]
 fn canonical_workflow_operator_ready_plan_pins_observability_seam_corpus() {
     let workflow_seam_event_kinds = [
         "phase_transition",
@@ -2693,6 +2853,7 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
 
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "enabled\n");
+    prepare_preflight_acceptance_workspace(repo, "workflow-phase-started-execution");
 
     let status_json = run_plan_execution_json(
         repo,
@@ -2700,6 +2861,13 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
         &["status", "--plan", plan_rel],
         "plan execution status before started-execution routing fixture",
     );
+    let preflight_json = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "plan execution preflight before started-execution routing fixture",
+    );
+    assert_eq!(preflight_json["allowed"], true);
     run_plan_execution_json(
         repo,
         state,

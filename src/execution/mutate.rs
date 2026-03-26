@@ -11,9 +11,9 @@ use crate::execution::state::{
     compute_packet_fingerprint, current_file_proof, current_head_sha, hash_contract_plan,
     load_execution_context, normalize_begin_request, normalize_complete_request,
     normalize_note_request, normalize_reopen_request, normalize_source, normalize_transfer_request,
-    require_normalized_text, status_from_context, validate_expected_fingerprint, EvidenceAttempt,
-    ExecutionContext, ExecutionEvidence, ExecutionRuntime, FileProof, PlanExecutionStatus,
-    PlanStepState, NO_REPO_FILES_MARKER,
+    require_normalized_text, require_preflight_acceptance, status_from_context,
+    validate_expected_fingerprint, EvidenceAttempt, ExecutionContext, ExecutionEvidence,
+    ExecutionRuntime, FileProof, PlanExecutionStatus, PlanStepState, NO_REPO_FILES_MARKER,
 };
 use crate::paths::{normalize_repo_relative_path, write_atomic as write_atomic_file};
 
@@ -24,6 +24,7 @@ pub fn begin(
     let request = normalize_begin_request(args);
     let mut context = load_execution_context(runtime, &args.plan)?;
     validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+    require_preflight_acceptance(&context)?;
 
     let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
         JsonFailure::new(
@@ -70,7 +71,7 @@ pub fn begin(
         .find(|step| step.note_state == Some(crate::execution::state::NoteState::Active))
     {
         if active.task_number == request.task && active.step_number == request.step {
-            return Ok(status_from_context(&context));
+            return status_from_context(&context);
         }
         return Err(JsonFailure::new(
             FailureClass::InvalidStepTransition,
@@ -114,7 +115,7 @@ pub fn begin(
     );
     write_atomic(&context.plan_abs, &rendered_plan)?;
     let reloaded = load_execution_context(runtime, &args.plan)?;
-    Ok(status_from_context(&reloaded))
+    status_from_context(&reloaded)
 }
 
 pub fn complete(
@@ -216,7 +217,7 @@ pub fn complete(
         "complete_after_plan_write",
     )?;
     let reloaded = load_execution_context(runtime, &args.plan)?;
-    Ok(status_from_context(&reloaded))
+    status_from_context(&reloaded)
 }
 
 pub fn note(
@@ -256,7 +257,7 @@ pub fn note(
     );
     write_atomic(&context.plan_abs, &rendered_plan)?;
     let reloaded = load_execution_context(runtime, &args.plan)?;
-    Ok(status_from_context(&reloaded))
+    status_from_context(&reloaded)
 }
 
 pub fn reopen(
@@ -317,7 +318,7 @@ pub fn reopen(
     )?;
 
     let reloaded = load_execution_context(runtime, &args.plan)?;
-    Ok(status_from_context(&reloaded))
+    status_from_context(&reloaded)
 }
 
 pub fn transfer(
@@ -400,7 +401,7 @@ pub fn transfer(
     )?;
 
     let reloaded = load_execution_context(runtime, &args.plan)?;
-    Ok(status_from_context(&reloaded))
+    status_from_context(&reloaded)
 }
 
 fn step_index(context: &ExecutionContext, task: u32, step: u32) -> Option<usize> {

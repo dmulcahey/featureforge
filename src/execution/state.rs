@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use schemars::{schema_for, JsonSchema};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::{
     BeginArgs, CompleteArgs, IsolatedAgentsArg, NoteArgs, NoteStateArg, RecommendArgs, ReopenArgs,
@@ -23,7 +24,7 @@ use crate::git::{
 };
 use crate::paths::{
     branch_storage_key, featureforge_state_dir, normalize_repo_relative_path, normalize_whitespace,
-    RepoPath,
+    write_atomic as write_atomic_file, RepoPath,
 };
 use crate::repo_safety::RepoSafetyRuntime;
 use crate::workflow::manifest::{load_manifest_read_only, ManifestLoadResult, WorkflowManifest};
@@ -33,6 +34,8 @@ pub const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
 const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
 const ACTIVE_EVIDENCE_ROOT: &str = "docs/featureforge/execution-evidence";
+const PREFLIGHT_ACCEPTANCE_DIR: &str = "execution-preflight";
+const PREFLIGHT_ACCEPTANCE_FILE: &str = "acceptance-state.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanExecutionStatus {
@@ -268,6 +271,23 @@ pub struct TransferRequest {
     pub expect_execution_fingerprint: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct PreflightAcceptanceState {
+    schema_version: u32,
+    plan_path: String,
+    plan_revision: u32,
+    execution_run_id: ExecutionRunId,
+    chunk_id: ChunkId,
+}
+
+impl PreflightAcceptanceState {
+    const SCHEMA_VERSION: u32 = 1;
+
+    fn matches_context(&self, context: &ExecutionContext) -> bool {
+        self.plan_path == context.plan_rel && self.plan_revision == context.plan_document.plan_revision
+    }
+}
+
 impl ExecutionRuntime {
     pub fn discover(current_dir: &Path) -> Result<Self, JsonFailure> {
         let identity = discover_repo_identity(current_dir).map_err(JsonFailure::from)?;
@@ -290,7 +310,7 @@ impl ExecutionRuntime {
 
     pub fn status(&self, args: &StatusArgs) -> Result<PlanExecutionStatus, JsonFailure> {
         let context = load_execution_context(self, &args.plan)?;
-        Ok(status_from_context(&context))
+        status_from_context(&context)
     }
 
     pub fn recommend(&self, args: &RecommendArgs) -> Result<RecommendOutput, JsonFailure> {
@@ -357,8 +377,24 @@ impl ExecutionRuntime {
     }
 
     pub fn preflight(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
+        self.preflight_with_mode(args, true)
+    }
+
+    pub fn preflight_read_only(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
+        self.preflight_with_mode(args, false)
+    }
+
+    fn preflight_with_mode(
+        &self,
+        args: &StatusArgs,
+        persist_acceptance: bool,
+    ) -> Result<GateResult, JsonFailure> {
         let context = load_execution_context(self, &args.plan)?;
-        Ok(preflight_from_context(&context))
+        let gate = preflight_from_context(&context);
+        if persist_acceptance && gate.allowed {
+            persist_preflight_acceptance(&context)?;
+        }
+        Ok(gate)
     }
 
     pub fn gate_review(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
@@ -505,6 +541,13 @@ pub fn load_execution_context(
         plan_document.source_spec_revision,
     )?;
 
+    if evidence.format == EvidenceFormat::Legacy && !evidence.attempts.is_empty() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Legacy pre-harness execution evidence is no longer accepted; regenerate execution evidence using the harness v2 format.",
+        ));
+    }
+
     if plan_document.execution_mode == "none" && !evidence.attempts.is_empty() {
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
@@ -580,27 +623,31 @@ pub fn validate_expected_fingerprint(
     Ok(())
 }
 
-pub fn status_from_context(context: &ExecutionContext) -> PlanExecutionStatus {
+pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionStatus, JsonFailure> {
+    let preflight_acceptance = preflight_acceptance_for_context(context)?;
     let started = execution_started(context);
     let latest_completed = latest_completed_attempt(&context.evidence);
-    let warning_codes = if context.evidence.format == EvidenceFormat::Legacy
-        && !context.evidence.attempts.is_empty()
-    {
-        vec![String::from("legacy_evidence_format")]
-    } else {
-        Vec::new()
-    };
+    let warning_codes = Vec::new();
+    let execution_run_id = preflight_acceptance
+        .as_ref()
+        .map(|acceptance| acceptance.execution_run_id.clone());
+    let chunk_id = preflight_acceptance
+        .as_ref()
+        .map(|acceptance| acceptance.chunk_id.clone())
+        .unwrap_or_else(|| pending_chunk_id(context));
 
-    PlanExecutionStatus {
+    Ok(PlanExecutionStatus {
         plan_revision: context.plan_document.plan_revision,
-        execution_run_id: None,
+        execution_run_id,
         latest_authoritative_sequence: INITIAL_AUTHORITATIVE_SEQUENCE,
         harness_phase: if started {
             HarnessPhase::Executing
+        } else if preflight_acceptance.is_some() {
+            HarnessPhase::ExecutionPreflight
         } else {
             HarnessPhase::ImplementationHandoff
         },
-        chunk_id: derived_chunk_id(context),
+        chunk_id,
         chunking_strategy: None,
         evaluator_policy: None,
         reset_policy: None,
@@ -654,12 +701,143 @@ pub fn status_from_context(context: &ExecutionContext) -> PlanExecutionStatus {
         blocking_step: active_step(context, NoteState::Blocked).map(|step| step.step_number),
         resume_task: active_step(context, NoteState::Interrupted).map(|step| step.task_number),
         resume_step: active_step(context, NoteState::Interrupted).map(|step| step.step_number),
+    })
+}
+
+fn pending_chunk_id(context: &ExecutionContext) -> ChunkId {
+    let seed = format!(
+        "pending-chunk\n{}\n{}\n",
+        context.plan_rel, context.plan_document.plan_revision
+    );
+    let digest = sha256_hex(seed.as_bytes());
+    ChunkId::new(format!("chunk-pending-{}", &digest[..12]))
+}
+
+pub fn require_preflight_acceptance(context: &ExecutionContext) -> Result<(), JsonFailure> {
+    if preflight_acceptance_for_context(context)?.is_none() {
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            "begin requires a successful execution_preflight acceptance for this approved plan revision.",
+        ));
+    }
+    Ok(())
+}
+
+fn preflight_acceptance_for_context(
+    context: &ExecutionContext,
+) -> Result<Option<PreflightAcceptanceState>, JsonFailure> {
+    Ok(load_preflight_acceptance(&context.runtime)?
+        .filter(|acceptance| acceptance.matches_context(context)))
+}
+
+fn load_preflight_acceptance(
+    runtime: &ExecutionRuntime,
+) -> Result<Option<PreflightAcceptanceState>, JsonFailure> {
+    let path = preflight_acceptance_path(runtime);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let source = fs::read_to_string(&path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Could not read persisted execution preflight acceptance {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    let acceptance: PreflightAcceptanceState = serde_json::from_str(&source).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Persisted execution preflight acceptance is malformed in {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    if acceptance.schema_version != PreflightAcceptanceState::SCHEMA_VERSION {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Persisted execution preflight acceptance schema version is unsupported in {}.",
+                path.display()
+            ),
+        ));
+    }
+    if acceptance.execution_run_id.as_str().trim().is_empty()
+        || acceptance.chunk_id.as_str().trim().is_empty()
+    {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Persisted execution preflight acceptance must include non-empty run and chunk identities in {}.",
+                path.display()
+            ),
+        ));
+    }
+    Ok(Some(acceptance))
+}
+
+fn persist_preflight_acceptance(
+    context: &ExecutionContext,
+) -> Result<PreflightAcceptanceState, JsonFailure> {
+    if let Some(existing) = preflight_acceptance_for_context(context)? {
+        return Ok(existing);
+    }
+
+    let acceptance = new_preflight_acceptance(context);
+    let payload = serde_json::to_string_pretty(&acceptance).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!("Could not serialize execution preflight acceptance: {error}"),
+        )
+    })?;
+    let path = preflight_acceptance_path(&context.runtime);
+    write_atomic_file(&path, payload).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!(
+                "Could not persist execution preflight acceptance {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    Ok(acceptance)
+}
+
+fn new_preflight_acceptance(context: &ExecutionContext) -> PreflightAcceptanceState {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let seed = format!(
+        "execution-preflight-acceptance\n{}\n{}\n{}\n{}\n{}\n{}\n",
+        context.runtime.repo_slug,
+        context.runtime.branch_name,
+        context.plan_rel,
+        context.plan_document.plan_revision,
+        std::process::id(),
+        nonce,
+    );
+    let digest = sha256_hex(seed.as_bytes());
+    PreflightAcceptanceState {
+        schema_version: PreflightAcceptanceState::SCHEMA_VERSION,
+        plan_path: context.plan_rel.clone(),
+        plan_revision: context.plan_document.plan_revision,
+        execution_run_id: ExecutionRunId::new(format!("run-{}", &digest[..16])),
+        chunk_id: ChunkId::new(format!("chunk-{}", &digest[16..32])),
     }
 }
 
-fn derived_chunk_id(context: &ExecutionContext) -> ChunkId {
-    let width = context.execution_fingerprint.len().min(12);
-    ChunkId::new(format!("chunk-{}", &context.execution_fingerprint[..width]))
+fn preflight_acceptance_path(runtime: &ExecutionRuntime) -> PathBuf {
+    runtime
+        .state_dir
+        .join("projects")
+        .join(&runtime.repo_slug)
+        .join("branches")
+        .join(&runtime.safe_branch)
+        .join(PREFLIGHT_ACCEPTANCE_DIR)
+        .join(PREFLIGHT_ACCEPTANCE_FILE)
 }
 
 pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
