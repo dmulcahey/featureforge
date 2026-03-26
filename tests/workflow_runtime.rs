@@ -13,6 +13,10 @@ mod workflow_support;
 
 use assert_cmd::cargo::cargo_bin;
 use bin_support::compiled_featureforge_path;
+use featureforge::execution::observability::{
+    HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters, STABLE_EVENT_KINDS,
+    STABLE_REASON_CODES,
+};
 use featureforge::git::{RepositoryIdentity, discover_repo_identity};
 use featureforge::paths::branch_storage_key;
 use featureforge::workflow::manifest::{
@@ -22,7 +26,8 @@ use featureforge::workflow::status::WorkflowRuntime;
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{repo_root, run, run_checked};
-use serde_json::Value;
+use serde_json::{Value, to_value};
+use std::collections::BTreeSet;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -1715,6 +1720,120 @@ fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
     assert_eq!(phase_json["route_status"], "implementation_ready");
     assert_eq!(phase_json["phase"], "execution_preflight");
     assert_eq!(phase_json["next_action"], "execution_preflight");
+}
+
+#[test]
+fn canonical_workflow_operator_ready_plan_pins_observability_seam_corpus() {
+    let workflow_seam_event_kinds = [
+        "phase_transition",
+        "gate_result",
+        "recommendation_proposed",
+        "policy_accepted",
+        "downstream_gate_rejected",
+    ];
+    let workflow_seam_minimum_envelope_fields = [
+        "event_kind",
+        "timestamp",
+        "execution_run_id",
+        "authoritative_sequence",
+        "source_plan_path",
+        "source_plan_revision",
+        "harness_phase",
+        "chunk_id",
+        "command_name",
+        "gate_name",
+        "failure_class",
+        "reason_codes",
+    ];
+    let workflow_seam_telemetry_counter_keys = [
+        "phase_transition_count",
+        "gate_failures_by_gate",
+        "downstream_gate_rejection_count",
+        "write_authority_conflict_count",
+        "repo_state_drift_count",
+    ];
+    let workflow_seam_folded_diagnostics = ["write_authority_conflict", "repo_state_drift"];
+
+    let stable_event_kinds: BTreeSet<&str> = STABLE_EVENT_KINDS.iter().copied().collect();
+    let unknown_event_kinds: Vec<&str> = workflow_seam_event_kinds
+        .iter()
+        .copied()
+        .filter(|event_kind| !stable_event_kinds.contains(event_kind))
+        .collect();
+    assert!(
+        unknown_event_kinds.is_empty(),
+        "workflow operator observability seam should use only runtime-owned event kinds, unknown: {unknown_event_kinds:?}"
+    );
+
+    let stable_reason_codes: BTreeSet<&str> = STABLE_REASON_CODES.iter().copied().collect();
+    let unknown_reason_codes: Vec<&str> = workflow_seam_folded_diagnostics
+        .iter()
+        .copied()
+        .filter(|reason_code| !stable_reason_codes.contains(reason_code))
+        .collect();
+    assert!(
+        unknown_reason_codes.is_empty(),
+        "workflow operator observability seam should fold only stable runtime diagnostics, unknown: {unknown_reason_codes:?}"
+    );
+
+    let mut probe_event =
+        HarnessObservabilityEvent::new(HarnessEventKind::PhaseTransition, "2026-03-26T12:00:00Z");
+    for reason_code in workflow_seam_folded_diagnostics {
+        probe_event.add_reason_code(reason_code);
+    }
+    let serialized_probe_event =
+        to_value(probe_event).expect("workflow observability seam probe event should serialize");
+    let event_object = serialized_probe_event
+        .as_object()
+        .expect("workflow observability seam probe should serialize to a JSON object");
+    let missing_envelope_fields: Vec<&str> = workflow_seam_minimum_envelope_fields
+        .iter()
+        .copied()
+        .filter(|field| !event_object.contains_key(*field))
+        .collect();
+    assert!(
+        missing_envelope_fields.is_empty(),
+        "workflow operator observability seam should pin minimum envelope fields, missing: {missing_envelope_fields:?}"
+    );
+    assert_eq!(
+        event_object.get("event_kind").and_then(Value::as_str),
+        Some("phase_transition"),
+        "workflow seam observability envelope should keep event_kind machine-readable"
+    );
+    assert!(
+        event_object
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .is_some_and(|timestamp| !timestamp.is_empty()),
+        "workflow seam observability envelope should keep timestamp as a non-empty string"
+    );
+    assert!(
+        event_object
+            .get("reason_codes")
+            .and_then(Value::as_array)
+            .is_some_and(|codes| {
+                let code_set: BTreeSet<&str> = codes.iter().filter_map(Value::as_str).collect();
+                workflow_seam_folded_diagnostics
+                    .iter()
+                    .all(|reason_code| code_set.contains(reason_code))
+            }),
+        "workflow seam observability envelope should keep folded conflict/drift diagnostics machine-readable"
+    );
+
+    let serialized_counters = to_value(HarnessTelemetryCounters::default())
+        .expect("workflow observability seam counters should serialize");
+    let counter_object = serialized_counters
+        .as_object()
+        .expect("workflow observability seam counters should serialize to a JSON object");
+    let missing_counter_keys: Vec<&str> = workflow_seam_telemetry_counter_keys
+        .iter()
+        .copied()
+        .filter(|counter_key| !counter_object.contains_key(*counter_key))
+        .collect();
+    assert!(
+        missing_counter_keys.is_empty(),
+        "workflow operator observability seam should pin required telemetry counter keys, missing: {missing_counter_keys:?}"
+    );
 }
 
 #[test]
