@@ -12,6 +12,7 @@ use featureforge::contracts::packet::{
 };
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::contracts::spec::parse_spec_file;
+use featureforge::execution::observability::HarnessTelemetryCounters;
 use files_support::write_file;
 use process_support::run_checked;
 use serde_json::{json, Value};
@@ -23,6 +24,24 @@ use tempfile::TempDir;
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-25-featureforge-execution-harness.md";
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-25-featureforge-execution-harness-spec.md";
+const EXPECTED_TELEMETRY_COUNTER_KEYS: &[&str] = &[
+    "phase_transition_count",
+    "blocked_state_entries_by_reason",
+    "gate_failures_by_gate",
+    "retry_count",
+    "pivot_count",
+    "authoritative_mutation_count",
+    "evaluator_outcomes",
+    "ordering_gap_count",
+    "replay_accepted_count",
+    "replay_conflict_count",
+    "write_authority_conflict_count",
+    "write_authority_reclaim_count",
+    "repo_state_drift_count",
+    "integrity_mismatch_count",
+    "partial_mutation_recovery_count",
+    "downstream_gate_rejection_count",
+];
 
 fn sha256_hex(contents: &str) -> String {
     let mut hasher = Sha256::new();
@@ -1345,5 +1364,27 @@ fn task_packet_helper_rejects_mismatched_plan_or_spec_provenance() {
     assert!(
         error.message().contains("task packet provenance"),
         "mismatched packet provenance should return a clear provenance mismatch diagnostic"
+    );
+}
+
+#[test]
+fn telemetry_counters_default_serialization_matches_exact_counter_key_vocabulary() {
+    let counters_json = serde_json::to_value(HarnessTelemetryCounters::default())
+        .expect("HarnessTelemetryCounters should serialize");
+    let counter_object = counters_json
+        .as_object()
+        .expect("HarnessTelemetryCounters should serialize to a JSON object");
+
+    let mut serialized_keys: Vec<String> = counter_object.keys().cloned().collect();
+    serialized_keys.sort_unstable();
+    let mut expected_keys: Vec<String> = EXPECTED_TELEMETRY_COUNTER_KEYS
+        .iter()
+        .map(|key| (*key).to_owned())
+        .collect();
+    expected_keys.sort_unstable();
+
+    assert_eq!(
+        serialized_keys, expected_keys,
+        "HarnessTelemetryCounters serialized key vocabulary drifted from src/execution/observability.rs"
     );
 }

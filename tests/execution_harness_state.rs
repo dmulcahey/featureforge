@@ -8,8 +8,12 @@ mod json_support;
 mod process_support;
 
 use files_support::write_file;
+use featureforge::execution::observability::{
+    HarnessEventKind, HarnessObservabilityEvent, STABLE_EVENT_KINDS,
+};
 use json_support::parse_json;
-use serde_json::Value;
+use schemars::schema_for;
+use serde_json::{to_value, Value};
 use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
@@ -48,6 +52,25 @@ const EXPECTED_REASON_CODES: &[&str] = &[
     "recovering_incomplete_authoritative_mutation",
     "missing_required_evidence",
     "invalid_evidence_satisfaction_rule",
+];
+
+const EXPECTED_OBSERVABILITY_EVENT_FIELDS: &[&str] = &[
+    "event_kind",
+    "timestamp",
+    "execution_run_id",
+    "authoritative_sequence",
+    "source_plan_path",
+    "source_plan_revision",
+    "harness_phase",
+    "chunk_id",
+    "evaluator_kind",
+    "active_contract_fingerprint",
+    "evaluation_report_fingerprint",
+    "handoff_fingerprint",
+    "command_name",
+    "gate_name",
+    "failure_class",
+    "reason_codes",
 ];
 
 fn run(mut command: Command, context: &str) -> Output {
@@ -306,6 +329,113 @@ fn assert_reason_code_minimum_vocabulary() {
     assert!(
         missing_in_spec.is_empty() && missing_in_expected.is_empty(),
         "REQ-040 minimum reason-code vocabulary drifted between local expected set and spec; missing_in_spec: {missing_in_spec:?}; missing_in_expected: {missing_in_expected:?}"
+    );
+}
+
+fn harness_event_kind_schema_literals() -> Vec<String> {
+    fn collect_enum_literals(schema: &Value, literals: &mut Vec<String>) {
+        if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+            literals.extend(
+                values
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .expect("HarnessEventKind schema literals should be strings")
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        for keyword in ["oneOf", "anyOf", "allOf"] {
+            if let Some(variants) = schema.get(keyword).and_then(Value::as_array) {
+                for variant in variants {
+                    collect_enum_literals(variant, literals);
+                }
+            }
+        }
+    }
+
+    let schema_json =
+        to_value(schema_for!(HarnessEventKind)).expect("HarnessEventKind schema should serialize");
+    let root_schema = schema_json.get("schema").unwrap_or(&schema_json);
+    let mut literals = Vec::new();
+    collect_enum_literals(root_schema, &mut literals);
+    assert!(
+        !literals.is_empty(),
+        "HarnessEventKind schema should expose enum literals"
+    );
+    literals.sort_unstable();
+    literals.dedup();
+    literals
+}
+
+#[test]
+fn observability_runtime_surface_matches_literal_event_kind_and_field_corpora() {
+    let serialized_event_kinds = harness_event_kind_schema_literals();
+    let mut stable_event_kinds: Vec<String> =
+        STABLE_EVENT_KINDS.iter().map(|kind| (*kind).to_owned()).collect();
+    stable_event_kinds.sort_unstable();
+    stable_event_kinds.dedup();
+
+    assert_eq!(
+        serialized_event_kinds,
+        stable_event_kinds,
+        "HarnessEventKind public schema literals drifted from the runtime stable event-kind table"
+    );
+
+    let serialized_event = to_value(HarnessObservabilityEvent::new(
+        HarnessEventKind::PhaseTransition,
+        "2026-03-25T12:00:00Z",
+    ))
+    .expect("HarnessObservabilityEvent should serialize");
+    let event_object = serialized_event
+        .as_object()
+        .expect("HarnessObservabilityEvent should serialize to a JSON object");
+
+    let mut serialized_fields: Vec<String> = event_object.keys().cloned().collect();
+    serialized_fields.sort_unstable();
+    let mut expected_fields: Vec<String> = EXPECTED_OBSERVABILITY_EVENT_FIELDS
+        .iter()
+        .map(|field| (*field).to_owned())
+        .collect();
+    expected_fields.sort_unstable();
+    assert_eq!(
+        serialized_fields, expected_fields,
+        "HarnessObservabilityEvent field names drifted from the local observability parity corpus"
+    );
+
+    let mut nullable_fields: Vec<String> = event_object
+        .iter()
+        .filter_map(|(field, value)| value.is_null().then(|| field.to_owned()))
+        .collect();
+    nullable_fields.sort_unstable();
+    let mut expected_nullable_fields: Vec<String> = EXPECTED_OBSERVABILITY_EVENT_FIELDS
+        .iter()
+        .copied()
+        .filter(|field| !matches!(*field, "event_kind" | "timestamp" | "reason_codes"))
+        .map(str::to_owned)
+        .collect();
+    expected_nullable_fields.sort_unstable();
+    assert_eq!(
+        nullable_fields, expected_nullable_fields,
+        "HarnessObservabilityEvent required-vs-optional shape drifted in default serialization"
+    );
+    assert_eq!(
+        event_object.get("event_kind").and_then(Value::as_str),
+        Some("phase_transition"),
+        "event_kind should remain required and snake_case serialized"
+    );
+    assert_eq!(
+        event_object.get("timestamp").and_then(Value::as_str),
+        Some("2026-03-25T12:00:00Z"),
+        "timestamp should remain required in the serialized observability envelope"
+    );
+    assert!(
+        event_object
+            .get("reason_codes")
+            .is_some_and(|value| value.as_array().is_some_and(|codes| codes.is_empty())),
+        "reason_codes should remain a required machine-readable string array in the serialized observability envelope"
     );
 }
 
