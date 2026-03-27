@@ -13,6 +13,8 @@ const EXECUTION_HARNESS_DIR: &str = "execution-harness";
 const HARNESS_STATE_FILE: &str = "state.json";
 const HARNESS_DEPENDENCY_INDEX_FILE: &str = "dependency-index.json";
 const HARNESS_AUTHORITATIVE_ARTIFACTS_DIR: &str = "authoritative-artifacts";
+const HARNESS_OBSERVABILITY_EVENTS_FILE: &str = "observability-events.jsonl";
+const HARNESS_TELEMETRY_COUNTERS_FILE: &str = "telemetry-counters.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepoPath(String);
@@ -139,6 +141,22 @@ pub fn harness_dependency_index_path(
     branch_name: &str,
 ) -> PathBuf {
     harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_DEPENDENCY_INDEX_FILE)
+}
+
+pub fn harness_observability_events_path(
+    state_dir: &Path,
+    repo_slug: &str,
+    branch_name: &str,
+) -> PathBuf {
+    harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_OBSERVABILITY_EVENTS_FILE)
+}
+
+pub fn harness_telemetry_counters_path(
+    state_dir: &Path,
+    repo_slug: &str,
+    branch_name: &str,
+) -> PathBuf {
+    harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_TELEMETRY_COUNTERS_FILE)
 }
 
 pub fn harness_authoritative_artifacts_dir(

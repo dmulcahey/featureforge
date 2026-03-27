@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,14 +21,18 @@ use crate::execution::gates::{
     validate_evaluator_semantics, validate_handoff_provenance, validate_handoff_semantics,
     validate_harness_provenance, validate_report_provenance, GateAuthorityState,
 };
-use crate::execution::harness::INITIAL_AUTHORITATIVE_SEQUENCE;
+use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
+use crate::execution::observability::{
+    HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters,
+};
 use crate::execution::state::{
     load_execution_context, ExecutionContext, ExecutionRuntime, GateResult, GateState,
 };
 use crate::git::sha256_hex;
 use crate::paths::{
     harness_authoritative_artifact_path, harness_authoritative_artifacts_dir, harness_branch_root,
-    harness_dependency_index_path, harness_state_path, write_atomic as write_atomic_file,
+    harness_dependency_index_path, harness_observability_events_path, harness_state_path,
+    harness_telemetry_counters_path, write_atomic as write_atomic_file,
 };
 
 pub fn record_contract(
@@ -330,6 +335,10 @@ fn record_authoritative_contract(
         source,
         &artifact_file_name,
         contract_sequence,
+        ObservabilityRecordContext {
+            command_name: "record-contract",
+            active_contract_fingerprint: Some(contract_fingerprint),
+        },
         revalidate_contract_locked_state,
         move |state| {
             state.harness_phase = Some(String::from("contract_approved"));
@@ -388,6 +397,10 @@ fn record_authoritative_evaluation(
         source,
         &artifact_file_name,
         report_sequence,
+        ObservabilityRecordContext {
+            command_name: "record-evaluation",
+            active_contract_fingerprint: None,
+        },
         move |state, gate| {
             revalidate_evaluation_locked_state(
                 &context_for_revalidation,
@@ -469,6 +482,10 @@ fn record_authoritative_handoff(
         source,
         &artifact_file_name,
         handoff_for_revalidation.authoritative_sequence,
+        ObservabilityRecordContext {
+            command_name: "record-handoff",
+            active_contract_fingerprint: None,
+        },
         move |state, gate| {
             revalidate_handoff_locked_state(
                 &context_for_revalidation,
@@ -613,6 +630,7 @@ fn record_authoritative_mutation<FRevalidate, FApply>(
     source: String,
     artifact_file_name: &str,
     authoritative_sequence: u64,
+    observability: ObservabilityRecordContext,
     revalidate_locked_state: FRevalidate,
     apply_transition: FApply,
 ) -> Result<GateResult, JsonFailure>
@@ -807,6 +825,23 @@ where
         );
         return Ok(gate.finish());
     }
+    if let Err(error) = persist_observability_after_authoritative_record(
+        runtime,
+        &state,
+        authoritative_sequence,
+        &observability,
+    ) {
+        if artifact_written_this_call {
+            let _ = fs::remove_file(&target_path);
+        }
+        gate.fail(
+            FailureClass::PartialAuthoritativeMutation,
+            "observability_publish_failed",
+            error,
+            "Restore observability sink write access and retry.",
+        );
+        return Ok(gate.finish());
+    }
 
     let serialized = match serde_json::to_string_pretty(&state) {
         Ok(serialized) => serialized,
@@ -842,6 +877,146 @@ fn set_dependency_index_state_healthy(state: &mut MutableHarnessState) {
         String::from("dependency_index_state"),
         serde_json::Value::String(String::from("healthy")),
     );
+}
+
+#[derive(Debug, Clone)]
+struct ObservabilityRecordContext {
+    command_name: &'static str,
+    active_contract_fingerprint: Option<String>,
+}
+
+fn persist_observability_after_authoritative_record(
+    runtime: &ExecutionRuntime,
+    state: &MutableHarnessState,
+    authoritative_sequence: u64,
+    context: &ObservabilityRecordContext,
+) -> Result<(), String> {
+    let events_path = harness_observability_events_path(
+        &runtime.state_dir,
+        &runtime.repo_slug,
+        &runtime.branch_name,
+    );
+    let telemetry_path = harness_telemetry_counters_path(
+        &runtime.state_dir,
+        &runtime.repo_slug,
+        &runtime.branch_name,
+    );
+
+    let mut event = HarnessObservabilityEvent::new(
+        HarnessEventKind::AuthoritativeMutationRecorded,
+        now_unix_timestamp_string(),
+    );
+    event.authoritative_sequence = Some(authoritative_sequence);
+    event.command_name = Some(context.command_name.to_owned());
+    event.source_plan_path = state
+        .extra
+        .get("source_plan_path")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+    event.source_plan_revision = state
+        .extra
+        .get("source_plan_revision")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok());
+    event.harness_phase = state
+        .harness_phase
+        .as_deref()
+        .and_then(|phase| phase.parse::<HarnessPhase>().ok());
+    event.active_contract_fingerprint = context
+        .active_contract_fingerprint
+        .clone()
+        .or_else(|| state.active_contract_fingerprint.clone());
+    append_observability_event(&events_path, &event)?;
+
+    let mut counters = load_or_default_telemetry_counters(&telemetry_path)?;
+    counters.record_authoritative_mutation();
+    let counters_json = serde_json::to_string_pretty(&counters).map_err(|error| {
+        format!(
+            "Could not serialize telemetry counters {}: {error}",
+            telemetry_path.display()
+        )
+    })?;
+    write_atomic_file(&telemetry_path, counters_json).map_err(|error| {
+        format!(
+            "Could not publish telemetry counters {}: {error}",
+            telemetry_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn append_observability_event(
+    events_path: &std::path::Path,
+    event: &HarnessObservabilityEvent,
+) -> Result<(), String> {
+    if let Some(parent) = events_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Could not create observability sink directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let serialized = serde_json::to_string(event).map_err(|error| {
+        format!(
+            "Could not serialize observability event for {}: {error}",
+            events_path.display()
+        )
+    })?;
+    let mut sink = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(events_path)
+        .map_err(|error| {
+            format!(
+                "Could not open observability event sink {}: {error}",
+                events_path.display()
+            )
+        })?;
+    sink.write_all(serialized.as_bytes()).map_err(|error| {
+        format!(
+            "Could not write observability event sink {}: {error}",
+            events_path.display()
+        )
+    })?;
+    sink.write_all(b"\n").map_err(|error| {
+        format!(
+            "Could not finalize observability event sink {}: {error}",
+            events_path.display()
+        )
+    })
+}
+
+fn load_or_default_telemetry_counters(
+    telemetry_path: &std::path::Path,
+) -> Result<HarnessTelemetryCounters, String> {
+    let source = match fs::read_to_string(telemetry_path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(HarnessTelemetryCounters::default());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not read telemetry counters {}: {error}",
+                telemetry_path.display()
+            ));
+        }
+    };
+    serde_json::from_str(&source).map_err(|error| {
+        format!(
+            "Telemetry counters are malformed in {}: {error}",
+            telemetry_path.display()
+        )
+    })
+}
+
+fn now_unix_timestamp_string() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    seconds.to_string()
 }
 
 fn persist_dependency_index_after_authoritative_record(

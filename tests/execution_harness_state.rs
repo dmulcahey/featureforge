@@ -1045,6 +1045,94 @@ fn record_contract_persists_dependency_index_with_authoritative_contract_node() 
 }
 
 #[test]
+fn record_contract_persists_observability_event_and_authoritative_mutation_counter() {
+    let (repo_dir, state_dir) = init_repo("execution-harness-state-observability-record-contract");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+
+    let contract_rel = "docs/featureforge/execution-evidence/observability-record-contract.md";
+    let contract_fingerprint = write_candidate_contract_fixture(repo, contract_rel);
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "contract_pending_approval",
+            "latest_authoritative_sequence": 0,
+            "current_chunk_retry_count": 0,
+            "current_chunk_retry_budget": 0,
+            "current_chunk_pivot_threshold": 0,
+            "handoff_required": false,
+            "open_failed_criteria": []
+        }),
+    );
+
+    let record_json = run_plan_execution_json(
+        repo,
+        state,
+        &["record-contract", "--plan", PLAN_REL, "--contract", contract_rel],
+        "record-contract observability persistence fixture",
+    );
+    assert_eq!(record_json["allowed"], Value::Bool(true));
+
+    let harness_root = harness_state_path(state, &repo_slug(repo), &branch_name(repo))
+        .parent()
+        .expect("harness state path should always live under a branch-scoped harness root")
+        .to_path_buf();
+    let events_path = harness_root.join("observability-events.jsonl");
+    let telemetry_path = harness_root.join("telemetry-counters.json");
+
+    assert!(
+        events_path.is_file(),
+        "record-contract should persist a branch-scoped observability event sink at {}",
+        events_path.display()
+    );
+    assert!(
+        telemetry_path.is_file(),
+        "record-contract should persist branch-scoped telemetry counters at {}",
+        telemetry_path.display()
+    );
+
+    let first_event_line = fs::read_to_string(&events_path)
+        .expect("observability event sink should be readable after record-contract")
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(str::to_owned)
+        .expect("observability event sink should contain at least one structured event line");
+    let event_json: Value = serde_json::from_str(&first_event_line)
+        .expect("first observability event line should be valid json");
+    assert_eq!(
+        event_json["event_kind"],
+        Value::String("authoritative_mutation_recorded".to_owned()),
+        "record-contract should emit authoritative_mutation_recorded in the persisted sink"
+    );
+    assert_eq!(
+        event_json["command_name"],
+        Value::String("record-contract".to_owned()),
+        "record-contract observability should keep command_name machine-readable"
+    );
+    assert_eq!(
+        event_json["active_contract_fingerprint"],
+        Value::String(contract_fingerprint),
+        "record-contract observability should carry the active contract fingerprint"
+    );
+
+    let telemetry_json: Value = serde_json::from_str(
+        &fs::read_to_string(&telemetry_path)
+            .expect("telemetry counters sink should be readable after record-contract"),
+    )
+    .expect("telemetry counters sink should remain valid json after record-contract");
+    assert_eq!(
+        telemetry_json["authoritative_mutation_count"],
+        Value::Number(1_u64.into()),
+        "record-contract should increment authoritative_mutation_count exactly once"
+    );
+}
+
+#[test]
 fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
     let (repo_dir, state_dir) = init_repo("execution-harness-state-overlay-validation");
     let repo = repo_dir.path();
