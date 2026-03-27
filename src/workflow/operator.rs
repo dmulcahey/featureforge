@@ -434,7 +434,7 @@ fn build_context_with_options(
                             }
                             gate_review = Some(review);
                         }
-                    } else {
+                    } else if !status_has_accepted_preflight(&status) {
                         preflight = Some(runtime.preflight_read_only(&status_args)?);
                     }
                     execution_status = Some(status);

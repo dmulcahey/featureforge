@@ -3299,6 +3299,73 @@ fn canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_wor
 }
 
 #[test]
+fn canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirties() {
+    let (repo_dir, state_dir) = init_repo("workflow-doctor-accepted-preflight-dirty");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-doctor-accepted-preflight-dirty";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    install_full_contract_ready_artifacts(repo);
+    enable_session_decision(state, session_key);
+    prepare_preflight_acceptance_workspace(repo, "workflow-doctor-accepted-preflight-dirty");
+
+    let preflight_json = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "explicit plan execution preflight acceptance before doctor dirty-workspace fixture",
+    );
+    assert_eq!(preflight_json["allowed"], true);
+
+    write_file(
+        &repo.join("README.md"),
+        "# workflow-doctor-accepted-preflight-dirty\ntracked change after execution preflight acceptance\n",
+    );
+    let dirty_status = run_checked(
+        {
+            let mut command = Command::new("git");
+            command.args(["status", "--porcelain"]).current_dir(repo);
+            command
+        },
+        "git status --porcelain after workspace dirties",
+    );
+    assert!(
+        !String::from_utf8_lossy(&dirty_status.stdout).trim().is_empty(),
+        "workspace should be dirty after introducing tracked change post-preflight acceptance"
+    );
+
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow doctor for accepted-preflight truth after dirty-workspace fixture",
+        ),
+        "workflow doctor for accepted-preflight truth after dirty-workspace fixture",
+    );
+    assert_eq!(doctor_json["phase"], "execution_preflight");
+    assert!(
+        doctor_json["execution_status"]["execution_run_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "doctor.execution_status.execution_run_id should stay non-empty after accepted preflight even when workspace becomes dirty"
+    );
+
+    assert_ne!(
+        doctor_json["preflight"]["failure_class"],
+        "WorkspaceNotSafe",
+        "workflow doctor should not surface a fresh WorkspaceNotSafe preflight failure after preflight was already accepted"
+    );
+    assert_ne!(
+        doctor_json["preflight"]["allowed"],
+        false,
+        "workflow doctor should not report preflight.allowed=false once accepted preflight state exists"
+    );
+}
+
+#[test]
 fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-final-review-pending");
     let repo = repo_dir.path();
