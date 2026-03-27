@@ -101,6 +101,13 @@ fn normalize_isolated_agents_available(value: &str) -> &'static str {
     }
 }
 
+fn recommended_skill_for_session(context: &TopologySelectionContext) -> String {
+    match context.session_intent.as_str() {
+        "separate" => String::from("featureforge:executing-plans"),
+        _ => String::from("featureforge:subagent-driven-development"),
+    }
+}
+
 fn learned_guidance_matches(
     report: &AnalyzePlanReport,
     context: &TopologySelectionContext,
@@ -135,34 +142,30 @@ pub fn recommend_topology(
     let isolated_agents_available = normalize_isolated_agents_available(
         context.isolated_agents_available.as_str(),
     );
-    let tasks_independent = if plan_supports_worktree_parallel(report) {
-        "yes"
-    } else {
-        "no"
-    };
-    let parallel_ready = plan_supports_worktree_parallel(report)
+    let tasks_independent = if context.tasks_independent { "yes" } else { "no" };
+    let worktree_parallel_available = plan_supports_worktree_parallel(report)
+        && context.tasks_independent
         && isolated_agents_available == "yes"
-        && same_session_viable == "yes"
         && context.workspace_prepared == "yes";
     let learned_guidance_matches = learned_guidance_matches(report, context);
     let learned_downgrade_reused =
         learned_guidance_matches && !context.current_parallel_path_ready;
     let restored_parallel_path =
-        learned_guidance_matches && context.current_parallel_path_ready && parallel_ready;
+        learned_guidance_matches && context.current_parallel_path_ready && worktree_parallel_available;
 
     let (selected_topology, recommended_skill, reason, reason_codes) = if restored_parallel_path {
         (
             ExecutionTopologyArg::WorktreeBackedParallel,
-            String::from("featureforge:subagent-driven-development"),
+            recommended_skill_for_session(context),
             String::from(
                 "Runtime restored the worktree-backed parallel topology because the current run is ready again.",
             ),
             vec![String::from("matching_downgrade_history_superseded")],
         )
-    } else if parallel_ready && !learned_downgrade_reused {
+    } else if worktree_parallel_available && !learned_downgrade_reused {
         (
             ExecutionTopologyArg::WorktreeBackedParallel,
-            String::from("featureforge:subagent-driven-development"),
+            recommended_skill_for_session(context),
             String::from(
                 "Runtime selected the worktree-backed parallel topology for the current approved plan.",
             ),

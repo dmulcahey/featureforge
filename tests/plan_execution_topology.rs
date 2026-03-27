@@ -245,6 +245,7 @@ fn topology_report(repo: &Path) -> AnalyzePlanReport {
 
 fn topology_context(
     execution_context_key: &str,
+    tasks_independent: bool,
     isolated_agents_available: &str,
     session_intent: &str,
     workspace_prepared: &str,
@@ -253,6 +254,7 @@ fn topology_context(
 ) -> TopologySelectionContext {
     TopologySelectionContext {
         execution_context_key: execution_context_key.to_owned(),
+        tasks_independent,
         isolated_agents_available: isolated_agents_available.to_owned(),
         session_intent: session_intent.to_owned(),
         workspace_prepared: workspace_prepared.to_owned(),
@@ -400,7 +402,7 @@ fn runtime_topology_recommends_worktree_backed_parallel_when_the_plan_and_worksp
     let report = topology_report(repo);
     let recommendation = recommend_topology(
         &report,
-        &topology_context("main@base-a", "available", "stay", "yes", true, None),
+        &topology_context("main@base-a", true, "available", "stay", "yes", true, None),
     );
 
     assert_eq!(
@@ -455,7 +457,7 @@ fn runtime_topology_falls_back_conservatively_when_worktrees_or_agents_are_not_r
     let report = topology_report(repo);
     let recommendation = recommend_topology(
         &report,
-        &topology_context("main@base-a", "unavailable", "stay", "no", false, None),
+        &topology_context("main@base-a", true, "unavailable", "stay", "no", false, None),
     );
 
     assert_eq!(
@@ -474,8 +476,12 @@ fn runtime_topology_falls_back_conservatively_when_worktrees_or_agents_are_not_r
         recommendation
             .reason_codes
             .iter()
-            .any(|code| code.starts_with("conservative_fallback")),
+            .any(|code: &String| code.starts_with("conservative_fallback")),
         "fallback topology should expose a conservative fallback reason code"
+    );
+    assert_eq!(
+        recommendation.decision_flags.tasks_independent, "yes",
+        "topology fallback should not redefine actual task independence"
     );
 }
 
@@ -496,6 +502,7 @@ fn runtime_topology_reuses_matching_downgrade_history_for_same_context() {
         &report,
         &topology_context(
             "main@base-a",
+            true,
             "available",
             "stay",
             "yes",
@@ -520,6 +527,35 @@ fn runtime_topology_reuses_matching_downgrade_history_for_same_context() {
             .any(|code| code == "matching_downgrade_history_reused"),
         "matching downgrade history should be visible in the runtime reason codes"
     );
+}
+
+#[test]
+fn runtime_topology_can_select_worktree_backed_parallel_for_separate_session_coordinators() {
+    let (repo_dir, _state_dir) = init_repo("plan-execution-separate-session-parallel");
+    let repo = repo_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let report = topology_report(repo);
+    let recommendation = recommend_topology(
+        &report,
+        &topology_context("main@base-a", true, "available", "separate", "yes", true, None),
+    );
+
+    assert_eq!(
+        recommendation.selected_topology,
+        ExecutionTopologyArg::WorktreeBackedParallel
+    );
+    assert_eq!(
+        recommendation.recommended_skill,
+        "featureforge:executing-plans",
+        "a separate-session coordinator should still drive the worktree-backed parallel topology"
+    );
+    assert_eq!(
+        recommendation.decision_flags.same_session_viable, "no",
+        "the same-session flag should remain about session intent, not topology eligibility"
+    );
+    assert_eq!(recommendation.decision_flags.tasks_independent, "yes");
 }
 
 #[test]

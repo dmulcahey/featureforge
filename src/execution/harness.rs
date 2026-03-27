@@ -326,6 +326,7 @@ pub struct LearnedTopologyGuidance {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TopologySelectionContext {
     pub execution_context_key: String,
+    pub tasks_independent: bool,
     pub isolated_agents_available: String,
     pub session_intent: String,
     pub workspace_prepared: String,
