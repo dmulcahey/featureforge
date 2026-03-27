@@ -309,6 +309,8 @@ impl PreflightAcceptanceState {
     const SCHEMA_VERSION: u32 = 1;
 
     fn matches_context(&self, context: &ExecutionContext) -> bool {
+        let (chunking_strategy, evaluator_policy, reset_policy, review_stack) =
+            proposed_preflight_policy_tuple(context);
         let Some(saved_baseline_head_sha) = self
             .repo_state_baseline_head_sha
             .as_deref()
@@ -324,7 +326,27 @@ impl PreflightAcceptanceState {
         self.plan_path == context.plan_rel
             && self.plan_revision == context.plan_document.plan_revision
             && saved_baseline_head_sha == current_baseline_head_sha
+            && self.chunking_strategy == chunking_strategy
+            && self.evaluator_policy == evaluator_policy
+            && self.reset_policy == reset_policy
+            && self.review_stack == review_stack
     }
+}
+
+fn proposed_preflight_policy_tuple(
+    _context: &ExecutionContext,
+) -> (
+    ChunkingStrategy,
+    EvaluatorPolicyName,
+    ResetPolicy,
+    Vec<String>,
+) {
+    (
+        default_preflight_chunking_strategy(),
+        default_preflight_evaluator_policy(),
+        default_preflight_reset_policy(),
+        default_preflight_review_stack(),
+    )
 }
 
 fn default_preflight_chunking_strategy() -> ChunkingStrategy {

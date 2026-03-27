@@ -2301,6 +2301,59 @@ fn preflight_replay_mints_new_run_identity_when_authoritative_baseline_changes()
 }
 
 #[test]
+fn preflight_replay_mints_new_run_identity_when_accepted_policy_tuple_changes() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-policy-tuple-replay");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let after_first_preflight = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after first preflight policy-tuple acceptance",
+    );
+    let first_run_id = after_first_preflight["execution_run_id"]
+        .as_str()
+        .expect("status should expose execution_run_id after first preflight acceptance")
+        .to_owned();
+
+    let acceptance_path = preflight_acceptance_state_path(repo, state);
+    let mut acceptance_payload: Value = serde_json::from_str(
+        &fs::read_to_string(&acceptance_path)
+            .expect("preflight acceptance state should remain readable before tuple mutation"),
+    )
+    .expect("preflight acceptance state should remain valid json before tuple mutation");
+    acceptance_payload["review_stack"] = json!([
+        "featureforge:writing-plans",
+        "featureforge:requesting-code-review"
+    ]);
+    write_file(
+        &acceptance_path,
+        &serde_json::to_string_pretty(&acceptance_payload)
+            .expect("tuple-mutated acceptance payload should serialize"),
+    );
+
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let after_second_preflight = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after second preflight with tuple-mutated acceptance state",
+    );
+    let second_run_id = after_second_preflight["execution_run_id"]
+        .as_str()
+        .expect("status should expose execution_run_id after second preflight acceptance");
+
+    assert_ne!(
+        second_run_id, first_run_id,
+        "execution_preflight should mint a new execution_run_id when accepted policy tuple changes"
+    );
+}
+
+#[test]
 fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_changes() {
     let (repo_dir, state_dir) = init_repo("plan-execution-preflight-stable-identities");
     let repo = repo_dir.path();
