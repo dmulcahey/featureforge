@@ -3603,6 +3603,101 @@ fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
 }
 
 #[test]
+fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-gate-review-stale-authoritative-truth");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-gate-review-stale-authoritative-truth";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    let branch = current_branch_name(repo);
+    let expected_base_branch = expected_release_base_branch(repo);
+    let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
+    let review_path = write_branch_review_artifact(repo, state, plan_rel, &expected_base_branch);
+    let qa_path = write_branch_qa_artifact(repo, state, plan_rel, &test_plan_path);
+    let release_path = write_branch_release_artifact(repo, state, plan_rel, &expected_base_branch);
+    enable_session_decision(state, session_key);
+
+    let authoritative_review_source = fs::read_to_string(&review_path)
+        .expect("source review artifact should be readable for stale-authoritative fixture");
+    let authoritative_review_fingerprint = sha256_hex(authoritative_review_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch,
+            &format!("final-review-{authoritative_review_fingerprint}.md"),
+        ),
+        &authoritative_review_source,
+    );
+
+    let authoritative_qa_source = fs::read_to_string(&qa_path)
+        .expect("source QA artifact should be readable for stale-authoritative fixture");
+    let authoritative_qa_fingerprint = sha256_hex(authoritative_qa_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch,
+            &format!("browser-qa-{authoritative_qa_fingerprint}.md"),
+        ),
+        &authoritative_qa_source,
+    );
+
+    let authoritative_release_source = fs::read_to_string(&release_path)
+        .expect("source release artifact should be readable for stale-authoritative fixture");
+    let authoritative_release_fingerprint = sha256_hex(authoritative_release_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch,
+            &format!("release-docs-{authoritative_release_fingerprint}.md"),
+        ),
+        &authoritative_release_source,
+    );
+
+    let authoritative_state_path = harness_state_path(state, &repo_slug(repo), &branch);
+    write_file(
+        &authoritative_state_path,
+        &format!(
+            "{{\"schema_version\":1,\"harness_phase\":\"executing\",\"latest_authoritative_sequence\":17,\"dependency_index_state\":\"stale\",\"final_review_state\":\"stale\",\"browser_qa_state\":\"stale\",\"release_docs_state\":\"stale\",\"last_final_review_artifact_fingerprint\":\"{authoritative_review_fingerprint}\",\"last_browser_qa_artifact_fingerprint\":\"{authoritative_qa_fingerprint}\",\"last_release_docs_artifact_fingerprint\":\"{authoritative_release_fingerprint}\"}}"
+        ),
+    );
+
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow doctor for stale authoritative late-gate truth",
+        ),
+        "workflow doctor for stale authoritative late-gate truth",
+    );
+    let gate_review_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "review", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate review for stale authoritative late-gate truth",
+        ),
+        "workflow gate review for stale authoritative late-gate truth",
+    );
+
+    assert_eq!(
+        gate_review_json["allowed"], false,
+        "workflow gate review should load authoritative late-gate truth before trusting v2 evidence; got {gate_review_json:?}"
+    );
+    assert_eq!(
+        doctor_json["gate_review"]["allowed"], false,
+        "workflow doctor should report review gate blocked when authoritative late-gate truth is stale; got {doctor_json:?}"
+    );
+}
+
+#[test]
 fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final_review_over_newer_branch_decoy()
 {
     let (repo_dir, state_dir) = init_repo("workflow-phase-authoritative-final-review-provenance");

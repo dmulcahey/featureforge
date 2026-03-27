@@ -3240,6 +3240,52 @@ fn gate_review_rejects_checked_step_without_execution_evidence() {
 }
 
 #[test]
+fn gate_review_rejects_stale_authoritative_late_gate_truth_even_with_valid_v2_evidence() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-review-stale-authoritative-truth");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+
+    // Stale authoritative truth should block review readiness regardless of candidate evidence shape.
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 17,
+            "dependency_index_state": "stale",
+            "final_review_state": "stale",
+            "browser_qa_state": "stale",
+            "release_docs_state": "stale",
+        }),
+    );
+
+    let gate_review = run_rust_json(
+        repo,
+        state,
+        &["gate-review", "--plan", PLAN_REL],
+        "gate review with stale authoritative late-gate truth",
+    );
+
+    assert_eq!(
+        gate_review["allowed"], false,
+        "gate-review should load authoritative late-gate truth before trusting v2 evidence"
+    );
+}
+
+#[test]
 fn gate_finish_requires_qa_result_when_browser_qa_is_required() {
     let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-missing-qa");
     let repo = repo_dir.path();

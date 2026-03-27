@@ -1889,6 +1889,13 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
 }
 
 pub fn gate_review_from_context(context: &ExecutionContext) -> GateResult {
+    gate_review_from_context_internal(context, true)
+}
+
+fn gate_review_from_context_internal(
+    context: &ExecutionContext,
+    enforce_authoritative_late_gate_truth: bool,
+) -> GateResult {
     let mut gate = GateState::default();
     if let Some(step) = active_step(context, NoteState::Active) {
         gate.fail(
@@ -1964,6 +1971,10 @@ pub fn gate_review_from_context(context: &ExecutionContext) -> GateResult {
         }
     }
 
+    if enforce_authoritative_late_gate_truth {
+        enforce_review_authoritative_late_gate_truth(context, &mut gate);
+    }
+
     if context.evidence.format == EvidenceFormat::Legacy && !context.evidence.attempts.is_empty() {
         gate.warn("legacy_evidence_format");
     }
@@ -1975,7 +1986,7 @@ pub fn gate_review_from_context(context: &ExecutionContext) -> GateResult {
 }
 
 pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
-    let mut gate = GateState::from_result(gate_review_from_context(context));
+    let mut gate = GateState::from_result(gate_review_from_context_internal(context, false));
     if !gate.allowed {
         return gate.finish();
     }
@@ -2402,6 +2413,98 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
     }
 
     gate.finish()
+}
+
+fn enforce_review_authoritative_late_gate_truth(context: &ExecutionContext, gate: &mut GateState) {
+    let overlay = match load_status_authoritative_overlay_checked(context) {
+        Ok(overlay) => overlay,
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "authoritative_state_unavailable",
+                error.message,
+                "Restore authoritative harness state readability and validity before running gate-review.",
+            );
+            return;
+        }
+    };
+    let Some(overlay) = overlay else {
+        return;
+    };
+
+    validate_review_dependency_index_truth(overlay.dependency_index_state.as_deref(), gate);
+    validate_review_downstream_truth(
+        "final_review_state",
+        "final review",
+        overlay.final_review_state.as_deref(),
+        gate,
+    );
+    validate_review_downstream_truth(
+        "browser_qa_state",
+        "browser QA",
+        overlay.browser_qa_state.as_deref(),
+        gate,
+    );
+    validate_review_downstream_truth(
+        "release_docs_state",
+        "release docs",
+        overlay.release_docs_state.as_deref(),
+        gate,
+    );
+}
+
+fn validate_review_dependency_index_truth(raw_state: Option<&str>, gate: &mut GateState) {
+    let state = normalize_optional_overlay_value(raw_state).unwrap_or("missing");
+    if state == "fresh" {
+        return;
+    }
+
+    let (code, message) = match state {
+        "missing" => (
+            "dependency_index_state_missing",
+            "Authoritative dependency-index truth is missing for review readiness.",
+        ),
+        "stale" => (
+            "dependency_index_state_stale",
+            "Authoritative dependency-index truth is stale for review readiness.",
+        ),
+        _ => (
+            "dependency_index_state_not_fresh",
+            "Authoritative dependency-index truth is not fresh for review readiness.",
+        ),
+    };
+    gate.fail(
+        FailureClass::DependencyIndexMismatch,
+        code,
+        message,
+        "Refresh authoritative dependency-index truth before running gate-review.",
+    );
+}
+
+fn validate_review_downstream_truth(
+    field_name: &str,
+    field_label: &str,
+    raw_state: Option<&str>,
+    gate: &mut GateState,
+) {
+    let state = normalize_optional_overlay_value(raw_state).unwrap_or("missing");
+    if state == "fresh" || state == "not_required" {
+        return;
+    }
+
+    let (code_suffix, message_suffix) = match state {
+        "missing" => ("missing", "is missing"),
+        "stale" => ("stale", "is stale"),
+        _ => ("not_fresh", "is not fresh"),
+    };
+    gate.fail(
+        FailureClass::StaleProvenance,
+        &format!("{field_name}_{code_suffix}"),
+        format!(
+            "Authoritative {field_label} truth {message_suffix} for review readiness."
+        ),
+        "Refresh authoritative late-gate truth before running gate-review.",
+    );
 }
 
 pub fn normalize_begin_request(args: &BeginArgs) -> BeginRequest {
@@ -3902,6 +4005,39 @@ fn load_status_authoritative_overlay(context: &ExecutionContext) -> Option<Statu
     );
     let source = fs::read_to_string(&state_path).ok()?;
     serde_json::from_str(&source).ok()
+}
+
+fn load_status_authoritative_overlay_checked(
+    context: &ExecutionContext,
+) -> Result<Option<StatusAuthoritativeOverlay>, JsonFailure> {
+    let state_path = harness_state_path(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    );
+    if !state_path.is_file() {
+        return Ok(None);
+    }
+
+    let source = fs::read_to_string(&state_path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Could not read authoritative harness state {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    let overlay: StatusAuthoritativeOverlay = serde_json::from_str(&source).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state is malformed in {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    Ok(Some(overlay))
 }
 
 fn authoritative_fingerprinted_artifact_path(
