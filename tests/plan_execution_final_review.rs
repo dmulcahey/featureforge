@@ -378,6 +378,36 @@ fn dedicated_final_review_receipt_requires_distinct_from_stages() {
 }
 
 #[test]
+fn dedicated_final_review_receipt_requires_implementation_stage_distinctness() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-final-review-distinct-stage-values");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    fs::write(
+        &review_path,
+        original.replace(
+            "**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development",
+            "**Distinct From Stages:** featureforge:requesting-code-review",
+        ),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let error = validate_final_review_receipt(&receipt, PLAN_REL, 1, &current_head_sha(repo), false)
+        .expect_err("final review should prove independence from implementation stages");
+    assert_eq!(error, FinalReviewReceiptIssue::DistinctFromStagesInvalid);
+    assert_eq!(
+        error.reason_code(),
+        "review_receipt_distinct_from_stages_invalid"
+    );
+}
+
+#[test]
 fn dedicated_final_review_receipt_requires_passed_deviation_disposition_when_needed() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-deviation-pass");
     let repo = repo_dir.path();
@@ -399,8 +429,40 @@ fn dedicated_final_review_receipt_requires_passed_deviation_disposition_when_nee
     let receipt = parse_final_review_receipt(&review_path);
     let error = validate_final_review_receipt(&receipt, PLAN_REL, 1, &current_head_sha(repo), true)
         .expect_err("deviation-aware final review should require a passing disposition");
-    assert_eq!(error, FinalReviewReceiptIssue::DeviationReviewNotPass);
-    assert_eq!(error.reason_code(), "review_receipt_deviation_review_not_pass");
+    assert_eq!(error, FinalReviewReceiptIssue::DeviationReviewVerdictMismatch);
+    assert_eq!(
+        error.reason_code(),
+        "review_receipt_deviation_verdict_mismatch"
+    );
+}
+
+#[test]
+fn dedicated_final_review_receipt_requires_explicit_no_deviation_disposition() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-final-review-no-deviation-disposition");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    fs::write(
+        &review_path,
+        original
+            .replace("**Recorded Execution Deviations:** none", "**Recorded Execution Deviations:** present")
+            .replace("**Deviation Review Verdict:** not_required", "**Deviation Review Verdict:** pass"),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let error = validate_final_review_receipt(&receipt, PLAN_REL, 1, &current_head_sha(repo), false)
+        .expect_err("no-deviation receipts should still record explicit none/not_required disposition");
+    assert_eq!(error, FinalReviewReceiptIssue::DeviationRecordMismatch);
+    assert_eq!(
+        error.reason_code(),
+        "review_receipt_deviation_record_mismatch"
+    );
 }
 
 fn write_release_readiness_artifact(repo: &Path, state: &Path, base_branch: &str) -> PathBuf {

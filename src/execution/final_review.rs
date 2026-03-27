@@ -32,13 +32,14 @@ pub enum FinalReviewReceiptIssue {
     ReviewStageMismatch,
     ReviewerProvenanceMissing,
     DistinctFromStagesMissing,
+    DistinctFromStagesInvalid,
     SourcePlanMismatch,
     SourcePlanRevisionMismatch,
     HeadMismatch,
     ResultNotPass,
     GeneratedByMismatch,
-    DeviationReviewMissing,
-    DeviationReviewNotPass,
+    DeviationRecordMismatch,
+    DeviationReviewVerdictMismatch,
 }
 
 impl FinalReviewReceiptIssue {
@@ -47,13 +48,16 @@ impl FinalReviewReceiptIssue {
             Self::ReviewStageMismatch => "review_receipt_stage_mismatch",
             Self::ReviewerProvenanceMissing => "review_receipt_not_dedicated",
             Self::DistinctFromStagesMissing => "review_receipt_distinct_from_stages_missing",
+            Self::DistinctFromStagesInvalid => "review_receipt_distinct_from_stages_invalid",
             Self::SourcePlanMismatch => "review_receipt_plan_mismatch",
             Self::SourcePlanRevisionMismatch => "review_receipt_plan_revision_mismatch",
             Self::HeadMismatch => "review_receipt_head_mismatch",
             Self::ResultNotPass => "review_receipt_result_not_pass",
             Self::GeneratedByMismatch => "review_receipt_generator_mismatch",
-            Self::DeviationReviewMissing => "review_receipt_deviation_review_missing",
-            Self::DeviationReviewNotPass => "review_receipt_deviation_review_not_pass",
+            Self::DeviationRecordMismatch => "review_receipt_deviation_record_mismatch",
+            Self::DeviationReviewVerdictMismatch => {
+                "review_receipt_deviation_verdict_mismatch"
+            }
         }
     }
 }
@@ -119,6 +123,13 @@ pub fn validate_final_review_receipt(
     if receipt.distinct_from_stages.is_empty() {
         return Err(FinalReviewReceiptIssue::DistinctFromStagesMissing);
     }
+    if !receipt
+        .distinct_from_stages
+        .iter()
+        .any(|stage| matches!(stage.as_str(), "featureforge:executing-plans" | "featureforge:subagent-driven-development"))
+    {
+        return Err(FinalReviewReceiptIssue::DistinctFromStagesInvalid);
+    }
     if receipt.source_plan.as_deref() != Some(expected_plan_path) {
         return Err(FinalReviewReceiptIssue::SourcePlanMismatch);
     }
@@ -134,13 +145,17 @@ pub fn validate_final_review_receipt(
     if receipt.generated_by.as_deref() != Some("featureforge:requesting-code-review") {
         return Err(FinalReviewReceiptIssue::GeneratedByMismatch);
     }
-    if deviations_required {
-        if receipt.recorded_execution_deviations.as_deref() != Some("present") {
-            return Err(FinalReviewReceiptIssue::DeviationReviewMissing);
-        }
-        if receipt.deviation_review_verdict.as_deref() != Some("pass") {
-            return Err(FinalReviewReceiptIssue::DeviationReviewNotPass);
-        }
+    let expected_deviation_record = if deviations_required { "present" } else { "none" };
+    let expected_deviation_verdict = if deviations_required {
+        "pass"
+    } else {
+        "not_required"
+    };
+    if receipt.recorded_execution_deviations.as_deref() != Some(expected_deviation_record) {
+        return Err(FinalReviewReceiptIssue::DeviationRecordMismatch);
+    }
+    if receipt.deviation_review_verdict.as_deref() != Some(expected_deviation_verdict) {
+        return Err(FinalReviewReceiptIssue::DeviationReviewVerdictMismatch);
     }
     Ok(())
 }
