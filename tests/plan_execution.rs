@@ -2711,6 +2711,120 @@ fn canonical_preflight_rejects_resume_when_authoritative_handoff_is_required() {
 }
 
 #[test]
+fn preflight_reclaims_stale_write_authority_lock_before_acceptance() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-stale-write-authority-lock");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout execution-preflight-fixture");
+
+    let lock_path = harness_branch_dir(repo, state)
+        .join("execution-harness")
+        .join("write-authority.lock");
+    let stale_pid = {
+        let mut child_cmd = Command::new("sh");
+        child_cmd.args(["-c", "exit 0"]);
+        let mut child = child_cmd
+            .spawn()
+            .expect("stale write-authority fixture process should spawn");
+        let pid = child.id();
+        let exit_status = child
+            .wait()
+            .expect("stale write-authority fixture process should exit");
+        assert!(
+            exit_status.success(),
+            "stale write-authority fixture process should exit successfully"
+        );
+        pid
+    };
+    write_file(&lock_path, &format!("pid={stale_pid}\n"));
+
+    let acceptance_path = preflight_acceptance_state_path(repo, state);
+    assert!(
+        !acceptance_path.exists(),
+        "preflight acceptance state should not exist before stale-lock preflight"
+    );
+
+    let preflight = run_rust_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight with stale write-authority lock",
+    );
+
+    assert_eq!(
+        preflight["allowed"],
+        true,
+        "preflight should allow stale lock reclamation, got {preflight}"
+    );
+    assert!(
+        !lock_path.exists(),
+        "preflight should reclaim stale write-authority lock before accepting resume"
+    );
+    assert!(
+        acceptance_path.exists(),
+        "preflight should persist acceptance state after reclaiming stale write authority"
+    );
+}
+
+#[test]
+fn preflight_blocks_live_write_authority_conflict_without_persisting_acceptance() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-live-write-authority-lock");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout execution-preflight-fixture");
+
+    let lock_path = harness_branch_dir(repo, state)
+        .join("execution-harness")
+        .join("write-authority.lock");
+    let mut holder_cmd = Command::new("sh");
+    holder_cmd.args(["-c", "sleep 30"]);
+    let mut holder = holder_cmd
+        .spawn()
+        .expect("live write-authority fixture process should spawn");
+    write_file(&lock_path, &format!("pid={}\n", holder.id()));
+
+    let acceptance_path = preflight_acceptance_state_path(repo, state);
+    assert!(
+        !acceptance_path.exists(),
+        "preflight acceptance state should not exist before live-lock preflight"
+    );
+
+    let preflight = run_rust_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight with live write-authority lock",
+    );
+    let _ = holder.kill();
+    let _ = holder.wait();
+
+    assert_eq!(preflight["allowed"], false);
+    assert!(
+        preflight["reason_codes"].as_array().is_some_and(|codes| codes
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|code| code == "write_authority_conflict")),
+        "preflight should expose write_authority_conflict for live write-authority lock, got {preflight}"
+    );
+    assert!(
+        !acceptance_path.exists(),
+        "preflight must not persist acceptance state when write authority is held by a live process"
+    );
+}
+
+#[test]
 fn canonical_preflight_blocks_workspace_hazards() {
     for (case_name, setup, expected_reason) in [
         (

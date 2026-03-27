@@ -25,8 +25,8 @@ use crate::git::{
     derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
 };
 use crate::paths::{
-    branch_storage_key, featureforge_state_dir, harness_state_path, normalize_repo_relative_path,
-    normalize_whitespace, write_atomic as write_atomic_file, RepoPath,
+    branch_storage_key, featureforge_state_dir, harness_branch_root, harness_state_path,
+    normalize_repo_relative_path, normalize_whitespace, write_atomic as write_atomic_file, RepoPath,
 };
 use crate::repo_safety::RepoSafetyRuntime;
 use crate::workflow::manifest::{load_manifest_read_only, ManifestLoadResult, WorkflowManifest};
@@ -1525,8 +1525,98 @@ fn preflight_requires_authoritative_handoff(context: &ExecutionContext) -> Resul
     Ok(overlay.handoff_required || phase_requires_handoff)
 }
 
+enum PreflightWriteAuthorityState {
+    Clear,
+    Conflict,
+}
+
+fn preflight_write_authority_state(
+    context: &ExecutionContext,
+) -> Result<PreflightWriteAuthorityState, JsonFailure> {
+    let lock_path =
+        harness_branch_root(
+            &context.runtime.state_dir,
+            &context.runtime.repo_slug,
+            &context.runtime.branch_name,
+        )
+        .join("write-authority.lock");
+    if !lock_path.exists() {
+        return Ok(PreflightWriteAuthorityState::Clear);
+    }
+
+    let source = fs::read_to_string(&lock_path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            format!(
+                "Could not read write-authority lock {}: {error}",
+                lock_path.display()
+            ),
+        )
+    })?;
+
+    let holder_pid = source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("pid=")
+            .and_then(|value| value.trim().parse::<u32>().ok())
+    });
+    let Some(holder_pid) = holder_pid else {
+        return Ok(PreflightWriteAuthorityState::Conflict);
+    };
+
+    if process_is_running(holder_pid) {
+        return Ok(PreflightWriteAuthorityState::Conflict);
+    }
+
+    match fs::remove_file(&lock_path) {
+        Ok(()) => Ok(PreflightWriteAuthorityState::Clear),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(PreflightWriteAuthorityState::Clear),
+        Err(error) => Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            format!(
+                "Could not reclaim stale write-authority lock {}: {error}",
+                lock_path.display()
+            ),
+        )),
+    }
+}
+
+fn process_is_running(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(true)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
     let mut gate = GateState::default();
+    match preflight_write_authority_state(context) {
+        Ok(PreflightWriteAuthorityState::Clear) => {}
+        Ok(PreflightWriteAuthorityState::Conflict) => gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "write_authority_conflict",
+            "Execution preflight cannot continue while another runtime writer holds write authority.",
+            "Retry once the active writer releases write authority.",
+        ),
+        Err(error) => gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "write_authority_unavailable",
+            error.message,
+            "Restore write-authority lock access before retrying preflight.",
+        ),
+    }
+
     match preflight_requires_authoritative_handoff(context) {
         Ok(true) => gate.fail(
             FailureClass::ExecutionStateNotReady,
