@@ -160,6 +160,7 @@ const HARNESS_OBSERVABILITY_SEAM_EXPECTATION_PATHS = [
   path.join(REPO_ROOT, 'tests/execution_harness_state.rs'),
   path.join(REPO_ROOT, 'tests/workflow_runtime.rs'),
   path.join(REPO_ROOT, 'tests/codex-runtime/workflow-fixtures.test.mjs'),
+  path.join(REPO_ROOT, 'tests/codex-runtime/fixtures/workflow-artifacts/harness/observability-seam-event-kinds.json'),
 ];
 const HARNESS_OBSERVABILITY_PLANNING_README_PATH = path.join(
   REPO_ROOT,
@@ -703,6 +704,11 @@ test('harness fixture/runtime output expectations should pin observability vocab
     seamBackedEventKinds,
     [],
     'runtime seam expectations should include at least one event_kind literal in event_kind-specific contexts',
+  );
+  assert.deepEqual(
+    missingEventKindSeamCoverage,
+    [],
+    `runtime seam expectations should cover every required stable event_kind without README fallback; missing seam coverage: ${missingEventKindSeamCoverage.join(', ')}`,
   );
   assert.notDeepEqual(
     plannedEventKinds,
