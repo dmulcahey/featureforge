@@ -10,7 +10,7 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
-use crate::execution::harness::EvaluatorKind;
+use crate::execution::harness::{EvaluatorKind, HarnessPhase};
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus, RecommendOutput};
 use crate::session_entry::{self, SessionEntryResolveOutput};
 use crate::workflow::status::{SessionEntryState, WorkflowPhase, WorkflowRoute, WorkflowRuntime};
@@ -602,7 +602,9 @@ fn derive_phase(
     };
 
     if execution_status.execution_started != "yes" {
-        if preflight.map(|result| result.allowed).unwrap_or(false) {
+        if status_has_accepted_preflight(execution_status)
+            || preflight.map(|result| result.allowed).unwrap_or(false)
+        {
             return String::from("execution_preflight");
         }
         return String::from("implementation_handoff");
@@ -632,6 +634,14 @@ fn derive_phase(
         "ReleaseArtifactNotFresh" => String::from("document_release_pending"),
         _ => String::from("final_review_pending"),
     }
+}
+
+fn status_has_accepted_preflight(status: &PlanExecutionStatus) -> bool {
+    status
+        .execution_run_id
+        .as_ref()
+        .is_some_and(|run_id| !run_id.as_str().trim().is_empty())
+        || status.harness_phase == HarnessPhase::ExecutionPreflight
 }
 
 fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {

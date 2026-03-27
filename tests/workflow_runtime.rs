@@ -3113,6 +3113,110 @@ fn canonical_workflow_routes_dirty_worktree_back_to_execution_handoff() {
 }
 
 #[test]
+fn canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_workspace_becomes_dirty(
+) {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-accepted-preflight-dirty");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-accepted-preflight-dirty";
+    let decision_path = state
+        .join("session-entry")
+        .join("using-featureforge")
+        .join(session_key);
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    install_full_contract_ready_artifacts(repo);
+    write_file(&decision_path, "enabled\n");
+    prepare_preflight_acceptance_workspace(repo, "workflow-phase-accepted-preflight-dirty");
+
+    let preflight_json = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "explicit plan execution preflight acceptance before dirty workspace routing fixture",
+    );
+    assert_eq!(preflight_json["allowed"], true);
+
+    let status_after_preflight = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status after explicit plan execution preflight acceptance before dirty workspace routing fixture",
+    );
+    assert!(
+        status_after_preflight["execution_run_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "explicit plan execution preflight should persist execution_run_id before workspace becomes dirty"
+    );
+
+    write_file(
+        &repo.join("README.md"),
+        "# workflow-phase-accepted-preflight-dirty\ntracked change after execution preflight acceptance\n",
+    );
+
+    let status_after_workspace_dirty = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status after workspace dirties following explicit plan execution preflight acceptance",
+    );
+    assert!(
+        status_after_workspace_dirty["execution_run_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "accepted preflight should keep plan execution status.execution_run_id non-empty after workspace dirties"
+    );
+    assert_eq!(
+        status_after_workspace_dirty["harness_phase"], "execution_preflight",
+        "accepted preflight should keep plan execution status.harness_phase at execution_preflight after workspace dirties"
+    );
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for accepted-preflight dirty-workspace routing fixture",
+        ),
+        "workflow phase for accepted-preflight dirty-workspace routing fixture",
+    );
+    assert_eq!(phase_json["phase"], "execution_preflight");
+    assert_eq!(phase_json["next_action"], "execution_preflight");
+
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff for accepted-preflight dirty-workspace routing fixture",
+        ),
+        "workflow handoff for accepted-preflight dirty-workspace routing fixture",
+    );
+    assert_eq!(handoff_json["phase"], "execution_preflight");
+    assert_eq!(handoff_json["next_action"], "execution_preflight");
+
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow doctor for accepted-preflight dirty-workspace routing fixture",
+        ),
+        "workflow doctor for accepted-preflight dirty-workspace routing fixture",
+    );
+    assert!(
+        doctor_json["execution_status"]["execution_run_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "accepted preflight should keep doctor.execution_status.execution_run_id non-empty after workspace dirties"
+    );
+}
+
+#[test]
 fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-final-review-pending");
     let repo = repo_dir.path();
