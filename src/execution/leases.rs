@@ -94,7 +94,7 @@ pub(crate) fn load_status_authoritative_overlay_checked(
     context: &ExecutionContext,
 ) -> Result<Option<StatusAuthoritativeOverlay>, JsonFailure> {
     let state_path = authoritative_state_path(context);
-    let metadata = match fs::metadata(&state_path) {
+    let metadata = match fs::symlink_metadata(&state_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => {
@@ -107,6 +107,15 @@ pub(crate) fn load_status_authoritative_overlay_checked(
             ));
         }
     };
+    if metadata.file_type().is_symlink() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state path must not be a symlink in {}.",
+                state_path.display()
+            ),
+        ));
+    }
     if !metadata.is_file() {
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
@@ -162,7 +171,7 @@ pub(crate) fn load_preflight_authoritative_state(
     context: &ExecutionContext,
 ) -> Result<Option<PreflightAuthoritativeState>, JsonFailure> {
     let state_path = authoritative_state_path(context);
-    let metadata = match fs::metadata(&state_path) {
+    let metadata = match fs::symlink_metadata(&state_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => {
@@ -175,6 +184,15 @@ pub(crate) fn load_preflight_authoritative_state(
             ));
         }
     };
+    if metadata.file_type().is_symlink() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state path must not be a symlink in {}.",
+                state_path.display()
+            ),
+        ));
+    }
     if !metadata.is_file() {
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
@@ -315,7 +333,7 @@ pub(crate) fn preflight_write_authority_state(
         &context.runtime.branch_name,
     )
     .join("write-authority.lock");
-    let metadata = match fs::metadata(&lock_path) {
+    let metadata = match fs::symlink_metadata(&lock_path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => {
             return Ok(PreflightWriteAuthorityState::Clear);
@@ -330,6 +348,15 @@ pub(crate) fn preflight_write_authority_state(
             ));
         }
     };
+    if metadata.file_type().is_symlink() {
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            format!(
+                "Write-authority lock path must not be a symlink in {}.",
+                lock_path.display()
+            ),
+        ));
+    }
     if !metadata.is_file() {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,

@@ -23,6 +23,8 @@ use json_support::parse_json;
 use process_support::{run, run_checked};
 use std::fs;
 #[cfg(unix)]
+use std::os::unix::fs::symlink;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -477,6 +479,97 @@ fn preflight_fails_closed_when_write_authority_lock_is_unreadable() {
             .iter()
             .any(|code| code == "write_authority_unavailable")),
         "unreadable write-authority lock should fail closed instead of clearing the preflight"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn status_fails_closed_when_authoritative_state_is_dangling_symlink() {
+    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-status-symlink");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args(["checkout", "-B", "execution-status-fixture"])
+                .current_dir(repo);
+            command
+        },
+        "git checkout execution-status-fixture",
+    );
+
+    let harness_dir = harness_branch_dir(repo, state).join("execution-harness");
+    fs::create_dir_all(&harness_dir).expect("harness directory should be creatable");
+    let state_path = harness_dir.join("state.json");
+    symlink("missing-state-target.json", &state_path)
+        .expect("dangling authoritative state symlink should be creatable");
+
+    let mut command =
+        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["plan", "execution", "status", "--plan", PLAN_REL]);
+    let output = run(
+        command,
+        "plan execution status with dangling authoritative state symlink",
+    );
+
+    assert!(
+        !output.status.success(),
+        "status must fail closed when authoritative harness state is a dangling symlink"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("must not be a symlink") || stdout.contains("must not be a symlink"),
+        "status should surface the dangling authoritative symlink failure"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn preflight_fails_closed_when_write_authority_lock_is_dangling_symlink() {
+    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-lock-symlink");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args(["checkout", "-B", "execution-preflight-fixture"])
+                .current_dir(repo);
+            command
+        },
+        "git checkout execution-preflight-fixture",
+    );
+
+    let harness_dir = harness_branch_dir(repo, state).join("execution-harness");
+    fs::create_dir_all(&harness_dir).expect("harness directory should be creatable");
+    let lock_path = harness_dir.join("write-authority.lock");
+    symlink("missing-lock-target.pid", &lock_path)
+        .expect("dangling write-authority symlink should be creatable");
+
+    let gate = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "plan execution preflight with dangling write-authority symlink",
+    );
+
+    assert_eq!(gate["allowed"], false);
+    assert!(
+        gate["reason_codes"].as_array().is_some_and(|codes| codes
+            .iter()
+            .any(|code| code == "write_authority_unavailable")),
+        "dangling write-authority symlink should fail closed instead of clearing the preflight"
     );
 }
 
