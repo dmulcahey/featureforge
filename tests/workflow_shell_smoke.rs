@@ -211,8 +211,9 @@ fn write_branch_test_plan_artifact(
 fn write_branch_review_artifact(repo: &Path, state_dir: &Path, plan_rel: &str, base_branch: &str) {
     let branch = current_branch_name(repo);
     let safe_branch = branch_storage_key(&branch);
-    let path = project_artifact_dir(repo, state_dir)
-        .join(format!("tester-{safe_branch}-code-review-20260324-121000.md"));
+    let path = project_artifact_dir(repo, state_dir).join(format!(
+        "tester-{safe_branch}-code-review-20260324-121000.md"
+    ));
     write_file(
         &path,
         &format!(
@@ -223,16 +224,12 @@ fn write_branch_review_artifact(repo: &Path, state_dir: &Path, plan_rel: &str, b
     );
 }
 
-fn write_branch_release_artifact(
-    repo: &Path,
-    state_dir: &Path,
-    plan_rel: &str,
-    base_branch: &str,
-) {
+fn write_branch_release_artifact(repo: &Path, state_dir: &Path, plan_rel: &str, base_branch: &str) {
     let branch = current_branch_name(repo);
     let safe_branch = branch_storage_key(&branch);
-    let path = project_artifact_dir(repo, state_dir)
-        .join(format!("tester-{safe_branch}-release-readiness-20260324-121500.md"));
+    let path = project_artifact_dir(repo, state_dir).join(format!(
+        "tester-{safe_branch}-release-readiness-20260324-121500.md"
+    ));
     write_file(
         &path,
         &format!(
@@ -253,15 +250,35 @@ fn enable_session_decision(state_dir: &Path, session_key: &str) {
     );
 }
 
+fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", branch_name])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout preflight acceptance branch");
+}
+
 fn complete_workflow_fixture_execution(repo: &Path, state_dir: &Path, plan_rel: &str) {
     install_full_contract_ready_artifacts(repo);
-    write_repo_file(repo, "tests/workflow_shell_smoke.rs", "synthetic route proof\n");
+    write_repo_file(
+        repo,
+        "tests/workflow_shell_smoke.rs",
+        "synthetic route proof\n",
+    );
+    prepare_preflight_acceptance_workspace(repo, "workflow-shell-smoke-fixture");
     let status = run_plan_execution_json(
         repo,
         state_dir,
         &["status", "--plan", plan_rel],
         "plan execution status for shell-smoke parity fixture",
     );
+    let preflight = run_plan_execution_json(
+        repo,
+        state_dir,
+        &["preflight", "--plan", plan_rel],
+        "plan execution preflight for shell-smoke parity fixture",
+    );
+    assert_eq!(preflight["allowed"], true);
     let begin = run_plan_execution_json(
         repo,
         state_dir,
@@ -491,7 +508,12 @@ struct LateStageCase {
     setup: fn(&Path, &Path, &str, &str),
 }
 
-fn setup_final_review_pending_case(repo: &Path, state_dir: &Path, plan_rel: &str, base_branch: &str) {
+fn setup_final_review_pending_case(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    base_branch: &str,
+) {
     complete_workflow_fixture_execution(repo, state_dir, plan_rel);
     write_branch_test_plan_artifact(repo, state_dir, plan_rel, "no");
     write_branch_release_artifact(repo, state_dir, plan_rel, base_branch);
@@ -607,19 +629,18 @@ fn workflow_phase_text_and_json_surfaces_match_harness_downstream_freshness() {
         assert_eq!(phase_json["phase"], case.expected_phase);
         assert_eq!(phase_json["next_action"], case.expected_next_action);
         assert!(phase_text.contains(&format!("Workflow phase: {}", case.expected_phase)));
-        assert!(phase_text.contains(&format!(
-            "Next action: {}",
-            case.expected_next_action
-        )));
-        assert!(next_text.contains(&format!(
-            "Next action: {}",
-            case.expected_next_action
-        )));
+        assert!(phase_text.contains(&format!("Next action: {}", case.expected_next_action)));
+        assert!(next_text.contains(&format!("Next action: {}", case.expected_next_action)));
 
         let next_step = phase_text
             .lines()
             .find_map(|line| line.strip_prefix("Next: "))
-            .unwrap_or_else(|| panic!("workflow phase text should expose Next line for case {}", case.name));
+            .unwrap_or_else(|| {
+                panic!(
+                    "workflow phase text should expose Next line for case {}",
+                    case.name
+                )
+            });
         assert!(
             next_text.contains(next_step),
             "workflow next text should mirror the same Next step from workflow phase text for case {}",
@@ -669,7 +690,8 @@ fn display_json_optional_str(value: Option<&Value>) -> String {
 }
 
 #[test]
-fn workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_and_reason_metadata() {
+fn workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_and_reason_metadata()
+{
     let (repo_dir, state_dir) = init_repo("workflow-doctor-handoff-metadata-parity");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -720,7 +742,8 @@ fn workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_an
         .get("write_authority_state")
         .and_then(Value::as_str)
         .expect("workflow doctor json should expose write_authority_state");
-    let write_authority_holder = display_json_optional_str(execution_status.get("write_authority_holder"));
+    let write_authority_holder =
+        display_json_optional_str(execution_status.get("write_authority_holder"));
     let write_authority_worktree =
         display_json_optional_str(execution_status.get("write_authority_worktree"));
     let reason_codes = display_json_array(
@@ -748,7 +771,8 @@ fn workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_an
             .get("non_passing_evaluator_kinds")
             .expect("workflow doctor json should expose non_passing_evaluator_kinds"),
     );
-    let last_evaluator = display_json_optional_str(execution_status.get("last_evaluation_evaluator_kind"));
+    let last_evaluator =
+        display_json_optional_str(execution_status.get("last_evaluation_evaluator_kind"));
     let finish_reason_codes = display_json_array(
         doctor_json["gate_finish"]
             .get("reason_codes")
@@ -768,31 +792,21 @@ fn workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_an
             .expect("workflow doctor json should expose next_action"),
     )));
     assert!(doctor_text.contains(&format!("Execution reason codes: {reason_codes}")));
-    assert!(doctor_text.contains(&format!(
-        "Evaluator required kinds: {required_evaluators}"
-    )));
+    assert!(doctor_text.contains(&format!("Evaluator required kinds: {required_evaluators}")));
     assert!(doctor_text.contains(&format!(
         "Evaluator completed kinds: {completed_evaluators}"
     )));
-    assert!(doctor_text.contains(&format!(
-        "Evaluator pending kinds: {pending_evaluators}"
-    )));
+    assert!(doctor_text.contains(&format!("Evaluator pending kinds: {pending_evaluators}")));
     assert!(doctor_text.contains(&format!(
         "Evaluator non-passing kinds: {non_passing_evaluators}"
     )));
     assert!(doctor_text.contains(&format!("Evaluator last kind: {last_evaluator}")));
-    assert!(doctor_text.contains(&format!(
-        "Write authority state: {write_authority_state}"
-    )));
-    assert!(doctor_text.contains(&format!(
-        "Write authority holder: {write_authority_holder}"
-    )));
+    assert!(doctor_text.contains(&format!("Write authority state: {write_authority_state}")));
+    assert!(doctor_text.contains(&format!("Write authority holder: {write_authority_holder}")));
     assert!(doctor_text.contains(&format!(
         "Write authority worktree: {write_authority_worktree}"
     )));
-    assert!(doctor_text.contains(&format!(
-        "Finish gate reason codes: {finish_reason_codes}"
-    )));
+    assert!(doctor_text.contains(&format!("Finish gate reason codes: {finish_reason_codes}")));
 
     assert!(handoff_text.contains(&format!(
         "Phase: {}",
@@ -807,15 +821,9 @@ fn workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_an
             .expect("workflow handoff json should expose next_action"),
     )));
     assert!(handoff_text.contains(&format!("Execution reason codes: {reason_codes}")));
-    assert!(handoff_text.contains(&format!(
-        "Evaluator required kinds: {required_evaluators}"
-    )));
-    assert!(handoff_text.contains(&format!(
-        "Write authority state: {write_authority_state}"
-    )));
-    assert!(handoff_text.contains(&format!(
-        "Write authority holder: {write_authority_holder}"
-    )));
+    assert!(handoff_text.contains(&format!("Evaluator required kinds: {required_evaluators}")));
+    assert!(handoff_text.contains(&format!("Write authority state: {write_authority_state}")));
+    assert!(handoff_text.contains(&format!("Write authority holder: {write_authority_holder}")));
     assert!(handoff_text.contains(&format!(
         "Write authority worktree: {write_authority_worktree}"
     )));
