@@ -306,6 +306,14 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
                 String::from("featureforge:finishing-a-development-branch"),
                 reason_text(&context),
             ),
+            "pivot_required" => {
+                let skill = context
+                    .execution_status
+                    .as_ref()
+                    .map(|status| status.execution_mode.clone())
+                    .unwrap_or_default();
+                (skill, reason_text(&context))
+            }
             _ if execution_started == "yes" => {
                 let skill = context
                     .execution_status
