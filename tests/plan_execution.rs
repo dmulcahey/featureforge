@@ -1939,6 +1939,115 @@ fn canonical_recommend_matches_helper_for_independent_plan() {
 }
 
 #[test]
+fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_preflight_state() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-recommend-policy-tuple");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let status_before = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before recommend policy tuple",
+    );
+    for field in [
+        "execution_run_id",
+        "chunking_strategy",
+        "evaluator_policy",
+        "reset_policy",
+        "review_stack",
+    ] {
+        let value = status_before
+            .get(field)
+            .unwrap_or_else(|| panic!("status should expose {field} before recommend"));
+        assert!(
+            value.is_null(),
+            "status should keep {field} null before execution_preflight acceptance, got {value:?}"
+        );
+    }
+
+    let args = [
+        "recommend",
+        "--plan",
+        PLAN_REL,
+        "--isolated-agents",
+        "available",
+        "--session-intent",
+        "stay",
+        "--workspace-prepared",
+        "yes",
+    ];
+    let rust = run_rust_json(repo, state, &args, "rust recommend policy tuple");
+
+    assert_eq!(
+        rust["recommended_skill"],
+        Value::String(String::from("featureforge:subagent-driven-development"))
+    );
+    assert!(
+        rust["reason"].as_str().is_some_and(|value| !value.is_empty()),
+        "recommend should preserve reason as a non-empty string"
+    );
+    assert_eq!(rust["decision_flags"]["tasks_independent"], "yes");
+    assert_eq!(rust["decision_flags"]["same_session_viable"], "yes");
+
+    for field in [
+        "chunking_strategy",
+        "evaluator_policy",
+        "reset_policy",
+        "review_stack",
+        "policy_reason_codes",
+    ] {
+        assert!(
+            rust.get(field).is_some(),
+            "rust recommend should expose {field}"
+        );
+    }
+
+    for field in ["chunking_strategy", "evaluator_policy", "reset_policy"] {
+        assert!(
+            rust[field].as_str().is_some_and(|value| !value.is_empty()),
+            "recommend should expose {field} as a non-empty string"
+        );
+    }
+    assert!(
+        rust["review_stack"].as_array().is_some_and(|value| !value.is_empty()),
+        "recommend should expose review_stack as a non-empty array"
+    );
+    assert!(
+        rust["policy_reason_codes"].as_array().is_some(),
+        "recommend should expose policy_reason_codes as an array"
+    );
+
+    let status_after = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after recommend policy tuple",
+    );
+    for field in [
+        "execution_run_id",
+        "chunking_strategy",
+        "evaluator_policy",
+        "reset_policy",
+        "review_stack",
+    ] {
+        let before = status_before
+            .get(field)
+            .unwrap_or_else(|| panic!("status before recommend should expose {field}"));
+        let after = status_after
+            .get(field)
+            .unwrap_or_else(|| panic!("status after recommend should expose {field}"));
+        assert!(after.is_null(), "status should keep {field} null after recommend");
+        assert_eq!(
+            after, before,
+            "recommend should not mutate preflight acceptance field {field}"
+        );
+    }
+}
+
+#[test]
 fn canonical_preflight_matches_helper_for_clean_plan() {
     let (repo_dir, state_dir) = init_repo("plan-execution-preflight");
     let repo = repo_dir.path();

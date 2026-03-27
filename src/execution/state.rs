@@ -126,6 +126,11 @@ pub struct RecommendOutput {
     pub recommended_skill: String,
     pub reason: String,
     pub decision_flags: RecommendDecisionFlags,
+    pub chunking_strategy: ChunkingStrategy,
+    pub evaluator_policy: EvaluatorPolicyName,
+    pub reset_policy: ResetPolicy,
+    pub review_stack: Vec<String>,
+    pub policy_reason_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -359,6 +364,24 @@ impl ExecutionRuntime {
                 "recommend is only valid before execution has started for this plan revision.",
             ));
         }
+        let (chunking_strategy, evaluator_policy, reset_policy, review_stack, policy_reason_codes) =
+            if let Some(preflight_acceptance) = preflight_acceptance_for_context(&context)? {
+                (
+                    preflight_acceptance.chunking_strategy,
+                    preflight_acceptance.evaluator_policy,
+                    preflight_acceptance.reset_policy,
+                    preflight_acceptance.review_stack,
+                    vec![String::from("reused_preflight_acceptance_policy_tuple")],
+                )
+            } else {
+                (
+                    default_preflight_chunking_strategy(),
+                    default_preflight_evaluator_policy(),
+                    default_preflight_reset_policy(),
+                    default_preflight_review_stack(),
+                    vec![String::from("default_preflight_policy_tuple")],
+                )
+            };
 
         let tasks_independent = if tasks_are_independent(&context.plan_document) {
             "yes"
@@ -411,6 +434,11 @@ impl ExecutionRuntime {
                 workspace_prepared: workspace_prepared.to_owned(),
                 same_session_viable: same_session_viable.to_owned(),
             },
+            chunking_strategy,
+            evaluator_policy,
+            reset_policy,
+            review_stack,
+            policy_reason_codes,
         })
     }
 
