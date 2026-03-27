@@ -209,6 +209,19 @@ pub fn run() -> std::process::ExitCode {
                         Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
                     }
                 }
+                cli::workflow::WorkflowCommand::PlanFidelity(plan_fidelity_cli) => {
+                    match plan_fidelity_cli.command {
+                        cli::workflow::WorkflowPlanFidelityCommand::Record(args) => {
+                            let result =
+                                workflow::status::record_plan_fidelity_receipt(&current_dir, &args);
+                            if args.json {
+                                emit_json(result)
+                            } else {
+                                emit_text(result.map(workflow::status::render_plan_fidelity_record))
+                            }
+                        }
+                    }
+                }
                 cli::workflow::WorkflowCommand::Next => emit_text(
                     workflow::operator::render_next(&current_dir)
                         .map_err(map_read_only_workflow_failure),

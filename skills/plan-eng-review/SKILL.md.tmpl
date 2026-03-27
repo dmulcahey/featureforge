@@ -174,10 +174,14 @@ Critical: If the user does not select SCOPE REDUCTION, respect that decision ful
 Before moving into the review sections:
 
 1. Read `**Source Spec:**` and confirm the file exists.
-2. Read that spec's `**Workflow State:**` and `**Spec Revision:**`.
-3. If the spec is not `CEO Approved`, stop and direct the agent back to `featureforge:plan-ceo-review`.
+2. Read that spec's `**Workflow State:**`, `**Spec Revision:**`, and `**Last Reviewed By:**`.
+3. If the spec is not workflow-valid `CEO Approved` with `**Last Reviewed By:** plan-ceo-review`, stop and direct the agent back to `featureforge:plan-ceo-review`.
 4. If the plan's `**Source Spec:**` path or `**Source Spec Revision:**` does not match the latest approved spec, stop and direct the agent back to `featureforge:writing-plans`.
-5. If you make plan edits during this review, keep `**Workflow State:** Draft` until every review issue is resolved.
+5. Before starting engineering review, require a matching runtime-owned plan-fidelity receipt in pass state for the current plan revision and approved spec revision.
+6. Do not start engineering review until workflow routing returns the current draft plan to `featureforge:plan-eng-review` with a matching pass plan-fidelity receipt.
+7. If the matching plan-fidelity receipt is missing, stale, malformed, or not pass, stop and hand control back to `featureforge:writing-plans`.
+8. Do not look for a markdown `## Plan Fidelity Review Receipt` block in the plan. The authoritative evidence is the runtime-owned receipt surfaced by workflow routing and `plan contract analyze-plan`.
+9. If you make plan edits during this review, keep `**Workflow State:** Draft` until every review issue is resolved.
 
 ### Plan-Contract Gate
 
@@ -191,6 +195,8 @@ PLAN_ANALYSIS_JSON="$("$_FEATUREFORGE_BIN" plan contract analyze-plan \
 ```
 
 Engineering approval must fail closed unless `contract_state == valid` and `packet_buildable_tasks == task_count`.
+
+Engineering approval must also fail closed unless `plan_fidelity_receipt.state == pass`.
 
 Treat `reason_codes` and `diagnostics` from `analyze-plan` as the authoritative contract feedback for approval law.
 

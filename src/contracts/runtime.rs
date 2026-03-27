@@ -11,12 +11,18 @@ use sha2::{Digest, Sha256};
 use crate::cli::plan_contract::{
     AnalyzePlanArgs, BuildTaskPacketArgs, LintArgs, PacketOutputFormat, PersistMode,
 };
-use crate::contracts::plan::{AnalyzePlanReport, ContractDiagnostic, OverlappingWriteScope};
+use crate::contracts::plan::{
+    AnalyzePlanReport, ContractDiagnostic, OverlappingWriteScope, PLAN_FIDELITY_RECEIPT_KIND,
+    PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION, PlanDocument, PlanFidelityReceipt,
+    PlanFidelityReviewerProvenance, PlanFidelityVerification,
+    evaluate_plan_fidelity_receipt_at_path, parse_plan_file, plan_fidelity_receipt_path_for_repo,
+};
+use crate::contracts::spec::{SpecDocument, parse_spec_file};
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::git::discover_slug_identity;
 use crate::paths::{
-    featureforge_state_dir, normalize_identifier_token, normalize_repo_relative_path,
-    normalize_whitespace,
+    featureforge_state_dir, harness_branch_root, normalize_identifier_token,
+    normalize_repo_relative_path, normalize_whitespace, write_atomic,
 };
 
 const AMBIGUOUS_PHRASES: &[&str] = &[
@@ -340,12 +346,17 @@ pub fn run_analyze_plan(args: &AnalyzePlanArgs) -> std::process::ExitCode {
         }
     };
 
-    emit_json_value(&analyze_contract(
+    let mut report = analyze_contract(&spec_path, &plan_path, &spec_source, &plan_source);
+    apply_plan_fidelity_gate_to_report(
+        repo_root.as_path(),
         &spec_path,
         &plan_path,
         &spec_source,
         &plan_source,
-    ))
+        &mut report,
+    );
+
+    emit_json_value(&report)
 }
 
 pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCode {
@@ -718,6 +729,16 @@ fn analyze_contract(
         files_blocks_valid: true,
         reason_codes: Vec::new(),
         overlapping_write_scopes: Vec::new(),
+        plan_fidelity_receipt: crate::contracts::plan::PlanFidelityGateReport {
+            state: String::from("not_applicable"),
+            receipt_path: String::new(),
+            reviewer_stage: String::new(),
+            provenance_source: String::new(),
+            verified_requirement_index: false,
+            verified_execution_topology: false,
+            reason_codes: Vec::new(),
+            diagnostics: Vec::new(),
+        },
         diagnostics: Vec::new(),
     };
 
@@ -1008,12 +1029,73 @@ fn analyze_contract(
 }
 
 pub fn analyze_contract_report(
+    repo_root: &Path,
     spec_path: &str,
     plan_path: &str,
     spec_source: &str,
     plan_source: &str,
 ) -> AnalyzePlanReport {
-    analyze_contract(spec_path, plan_path, spec_source, plan_source)
+    let mut report = analyze_contract(spec_path, plan_path, spec_source, plan_source);
+    apply_plan_fidelity_gate_to_report(repo_root, spec_path, plan_path, spec_source, plan_source, &mut report);
+    report
+}
+
+fn apply_plan_fidelity_gate_to_report(
+    repo_root: &Path,
+    spec_path: &str,
+    plan_path: &str,
+    _spec_source: &str,
+    plan_source: &str,
+    report: &mut AnalyzePlanReport,
+) {
+    if find_header_value(plan_source, "Workflow State").as_deref() != Some("Draft") {
+        return;
+    }
+
+    let spec_abs = repo_root.join(spec_path);
+    let plan_abs = repo_root.join(plan_path);
+    let receipt_path = plan_fidelity_receipt_path_for_repo(repo_root);
+    let gate = match (parse_spec_file(&spec_abs), parse_plan_file(&plan_abs)) {
+        (Ok(spec), Ok(plan)) => {
+            evaluate_plan_fidelity_receipt_at_path(&spec, &plan, repo_root, receipt_path)
+        }
+        (spec_result, plan_result) => {
+            let mut diagnostics = Vec::new();
+            if spec_result.is_err() {
+                diagnostics.push(ContractDiagnostic {
+                    code: String::from("plan_fidelity_verification_incomplete"),
+                    message: String::from(
+                        "Plan-fidelity review cannot be validated until the source spec parses cleanly, including a parseable Requirement Index.",
+                    ),
+                });
+            }
+            if plan_result.is_err() {
+                diagnostics.push(ContractDiagnostic {
+                    code: String::from("plan_fidelity_verification_incomplete"),
+                    message: String::from(
+                        "Plan-fidelity review cannot be validated until the draft plan parses cleanly.",
+                    ),
+                });
+            }
+            crate::contracts::plan::PlanFidelityGateReport {
+                state: String::from("invalid"),
+                receipt_path: receipt_path.display().to_string(),
+                reviewer_stage: String::new(),
+                provenance_source: String::new(),
+                verified_requirement_index: false,
+                verified_execution_topology: false,
+                reason_codes: vec![String::from("plan_fidelity_verification_incomplete")],
+                diagnostics,
+            }
+        }
+    };
+    if gate.state != "pass" {
+        report.contract_state = String::from("invalid");
+        for diagnostic in &gate.diagnostics {
+            push_reason(report, &diagnostic.code, &diagnostic.message);
+        }
+    }
+    report.plan_fidelity_receipt = gate;
 }
 
 fn parse_spec_revision(source: &str) -> Result<u32, ()> {
@@ -1138,7 +1220,11 @@ fn parse_plan_headers(source: &str) -> Result<PlanHeaders, HeaderError> {
             message: String::from("Source Spec header is missing or malformed."),
         });
     }
-    let source_spec_path = source_spec_path.trim_matches('`').to_owned();
+    let source_spec_path = normalize_repo_relative_path(source_spec_path.trim_matches('`'))
+        .map_err(|_| HeaderError {
+            reason_code: String::from("missing_source_spec"),
+            message: String::from("Source Spec header is missing or malformed."),
+        })?;
 
     let source_spec_revision =
         find_header_value(source, "Source Spec Revision").ok_or_else(|| HeaderError {
@@ -1970,8 +2056,83 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+pub fn plan_fidelity_receipt_path(state_dir: &Path, repo_slug: &str, branch_name: &str) -> PathBuf {
+    let branch_root = harness_branch_root(state_dir, repo_slug, branch_name)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| harness_branch_root(state_dir, repo_slug, branch_name));
+    branch_root
+        .join("workflow")
+        .join("plan-fidelity-receipt.json")
+}
+
+pub fn build_plan_fidelity_receipt(
+    spec: &SpecDocument,
+    plan: &PlanDocument,
+    verdict: &str,
+    review_artifact_path: &str,
+    review_artifact_fingerprint: &str,
+    reviewer_stage: &str,
+    reviewer_source: &str,
+    reviewer_id: &str,
+    distinct_from_stages: &[String],
+    checked_surfaces: &[String],
+    verified_requirement_ids: &[String],
+) -> PlanFidelityReceipt {
+    PlanFidelityReceipt {
+        schema_version: PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION,
+        receipt_kind: String::from(PLAN_FIDELITY_RECEIPT_KIND),
+        verdict: verdict.to_owned(),
+        spec_path: spec.path.clone(),
+        spec_revision: spec.spec_revision,
+        spec_fingerprint: sha256_hex(spec.source.as_bytes()),
+        plan_path: plan.path.clone(),
+        plan_revision: plan.plan_revision,
+        plan_fingerprint: sha256_hex(plan.source.as_bytes()),
+        review_artifact_path: review_artifact_path.to_owned(),
+        review_artifact_fingerprint: review_artifact_fingerprint.to_owned(),
+        reviewer_provenance: PlanFidelityReviewerProvenance {
+            review_stage: reviewer_stage.to_owned(),
+            reviewer_source: reviewer_source.to_owned(),
+            reviewer_id: reviewer_id.to_owned(),
+            distinct_from_stages: distinct_from_stages.to_vec(),
+        },
+        verification: PlanFidelityVerification {
+            checked_surfaces: checked_surfaces.to_vec(),
+            verified_requirement_ids: verified_requirement_ids.to_vec(),
+        },
+    }
+}
+
+pub fn persist_plan_fidelity_receipt(
+    receipt_path: &Path,
+    receipt: &PlanFidelityReceipt,
+) -> Result<(), DiagnosticError> {
+    let body = serde_json::to_vec_pretty(receipt).map_err(|error| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize plan-fidelity receipt: {error}"),
+        )
+    })?;
+    write_atomic(receipt_path, body).map_err(|error| {
+        DiagnosticError::new(
+            FailureClass::DecisionWriteFailed,
+            format!(
+                "Could not write plan-fidelity receipt {}: {error}",
+                receipt_path.display()
+            ),
+        )
+    })
+}
+
 fn repo_root() -> PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    let start_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    for ancestor in start_dir.ancestors() {
+        if ancestor.join(".git").is_dir() || ancestor.join("docs/featureforge").is_dir() {
+            return ancestor.to_path_buf();
+        }
+    }
+    discover_slug_identity(&start_dir).repo_root
 }
 
 fn state_dir() -> PathBuf {

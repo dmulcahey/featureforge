@@ -563,7 +563,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.doesNotMatch(usingFeatureForge, /brainstorming first, then implementation skills/);
   assert.match(
     usingFeatureForge,
-    /brainstorming first, then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review -> execution\./,
+    /brainstorming first, then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-fidelity review -> plan-eng-review -> execution\./,
   );
   assert.match(
     usingFeatureForge,
