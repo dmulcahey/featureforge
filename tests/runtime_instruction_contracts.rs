@@ -1220,6 +1220,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
+        "Fresh-session spec review, plan review, and execution-preflight intents must still surface the bypass prompt first through `featureforge session-entry resolve --message-file <path>`.",
+    );
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
         "then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-eng-review -> execution.",
     );
     assert_file_contains(
