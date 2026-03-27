@@ -309,6 +309,11 @@ struct PreflightAcceptanceState {
 impl PreflightAcceptanceState {
     const SCHEMA_VERSION: u32 = 1;
 
+    fn matches_plan_revision(&self, context: &ExecutionContext) -> bool {
+        self.plan_path == context.plan_rel
+            && self.plan_revision == context.plan_document.plan_revision
+    }
+
     fn matches_context(&self, context: &ExecutionContext) -> bool {
         let (chunking_strategy, evaluator_policy, reset_policy, review_stack) =
             proposed_preflight_policy_tuple(context);
@@ -1349,7 +1354,7 @@ fn pending_chunk_id(context: &ExecutionContext) -> ChunkId {
 }
 
 pub fn require_preflight_acceptance(context: &ExecutionContext) -> Result<(), JsonFailure> {
-    if preflight_acceptance_for_context(context)?.is_none() {
+    if preflight_acceptance_for_plan_revision(context)?.is_none() {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
             "begin requires a successful execution_preflight acceptance for this approved plan revision.",
@@ -1363,6 +1368,13 @@ fn preflight_acceptance_for_context(
 ) -> Result<Option<PreflightAcceptanceState>, JsonFailure> {
     Ok(load_preflight_acceptance(&context.runtime)?
         .filter(|acceptance| acceptance.matches_context(context)))
+}
+
+fn preflight_acceptance_for_plan_revision(
+    context: &ExecutionContext,
+) -> Result<Option<PreflightAcceptanceState>, JsonFailure> {
+    Ok(load_preflight_acceptance(&context.runtime)?
+        .filter(|acceptance| acceptance.matches_plan_revision(context)))
 }
 
 fn load_preflight_acceptance(
