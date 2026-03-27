@@ -479,21 +479,36 @@ test('execution workflow skills reference the plan-execution helper contract', (
 test('task-fidelity workflow docs and prompts require packet-backed plan contracts', () => {
   const writingPlans = readUtf8(getSkillPath('writing-plans'));
   assert.match(writingPlans, /Requirement Coverage Matrix/);
+  assert.match(writingPlans, /## Execution Strategy/);
+  assert.match(writingPlans, /## Dependency Diagram/);
   assert.match(writingPlans, /\*\*Spec Coverage:\*\*/);
   assert.match(writingPlans, /\*\*Task Outcome:\*\*/);
   assert.match(writingPlans, /\*\*Plan Constraints:\*\*/);
   assert.match(writingPlans, /\*\*Open Questions:\*\* none/);
   assert.match(writingPlans, /"\$_FEATUREFORGE_BIN" plan contract lint/);
+  assert.match(writingPlans, /create .* worktrees? and run Tasks .* in parallel/i);
+  assert.match(writingPlans, /Task \d+ owns /);
+  assert.match(writingPlans, /Execute Task \d+ serially/i);
 
   const planEngReview = readUtf8(getSkillPath('plan-eng-review'));
   assert.match(planEngReview, /"\$_FEATUREFORGE_BIN" plan contract analyze-plan/);
   assert.match(planEngReview, /contract_state == valid/);
   assert.match(planEngReview, /packet_buildable_tasks == task_count/);
+  assert.match(planEngReview, /execution_strategy_present/);
+  assert.match(planEngReview, /dependency_diagram_present/);
+  assert.match(planEngReview, /execution_topology_valid/);
+  assert.match(planEngReview, /serial_hazards_resolved/);
+  assert.match(planEngReview, /parallel_lane_ownership_valid/);
+  assert.match(planEngReview, /parallel_workspace_isolation_valid/);
   assert.match(planEngReview, /missing, stale, or non-buildable for the approved plan revision/);
   assert.match(planEngReview, /Requirement Index/);
   assert.match(planEngReview, /Requirement Coverage Matrix/);
+  assert.match(planEngReview, /Execution Strategy/);
+  assert.match(planEngReview, /Dependency Diagram/);
   assert.match(planEngReview, /tasks with `Open Questions` not equal to `none`/);
   assert.match(planEngReview, /invalid `Files:` block structure/);
+  assert.match(planEngReview, /fake-parallel hotspot files/i);
+  assert.match(planEngReview, /exact isolated workspace truth/i);
   assert.match(planEngReview, /Does the `Requirement Coverage Matrix` cover every approved requirement without orphaned or over-broad tasks\?/);
   assert.match(planEngReview, /Do `Files:` blocks stay within the minimum file scope needed for the covered requirements, or do they signal file-scope drift that should be split or reapproved\?/);
 

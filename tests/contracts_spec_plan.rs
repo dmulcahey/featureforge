@@ -7,10 +7,11 @@ use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use assert_cmd::cargo::CommandCargoExt;
+use featureforge::contracts::packet::write_contract_schemas;
 use featureforge::contracts::plan::{
-    PlanFidelityGateReport, PlanFidelityReceipt, PlanFidelityReviewerProvenance,
-    PlanFidelityVerification, analyze_plan, evaluate_plan_fidelity_receipt_at_path,
-    parse_plan_file, plan_fidelity_receipt_path_for_repo,
+    ParallelWorktreeRequirement, PlanFidelityGateReport, PlanFidelityReceipt,
+    PlanFidelityReviewerProvenance, PlanFidelityVerification, analyze_plan,
+    evaluate_plan_fidelity_receipt_at_path, parse_plan_file, plan_fidelity_receipt_path_for_repo,
 };
 use featureforge::contracts::runtime::plan_fidelity_receipt_path;
 use featureforge::contracts::spec::parse_spec_file;
@@ -270,12 +271,7 @@ fn run_rust(repo_root: &Path, state_dir: &Path, args: &[&str], context: &str) ->
     run(command, context)
 }
 
-fn run_rust_from_dir(
-    current_dir: &Path,
-    state_dir: &Path,
-    args: &[&str],
-    context: &str,
-) -> Output {
+fn run_rust_from_dir(current_dir: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
     let mut command =
         Command::cargo_bin("featureforge").expect("featureforge cargo binary should exist");
     command
@@ -444,15 +440,448 @@ fn analyze_valid_contract_fixture_reports_clean_coverage() {
     assert_eq!(report.spec_revision, 1);
     assert_eq!(report.plan_path, PLAN_REL);
     assert_eq!(report.plan_revision, 1);
-    assert_eq!(report.task_count, 2);
-    assert_eq!(report.packet_buildable_tasks, 2);
+    assert_eq!(report.task_count, 3);
+    assert_eq!(report.packet_buildable_tasks, 3);
     assert!(report.coverage_complete);
     assert!(report.open_questions_resolved);
     assert!(report.task_structure_valid);
     assert!(report.files_blocks_valid);
+    assert!(report.execution_strategy_present);
+    assert!(report.dependency_diagram_present);
+    assert!(report.execution_topology_valid);
+    assert!(report.serial_hazards_resolved);
+    assert!(report.parallel_lane_ownership_valid);
+    assert!(report.parallel_workspace_isolation_valid);
+    assert_eq!(report.parallel_worktree_groups, vec![vec![2, 3]]);
+    assert_eq!(
+        report.parallel_worktree_requirements,
+        vec![ParallelWorktreeRequirement {
+            tasks: vec![2, 3],
+            declared_worktrees: 2,
+            required_worktrees: 2,
+        }]
+    );
     assert!(report.reason_codes.is_empty());
     assert!(report.overlapping_write_scopes.is_empty());
     assert!(report.diagnostics.is_empty());
+}
+
+#[test]
+fn analyze_plan_rejects_missing_execution_strategy() {
+    let repo_root = unique_temp_dir("contract-analyze-missing-execution-strategy");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "## Execution Strategy\n\n- Execute Task 1 serially. It establishes the contract surface before packet-backed execution splits into lane-owned work.\n- After Task 1, create two worktrees and run Tasks 2 and 3 in parallel:\n  - Task 2 owns the CLI and packaged-binary surfaces for packet-backed execution.\n  - Task 3 owns the prompt and shell-proof surfaces for packet-backed execution.\n\n",
+        "",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.execution_strategy_present);
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "missing_execution_strategy")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_missing_dependency_diagram() {
+    let repo_root = unique_temp_dir("contract-analyze-missing-dependency-diagram");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "## Dependency Diagram\n\n```text\nTask 1\n  |\n  +--> Task 2\n  |\n  +--> Task 3\n```\n\n",
+        "",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.dependency_diagram_present);
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "missing_dependency_diagram")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_dependency_diagram_that_lies_about_parallel_edges() {
+    let repo_root = unique_temp_dir("contract-analyze-lying-dependency-diagram");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "Task 1\n  |\n  +--> Task 2\n  |\n  +--> Task 3\n",
+        "Task 1\n  |\n  v\nTask 2\n",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "dependency_diagram_mismatch")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_dependency_diagram_with_extra_unplanned_edges() {
+    let repo_root = unique_temp_dir("contract-analyze-extra-dependency-edge");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "Task 1\n  |\n  +--> Task 2\n  |\n  +--> Task 3\n",
+        "Task 1\n  |\n  +--> Task 2\n  |\n  +--> Task 3\nTask 2 -> Task 3\n",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "dependency_diagram_mismatch")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_unjustified_serial_execution() {
+    let repo_root = unique_temp_dir("contract-analyze-unjustified-serial");
+    install_fixture(&repo_root, "valid-serialized-plan.md", PLAN_REL);
+    install_fixture(&repo_root, "valid-spec.md", SPEC_REL);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "Both tasks revise the same contract boundary and the plan intentionally keeps that hotspot in one shared branch lane.",
+        "",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.serial_hazards_resolved);
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "serial_execution_needs_reason")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_serial_by_default_topology_without_real_hazard() {
+    let repo_root = unique_temp_dir("contract-analyze-serial-by-default");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "## Execution Strategy\n\n- Execute Task 1 serially. It establishes the contract surface before packet-backed execution splits into lane-owned work.\n- After Task 1, create two worktrees and run Tasks 2 and 3 in parallel:\n  - Task 2 owns the CLI and packaged-binary surfaces for packet-backed execution.\n  - Task 3 owns the prompt and shell-proof surfaces for packet-backed execution.\n\n",
+        "## Execution Strategy\n\n- Execute Tasks 1, 2, and 3 serially. Keep the plan easy to follow in one lane.\n\n",
+    );
+    replace_in_file(
+        &plan_path,
+        "Task 1\n  |\n  +--> Task 2\n  |\n  +--> Task 3\n",
+        "Task 1\n  |\n  v\nTask 2\n  |\n  v\nTask 3\n",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.serial_hazards_resolved);
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "serial_execution_unproven")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_parallel_lane_without_ownership_guidance() {
+    let repo_root = unique_temp_dir("contract-analyze-missing-parallel-ownership");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "  - Task 3 owns the prompt and shell-proof surfaces for packet-backed execution.\n",
+        "",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.parallel_lane_ownership_valid);
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "parallel_lane_missing_ownership")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_parallel_lane_without_per_task_worktrees() {
+    let repo_root = unique_temp_dir("contract-analyze-shared-worktree");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "create two worktrees and run Tasks 2 and 3 in parallel",
+        "create one worktree and run Tasks 2 and 3 in parallel",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.parallel_workspace_isolation_valid);
+    assert!(!report.execution_topology_valid);
+    assert_eq!(
+        report.parallel_worktree_requirements,
+        vec![ParallelWorktreeRequirement {
+            tasks: vec![2, 3],
+            declared_worktrees: 1,
+            required_worktrees: 2,
+        }]
+    );
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "parallel_workspace_isolation_mismatch")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_fake_parallel_hotspots() {
+    let repo_root = unique_temp_dir("contract-analyze-fake-parallel-hotspots");
+    install_fixture(&repo_root, "fake-parallel-hotspot-plan.md", PLAN_REL);
+    install_fixture(&repo_root, "valid-spec.md", SPEC_REL);
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), repo_root.join(PLAN_REL))
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "parallel_hotspot_conflict")
+    );
+}
+
+#[test]
+fn analyze_plan_rejects_invalid_path_traversal_fixture_in_library_path() {
+    let repo_root = unique_temp_dir("contract-analyze-library-path-traversal");
+    install_fixture(&repo_root, "valid-spec.md", SPEC_REL);
+    install_fixture(&repo_root, "invalid-path-traversal-plan.md", PLAN_REL);
+
+    let error = analyze_plan(repo_root.join(SPEC_REL), repo_root.join(PLAN_REL))
+        .expect_err("library analyzer should reject path traversal files entries");
+
+    assert_eq!(error.failure_class(), "InstructionParseFailed");
+    assert!(error.message().contains("Malformed files block entry"));
+}
+
+#[test]
+fn analyze_plan_rejects_invalid_plan_headers_in_library_path() {
+    let repo_root = unique_temp_dir("contract-analyze-invalid-library-headers");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "**Workflow State:** Engineering Approved",
+        "**Workflow State:** Legacy Draft",
+    );
+    replace_in_file(
+        &plan_path,
+        "**Execution Mode:** none",
+        "**Execution Mode:** made-up-mode",
+    );
+    replace_in_file(
+        &plan_path,
+        "**Last Reviewed By:** plan-eng-review",
+        "**Last Reviewed By:** somebody-else",
+    );
+
+    let error = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect_err("library analyzer should reject invalid plan headers");
+
+    assert_eq!(error.failure_class(), "InstructionParseFailed");
+    assert!(error.message().contains("header is missing or malformed"));
+}
+
+#[test]
+fn analyze_plan_accepts_valid_last_directive_with_immediate_predecessor_edge() {
+    let repo_root = unique_temp_dir("contract-analyze-valid-last");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "## Execution Strategy\n\n- Execute Task 1 serially. It establishes the contract surface before packet-backed execution splits into lane-owned work.\n- After Task 1, create two worktrees and run Tasks 2 and 3 in parallel:\n  - Task 2 owns the CLI and packaged-binary surfaces for packet-backed execution.\n  - Task 3 owns the prompt and shell-proof surfaces for packet-backed execution.\n\n",
+        "## Execution Strategy\n\n- Execute Task 1 serially. It establishes the contract surface before reintegration work begins.\n- Execute Task 2 serially after Task 1. It is the reintegration seam before the final gate.\n- Execute Task 3 last as the final ratification gate.\n\n",
+    );
+    replace_in_file(
+        &plan_path,
+        "Task 1\n  |\n  +--> Task 2\n  |\n  +--> Task 3\n",
+        "Task 1\n  |\n  v\nTask 2\n  |\n  v\nTask 3\n",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "valid");
+    assert!(report.execution_topology_valid);
+    assert!(report.serial_hazards_resolved);
+}
+
+#[test]
+fn analyze_plan_requires_last_directive_to_wait_for_all_current_sink_tasks() {
+    let repo_root = unique_temp_dir("contract-analyze-last-sinks");
+    install_fixture(&repo_root, "valid-spec.md", SPEC_REL);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    fs::create_dir_all(
+        plan_path
+            .parent()
+            .expect("custom last-plan fixture should have a parent directory"),
+    )
+    .expect("custom last-plan fixture parent should exist");
+    fs::write(
+        &plan_path,
+        format!(
+            "# Plan Contract Fixture\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{SPEC_REL}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n- REQ-002 -> Task 1\n- REQ-003 -> Task 2, Task 3, Task 4\n- DEC-001 -> Task 1\n- NONGOAL-001 -> Task 4\n- VERIFY-001 -> Task 2, Task 3, Task 4\n\n## Execution Strategy\n\n- Execute Task 1 serially. It establishes the contract surface before lane-owned work starts.\n- After Task 1, create two isolated worktrees and run Tasks 2 and 3 in parallel:\n  - Task 2 owns the CLI surface.\n  - Task 3 owns the prompt surface.\n- Execute Task 4 last as the final ratification gate.\n\n## Dependency Diagram\n\n```text\nTask 1 -> Task 2\nTask 1 -> Task 3\nTask 2 -> Task 4\n```\n\n## Task 1: Establish the plan contract\n\n**Spec Coverage:** REQ-001, REQ-002, DEC-001\n**Task Outcome:** Establishes the shared contract boundary.\n**Plan Constraints:**\n- Keep markdown authoritative.\n**Open Questions:** none\n\n**Files:**\n- Modify: `src/contracts/plan.rs`\n\n- [ ] **Step 1: Establish the boundary**\n\n## Task 2: Own the CLI surface\n\n**Spec Coverage:** REQ-003, VERIFY-001\n**Task Outcome:** Owns the CLI packet surface.\n**Plan Constraints:**\n- Keep this lane disjoint.\n**Open Questions:** none\n\n**Files:**\n- Modify: `src/cli/plan_contract.rs`\n\n- [ ] **Step 1: Land the CLI slice**\n\n## Task 3: Own the prompt surface\n\n**Spec Coverage:** REQ-003, VERIFY-001\n**Task Outcome:** Owns the prompt packet surface.\n**Plan Constraints:**\n- Keep this lane disjoint.\n**Open Questions:** none\n\n**Files:**\n- Modify: `skills/subagent-driven-development/implementer-prompt.md`\n\n- [ ] **Step 1: Land the prompt slice**\n\n## Task 4: Ratify the combined result\n\n**Spec Coverage:** REQ-003, NONGOAL-001, VERIFY-001\n**Task Outcome:** Ratifies the combined result after both lane-owned units finish.\n**Plan Constraints:**\n- Do not begin until every unfinished lane is complete.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/contracts_spec_plan.rs`\n\n- [ ] **Step 1: Ratify the combined result**\n"
+        ),
+    )
+    .expect("custom last-plan fixture should write");
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.execution_topology_valid);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "dependency_diagram_mismatch")
+    );
+}
+
+#[test]
+fn analyze_plan_accepts_parallel_lane_with_isolated_worktree_wording() {
+    let repo_root = unique_temp_dir("contract-analyze-isolated-worktree-wording");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "create two worktrees and run Tasks 2 and 3 in parallel",
+        "create one isolated worktree per task and run Tasks 2 and 3 in parallel",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "valid");
+    assert!(report.parallel_workspace_isolation_valid);
+}
+
+#[test]
+fn analyze_plan_accepts_multi_task_serial_reintegration_seam() {
+    let repo_root = unique_temp_dir("contract-analyze-serial-reintegration-seam");
+    install_fixture(&repo_root, "valid-spec.md", SPEC_REL);
+    let plan_path = repo_root.join(PLAN_REL);
+    fs::create_dir_all(
+        plan_path
+            .parent()
+            .expect("custom seam-plan fixture should have a parent directory"),
+    )
+    .expect("custom seam-plan fixture parent should exist");
+    fs::write(
+        &plan_path,
+        format!(
+            "# Plan Contract Fixture\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{SPEC_REL}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n- REQ-002 -> Task 1\n- REQ-003 -> Task 2, Task 3, Task 4, Task 5\n- DEC-001 -> Task 1\n- NONGOAL-001 -> Task 5\n- VERIFY-001 -> Task 2, Task 3, Task 4, Task 5\n\n## Execution Strategy\n\n- Execute Task 1 serially. It establishes the contract surface before lane-owned work starts.\n- After Task 1, create one isolated worktree per task and run Tasks 2 and 3 in parallel:\n  - Task 2 owns the CLI lane.\n  - Task 3 owns the prompt lane.\n- Execute Tasks 4 and 5 serially after Tasks 2 and 3. They form the reintegration seam before finish gating.\n\n## Dependency Diagram\n\n```text\nTask 1 -> Task 2\nTask 1 -> Task 3\nTask 2 -> Task 4\nTask 3 -> Task 4\nTask 4 -> Task 5\n```\n\n## Task 1: Establish the plan contract\n\n**Spec Coverage:** REQ-001, REQ-002, DEC-001\n**Task Outcome:** Establishes the shared contract boundary.\n**Plan Constraints:**\n- Keep markdown authoritative.\n**Open Questions:** none\n\n**Files:**\n- Modify: `src/contracts/plan.rs`\n\n- [ ] **Step 1: Establish the boundary**\n\n## Task 2: Own the CLI lane\n\n**Spec Coverage:** REQ-003, VERIFY-001\n**Task Outcome:** Owns the CLI lane in isolation.\n**Plan Constraints:**\n- Keep this lane disjoint.\n**Open Questions:** none\n\n**Files:**\n- Modify: `src/cli/plan_contract.rs`\n\n- [ ] **Step 1: Land the CLI lane**\n\n## Task 3: Own the prompt lane\n\n**Spec Coverage:** REQ-003, VERIFY-001\n**Task Outcome:** Owns the prompt lane in isolation.\n**Plan Constraints:**\n- Keep this lane disjoint.\n**Open Questions:** none\n\n**Files:**\n- Modify: `skills/subagent-driven-development/implementer-prompt.md`\n\n- [ ] **Step 1: Land the prompt lane**\n\n## Task 4: Reintegrate the parallel lanes\n\n**Spec Coverage:** REQ-003, VERIFY-001\n**Task Outcome:** Reintegrates the two parallel lanes into shared glue.\n**Plan Constraints:**\n- Do not begin until Tasks 2 and 3 are complete.\n**Open Questions:** none\n\n**Files:**\n- Modify: `src/execution/harness.rs`\n\n- [ ] **Step 1: Reintegrate the parallel lanes**\n\n## Task 5: Ratify the combined result\n\n**Spec Coverage:** REQ-003, NONGOAL-001, VERIFY-001\n**Task Outcome:** Ratifies the combined result after the reintegration seam finishes.\n**Plan Constraints:**\n- Do not begin until Task 4 is complete.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/contracts_spec_plan.rs`\n\n- [ ] **Step 1: Ratify the combined result**\n"
+        ),
+    )
+    .expect("custom seam-plan fixture should write");
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "valid");
+    assert!(report.serial_hazards_resolved);
+    assert!(report.execution_topology_valid);
+}
+
+#[test]
+fn analyze_plan_rejects_multi_task_serial_plain_seam_wording() {
+    let repo_root = unique_temp_dir("contract-analyze-plain-seam-wording");
+    install_fixture(&repo_root, "valid-spec.md", SPEC_REL);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    fs::create_dir_all(
+        plan_path
+            .parent()
+            .expect("custom plain-seam fixture should have a parent directory"),
+    )
+    .expect("custom plain-seam fixture parent should exist");
+    fs::write(
+        &plan_path,
+        format!(
+            "# Plan Contract Fixture\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{SPEC_REL}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n- REQ-002 -> Task 1\n- REQ-003 -> Task 2, Task 3, Task 4, Task 5\n- DEC-001 -> Task 1\n- NONGOAL-001 -> Task 5\n- VERIFY-001 -> Task 2, Task 3, Task 4, Task 5\n\n## Execution Strategy\n\n- Execute Task 1 serially. It establishes the contract surface before lane-owned work starts.\n- After Task 1, create one isolated worktree per task and run Tasks 2 and 3 in parallel:\n  - Task 2 owns the CLI lane.\n  - Task 3 owns the prompt lane.\n- Execute Tasks 4 and 5 serially after Tasks 2 and 3. They are the seam before finish gating.\n\n## Dependency Diagram\n\n```text\nTask 1 -> Task 2\nTask 1 -> Task 3\nTask 2 -> Task 4\nTask 3 -> Task 4\nTask 4 -> Task 5\n```\n\n## Task 1: Establish the plan contract\n\n**Spec Coverage:** REQ-001, REQ-002, DEC-001\n**Task Outcome:** Establishes the shared contract boundary.\n**Plan Constraints:**\n- Keep markdown authoritative.\n**Open Questions:** none\n\n**Files:**\n- Modify: `src/contracts/plan.rs`\n\n- [ ] **Step 1: Establish the boundary**\n\n## Task 2: Own the CLI lane\n\n**Spec Coverage:** REQ-003, VERIFY-001\n**Task Outcome:** Owns the CLI lane in isolation.\n**Plan Constraints:**\n- Keep this lane disjoint.\n**Open Questions:** none\n\n**Files:**\n- Modify: `src/cli/plan_contract.rs`\n\n- [ ] **Step 1: Land the CLI lane**\n\n## Task 3: Own the prompt lane\n\n**Spec Coverage:** REQ-003, VERIFY-001\n**Task Outcome:** Owns the prompt lane in isolation.\n**Plan Constraints:**\n- Keep this lane disjoint.\n**Open Questions:** none\n\n**Files:**\n- Modify: `skills/subagent-driven-development/implementer-prompt.md`\n\n- [ ] **Step 1: Land the prompt lane**\n\n## Task 4: Reintegrate the parallel lanes\n\n**Spec Coverage:** REQ-003, VERIFY-001\n**Task Outcome:** Reintegrates the two parallel lanes into shared glue.\n**Plan Constraints:**\n- Do not begin until Tasks 2 and 3 are complete.\n**Open Questions:** none\n\n**Files:**\n- Modify: `src/execution/harness.rs`\n\n- [ ] **Step 1: Reintegrate the parallel lanes**\n\n## Task 5: Ratify the combined result\n\n**Spec Coverage:** REQ-003, NONGOAL-001, VERIFY-001\n**Task Outcome:** Ratifies the combined result after the reintegration seam finishes.\n**Plan Constraints:**\n- Do not begin until Task 4 is complete.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/contracts_spec_plan.rs`\n\n- [ ] **Step 1: Ratify the combined result**\n"
+        ),
+    )
+    .expect("custom plain-seam fixture should write");
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), &plan_path)
+        .expect("analysis should still produce a report");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(!report.serial_hazards_resolved);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "serial_execution_unproven")
+    );
 }
 
 #[test]
@@ -550,7 +979,8 @@ fn plan_fidelity_receipt_validation_rejects_missing_or_drifted_review_artifacts(
             .any(|code| code == "plan_fidelity_review_artifact_missing")
     );
 
-    let (artifact_rel, artifact_fingerprint) = seed_direct_plan_fidelity_review_artifact(&repo_root);
+    let (artifact_rel, artifact_fingerprint) =
+        seed_direct_plan_fidelity_review_artifact(&repo_root);
     receipt.review_artifact_path = artifact_rel;
     receipt.review_artifact_fingerprint = artifact_fingerprint;
     write_plan_fidelity_receipt(&receipt_path, &receipt);
@@ -663,8 +1093,8 @@ fn analyze_valid_contract_fixture_with_trailing_engineering_review_summary() {
     let report = analyze_plan(repo_root.join(SPEC_REL), plan_path.clone())
         .expect("analysis should tolerate trailing engineering summary");
     assert_eq!(report.contract_state, "valid");
-    assert_eq!(report.task_count, 2);
-    assert_eq!(report.packet_buildable_tasks, 2);
+    assert_eq!(report.task_count, 3);
+    assert_eq!(report.packet_buildable_tasks, 3);
     assert!(report.coverage_complete);
 
     let lint = parse_success_json(
@@ -677,7 +1107,7 @@ fn analyze_valid_contract_fixture_with_trailing_engineering_review_summary() {
         "rust lint with trailing engineering summary",
     );
     assert_eq!(lint["status"], "ok");
-    assert_eq!(lint["plan_task_count"], 2);
+    assert_eq!(lint["plan_task_count"], 3);
     assert_eq!(lint["coverage"]["REQ-001"][0], 1);
 }
 
@@ -734,8 +1164,8 @@ fn analyze_valid_contract_fixture_with_checked_steps_and_fenced_details() {
         .expect("checked steps with fenced details should analyze");
 
     assert_eq!(report.contract_state, "valid");
-    assert_eq!(report.task_count, 2);
-    assert_eq!(report.packet_buildable_tasks, 2);
+    assert_eq!(report.task_count, 3);
+    assert_eq!(report.packet_buildable_tasks, 3);
     assert!(report.coverage_complete);
 }
 
@@ -792,9 +1222,10 @@ fn lint_valid_contract_matches_helper_and_canonical_cli() {
     assert_eq!(rust, helper);
     assert_eq!(rust["status"], "ok");
     assert_eq!(rust["spec_requirement_count"], 6);
-    assert_eq!(rust["plan_task_count"], 2);
+    assert_eq!(rust["plan_task_count"], 3);
     assert_eq!(rust["coverage"]["REQ-001"][0], 1);
     assert_eq!(rust["coverage"]["REQ-003"][0], 2);
+    assert_eq!(rust["coverage"]["REQ-003"][1], 3);
 }
 
 #[test]
@@ -815,7 +1246,7 @@ fn lint_ignores_fenced_example_requirement_index_blocks() {
     );
     assert_eq!(rust["status"], "ok");
     assert_eq!(rust["spec_requirement_count"], 6);
-    assert_eq!(rust["plan_task_count"], 2);
+    assert_eq!(rust["plan_task_count"], 3);
 }
 
 #[test]
@@ -842,12 +1273,30 @@ fn analyze_plan_cli_reports_fixture_matrix() {
         "rust analyze valid contract",
     );
     assert_eq!(valid["contract_state"], "valid");
-    assert_eq!(valid["task_count"], 2);
-    assert_eq!(valid["packet_buildable_tasks"], 2);
+    assert_eq!(valid["task_count"], 3);
+    assert_eq!(valid["packet_buildable_tasks"], 3);
     assert_eq!(valid["coverage_complete"], true);
     assert_eq!(valid["open_questions_resolved"], true);
     assert_eq!(valid["task_structure_valid"], true);
     assert_eq!(valid["files_blocks_valid"], true);
+    assert_eq!(valid["execution_strategy_present"], true);
+    assert_eq!(valid["dependency_diagram_present"], true);
+    assert_eq!(valid["execution_topology_valid"], true);
+    assert_eq!(valid["serial_hazards_resolved"], true);
+    assert_eq!(valid["parallel_lane_ownership_valid"], true);
+    assert_eq!(valid["parallel_workspace_isolation_valid"], true);
+    assert_eq!(
+        valid["parallel_worktree_groups"],
+        serde_json::json!([[2, 3]])
+    );
+    assert_eq!(
+        valid["parallel_worktree_requirements"],
+        serde_json::json!([{
+            "tasks": [2, 3],
+            "declared_worktrees": 2,
+            "required_worktrees": 2
+        }])
+    );
     assert_eq!(valid["reason_codes"], Value::Array(vec![]));
     assert_eq!(valid["diagnostics"], Value::Array(vec![]));
 
@@ -1037,6 +1486,32 @@ fn analyze_plan_cli_reports_fixture_matrix() {
     assert_eq!(
         overlapping["overlapping_write_scopes"][0]["tasks"],
         serde_json::json!([1, 2])
+    );
+    install_valid_artifacts(&repo_root);
+
+    install_fixture(&repo_root, "fake-parallel-hotspot-plan.md", PLAN_REL);
+    let fake_parallel = parse_success_json(
+        &run_rust(
+            &repo_root,
+            &state_dir,
+            &[
+                "analyze-plan",
+                "--spec",
+                SPEC_REL,
+                "--plan",
+                PLAN_REL,
+                "--format",
+                "json",
+            ],
+            "rust analyze fake parallel hotspot plan",
+        ),
+        "rust analyze fake parallel hotspot plan",
+    );
+    assert_eq!(fake_parallel["contract_state"], "invalid");
+    assert_eq!(fake_parallel["execution_topology_valid"], false);
+    assert_eq!(
+        fake_parallel["reason_codes"][0],
+        "parallel_hotspot_conflict"
     );
     install_valid_artifacts(&repo_root);
 
@@ -1801,8 +2276,7 @@ fn analyze_plan_reports_invalid_fidelity_gate_when_spec_requirement_index_is_mal
     assert_eq!(report["contract_state"], "invalid");
     assert_eq!(report["plan_fidelity_receipt"]["state"], "invalid");
     assert_ne!(
-        report["plan_fidelity_receipt"]["state"],
-        "not_applicable",
+        report["plan_fidelity_receipt"]["state"], "not_applicable",
         "draft-plan analysis should still report the plan-fidelity gate when the source spec is malformed"
     );
 }
@@ -1880,6 +2354,8 @@ fn analyze_plan_rejects_out_of_repo_source_spec_paths() {
 fn plan_contract_schemas_exist_with_expected_titles() {
     let analyze_schema_path = repo_fixture_path("schemas/plan-contract-analyze.schema.json");
     let packet_schema_path = repo_fixture_path("schemas/plan-contract-packet.schema.json");
+    let generated_schema_dir = unique_temp_dir("generated-contract-schemas");
+    write_contract_schemas(&generated_schema_dir).expect("generated contract schemas should write");
 
     let analyze_schema: Value = serde_json::from_str(
         &fs::read_to_string(&analyze_schema_path).expect("analyze schema should exist"),
@@ -1889,7 +2365,16 @@ fn plan_contract_schemas_exist_with_expected_titles() {
         &fs::read_to_string(&packet_schema_path).expect("packet schema should exist"),
     )
     .expect("packet schema should be valid json");
+    let generated_analyze_schema =
+        fs::read_to_string(generated_schema_dir.join("plan-contract-analyze.schema.json"))
+            .expect("generated analyze schema should exist");
 
     assert_eq!(analyze_schema["title"], "AnalyzePlanReport");
     assert_eq!(packet_schema["title"], "TaskPacket");
+    assert_eq!(
+        fs::read_to_string(&analyze_schema_path)
+            .expect("checked-in analyze schema should be readable")
+            .trim_end(),
+        generated_analyze_schema.trim_end()
+    );
 }

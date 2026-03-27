@@ -18,7 +18,7 @@
 
 ## Execution Strategy
 
-- Execute Tasks 1 and 2 serially. Both tasks stay in one shared branch lane so the fixture exercises its intended contract failure without fake parallelism.
+- Execute Tasks 1 and 2 serially. Both tasks revise the same contract boundary and the plan intentionally keeps that hotspot in one shared branch lane.
 
 ## Dependency Diagram
 
@@ -40,7 +40,7 @@ Task 2
 
 **Files:**
 - Create: `bin/featureforge`
-- Modify: `skills/writing-plans/SKILL.md`
+- Modify: `src/contracts/plan.rs`
 - Test: `cargo test --test contracts_spec_plan`
 
 - [ ] **Step 1: Parse the source requirement index**
@@ -49,16 +49,16 @@ Task 2
 ## Task 2: Dispatch exact packet-backed execution
 
 **Spec Coverage:** REQ-003, NONGOAL-001, VERIFY-001
-**Task Outcome:** Execution and review consume exact task packets built from approved artifacts with stale packet handling.
+**Task Outcome:** Execution and review consume exact task packets built from approved artifacts with stale packet handling and schema-readable evidence.
 **Plan Constraints:**
 - Do not invent controller-authored summary context.
 - Reject malformed file scope and normalized path traversal.
 **Open Questions:** none
 
 **Files:**
-- Create: `bin/prebuilt/windows-x64/featureforge.exe`
-- Modify: `skills/subagent-driven-development/implementer-prompt.md`
+- Modify: `src/contracts/plan.rs`
+- Modify: `tests/contracts_spec_plan.rs`
 - Test: `tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
-- [ ] **Step 1: Build canonical task packets if needed**
+- [ ] **Step 1: Build canonical task packets**
 - [ ] **Step 2: Rebuild stale packets from the current approved artifacts**

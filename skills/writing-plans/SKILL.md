@@ -307,6 +307,46 @@ git commit -m "feat: add specific feature"
 - Every task must include `Spec Coverage`, `Task Outcome`, `Plan Constraints`, `Open Questions`, and a parseable `Files:` block.
 - Engineering-approved plans require `**Open Questions:** none` for every task.
 - If a task touches a requirement, that id must appear in `Spec Coverage`.
+- Every execution-bound plan must include `## Execution Strategy` and `## Dependency Diagram`.
+- `## Execution Strategy` must assign every task exactly once to either an explicitly justified serial directive or an explicitly owned parallel worktree directive.
+- Parallel directives must declare exact workspace isolation, not just the word `worktree`. Either declare one isolated worktree per task or state an explicit worktree count that exactly matches the parallel batch size.
+- `## Dependency Diagram` must reflect the same fastest-safe topology the task list and `Execution Strategy` claim.
+
+Use this canonical topology shape when the plan has a serial seam plus a parallel worktree batch:
+
+````markdown
+## Execution Strategy
+
+- Execute Tasks 1, 2, and 3 serially. They all revise the approved foundation that later execution work depends on.
+- Execute Task 4 serially. It is the only seam-extraction slice before parallel work starts.
+- After Task 4, create three worktrees and run Tasks 5, 6, and 7 in parallel:
+  - Task 5 owns lease and downgrade artifact contracts plus observability helpers.
+  - Task 6 owns topology recommendation and execution-skill orchestration.
+  - Task 7 owns dedicated final-review modules and reviewer docs.
+- Execute Task 8 serially after Tasks 5 and 6 merge back. It is the execution-state and reconcile reintegration point.
+- Execute Task 9 serially after Task 8 is green and Task 7 is ready. It is the status and final-review reintegration point.
+- Execute Task 10 last as the release-facing parity and regression gate.
+
+## Dependency Diagram
+
+```text
+Task 1 -> Task 2
+Task 2 -> Task 3
+Task 3 -> Task 4
+Task 4 -> Task 5
+Task 4 -> Task 6
+Task 4 -> Task 7
+Task 5 -> Task 8
+Task 6 -> Task 8
+Task 7 -> Task 9
+Task 8 -> Task 9
+Task 9 -> Task 10
+```
+````
+
+- Use `Files:` blocks as concrete write-scope truth for every task.
+- If tasks share hotspot files, do not pretend they are parallel. Move the hotspot into an explicit later serial seam and name that seam in `## Execution Strategy`.
+- Do not serialize work just because one lane feels simpler. If a serial directive covers more than one task, the plan must prove a real hazard such as overlapping write scope or an explicit reintegration seam that cannot be isolated.
 
 ## Remember
 - Exact file paths always

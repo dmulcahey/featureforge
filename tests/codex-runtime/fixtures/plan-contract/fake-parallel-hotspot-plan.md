@@ -20,8 +20,8 @@
 
 - Execute Task 1 serially. It establishes the contract surface before packet-backed execution splits into lane-owned work.
 - After Task 1, create two worktrees and run Tasks 2 and 3 in parallel:
-  - Task 2 owns the CLI and packaged-binary surfaces for packet-backed execution.
-  - Task 3 owns the prompt and shell-proof surfaces for packet-backed execution.
+  - Task 2 owns the first half of the shared contract hotspot.
+  - Task 3 owns the second half of the shared contract hotspot.
 
 ## Dependency Diagram
 
@@ -53,15 +53,14 @@ Task 1
 ## Task 2: Dispatch exact packet-backed execution
 
 **Spec Coverage:** REQ-003, VERIFY-001
-**Task Outcome:** The CLI and packaged binary surfaces emit exact task packets backed by approved artifacts and schema-readable evidence.
+**Task Outcome:** The first parallel lane emits exact task packets backed by approved artifacts and schema-readable evidence.
 **Plan Constraints:**
 - Do not invent controller-authored summary context.
-- Keep the CLI and packaged binary surfaces lane-owned and disjoint from prompt or shell-proof work.
+- Keep the hotspot write scope explicit and visible to review.
 **Open Questions:** none
 
 **Files:**
-- Create: `bin/prebuilt/windows-x64/featureforge.exe`
-- Modify: `src/cli/plan_contract.rs`
+- Modify: `src/contracts/plan.rs`
 - Test: `tests/contracts_spec_plan.rs`
 
 - [ ] **Step 1: Build canonical task packets**
@@ -70,14 +69,14 @@ Task 1
 ## Task 3: Prove packet-backed execution handoffs
 
 **Spec Coverage:** REQ-003, NONGOAL-001, VERIFY-001
-**Task Outcome:** Execution prompts and shell-proof coverage consume exact packet-backed handoffs without controller-authored summaries.
+**Task Outcome:** The second parallel lane proves prompt and shell handoffs against the same hotspot contract surface.
 **Plan Constraints:**
 - Do not invent controller-authored summary context.
-- Keep prompt and shell-proof work disjoint from CLI and packaged-binary ownership.
+- Keep the hotspot write scope explicit and visible to review.
 **Open Questions:** none
 
 **Files:**
-- Modify: `skills/subagent-driven-development/implementer-prompt.md`
+- Modify: `src/contracts/plan.rs`
 - Test: `tests/codex-runtime/test-powershell-wrapper-bash-resolution.sh`
 
 - [ ] **Step 1: Consume the canonical task packet in the implementer prompt**

@@ -14,7 +14,7 @@ use crate::cli::plan_contract::{
 use crate::contracts::plan::{
     AnalyzePlanReport, ContractDiagnostic, OverlappingWriteScope, PLAN_FIDELITY_RECEIPT_KIND,
     PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION, PlanDocument, PlanFidelityReceipt,
-    PlanFidelityReviewerProvenance, PlanFidelityVerification,
+    PlanFidelityReviewerProvenance, PlanFidelityVerification, analyze_execution_topology,
     evaluate_plan_fidelity_receipt_at_path, parse_plan_file, plan_fidelity_receipt_path_for_repo,
 };
 use crate::contracts::spec::{SpecDocument, parse_spec_file};
@@ -727,6 +727,14 @@ fn analyze_contract(
         open_questions_resolved: true,
         task_structure_valid: true,
         files_blocks_valid: true,
+        execution_strategy_present: false,
+        dependency_diagram_present: false,
+        execution_topology_valid: false,
+        serial_hazards_resolved: false,
+        parallel_lane_ownership_valid: false,
+        parallel_workspace_isolation_valid: false,
+        parallel_worktree_groups: Vec::new(),
+        parallel_worktree_requirements: Vec::new(),
         reason_codes: Vec::new(),
         overlapping_write_scopes: Vec::new(),
         plan_fidelity_receipt: crate::contracts::plan::PlanFidelityGateReport {
@@ -1015,8 +1023,29 @@ fn analyze_contract(
         task_scopes = plan
             .tasks
             .iter()
-            .map(|task| (task.number, task.file_scope.clone()))
+            .map(|task| {
+                (
+                    task.number,
+                    task.file_entries
+                        .iter()
+                        .filter(|entry| entry.action != "Test")
+                        .map(|entry| entry.normalized_path.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
             .collect();
+    }
+    let topology = analyze_execution_topology(plan_source, &task_scopes);
+    report.execution_strategy_present = topology.execution_strategy_present;
+    report.dependency_diagram_present = topology.dependency_diagram_present;
+    report.execution_topology_valid = topology.execution_topology_valid;
+    report.serial_hazards_resolved = topology.serial_hazards_resolved;
+    report.parallel_lane_ownership_valid = topology.parallel_lane_ownership_valid;
+    report.parallel_workspace_isolation_valid = topology.parallel_workspace_isolation_valid;
+    report.parallel_worktree_groups = topology.parallel_worktree_groups;
+    report.parallel_worktree_requirements = topology.parallel_worktree_requirements;
+    for diagnostic in topology.diagnostics {
+        push_reason(&mut report, &diagnostic.code, &diagnostic.message);
     }
     report.overlapping_write_scopes = overlapping_scopes(&task_scopes);
     if report.reason_codes.is_empty() {
@@ -1036,7 +1065,14 @@ pub fn analyze_contract_report(
     plan_source: &str,
 ) -> AnalyzePlanReport {
     let mut report = analyze_contract(spec_path, plan_path, spec_source, plan_source);
-    apply_plan_fidelity_gate_to_report(repo_root, spec_path, plan_path, spec_source, plan_source, &mut report);
+    apply_plan_fidelity_gate_to_report(
+        repo_root,
+        spec_path,
+        plan_path,
+        spec_source,
+        plan_source,
+        &mut report,
+    );
     report
 }
 
