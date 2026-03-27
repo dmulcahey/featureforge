@@ -3649,6 +3649,11 @@ fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase
     assert_eq!(phase_json["next_action"], "plan_update");
     assert_eq!(doctor_json["next_action"], "plan_update");
     assert_eq!(handoff_json["next_action"], "plan_update");
+    assert_ne!(
+        handoff_json["recommended_skill"],
+        doctor_json["execution_status"]["execution_mode"],
+        "pivot-required plan-revision blocks should not keep recommending the active execution mode"
+    );
     assert_eq!(
         handoff_json["recommendation_reason"],
         "Execution is blocked pending an approved plan revision."

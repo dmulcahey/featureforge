@@ -307,12 +307,10 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
                 reason_text(&context),
             ),
             "pivot_required" => {
-                let skill = context
-                    .execution_status
-                    .as_ref()
-                    .map(|status| status.execution_mode.clone())
-                    .unwrap_or_default();
-                (skill, reason_text(&context))
+                (
+                    String::from("featureforge:writing-plans"),
+                    reason_text(&context),
+                )
             }
             _ if execution_started == "yes" => {
                 let skill = context
