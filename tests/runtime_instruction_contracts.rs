@@ -52,15 +52,29 @@ fn assert_forbids_direct_helper_command_mutation(content: &str, command: &str, l
     );
     let has_boundary = windows.iter().any(|window| {
         let normalized = window.to_ascii_lowercase();
-        let has_prohibition = ["must not", "do not", "never", "should not", "cannot", "can't"]
-            .iter()
-            .any(|needle| normalized.contains(needle));
+        let has_prohibition = [
+            "must not",
+            "do not",
+            "never",
+            "should not",
+            "cannot",
+            "can't",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle));
         let has_direct_action = ["invoke", "call", "run", "execute", "direct"]
             .iter()
             .any(|needle| normalized.contains(needle));
-        let has_owner_actor = ["coordinator", "controller", "helper", "runtime", "harness", "gate"]
-            .iter()
-            .any(|needle| normalized.contains(needle));
+        let has_owner_actor = [
+            "coordinator",
+            "controller",
+            "helper",
+            "runtime",
+            "harness",
+            "gate",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle));
         let has_owner_verb = [
             "owns",
             "owned",
@@ -1821,7 +1835,10 @@ fn execution_skill_docs_keep_candidate_artifacts_and_authoritative_mutations_sep
 
     for (content, label) in [
         (&executing_plans, "skills/executing-plans/SKILL.md"),
-        (&subagent_skill, "skills/subagent-driven-development/SKILL.md"),
+        (
+            &subagent_skill,
+            "skills/subagent-driven-development/SKILL.md",
+        ),
         (
             &implementer_prompt,
             "skills/subagent-driven-development/implementer-prompt.md",
@@ -1857,8 +1874,5 @@ fn execution_skill_docs_keep_candidate_artifacts_and_authoritative_mutations_sep
         &review_skill,
         "skills/requesting-code-review/SKILL.md",
     );
-    assert_downstream_material_stays_gate_and_harness_aware(
-        &qa_skill,
-        "skills/qa-only/SKILL.md",
-    );
+    assert_downstream_material_stays_gate_and_harness_aware(&qa_skill, "skills/qa-only/SKILL.md");
 }

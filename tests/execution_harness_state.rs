@@ -7,14 +7,17 @@ mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
 
-use files_support::write_file;
+use featureforge::diagnostics::FailureClass;
 use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, STABLE_EVENT_KINDS,
 };
+use featureforge::execution::state::ExecutionRuntime;
+use featureforge::paths::harness_state_path;
+use files_support::write_file;
 use json_support::parse_json;
 use schemars::schema_for;
-use serde_json::{to_value, Value};
-use std::path::Path;
+use serde_json::{Value, to_value};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
@@ -54,6 +57,25 @@ const EXPECTED_REASON_CODES: &[&str] = &[
     "invalid_evidence_satisfaction_rule",
 ];
 
+const EXPECTED_TASK3_FAILURE_CLASSES: &[&str] = &[
+    "IllegalHarnessPhase",
+    "StaleProvenance",
+    "ContractMismatch",
+    "EvaluationMismatch",
+    "MissingRequiredHandoff",
+    "NonHarnessProvenance",
+    "BlockedOnPlanPivot",
+    "ConcurrentWriterConflict",
+    "UnsupportedArtifactVersion",
+    "NonAuthoritativeArtifact",
+    "IdempotencyConflict",
+    "RepoStateDrift",
+    "ArtifactIntegrityMismatch",
+    "PartialAuthoritativeMutation",
+    "AuthoritativeOrderingMismatch",
+    "DependencyIndexMismatch",
+];
+
 const EXPECTED_OBSERVABILITY_EVENT_FIELDS: &[&str] = &[
     "event_kind",
     "timestamp",
@@ -77,6 +99,23 @@ fn run(mut command: Command, context: &str) -> Output {
     command
         .output()
         .unwrap_or_else(|error| panic!("{context} should run: {error}"))
+}
+
+fn parse_failure_json(output: &Output, context: &str) -> Value {
+    assert!(
+        !output.status.success(),
+        "{context} should fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = if output.stdout.is_empty() {
+        &output.stderr
+    } else {
+        &output.stdout
+    };
+    serde_json::from_slice(payload)
+        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
 }
 
 fn run_checked_output(command: Command, context: &str) -> Output {
@@ -176,13 +215,23 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
+    parse_json(&run_plan_execution(repo, state, args, context), context)
+}
+
+fn run_plan_execution(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
     let mut command = Command::new(bin_support::compiled_featureforge_path());
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)
         .args(["plan", "execution"])
         .args(args);
-    parse_json(&run(command, context), context)
+    run(command, context)
+}
+
+fn harness_state_file_path(repo: &Path, state: &Path) -> PathBuf {
+    let runtime = ExecutionRuntime::discover(repo)
+        .expect("execution runtime should discover fixture repository");
+    harness_state_path(state, &runtime.repo_slug, &runtime.branch_name)
 }
 
 fn missing_string_fields(object: &Value, fields: &[&str]) -> Vec<String> {
@@ -198,11 +247,9 @@ fn missing_or_empty_string_fields(object: &Value, fields: &[&str]) -> Vec<String
     fields
         .iter()
         .copied()
-        .filter(|field| {
-            !match object.get(*field) {
-                Some(Value::String(value)) => !value.is_empty(),
-                _ => false,
-            }
+        .filter(|field| !match object.get(*field) {
+            Some(Value::String(value)) => !value.is_empty(),
+            _ => false,
         })
         .map(str::to_owned)
         .collect()
@@ -212,12 +259,10 @@ fn missing_or_invalid_nullable_string_fields(object: &Value, fields: &[&str]) ->
     fields
         .iter()
         .copied()
-        .filter(|field| {
-            !match object.get(*field) {
-                Some(Value::Null) => true,
-                Some(Value::String(value)) => !value.is_empty(),
-                _ => false,
-            }
+        .filter(|field| !match object.get(*field) {
+            Some(Value::Null) => true,
+            Some(Value::String(value)) => !value.is_empty(),
+            _ => false,
         })
         .map(str::to_owned)
         .collect()
@@ -373,14 +418,15 @@ fn harness_event_kind_schema_literals() -> Vec<String> {
 #[test]
 fn observability_runtime_surface_matches_literal_event_kind_and_field_corpora() {
     let serialized_event_kinds = harness_event_kind_schema_literals();
-    let mut stable_event_kinds: Vec<String> =
-        STABLE_EVENT_KINDS.iter().map(|kind| (*kind).to_owned()).collect();
+    let mut stable_event_kinds: Vec<String> = STABLE_EVENT_KINDS
+        .iter()
+        .map(|kind| (*kind).to_owned())
+        .collect();
     stable_event_kinds.sort_unstable();
     stable_event_kinds.dedup();
 
     assert_eq!(
-        serialized_event_kinds,
-        stable_event_kinds,
+        serialized_event_kinds, stable_event_kinds,
         "HarnessEventKind public schema literals drifted from the runtime stable event-kind table"
     );
 
@@ -583,5 +629,103 @@ fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_
     assert!(
         non_string_reason_codes.is_empty(),
         "status should expose machine-readable reason_codes entries, got non-strings: {non_string_reason_codes:?}"
+    );
+}
+
+#[test]
+fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
+    let (repo_dir, state_dir) = init_repo("execution-harness-state-overlay-validation");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+
+    let harness_state = harness_state_file_path(repo, state);
+    let malformed_cases = vec![
+        (
+            "unknown harness_phase value",
+            serde_json::json!({
+                "schema_version": 1,
+                "harness_phase": "unknown_phase"
+            }),
+        ),
+        (
+            "malformed active_contract_path value",
+            serde_json::json!({
+                "schema_version": 1,
+                "active_contract_path": "nested/contract-deadbeef.md",
+                "active_contract_fingerprint": "deadbeef"
+            }),
+        ),
+        (
+            "unknown required evaluator kind",
+            serde_json::json!({
+                "schema_version": 1,
+                "required_evaluator_kinds": ["spec_compliance", "invented_evaluator"]
+            }),
+        ),
+        (
+            "unknown last_evaluation_evaluator_kind value",
+            serde_json::json!({
+                "schema_version": 1,
+                "last_evaluation_evaluator_kind": "invented_evaluator"
+            }),
+        ),
+        (
+            "unknown last_evaluation_verdict value",
+            serde_json::json!({
+                "schema_version": 1,
+                "last_evaluation_verdict": "invented_verdict"
+            }),
+        ),
+    ];
+
+    for (case_name, payload) in malformed_cases {
+        write_file(
+            &harness_state,
+            &serde_json::to_string_pretty(&payload)
+                .expect("malformed overlay fixture should serialize"),
+        );
+        let output = run_plan_execution(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status malformed authoritative overlay",
+        );
+        let json = parse_failure_json(
+            &output,
+            &format!("status should fail closed for {case_name}"),
+        );
+        assert_eq!(
+            json["error_class"],
+            Value::String(String::from("MalformedExecutionState")),
+            "status should classify {case_name} as malformed authoritative state, got {json}"
+        );
+    }
+}
+
+#[test]
+fn diagnostics_exposes_the_minimum_task3_failure_class_taxonomy() {
+    let observed = [
+        FailureClass::IllegalHarnessPhase.as_str(),
+        FailureClass::StaleProvenance.as_str(),
+        FailureClass::ContractMismatch.as_str(),
+        FailureClass::EvaluationMismatch.as_str(),
+        FailureClass::MissingRequiredHandoff.as_str(),
+        FailureClass::NonHarnessProvenance.as_str(),
+        FailureClass::BlockedOnPlanPivot.as_str(),
+        FailureClass::ConcurrentWriterConflict.as_str(),
+        FailureClass::UnsupportedArtifactVersion.as_str(),
+        FailureClass::NonAuthoritativeArtifact.as_str(),
+        FailureClass::IdempotencyConflict.as_str(),
+        FailureClass::RepoStateDrift.as_str(),
+        FailureClass::ArtifactIntegrityMismatch.as_str(),
+        FailureClass::PartialAuthoritativeMutation.as_str(),
+        FailureClass::AuthoritativeOrderingMismatch.as_str(),
+        FailureClass::DependencyIndexMismatch.as_str(),
+    ];
+    assert_eq!(
+        observed, EXPECTED_TASK3_FAILURE_CLASSES,
+        "diagnostics failure-class taxonomy drifted from the Task 3 minimum harness contract"
     );
 }

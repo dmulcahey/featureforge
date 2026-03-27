@@ -4,15 +4,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use schemars::{schema_for, JsonSchema};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::{
-    BeginArgs, CompleteArgs, IsolatedAgentsArg, NoteArgs, NoteStateArg, RecommendArgs, ReopenArgs,
-    StatusArgs, TransferArgs,
+    BeginArgs, CompleteArgs, GateContractArgs, GateEvaluatorArgs, GateHandoffArgs,
+    IsolatedAgentsArg, NoteArgs, NoteStateArg, RecommendArgs, RecordContractArgs,
+    RecordEvaluationArgs, RecordHandoffArgs, ReopenArgs, StatusArgs, TransferArgs,
 };
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
-use crate::contracts::plan::{parse_plan_file, PlanDocument, PlanTask};
+use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
@@ -23,11 +24,11 @@ use crate::git::{
     derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
 };
 use crate::paths::{
-    branch_storage_key, featureforge_state_dir, normalize_repo_relative_path, normalize_whitespace,
-    write_atomic as write_atomic_file, RepoPath,
+    RepoPath, branch_storage_key, featureforge_state_dir, harness_state_path,
+    normalize_repo_relative_path, normalize_whitespace, write_atomic as write_atomic_file,
 };
 use crate::repo_safety::RepoSafetyRuntime;
-use crate::workflow::manifest::{load_manifest_read_only, ManifestLoadResult, WorkflowManifest};
+use crate::workflow::manifest::{ManifestLoadResult, WorkflowManifest, load_manifest_read_only};
 use crate::workflow::markdown_scan::markdown_files_under;
 
 pub const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
@@ -284,7 +285,8 @@ impl PreflightAcceptanceState {
     const SCHEMA_VERSION: u32 = 1;
 
     fn matches_context(&self, context: &ExecutionContext) -> bool {
-        self.plan_path == context.plan_rel && self.plan_revision == context.plan_document.plan_revision
+        self.plan_path == context.plan_rel
+            && self.plan_revision == context.plan_document.plan_revision
     }
 }
 
@@ -378,6 +380,33 @@ impl ExecutionRuntime {
 
     pub fn preflight(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
         self.preflight_with_mode(args, true)
+    }
+
+    pub fn gate_contract(&self, args: &GateContractArgs) -> Result<GateResult, JsonFailure> {
+        crate::execution::gates::gate_contract(self, args)
+    }
+
+    pub fn record_contract(&self, args: &RecordContractArgs) -> Result<GateResult, JsonFailure> {
+        crate::execution::authority::record_contract(self, args)
+    }
+
+    pub fn gate_evaluator(&self, args: &GateEvaluatorArgs) -> Result<GateResult, JsonFailure> {
+        crate::execution::gates::gate_evaluator(self, args)
+    }
+
+    pub fn record_evaluation(
+        &self,
+        args: &RecordEvaluationArgs,
+    ) -> Result<GateResult, JsonFailure> {
+        crate::execution::authority::record_evaluation(self, args)
+    }
+
+    pub fn gate_handoff(&self, args: &GateHandoffArgs) -> Result<GateResult, JsonFailure> {
+        crate::execution::gates::gate_handoff(self, args)
+    }
+
+    pub fn record_handoff(&self, args: &RecordHandoffArgs) -> Result<GateResult, JsonFailure> {
+        crate::execution::authority::record_handoff(self, args)
     }
 
     pub fn preflight_read_only(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
@@ -636,7 +665,7 @@ pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionSt
         .map(|acceptance| acceptance.chunk_id.clone())
         .unwrap_or_else(|| pending_chunk_id(context));
 
-    Ok(PlanExecutionStatus {
+    let mut status = PlanExecutionStatus {
         plan_revision: context.plan_document.plan_revision,
         execution_run_id,
         latest_authoritative_sequence: INITIAL_AUTHORITATIVE_SEQUENCE,
@@ -701,6 +730,361 @@ pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionSt
         blocking_step: active_step(context, NoteState::Blocked).map(|step| step.step_number),
         resume_task: active_step(context, NoteState::Interrupted).map(|step| step.task_number),
         resume_step: active_step(context, NoteState::Interrupted).map(|step| step.step_number),
+    };
+
+    apply_authoritative_status_overlay(context, &mut status)?;
+    Ok(status)
+}
+
+#[derive(Debug, Deserialize)]
+struct StatusAuthoritativeOverlay {
+    #[serde(default)]
+    harness_phase: Option<String>,
+    #[serde(default)]
+    chunk_id: Option<String>,
+    #[serde(default)]
+    latest_authoritative_sequence: Option<u64>,
+    #[serde(default)]
+    authoritative_sequence: Option<u64>,
+    #[serde(default)]
+    active_contract_path: Option<String>,
+    #[serde(default)]
+    active_contract_fingerprint: Option<String>,
+    #[serde(default)]
+    required_evaluator_kinds: Vec<String>,
+    #[serde(default)]
+    completed_evaluator_kinds: Vec<String>,
+    #[serde(default)]
+    pending_evaluator_kinds: Vec<String>,
+    #[serde(default)]
+    non_passing_evaluator_kinds: Vec<String>,
+    #[serde(default)]
+    aggregate_evaluation_state: Option<String>,
+    #[serde(default)]
+    last_evaluation_report_path: Option<String>,
+    #[serde(default)]
+    last_evaluation_report_fingerprint: Option<String>,
+    #[serde(default)]
+    last_evaluation_evaluator_kind: Option<String>,
+    #[serde(default)]
+    last_evaluation_verdict: Option<String>,
+    #[serde(default)]
+    current_chunk_retry_count: Option<u32>,
+    #[serde(default)]
+    current_chunk_retry_budget: Option<u32>,
+    #[serde(default)]
+    current_chunk_pivot_threshold: Option<u32>,
+    #[serde(default)]
+    handoff_required: Option<bool>,
+    #[serde(default)]
+    open_failed_criteria: Vec<String>,
+}
+
+fn apply_authoritative_status_overlay(
+    context: &ExecutionContext,
+    status: &mut PlanExecutionStatus,
+) -> Result<(), JsonFailure> {
+    let state_path = harness_state_path(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    );
+    if !state_path.is_file() {
+        return Ok(());
+    }
+
+    let source = fs::read_to_string(&state_path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Could not read authoritative harness state {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    let overlay: StatusAuthoritativeOverlay = serde_json::from_str(&source).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state is malformed in {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+
+    if let Some(phase) = normalize_optional_overlay_value(overlay.harness_phase.as_deref()) {
+        status.harness_phase = parse_harness_phase(phase).ok_or_else(|| {
+            malformed_overlay_field(
+                &state_path,
+                "harness_phase",
+                phase,
+                "must be one of the public harness phases",
+            )
+        })?;
+    }
+
+    if let Some(chunk_id) = normalize_optional_overlay_value(overlay.chunk_id.as_deref()) {
+        status.chunk_id = ChunkId::new(chunk_id.to_owned());
+    }
+
+    if let Some(sequence) = overlay
+        .latest_authoritative_sequence
+        .or(overlay.authoritative_sequence)
+    {
+        status.latest_authoritative_sequence = sequence;
+    }
+
+    let (active_contract_path, active_contract_fingerprint) = parse_overlay_active_contract_fields(
+        overlay.active_contract_path.as_deref(),
+        overlay.active_contract_fingerprint.as_deref(),
+        &state_path,
+    )?;
+    status.active_contract_path = active_contract_path;
+    status.active_contract_fingerprint = active_contract_fingerprint;
+
+    status.required_evaluator_kinds = parse_evaluator_kinds(
+        &overlay.required_evaluator_kinds,
+        "required_evaluator_kinds",
+        &state_path,
+    )?;
+    status.completed_evaluator_kinds = parse_evaluator_kinds(
+        &overlay.completed_evaluator_kinds,
+        "completed_evaluator_kinds",
+        &state_path,
+    )?;
+    status.pending_evaluator_kinds = parse_evaluator_kinds(
+        &overlay.pending_evaluator_kinds,
+        "pending_evaluator_kinds",
+        &state_path,
+    )?;
+    status.non_passing_evaluator_kinds = parse_evaluator_kinds(
+        &overlay.non_passing_evaluator_kinds,
+        "non_passing_evaluator_kinds",
+        &state_path,
+    )?;
+
+    if let Some(value) =
+        normalize_optional_overlay_value(overlay.aggregate_evaluation_state.as_deref())
+    {
+        status.aggregate_evaluation_state =
+            parse_aggregate_evaluation_state(value).ok_or_else(|| {
+                malformed_overlay_field(
+                    &state_path,
+                    "aggregate_evaluation_state",
+                    value,
+                    "must be pass, fail, blocked, or pending",
+                )
+            })?;
+    }
+
+    status.last_evaluation_report_path = overlay
+        .last_evaluation_report_path
+        .filter(|value| !value.trim().is_empty());
+    status.last_evaluation_report_fingerprint = overlay
+        .last_evaluation_report_fingerprint
+        .filter(|value| !value.trim().is_empty());
+    status.last_evaluation_evaluator_kind = parse_optional_evaluator_kind(
+        overlay.last_evaluation_evaluator_kind.as_deref(),
+        "last_evaluation_evaluator_kind",
+        &state_path,
+    )?;
+    status.last_evaluation_verdict = parse_optional_evaluation_verdict(
+        overlay.last_evaluation_verdict.as_deref(),
+        "last_evaluation_verdict",
+        &state_path,
+    )?;
+
+    if let Some(value) = overlay.current_chunk_retry_count {
+        status.current_chunk_retry_count = value;
+    }
+    if let Some(value) = overlay.current_chunk_retry_budget {
+        status.current_chunk_retry_budget = value;
+    }
+    if let Some(value) = overlay.current_chunk_pivot_threshold {
+        status.current_chunk_pivot_threshold = value;
+    }
+    if let Some(value) = overlay.handoff_required {
+        status.handoff_required = value;
+    }
+    if !overlay.open_failed_criteria.is_empty() {
+        status.open_failed_criteria = overlay.open_failed_criteria;
+    }
+
+    Ok(())
+}
+
+fn normalize_optional_overlay_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn parse_harness_phase(value: &str) -> Option<HarnessPhase> {
+    match value {
+        "implementation_handoff" => Some(HarnessPhase::ImplementationHandoff),
+        "execution_preflight" => Some(HarnessPhase::ExecutionPreflight),
+        "contract_drafting" => Some(HarnessPhase::ContractDrafting),
+        "contract_pending_approval" => Some(HarnessPhase::ContractPendingApproval),
+        "contract_approved" => Some(HarnessPhase::ContractApproved),
+        "executing" => Some(HarnessPhase::Executing),
+        "evaluating" => Some(HarnessPhase::Evaluating),
+        "repairing" => Some(HarnessPhase::Repairing),
+        "pivot_required" => Some(HarnessPhase::PivotRequired),
+        "handoff_required" => Some(HarnessPhase::HandoffRequired),
+        "final_review_pending" => Some(HarnessPhase::FinalReviewPending),
+        "qa_pending" => Some(HarnessPhase::QaPending),
+        "document_release_pending" => Some(HarnessPhase::DocumentReleasePending),
+        "ready_for_branch_completion" => Some(HarnessPhase::ReadyForBranchCompletion),
+        _ => None,
+    }
+}
+
+fn parse_aggregate_evaluation_state(value: &str) -> Option<AggregateEvaluationState> {
+    match value {
+        "pass" => Some(AggregateEvaluationState::Pass),
+        "fail" => Some(AggregateEvaluationState::Fail),
+        "blocked" => Some(AggregateEvaluationState::Blocked),
+        "pending" => Some(AggregateEvaluationState::Pending),
+        _ => None,
+    }
+}
+
+fn parse_overlay_active_contract_fields(
+    active_contract_path: Option<&str>,
+    active_contract_fingerprint: Option<&str>,
+    state_path: &Path,
+) -> Result<(Option<String>, Option<String>), JsonFailure> {
+    let active_contract_path =
+        normalize_optional_overlay_value(active_contract_path).map(str::to_owned);
+    let active_contract_fingerprint =
+        normalize_optional_overlay_value(active_contract_fingerprint).map(str::to_owned);
+
+    let (Some(active_contract_path), Some(active_contract_fingerprint)) = (
+        active_contract_path.clone(),
+        active_contract_fingerprint.clone(),
+    ) else {
+        if active_contract_path.is_some() || active_contract_fingerprint.is_some() {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Authoritative harness state must set active_contract_path and active_contract_fingerprint together in {}.",
+                    state_path.display()
+                ),
+            ));
+        }
+        return Ok((None, None));
+    };
+
+    if active_contract_path.contains('/') || active_contract_path.contains('\\') {
+        return Err(malformed_overlay_field(
+            state_path,
+            "active_contract_path",
+            &active_contract_path,
+            "must be a single authoritative artifact file name",
+        ));
+    }
+
+    let expected_file = format!("contract-{active_contract_fingerprint}.md");
+    if active_contract_path != expected_file {
+        let expectation = format!("must match `{expected_file}`");
+        return Err(malformed_overlay_field(
+            state_path,
+            "active_contract_path",
+            &active_contract_path,
+            &expectation,
+        ));
+    }
+
+    Ok((
+        Some(active_contract_path),
+        Some(active_contract_fingerprint),
+    ))
+}
+
+fn malformed_overlay_field(
+    state_path: &Path,
+    field_name: &str,
+    value: &str,
+    expectation: &str,
+) -> JsonFailure {
+    JsonFailure::new(
+        FailureClass::MalformedExecutionState,
+        format!(
+            "Authoritative harness state field `{field_name}` is malformed in {}: `{value}` ({expectation}).",
+            state_path.display()
+        ),
+    )
+}
+
+fn parse_evaluator_kinds(
+    values: &[String],
+    field_name: &str,
+    state_path: &Path,
+) -> Result<Vec<EvaluatorKind>, JsonFailure> {
+    values
+        .iter()
+        .map(|value| {
+            let value = value.trim();
+            parse_evaluator_kind(value).ok_or_else(|| {
+                malformed_overlay_field(
+                    state_path,
+                    field_name,
+                    value,
+                    "must contain only spec_compliance or code_quality",
+                )
+            })
+        })
+        .collect()
+}
+
+fn parse_evaluator_kind(value: &str) -> Option<EvaluatorKind> {
+    match value {
+        "spec_compliance" => Some(EvaluatorKind::SpecCompliance),
+        "code_quality" => Some(EvaluatorKind::CodeQuality),
+        _ => None,
+    }
+}
+
+fn parse_evaluation_verdict(value: &str) -> Option<EvaluationVerdict> {
+    match value {
+        "pass" => Some(EvaluationVerdict::Pass),
+        "fail" => Some(EvaluationVerdict::Fail),
+        "blocked" => Some(EvaluationVerdict::Blocked),
+        _ => None,
+    }
+}
+
+fn parse_optional_evaluator_kind(
+    value: Option<&str>,
+    field_name: &str,
+    state_path: &Path,
+) -> Result<Option<EvaluatorKind>, JsonFailure> {
+    let Some(value) = normalize_optional_overlay_value(value) else {
+        return Ok(None);
+    };
+    parse_evaluator_kind(value).map(Some).ok_or_else(|| {
+        malformed_overlay_field(
+            state_path,
+            field_name,
+            value,
+            "must be spec_compliance or code_quality",
+        )
+    })
+}
+
+fn parse_optional_evaluation_verdict(
+    value: Option<&str>,
+    field_name: &str,
+    state_path: &Path,
+) -> Result<Option<EvaluationVerdict>, JsonFailure> {
+    let Some(value) = normalize_optional_overlay_value(value) else {
+        return Ok(None);
+    };
+    parse_evaluation_verdict(value).map(Some).ok_or_else(|| {
+        malformed_overlay_field(
+            state_path,
+            field_name,
+            value,
+            "must be pass, fail, or blocked",
+        )
     })
 }
 

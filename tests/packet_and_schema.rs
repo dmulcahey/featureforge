@@ -122,11 +122,7 @@ fn schema_type_set(schema: &Value, value: &Value) -> Option<BTreeSet<String>> {
             _ => {}
         }
     }
-    if types.is_empty() {
-        None
-    } else {
-        Some(types)
-    }
+    if types.is_empty() { None } else { Some(types) }
 }
 
 fn schema_enum_set(schema: &Value, value: &Value) -> Option<BTreeSet<String>> {
@@ -453,13 +449,22 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_types!("active_contract_fingerprint", ["string", "null"], optional);
     check_types!("required_evaluator_kinds", ["array"], required);
     check_array_items!("required_evaluator_kinds", ["string"]);
-    check_array_items_enum!("required_evaluator_kinds", ["spec_compliance", "code_quality"]);
+    check_array_items_enum!(
+        "required_evaluator_kinds",
+        ["spec_compliance", "code_quality"]
+    );
     check_types!("completed_evaluator_kinds", ["array"], required);
     check_array_items!("completed_evaluator_kinds", ["string"]);
-    check_array_items_enum!("completed_evaluator_kinds", ["spec_compliance", "code_quality"]);
+    check_array_items_enum!(
+        "completed_evaluator_kinds",
+        ["spec_compliance", "code_quality"]
+    );
     check_types!("pending_evaluator_kinds", ["array"], required);
     check_array_items!("pending_evaluator_kinds", ["string"]);
-    check_array_items_enum!("pending_evaluator_kinds", ["spec_compliance", "code_quality"]);
+    check_array_items_enum!(
+        "pending_evaluator_kinds",
+        ["spec_compliance", "code_quality"]
+    );
     check_types!("non_passing_evaluator_kinds", ["array"], required);
     check_array_items!("non_passing_evaluator_kinds", ["string"]);
     check_array_items_enum!(
@@ -477,7 +482,11 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         ["string", "null"],
         optional
     );
-    check_types!("last_evaluation_evaluator_kind", ["string", "null"], optional);
+    check_types!(
+        "last_evaluation_evaluator_kind",
+        ["string", "null"],
+        optional
+    );
     check_enum!(
         "last_evaluation_evaluator_kind",
         ["spec_compliance", "code_quality"]

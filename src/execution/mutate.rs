@@ -8,12 +8,13 @@ use sha2::{Digest, Sha256};
 use crate::cli::plan_execution::{BeginArgs, CompleteArgs, NoteArgs, ReopenArgs, TransferArgs};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::state::{
-    compute_packet_fingerprint, current_file_proof, current_head_sha, hash_contract_plan,
-    load_execution_context, normalize_begin_request, normalize_complete_request,
-    normalize_note_request, normalize_reopen_request, normalize_source, normalize_transfer_request,
+    EvidenceAttempt, ExecutionContext, ExecutionEvidence, ExecutionRuntime, FileProof,
+    NO_REPO_FILES_MARKER, PlanExecutionStatus, PlanStepState, compute_packet_fingerprint,
+    current_file_proof, current_head_sha, hash_contract_plan, load_execution_context,
+    normalize_begin_request, normalize_complete_request, normalize_note_request,
+    normalize_reopen_request, normalize_source, normalize_transfer_request,
     require_normalized_text, require_preflight_acceptance, status_from_context,
-    validate_expected_fingerprint, EvidenceAttempt, ExecutionContext, ExecutionEvidence,
-    ExecutionRuntime, FileProof, PlanExecutionStatus, PlanStepState, NO_REPO_FILES_MARKER,
+    validate_expected_fingerprint,
 };
 use crate::paths::{normalize_repo_relative_path, write_atomic as write_atomic_file};
 

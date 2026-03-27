@@ -1816,8 +1816,7 @@ fn workflow_read_commands_do_not_persist_preflight_acceptance() {
         "workflow read commands must not persist preflight acceptance"
     );
     assert_eq!(
-        status_after_reads["harness_phase"],
-        "implementation_handoff",
+        status_after_reads["harness_phase"], "implementation_handoff",
         "without explicit preflight acceptance, harness phase should stay implementation_handoff"
     );
 
@@ -2551,14 +2550,19 @@ fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_workt
         .join("using-featureforge")
         .join(session_key);
     let linked_worktree_root = TempDir::new().expect("linked worktree tempdir should exist");
-    let repo_b = linked_worktree_root.path().join("same-branch-linked-worktree");
+    let repo_b = linked_worktree_root
+        .path()
+        .join("same-branch-linked-worktree");
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     let mut git_checkout = Command::new("git");
     git_checkout
         .args(["checkout", "-B", "workflow-public-same-branch-worktree"])
         .current_dir(repo_a);
-    run_checked(git_checkout, "git checkout workflow-public-same-branch-worktree");
+    run_checked(
+        git_checkout,
+        "git checkout workflow-public-same-branch-worktree",
+    );
 
     let mut git_worktree_add = Command::new("git");
     git_worktree_add
@@ -2729,14 +2733,19 @@ fn canonical_workflow_doctor_does_not_adopt_started_status_across_different_bran
         .join("using-featureforge")
         .join(session_key);
     let linked_worktree_root = TempDir::new().expect("linked worktree tempdir should exist");
-    let repo_b = linked_worktree_root.path().join("cross-branch-linked-worktree");
+    let repo_b = linked_worktree_root
+        .path()
+        .join("cross-branch-linked-worktree");
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     let mut git_checkout = Command::new("git");
     git_checkout
         .args(["checkout", "-B", "workflow-public-cross-branch-worktree-a"])
         .current_dir(repo_a);
-    run_checked(git_checkout, "git checkout workflow-public-cross-branch-worktree-a");
+    run_checked(
+        git_checkout,
+        "git checkout workflow-public-cross-branch-worktree-a",
+    );
 
     let mut git_worktree_add = Command::new("git");
     git_worktree_add

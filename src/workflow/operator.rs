@@ -450,8 +450,8 @@ fn started_status_from_same_branch_worktree(
         return None;
     }
 
-    let current_root = fs::canonicalize(current_repo_root)
-        .unwrap_or_else(|_| current_repo_root.to_path_buf());
+    let current_root =
+        fs::canonicalize(current_repo_root).unwrap_or_else(|_| current_repo_root.to_path_buf());
     for worktree_root in same_branch_worktree_roots(current_repo_root) {
         let canonical_root =
             fs::canonicalize(&worktree_root).unwrap_or_else(|_| worktree_root.clone());
@@ -464,8 +464,8 @@ fn started_status_from_same_branch_worktree(
             Err(_) => continue,
         };
         let status = match runtime.status(&ExecutionStatusArgs {
-                plan: PathBuf::from(plan_path),
-            }) {
+            plan: PathBuf::from(plan_path),
+        }) {
             Ok(status) => status,
             Err(_) => continue,
         };
@@ -514,8 +514,8 @@ fn same_branch_worktree_roots(current_repo_root: &Path) -> Vec<PathBuf> {
     }
     flush_entry(&mut entries, &mut worktree_root, &mut branch_ref);
 
-    let current_root = fs::canonicalize(current_repo_root)
-        .unwrap_or_else(|_| current_repo_root.to_path_buf());
+    let current_root =
+        fs::canonicalize(current_repo_root).unwrap_or_else(|_| current_repo_root.to_path_buf());
     let mut current_branch_ref = entries.iter().find_map(|(root, branch)| {
         let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
         if canonical_root == current_root {
@@ -922,7 +922,9 @@ fn optional_evaluator_kind_text(value: Option<EvaluatorKind>) -> &'static str {
 }
 
 fn optional_text(value: Option<&str>) -> &str {
-    value.filter(|value| !value.trim().is_empty()).unwrap_or("none")
+    value
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("none")
 }
 
 fn execution_status_args(args: &PlanArgs) -> ExecutionStatusArgs {

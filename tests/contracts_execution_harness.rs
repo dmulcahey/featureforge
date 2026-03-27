@@ -3,19 +3,19 @@ mod files_support;
 #[path = "support/process.rs"]
 mod process_support;
 
+use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::harness::{
     read_evaluation_report, read_evidence_artifact, read_execution_contract, read_execution_handoff,
 };
-use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::packet::{
-    build_harness_contract_provenance, build_task_packet_with_timestamp, TaskPacket,
+    TaskPacket, build_harness_contract_provenance, build_task_packet_with_timestamp,
 };
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::observability::HarnessTelemetryCounters;
 use files_support::write_file;
 use process_support::run_checked;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -204,6 +204,55 @@ fn markdown_field(path: &Path, label: &str) -> String {
         .to_owned()
 }
 
+fn markdown_list(values: &[&str]) -> String {
+    if values.is_empty() {
+        String::from("[]")
+    } else {
+        values
+            .iter()
+            .map(|value| format!("- {value}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn replace_section_between_markers(
+    source: &str,
+    start_marker: &str,
+    end_marker: &str,
+    replacement: &str,
+) -> String {
+    let (before, rest) = source
+        .split_once(start_marker)
+        .unwrap_or_else(|| panic!("missing start marker `{start_marker}`"));
+    let (_, after) = rest
+        .split_once(end_marker)
+        .unwrap_or_else(|| panic!("missing end marker `{end_marker}`"));
+    format!("{before}{start_marker}\n{replacement}\n{end_marker}{after}")
+}
+
+fn rewrite_contract_verifiers(contract_path: &Path, verifiers: &[&str]) {
+    let source = fs::read_to_string(contract_path).expect("contract should be readable");
+    let rewritten = replace_section_between_markers(
+        &source,
+        "**Verifiers:**",
+        "**Evidence Requirements:**",
+        &markdown_list(verifiers),
+    );
+    write_file(contract_path, &rewritten);
+}
+
+fn rewrite_first_contract_criterion_verifier_types(contract_path: &Path, verifier_types: &[&str]) {
+    let source = fs::read_to_string(contract_path).expect("contract should be readable");
+    let rewritten = replace_section_between_markers(
+        &source,
+        "**Verifier Types:**",
+        "**Threshold:**",
+        &markdown_list(verifier_types),
+    );
+    write_file(contract_path, &rewritten);
+}
+
 enum ContractArtifactFixture {
     Valid,
     EmptyScope,
@@ -272,7 +321,6 @@ fn write_contract_artifact(
 - Task 1 Step 1
 **Verifier Types:**
 - spec_compliance
-- code_quality
 **Threshold:** all
 **Notes:** Minimal criterion for the red slice.
 
@@ -285,7 +333,7 @@ fn write_contract_artifact(
 **Covered Steps:**
 - Task 1 Step 2
 **Verifier Types:**
-- spec_compliance
+- code_quality
 **Threshold:** all
 **Notes:** Ordering is tracked explicitly.
 
@@ -1044,6 +1092,101 @@ fn contract_parser_rejects_operationally_empty_verifiers() {
 }
 
 #[test]
+fn contract_parser_rejects_unsupported_top_level_verifier_kind() {
+    let (repo_dir, state_dir, packet_fingerprint) =
+        harness_fixture("contracts-harness-invalid-contract-unsupported-verifier-kind");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let contract_path = write_contract_artifact(
+        state,
+        repo,
+        &packet_fingerprint,
+        ContractArtifactFixture::Valid,
+    );
+    rewrite_contract_verifiers(&contract_path, &["spec_compliance", "invented_evaluator"]);
+
+    let error = read_execution_contract(&contract_path)
+        .expect_err("unsupported verifier kind should fail parser validation");
+    assert!(
+        error.message().contains("unsupported evaluator"),
+        "unsupported top-level verifiers should fail closed with an explicit evaluator-kind error"
+    );
+}
+
+#[test]
+fn contract_parser_rejects_criterion_verifier_kind_not_declared_top_level() {
+    let (repo_dir, state_dir, packet_fingerprint) =
+        harness_fixture("contracts-harness-invalid-contract-undeclared-verifier-kind");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let contract_path = write_contract_artifact(
+        state,
+        repo,
+        &packet_fingerprint,
+        ContractArtifactFixture::Valid,
+    );
+    rewrite_contract_verifiers(&contract_path, &["code_quality"]);
+
+    let error = read_execution_contract(&contract_path)
+        .expect_err("undeclared criterion verifier kind should fail parser validation");
+    assert!(
+        error.message().contains("undeclared"),
+        "criterion verifier kinds not declared in top-level verifiers should fail closed"
+    );
+}
+
+#[test]
+fn contract_parser_rejects_criterion_with_multiple_verifier_owners() {
+    let (repo_dir, state_dir, packet_fingerprint) =
+        harness_fixture("contracts-harness-invalid-contract-shared-criterion");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let contract_path = write_contract_artifact(
+        state,
+        repo,
+        &packet_fingerprint,
+        ContractArtifactFixture::Valid,
+    );
+    rewrite_first_contract_criterion_verifier_types(
+        &contract_path,
+        &["spec_compliance", "code_quality"],
+    );
+
+    let error = read_execution_contract(&contract_path)
+        .expect_err("shared criterion verifier ownership should fail parser validation");
+    assert!(
+        error
+            .message()
+            .contains("invalid_criterion_verifier_owner_count"),
+        "criterion verifier ownership must be exactly one evaluator kind"
+    );
+}
+
+#[test]
+fn contract_parser_rejects_criterion_with_empty_verifier_owners() {
+    let (repo_dir, state_dir, packet_fingerprint) =
+        harness_fixture("contracts-harness-invalid-contract-ownerless-criterion");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let contract_path = write_contract_artifact(
+        state,
+        repo,
+        &packet_fingerprint,
+        ContractArtifactFixture::Valid,
+    );
+    rewrite_first_contract_criterion_verifier_types(&contract_path, &[]);
+
+    let error = read_execution_contract(&contract_path)
+        .expect_err("ownerless criterion verifier ownership should fail parser validation");
+    assert!(
+        error
+            .message()
+            .contains("invalid_criterion_verifier_owner_count"),
+        "criterion verifier ownership must be exactly one evaluator kind"
+    );
+}
+
+#[test]
 fn contract_parser_preserves_explicit_empty_evidence_requirements_list() {
     let (repo_dir, state_dir, packet_fingerprint) =
         harness_fixture("contracts-harness-contract-empty-evidence-requirements");
@@ -1307,7 +1450,10 @@ fn execution_evidence_parser_preserves_harness_provenance_fields_when_present() 
         .first()
         .expect("execution evidence should contain one step");
 
-    assert_eq!(step.source_contract_path.as_deref(), Some("artifacts/contract-17.md"));
+    assert_eq!(
+        step.source_contract_path.as_deref(),
+        Some("artifacts/contract-17.md")
+    );
     assert_eq!(
         step.source_contract_fingerprint.as_deref(),
         Some("contract-fingerprint-17")
@@ -1325,7 +1471,10 @@ fn execution_evidence_parser_preserves_harness_provenance_fields_when_present() 
         step.source_handoff_fingerprint.as_deref(),
         Some("handoff-fingerprint-21")
     );
-    assert_eq!(step.repo_state_baseline_head_sha.as_deref(), Some(head_sha.as_str()));
+    assert_eq!(
+        step.repo_state_baseline_head_sha.as_deref(),
+        Some(head_sha.as_str())
+    );
     assert_eq!(
         step.repo_state_baseline_worktree_fingerprint.as_deref(),
         Some(worktree_fingerprint.as_str())
