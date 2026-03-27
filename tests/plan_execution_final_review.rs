@@ -408,6 +408,36 @@ fn dedicated_final_review_receipt_requires_implementation_stage_distinctness() {
 }
 
 #[test]
+fn dedicated_final_review_receipt_requires_both_implementation_stages() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-final-review-both-stage-values");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    fs::write(
+        &review_path,
+        original.replace(
+            "**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development",
+            "**Distinct From Stages:** featureforge:executing-plans",
+        ),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let error = validate_final_review_receipt(&receipt, PLAN_REL, 1, &current_head_sha(repo), false)
+        .expect_err("final review should name both implementation stages in its distinctness proof");
+    assert_eq!(error, FinalReviewReceiptIssue::DistinctFromStagesInvalid);
+    assert_eq!(
+        error.reason_code(),
+        "review_receipt_distinct_from_stages_invalid"
+    );
+}
+
+#[test]
 fn dedicated_final_review_receipt_requires_passed_deviation_disposition_when_needed() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-deviation-pass");
     let repo = repo_dir.path();

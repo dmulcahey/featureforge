@@ -123,10 +123,15 @@ pub fn validate_final_review_receipt(
     if receipt.distinct_from_stages.is_empty() {
         return Err(FinalReviewReceiptIssue::DistinctFromStagesMissing);
     }
-    if !receipt
+    let has_executing_plans = receipt
         .distinct_from_stages
         .iter()
-        .any(|stage| matches!(stage.as_str(), "featureforge:executing-plans" | "featureforge:subagent-driven-development"))
+        .any(|stage| stage == "featureforge:executing-plans");
+    let has_subagent_driven = receipt
+        .distinct_from_stages
+        .iter()
+        .any(|stage| stage == "featureforge:subagent-driven-development");
+    if !(has_executing_plans && has_subagent_driven)
     {
         return Err(FinalReviewReceiptIssue::DistinctFromStagesInvalid);
     }
