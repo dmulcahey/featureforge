@@ -7,7 +7,8 @@ mod process_support;
 
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::execution::final_review::{
-    FinalReviewReceiptIssue, parse_final_review_receipt, validate_final_review_receipt,
+    FinalReviewReceiptIssue, latest_branch_artifact_path, parse_final_review_receipt,
+    resolve_release_base_branch, validate_final_review_receipt,
 };
 use featureforge::paths::branch_storage_key;
 use files_support::write_file;
@@ -173,6 +174,27 @@ fn current_head_sha(repo: &Path) -> String {
         .expect("head sha should be utf-8")
         .trim()
         .to_owned()
+}
+
+fn git_dir_path(repo: &Path) -> PathBuf {
+    let output = run_checked(
+        {
+            let mut command = Command::new("git");
+            command.args(["rev-parse", "--git-dir"]).current_dir(repo);
+            command
+        },
+        "git rev-parse --git-dir",
+    );
+    let git_dir = String::from_utf8(output.stdout)
+        .expect("git dir should be utf-8")
+        .trim()
+        .to_owned();
+    let git_dir_path = PathBuf::from(&git_dir);
+    if git_dir_path.is_absolute() {
+        git_dir_path
+    } else {
+        repo.join(git_dir_path)
+    }
 }
 
 fn branch_name(repo: &Path) -> String {
@@ -509,6 +531,74 @@ fn write_release_readiness_artifact(repo: &Path, state: &Path, base_branch: &str
         ),
     );
     artifact_path
+}
+
+#[test]
+fn resolve_release_base_branch_reads_common_git_dir_in_worktrees() {
+    let (repo_dir, _state_dir) = init_repo("plan-execution-final-review-worktree-base-branch");
+    let repo = repo_dir.path();
+    let worktree_root = repo.join("worktrees").join("review-lane");
+
+    run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args([
+                    "config",
+                    "branch.review-lane.gh-merge-base",
+                    "fixture-work",
+                ])
+                .current_dir(repo);
+            command
+        },
+        "git config branch.review-lane.gh-merge-base",
+    );
+    run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args([
+                    "worktree",
+                    "add",
+                    "-b",
+                    "review-lane",
+                    worktree_root
+                        .to_str()
+                        .expect("worktree path should be utf-8"),
+                ])
+                .current_dir(repo);
+            command
+        },
+        "git worktree add review-lane",
+    );
+
+    let git_dir = git_dir_path(&worktree_root);
+    assert_eq!(
+        resolve_release_base_branch(&git_dir, "review-lane").as_deref(),
+        Some("fixture-work")
+    );
+}
+
+#[test]
+fn latest_branch_artifact_path_prefers_timestamp_over_username_prefix() {
+    let artifact_dir = TempDir::new().expect("artifact tempdir should exist");
+    let branch = "fixture-work";
+
+    write_file(
+        &artifact_dir
+            .path()
+            .join("zoe-fixture-work-code-review-20260322-171000.md"),
+        &format!("# Code Review Result\n**Branch:** {branch}\n"),
+    );
+    let newest = artifact_dir
+        .path()
+        .join("alice-fixture-work-code-review-20260322-171100.md");
+    write_file(&newest, &format!("# Code Review Result\n**Branch:** {branch}\n"));
+
+    assert_eq!(
+        latest_branch_artifact_path(artifact_dir.path(), branch, "code-review").as_deref(),
+        Some(newest.as_path())
+    );
 }
 
 fn run_plan_execution_json(

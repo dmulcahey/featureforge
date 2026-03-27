@@ -165,21 +165,22 @@ pub fn validate_final_review_receipt(
     Ok(())
 }
 
-pub(crate) fn resolve_release_base_branch(git_dir: &Path, current_branch: &str) -> Option<String> {
+pub fn resolve_release_base_branch(git_dir: &Path, current_branch: &str) -> Option<String> {
     const COMMON_BASE_BRANCHES: &[&str] = &["main", "master", "develop", "dev", "trunk"];
+    let common_git_dir = common_git_dir(git_dir);
 
     if COMMON_BASE_BRANCHES.contains(&current_branch) {
         return Some(current_branch.to_owned());
     }
 
-    if let Some(branch) = branch_merge_base_from_config(git_dir, current_branch) {
+    if let Some(branch) = branch_merge_base_from_config(&common_git_dir, current_branch) {
         return Some(branch);
     }
-    if let Some(branch) = origin_head_branch(git_dir) {
+    if let Some(branch) = origin_head_branch(&common_git_dir) {
         return Some(branch);
     }
 
-    let branches = local_head_branches(&git_dir.join("refs/heads"));
+    let branches = local_head_branches(&common_git_dir.join("refs/heads"));
     for candidate in COMMON_BASE_BRANCHES {
         if branches.iter().any(|branch| branch == candidate) {
             return Some((*candidate).to_owned());
@@ -198,7 +199,7 @@ pub(crate) fn resolve_release_base_branch(git_dir: &Path, current_branch: &str) 
     None
 }
 
-pub(crate) fn latest_branch_artifact_path(
+pub fn latest_branch_artifact_path(
     artifact_dir: &Path,
     branch_name: &str,
     kind: &str,
@@ -224,7 +225,11 @@ pub(crate) fn latest_branch_artifact_path(
                 .is_some_and(|value| value == branch_name)
         })
         .collect::<Vec<_>>();
-    candidates.sort();
+    candidates.sort_by(|left, right| {
+        artifact_timestamp_key(left, kind)
+            .cmp(&artifact_timestamp_key(right, kind))
+            .then_with(|| left.file_name().cmp(&right.file_name()))
+    });
     candidates.pop()
 }
 
@@ -299,6 +304,31 @@ fn parse_headers(source: &str) -> BTreeMap<String, String> {
             Some((key.to_owned(), value.to_owned()))
         })
         .collect()
+}
+
+fn common_git_dir(git_dir: &Path) -> PathBuf {
+    let commondir = git_dir.join("commondir");
+    let Ok(source) = fs::read_to_string(commondir) else {
+        return git_dir.to_path_buf();
+    };
+    let relative = source.trim();
+    if relative.is_empty() {
+        return git_dir.to_path_buf();
+    }
+    let common = Path::new(relative);
+    if common.is_absolute() {
+        common.to_path_buf()
+    } else {
+        git_dir.join(common)
+    }
+}
+
+fn artifact_timestamp_key(path: &Path, kind: &str) -> Option<String> {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(|name| name.strip_suffix(".md"))
+        .and_then(|stem| stem.rsplit_once(&format!("-{kind}-")))
+        .map(|(_, timestamp)| timestamp.to_owned())
 }
 
 fn branch_merge_base_from_config(git_dir: &Path, current_branch: &str) -> Option<String> {
