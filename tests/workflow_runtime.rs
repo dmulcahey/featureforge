@@ -3113,6 +3113,88 @@ fn canonical_workflow_routes_dirty_worktree_back_to_execution_handoff() {
 }
 
 #[test]
+fn canonical_workflow_handoff_surfaces_legacy_pre_harness_cutover_block() {
+    let (repo_dir, state_dir) = init_repo("workflow-handoff-legacy-pre-harness-cutover");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-handoff-legacy-pre-harness-cutover";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let cutover_message = "Legacy pre-harness execution evidence is no longer accepted; regenerate execution evidence using the harness v2 format.";
+    let decision_path = state
+        .join("session-entry")
+        .join("using-featureforge")
+        .join(session_key);
+
+    install_full_contract_ready_artifacts(repo);
+    enable_session_decision(state, session_key);
+    assert_eq!(
+        fs::read_to_string(&decision_path).expect("session decision should be readable"),
+        "enabled\n"
+    );
+    assert!(
+        fs::read_to_string(repo.join(plan_rel))
+            .expect("approved plan fixture should be readable")
+            .contains("**Workflow State:** Engineering Approved"),
+        "fixture should keep an engineering-approved plan for workflow handoff routing"
+    );
+
+    let execution_status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status before legacy pre-harness cutover handoff fixture",
+    );
+    let evidence_path = repo.join(
+        execution_status["evidence_path"]
+            .as_str()
+            .expect("execution status should expose evidence_path"),
+    );
+    write_file(&repo.join("docs/example-output.md"), "legacy output\n");
+    write_file(
+        &evidence_path,
+        &format!(
+            "# Execution Evidence: 2026-03-17-example-execution-plan\n\n**Plan Path:** {plan_rel}\n**Plan Revision:** 1\n\n## Step Evidence\n\n### Task 1 Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-03-17T14:22:31Z\n**Execution Source:** featureforge:executing-plans\n**Claim:** Prepared the workspace for execution.\n**Files:**\n- docs/example-output.md\n**Verification:**\n- Manual verification recorded in fixture setup.\n**Invalidation Reason:** N/A\n"
+        ),
+    );
+    assert!(
+        fs::read_to_string(&evidence_path)
+            .expect("legacy execution evidence fixture should be readable")
+            .contains("## Step Evidence"),
+        "fixture should inject legacy pre-harness execution evidence"
+    );
+
+    let handoff_output = run_rust_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "handoff", "--json"],
+        &[("FEATUREFORGE_SESSION_KEY", session_key)],
+        "workflow handoff for legacy pre-harness cutover fixture",
+    );
+    assert!(
+        handoff_output.status.success(),
+        "workflow handoff --json should surface legacy pre-harness cutover blocks without raw errors, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        handoff_output.status,
+        String::from_utf8_lossy(&handoff_output.stdout),
+        String::from_utf8_lossy(&handoff_output.stderr)
+    );
+
+    let handoff_json = parse_json(
+        &handoff_output,
+        "workflow handoff for legacy pre-harness cutover fixture",
+    );
+    assert_eq!(handoff_json["phase"], "implementation_handoff");
+    assert_eq!(handoff_json["next_action"], "execution_preflight");
+    assert_eq!(handoff_json["recommended_skill"], "");
+    assert!(
+        handoff_json["recommendation_reason"]
+            .as_str()
+            .expect("recommendation_reason should stay a string")
+            .contains(cutover_message),
+        "recommendation_reason should surface the execution-state legacy cutover message"
+    );
+}
+
+#[test]
 fn canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_workspace_becomes_dirty(
 ) {
     let (repo_dir, state_dir) = init_repo("workflow-phase-accepted-preflight-dirty");

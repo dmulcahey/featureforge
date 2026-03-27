@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArgs};
 use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
-use crate::diagnostics::{DiagnosticError, JsonFailure};
+use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::execution::harness::{EvaluatorKind, HarnessPhase};
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus, RecommendOutput};
 use crate::session_entry::{self, SessionEntryResolveOutput};
@@ -68,8 +68,31 @@ struct OperatorContext {
     preflight: Option<GateResult>,
     gate_review: Option<GateResult>,
     gate_finish: Option<GateResult>,
+    execution_preflight_block_reason: Option<String>,
     phase: String,
 }
+
+#[derive(Clone, Copy)]
+struct BuildContextOptions {
+    allow_legacy_pre_harness_cutover_handoff_block: bool,
+}
+
+impl BuildContextOptions {
+    const fn strict() -> Self {
+        Self {
+            allow_legacy_pre_harness_cutover_handoff_block: false,
+        }
+    }
+
+    const fn allow_legacy_pre_harness_cutover_handoff_block() -> Self {
+        Self {
+            allow_legacy_pre_harness_cutover_handoff_block: true,
+        }
+    }
+}
+
+const LEGACY_PRE_HARNESS_CUTOVER_MESSAGE: &str =
+    "Legacy pre-harness execution evidence is no longer accepted; regenerate execution evidence using the harness v2 format.";
 
 pub fn render_next(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
@@ -197,7 +220,10 @@ pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
 }
 
 pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
-    let context = build_context(current_dir)?;
+    let context = build_context_with_options(
+        current_dir,
+        BuildContextOptions::allow_legacy_pre_harness_cutover_handoff_block(),
+    )?;
     let contract_state = context
         .plan_contract
         .as_ref()
@@ -364,6 +390,13 @@ pub fn render_gate(title: &str, gate: &GateResult) -> String {
 }
 
 fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
+    build_context_with_options(current_dir, BuildContextOptions::strict())
+}
+
+fn build_context_with_options(
+    current_dir: &Path,
+    options: BuildContextOptions,
+) -> Result<OperatorContext, JsonFailure> {
     let workflow = WorkflowRuntime::discover_read_only(current_dir).map_err(JsonFailure::from)?;
     let route = workflow.resolve().map_err(JsonFailure::from)?;
     let session_entry =
@@ -373,6 +406,7 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
     let mut preflight = None;
     let mut gate_review = None;
     let mut gate_finish = None;
+    let mut execution_preflight_block_reason = None;
 
     if session_entry.outcome == "enabled" && route.status == "implementation_ready" {
         if let Some(report) = analyze_plan_if_available(&route).map_err(JsonFailure::from)? {
@@ -383,26 +417,36 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
             let status_args = ExecutionStatusArgs {
                 plan: PathBuf::from(&route.plan_path),
             };
-            let mut status = runtime.status(&status_args)?;
-            if let Some(shared_status) = started_status_from_same_branch_worktree(
-                &PathBuf::from(&route.root),
-                &route.plan_path,
-                &status,
-            ) {
-                status = shared_status;
-            }
-            if status.execution_started == "yes" {
-                if !execution_state_has_open_steps(&status) {
-                    let review = runtime.gate_review(&status_args)?;
-                    if review.allowed {
-                        gate_finish = Some(runtime.gate_finish(&status_args)?);
+            match runtime.status(&status_args) {
+                Ok(mut status) => {
+                    if let Some(shared_status) = started_status_from_same_branch_worktree(
+                        &PathBuf::from(&route.root),
+                        &route.plan_path,
+                        &status,
+                    ) {
+                        status = shared_status;
                     }
-                    gate_review = Some(review);
+                    if status.execution_started == "yes" {
+                        if !execution_state_has_open_steps(&status) {
+                            let review = runtime.gate_review(&status_args)?;
+                            if review.allowed {
+                                gate_finish = Some(runtime.gate_finish(&status_args)?);
+                            }
+                            gate_review = Some(review);
+                        }
+                    } else {
+                        preflight = Some(runtime.preflight_read_only(&status_args)?);
+                    }
+                    execution_status = Some(status);
                 }
-            } else {
-                preflight = Some(runtime.preflight_read_only(&status_args)?);
+                Err(error)
+                    if options.allow_legacy_pre_harness_cutover_handoff_block
+                        && is_legacy_pre_harness_cutover_block(&error) =>
+                {
+                    execution_preflight_block_reason = Some(error.message.clone());
+                }
+                Err(error) => return Err(error),
             }
-            execution_status = Some(status);
         }
     }
 
@@ -423,8 +467,14 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
         preflight,
         gate_review,
         gate_finish,
+        execution_preflight_block_reason,
         phase,
     })
+}
+
+fn is_legacy_pre_harness_cutover_block(error: &JsonFailure) -> bool {
+    error.error_class == FailureClass::MalformedExecutionState.as_str()
+        && error.message == LEGACY_PRE_HARNESS_CUTOVER_MESSAGE
 }
 
 fn doctor_phase_for_context(context: &OperatorContext) -> String {
@@ -752,9 +802,14 @@ fn reason_text(context: &OperatorContext) -> String {
         "execution_preflight" => String::from(
             "The approved plan matches the latest approved spec and preflight is the next safe boundary.",
         ),
-        "implementation_handoff" => String::from(
-            "The approved plan is ready, but execution preflight is still blocked by the current workspace state.",
-        ),
+        "implementation_handoff" => context
+            .execution_preflight_block_reason
+            .clone()
+            .unwrap_or_else(|| {
+                String::from(
+                    "The approved plan is ready, but execution preflight is still blocked by the current workspace state.",
+                )
+            }),
         "executing" => String::from(
             "Execution already started for the approved plan and should continue through the current execution flow.",
         ),
@@ -781,7 +836,11 @@ fn reason_text(context: &OperatorContext) -> String {
 }
 
 fn display_or_none(value: &str) -> &str {
-    if value.is_empty() { "none" } else { value }
+    if value.is_empty() {
+        "none"
+    } else {
+        value
+    }
 }
 
 fn public_next_skill(context: &OperatorContext) -> String {
