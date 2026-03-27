@@ -479,9 +479,54 @@ fn runtime_topology_falls_back_conservatively_when_worktrees_or_agents_are_not_r
             .any(|code: &String| code.starts_with("conservative_fallback")),
         "fallback topology should expose a conservative fallback reason code"
     );
+    assert!(
+        !recommendation
+            .reason_codes
+            .iter()
+            .any(|code: &String| code == "conservative_fallback_same_session_unavailable"),
+        "fallback diagnostics should not blame same-session viability when it is not the actual blocker"
+    );
     assert_eq!(
         recommendation.decision_flags.tasks_independent, "yes",
         "topology fallback should not redefine actual task independence"
+    );
+}
+
+#[test]
+fn runtime_topology_separate_session_fallback_uses_actual_blocker_reason_codes() {
+    let (repo_dir, _state_dir) = init_repo("plan-execution-separate-session-fallback");
+    let repo = repo_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let report = topology_report(repo);
+    let recommendation = recommend_topology(
+        &report,
+        &topology_context("main@base-a", true, "unavailable", "separate", "yes", false, None),
+    );
+
+    assert_eq!(
+        recommendation.selected_topology,
+        ExecutionTopologyArg::ConservativeFallback
+    );
+    assert_eq!(recommendation.recommended_skill, "featureforge:executing-plans");
+    assert!(
+        recommendation
+            .reason_codes
+            .iter()
+            .any(|code| code == "conservative_fallback_isolated_agents_unavailable"),
+        "separate-session fallback should name the actual blocker"
+    );
+    assert!(
+        !recommendation
+            .reason_codes
+            .iter()
+            .any(|code| code == "conservative_fallback_same_session_unavailable"),
+        "separate-session fallback must not claim same-session unavailability"
+    );
+    assert_eq!(
+        recommendation.decision_flags.session_intent, "separate",
+        "session intent should still be surfaced verbatim"
     );
 }
 

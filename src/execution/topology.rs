@@ -188,9 +188,6 @@ pub fn recommend_topology(
         if isolated_agents_available != "yes" {
             codes.push(String::from("conservative_fallback_isolated_agents_unavailable"));
         }
-        if same_session_viable != "yes" {
-            codes.push(String::from("conservative_fallback_same_session_unavailable"));
-        }
         if context.workspace_prepared != "yes" {
             codes.push(String::from("conservative_fallback_workspace_unavailable"));
         }
