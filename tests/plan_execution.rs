@@ -2053,6 +2053,86 @@ fn begin_requires_preflight_acceptance_before_execution_starts() {
 }
 
 #[test]
+fn preflight_accepts_default_policy_snapshot_and_replays_same_run_identity_in_status() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-policy-replay");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+
+    let before_preflight = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before preflight policy acceptance",
+    );
+    for field in [
+        "execution_run_id",
+        "chunking_strategy",
+        "evaluator_policy",
+        "reset_policy",
+        "review_stack",
+    ] {
+        let value = before_preflight
+            .get(field)
+            .unwrap_or_else(|| panic!("status should expose {field}"));
+        assert!(
+            value.is_null(),
+            "status should keep {field} null before execution preflight acceptance, got {value:?}"
+        );
+    }
+
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let after_first_preflight = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after first preflight policy acceptance",
+    );
+    let first_run_id = after_first_preflight["execution_run_id"]
+        .as_str()
+        .expect("status should expose execution_run_id after first preflight acceptance")
+        .to_owned();
+    assert!(
+        !first_run_id.is_empty(),
+        "status should expose a non-empty execution_run_id after first preflight acceptance"
+    );
+    let first_policy_snapshot = [
+        after_first_preflight["chunking_strategy"].clone(),
+        after_first_preflight["evaluator_policy"].clone(),
+        after_first_preflight["reset_policy"].clone(),
+        after_first_preflight["review_stack"].clone(),
+    ];
+    assert!(
+        first_policy_snapshot.iter().all(|value| !value.is_null()),
+        "status should expose non-null frozen policy fields after first preflight acceptance, got {first_policy_snapshot:?}"
+    );
+
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let after_second_preflight = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after second identical preflight policy acceptance",
+    );
+    assert_eq!(
+        after_second_preflight["execution_run_id"],
+        Value::String(first_run_id),
+        "second identical preflight should reuse the accepted execution_run_id"
+    );
+    let second_policy_snapshot = [
+        after_second_preflight["chunking_strategy"].clone(),
+        after_second_preflight["evaluator_policy"].clone(),
+        after_second_preflight["reset_policy"].clone(),
+        after_second_preflight["review_stack"].clone(),
+    ];
+    assert_eq!(
+        second_policy_snapshot, first_policy_snapshot,
+        "second identical preflight should reuse the same frozen policy tuple from the first acceptance"
+    );
+}
+
+#[test]
 fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_changes() {
     let (repo_dir, state_dir) = init_repo("plan-execution-preflight-stable-identities");
     let repo = repo_dir.path();

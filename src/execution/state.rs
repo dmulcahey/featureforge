@@ -287,6 +287,14 @@ struct PreflightAcceptanceState {
     plan_revision: u32,
     execution_run_id: ExecutionRunId,
     chunk_id: ChunkId,
+    #[serde(default = "default_preflight_chunking_strategy")]
+    chunking_strategy: ChunkingStrategy,
+    #[serde(default = "default_preflight_evaluator_policy")]
+    evaluator_policy: EvaluatorPolicyName,
+    #[serde(default = "default_preflight_reset_policy")]
+    reset_policy: ResetPolicy,
+    #[serde(default = "default_preflight_review_stack")]
+    review_stack: Vec<String>,
 }
 
 impl PreflightAcceptanceState {
@@ -296,6 +304,26 @@ impl PreflightAcceptanceState {
         self.plan_path == context.plan_rel
             && self.plan_revision == context.plan_document.plan_revision
     }
+}
+
+fn default_preflight_chunking_strategy() -> ChunkingStrategy {
+    ChunkingStrategy::Task
+}
+
+fn default_preflight_evaluator_policy() -> EvaluatorPolicyName {
+    EvaluatorPolicyName(String::from("spec_compliance+code_quality"))
+}
+
+fn default_preflight_reset_policy() -> ResetPolicy {
+    ResetPolicy::ChunkBoundary
+}
+
+fn default_preflight_review_stack() -> Vec<String> {
+    vec![
+        String::from("featureforge:requesting-code-review"),
+        String::from("featureforge:qa-only"),
+        String::from("featureforge:document-release"),
+    ]
 }
 
 impl ExecutionRuntime {
@@ -672,6 +700,18 @@ pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionSt
         .as_ref()
         .map(|acceptance| acceptance.chunk_id.clone())
         .unwrap_or_else(|| pending_chunk_id(context));
+    let chunking_strategy = preflight_acceptance
+        .as_ref()
+        .map(|acceptance| acceptance.chunking_strategy);
+    let evaluator_policy = preflight_acceptance
+        .as_ref()
+        .map(|acceptance| acceptance.evaluator_policy.clone());
+    let reset_policy = preflight_acceptance
+        .as_ref()
+        .map(|acceptance| acceptance.reset_policy);
+    let review_stack = preflight_acceptance
+        .as_ref()
+        .map(|acceptance| acceptance.review_stack.clone());
 
     let mut status = PlanExecutionStatus {
         plan_revision: context.plan_document.plan_revision,
@@ -685,10 +725,10 @@ pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionSt
             HarnessPhase::ImplementationHandoff
         },
         chunk_id,
-        chunking_strategy: None,
-        evaluator_policy: None,
-        reset_policy: None,
-        review_stack: None,
+        chunking_strategy,
+        evaluator_policy,
+        reset_policy,
+        review_stack,
         active_contract_path: None,
         active_contract_fingerprint: None,
         required_evaluator_kinds: Vec::new(),
@@ -1218,6 +1258,10 @@ fn new_preflight_acceptance(context: &ExecutionContext) -> PreflightAcceptanceSt
         plan_revision: context.plan_document.plan_revision,
         execution_run_id: ExecutionRunId::new(format!("run-{}", &digest[..16])),
         chunk_id: ChunkId::new(format!("chunk-{}", &digest[16..32])),
+        chunking_strategy: default_preflight_chunking_strategy(),
+        evaluator_policy: default_preflight_evaluator_policy(),
+        reset_policy: default_preflight_reset_policy(),
+        review_stack: default_preflight_review_stack(),
     }
 }
 
