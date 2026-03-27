@@ -1754,6 +1754,88 @@ fn downgrade_record_contract_rejects_missing_blocking_evidence_summary() {
 }
 
 #[test]
+fn downgrade_record_contract_rejects_empty_changed_or_blocked_stage() {
+    let downgrade = ExecutionTopologyDowngradeRecord {
+        record_version: 1,
+        authoritative_sequence: 88,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_context_key: String::from("dm/todos-task5-lease-lane:main"),
+        primary_reason_class: DowngradeReasonClass::ReconcileConflict,
+        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
+            trigger_summary: String::from("parallel execution became unsafe"),
+            affected_units: vec![String::from("task-a")],
+            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
+                summary: String::from("conflict observed during reconcile"),
+                references: vec![blocking_evidence_reference("artifact:lease-1")],
+            },
+            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
+                severity:
+                    featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Warning,
+                changed_or_blocked_stage: String::new(),
+                expected_response: String::from("downgrade the slice"),
+            },
+            notes: vec![],
+        },
+        rerun_guidance_superseded: false,
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        record_fingerprint: String::from(
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        ),
+    };
+
+    let error = validate_execution_topology_downgrade_record(&downgrade)
+        .expect_err("downgrade records missing changed_or_blocked_stage should fail");
+    assert!(
+        error
+            .message
+            .contains("operator_impact.changed_or_blocked_stage"),
+        "structured operator-impact validation should surface the missing stage field"
+    );
+}
+
+#[test]
+fn downgrade_record_contract_rejects_empty_expected_response() {
+    let downgrade = ExecutionTopologyDowngradeRecord {
+        record_version: 1,
+        authoritative_sequence: 88,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_context_key: String::from("dm/todos-task5-lease-lane:main"),
+        primary_reason_class: DowngradeReasonClass::ReconcileConflict,
+        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
+            trigger_summary: String::from("parallel execution became unsafe"),
+            affected_units: vec![String::from("task-a")],
+            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
+                summary: String::from("conflict observed during reconcile"),
+                references: vec![blocking_evidence_reference("artifact:lease-1")],
+            },
+            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
+                severity:
+                    featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Warning,
+                changed_or_blocked_stage: String::from("execution"),
+                expected_response: String::new(),
+            },
+            notes: vec![],
+        },
+        rerun_guidance_superseded: false,
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        record_fingerprint: String::from(
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ),
+    };
+
+    let error = validate_execution_topology_downgrade_record(&downgrade)
+        .expect_err("downgrade records missing expected_response should fail");
+    assert!(
+        error.message.contains("operator_impact.expected_response"),
+        "structured operator-impact validation should surface the missing response field"
+    );
+}
+
+#[test]
 fn downgrade_record_contract_rejects_malformed_blocking_evidence_reference() {
     let downgrade = json!({
         "record_version": 1,
