@@ -3755,6 +3755,228 @@ fn gate_finish_prefers_recorded_authoritative_final_review_over_newer_branch_dec
     );
 }
 
+fn write_authoritative_downstream_fixture_state(
+    repo: &Path,
+    state: &Path,
+    test_plan_path: &Path,
+    qa_path: &Path,
+    review_path: &Path,
+    release_path: &Path,
+) {
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+
+    let authoritative_test_plan_source = fs::read_to_string(test_plan_path)
+        .expect("source test-plan artifact should be readable for authoritative fixture");
+    let authoritative_test_plan_fingerprint = sha256_hex(authoritative_test_plan_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug,
+            &branch,
+            &format!("test-plan-{authoritative_test_plan_fingerprint}.md"),
+        ),
+        &authoritative_test_plan_source,
+    );
+
+    let authoritative_qa_source = fs::read_to_string(qa_path)
+        .expect("source QA artifact should be readable for authoritative fixture");
+    let authoritative_qa_fingerprint = sha256_hex(authoritative_qa_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug,
+            &branch,
+            &format!("browser-qa-{authoritative_qa_fingerprint}.md"),
+        ),
+        &authoritative_qa_source,
+    );
+
+    let authoritative_review_source = fs::read_to_string(review_path)
+        .expect("source review artifact should be readable for authoritative fixture");
+    let authoritative_review_fingerprint = sha256_hex(authoritative_review_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug,
+            &branch,
+            &format!("final-review-{authoritative_review_fingerprint}.md"),
+        ),
+        &authoritative_review_source,
+    );
+
+    let authoritative_release_source = fs::read_to_string(release_path)
+        .expect("source release artifact should be readable for authoritative fixture");
+    let authoritative_release_fingerprint = sha256_hex(authoritative_release_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug,
+            &branch,
+            &format!("release-docs-{authoritative_release_fingerprint}.md"),
+        ),
+        &authoritative_release_source,
+    );
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 17,
+            "dependency_index_state": "fresh",
+            "final_review_state": "fresh",
+            "browser_qa_state": "fresh",
+            "release_docs_state": "fresh",
+            "last_final_review_artifact_fingerprint": authoritative_review_fingerprint,
+            "last_browser_qa_artifact_fingerprint": authoritative_qa_fingerprint,
+            "last_release_docs_artifact_fingerprint": authoritative_release_fingerprint,
+        }),
+    );
+}
+
+#[test]
+fn gate_finish_prefers_recorded_authoritative_test_plan_over_newer_branch_decoy() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-authoritative-test-plan");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+
+    let branch = branch_name(repo);
+    let artifact_dir = project_artifact_dir(repo, state);
+    let stale_test_plan = fs::read_to_string(&test_plan_path)
+        .expect("source test-plan artifact should be readable for decoy fixture")
+        .replace(
+            &format!("**Head SHA:** {}", current_head_sha(repo)),
+            "**Head SHA:** 0000000000000000000000000000000000000000",
+        );
+    write_file(
+        &artifact_dir.join(format!(
+            "tester-{}-test-plan-99999999-999999.md",
+            normalize_identifier(&branch)
+        )),
+        &stale_test_plan,
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should prefer recorded authoritative test-plan provenance over latest branch decoy",
+    );
+
+    assert_eq!(
+        gate_finish["allowed"], true,
+        "gate-finish should resolve test-plan freshness from recorded authoritative downstream provenance instead of scanning the newest branch artifact"
+    );
+}
+
+#[test]
+fn gate_finish_prefers_recorded_authoritative_browser_qa_over_newer_branch_decoy() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-authoritative-browser-qa");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+
+    let branch = branch_name(repo);
+    let artifact_dir = project_artifact_dir(repo, state);
+    let stale_qa = fs::read_to_string(&qa_path)
+        .expect("source QA artifact should be readable for decoy fixture")
+        .replace(
+            &format!("**Head SHA:** {}", current_head_sha(repo)),
+            "**Head SHA:** 0000000000000000000000000000000000000000",
+        );
+    write_file(
+        &artifact_dir.join(format!(
+            "tester-{}-test-outcome-99999999-999999.md",
+            normalize_identifier(&branch)
+        )),
+        &stale_qa,
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should prefer recorded authoritative browser QA provenance over latest branch decoy",
+    );
+
+    assert_eq!(
+        gate_finish["allowed"], true,
+        "gate-finish should resolve browser-QA freshness from recorded authoritative downstream provenance instead of scanning the newest branch artifact"
+    );
+}
+
+#[test]
+fn gate_finish_prefers_recorded_authoritative_release_docs_over_newer_branch_decoy() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-authoritative-release-docs");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+
+    let branch = branch_name(repo);
+    let artifact_dir = project_artifact_dir(repo, state);
+    let stale_release = fs::read_to_string(&release_path)
+        .expect("source release artifact should be readable for decoy fixture")
+        .replace(
+            &format!("**Head SHA:** {}", current_head_sha(repo)),
+            "**Head SHA:** 0000000000000000000000000000000000000000",
+        );
+    write_file(
+        &artifact_dir.join(format!(
+            "tester-{}-release-readiness-99999999-999999.md",
+            normalize_identifier(&branch)
+        )),
+        &stale_release,
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should prefer recorded authoritative release-doc provenance over latest branch decoy",
+    );
+
+    assert_eq!(
+        gate_finish["allowed"], true,
+        "gate-finish should resolve release-doc freshness from recorded authoritative downstream provenance instead of scanning the newest branch artifact"
+    );
+}
+
 #[test]
 fn canonical_execution_runtime_uses_canonical_repo_slug() {
     let (repo_dir, state_dir) = init_repo("plan-execution-runtime-slug");
