@@ -1,12 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use schemars::{schema_for, JsonSchema};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::cli::plan_execution::{
     BeginArgs, CompleteArgs, GateContractArgs, GateEvaluatorArgs, GateHandoffArgs,
@@ -16,18 +14,33 @@ use crate::cli::plan_execution::{
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
 use crate::contracts::plan::{parse_plan_file, PlanDocument, PlanTask};
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::final_review::{
+    authoritative_browser_qa_artifact_path, authoritative_final_review_artifact_path,
+    authoritative_release_docs_artifact_path, authoritative_test_plan_artifact_path_from_qa,
+    latest_branch_artifact_path, parse_artifact_document, resolve_release_base_branch,
+};
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
     EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
     ResetPolicy, INITIAL_AUTHORITATIVE_SEQUENCE,
 };
+use crate::execution::leases::{
+    PreflightWriteAuthorityState, authoritative_state_path,
+    load_status_authoritative_overlay_checked, preflight_requires_authoritative_handoff,
+    preflight_requires_authoritative_mutation_recovery, preflight_write_authority_state,
+};
+use crate::execution::topology::{
+    RecommendDecisionFlags, RecommendOutput, default_preflight_chunking_strategy,
+    default_preflight_evaluator_policy, default_preflight_reset_policy,
+    default_preflight_review_stack, pending_chunk_id, persist_preflight_acceptance,
+    preflight_acceptance_for_context, tasks_are_independent,
+};
 use crate::git::{
     derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
 };
 use crate::paths::{
-    branch_storage_key, featureforge_state_dir, harness_authoritative_artifacts_dir,
-    harness_branch_root, harness_state_path, normalize_repo_relative_path, normalize_whitespace,
-    write_atomic as write_atomic_file, RepoPath,
+    branch_storage_key, featureforge_state_dir, normalize_repo_relative_path,
+    normalize_whitespace, RepoPath,
 };
 use crate::repo_safety::RepoSafetyRuntime;
 use crate::workflow::manifest::{load_manifest_read_only, ManifestLoadResult, WorkflowManifest};
@@ -37,8 +50,6 @@ pub const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
 const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
 const ACTIVE_EVIDENCE_ROOT: &str = "docs/featureforge/execution-evidence";
-const PREFLIGHT_ACCEPTANCE_DIR: &str = "execution-preflight";
-const PREFLIGHT_ACCEPTANCE_FILE: &str = "acceptance-state.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanExecutionStatus {
@@ -112,27 +123,6 @@ pub struct GateResult {
     pub reason_codes: Vec<String>,
     pub warning_codes: Vec<String>,
     pub diagnostics: Vec<GateDiagnostic>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct RecommendDecisionFlags {
-    pub tasks_independent: String,
-    pub isolated_agents_available: String,
-    pub session_intent: String,
-    pub workspace_prepared: String,
-    pub same_session_viable: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct RecommendOutput {
-    pub recommended_skill: String,
-    pub reason: String,
-    pub decision_flags: RecommendDecisionFlags,
-    pub chunking_strategy: ChunkingStrategy,
-    pub evaluator_policy: EvaluatorPolicyName,
-    pub reset_policy: ResetPolicy,
-    pub review_stack: Vec<String>,
-    pub policy_reason_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -285,94 +275,6 @@ pub struct TransferRequest {
     pub source: String,
     pub reason: String,
     pub expect_execution_fingerprint: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct PreflightAcceptanceState {
-    schema_version: u32,
-    plan_path: String,
-    plan_revision: u32,
-    #[serde(default)]
-    repo_state_baseline_head_sha: Option<String>,
-    execution_run_id: ExecutionRunId,
-    chunk_id: ChunkId,
-    #[serde(default = "default_preflight_chunking_strategy")]
-    chunking_strategy: ChunkingStrategy,
-    #[serde(default = "default_preflight_evaluator_policy")]
-    evaluator_policy: EvaluatorPolicyName,
-    #[serde(default = "default_preflight_reset_policy")]
-    reset_policy: ResetPolicy,
-    #[serde(default = "default_preflight_review_stack")]
-    review_stack: Vec<String>,
-}
-
-impl PreflightAcceptanceState {
-    const SCHEMA_VERSION: u32 = 1;
-
-    fn matches_plan_revision(&self, context: &ExecutionContext) -> bool {
-        self.plan_path == context.plan_rel
-            && self.plan_revision == context.plan_document.plan_revision
-    }
-
-    fn matches_context(&self, context: &ExecutionContext) -> bool {
-        let (chunking_strategy, evaluator_policy, reset_policy, review_stack) =
-            proposed_preflight_policy_tuple(context);
-        let Some(saved_baseline_head_sha) = self
-            .repo_state_baseline_head_sha
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return false;
-        };
-        let current_baseline_head_sha = match current_head_sha(&context.runtime.repo_root) {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
-        self.plan_path == context.plan_rel
-            && self.plan_revision == context.plan_document.plan_revision
-            && saved_baseline_head_sha == current_baseline_head_sha
-            && self.chunking_strategy == chunking_strategy
-            && self.evaluator_policy == evaluator_policy
-            && self.reset_policy == reset_policy
-            && self.review_stack == review_stack
-    }
-}
-
-fn proposed_preflight_policy_tuple(
-    _context: &ExecutionContext,
-) -> (
-    ChunkingStrategy,
-    EvaluatorPolicyName,
-    ResetPolicy,
-    Vec<String>,
-) {
-    (
-        default_preflight_chunking_strategy(),
-        default_preflight_evaluator_policy(),
-        default_preflight_reset_policy(),
-        default_preflight_review_stack(),
-    )
-}
-
-fn default_preflight_chunking_strategy() -> ChunkingStrategy {
-    ChunkingStrategy::Task
-}
-
-fn default_preflight_evaluator_policy() -> EvaluatorPolicyName {
-    EvaluatorPolicyName(String::from("spec_compliance+code_quality"))
-}
-
-fn default_preflight_reset_policy() -> ResetPolicy {
-    ResetPolicy::ChunkBoundary
-}
-
-fn default_preflight_review_stack() -> Vec<String> {
-    vec![
-        String::from("featureforge:requesting-code-review"),
-        String::from("featureforge:qa-only"),
-        String::from("featureforge:document-release"),
-    ]
 }
 
 impl ExecutionRuntime {
@@ -856,109 +758,14 @@ pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionSt
     Ok(status)
 }
 
-#[derive(Debug, Deserialize)]
-struct StatusAuthoritativeOverlay {
-    #[serde(default)]
-    harness_phase: Option<String>,
-    #[serde(default)]
-    chunk_id: Option<String>,
-    #[serde(default)]
-    latest_authoritative_sequence: Option<u64>,
-    #[serde(default)]
-    authoritative_sequence: Option<u64>,
-    #[serde(default)]
-    active_contract_path: Option<String>,
-    #[serde(default)]
-    active_contract_fingerprint: Option<String>,
-    #[serde(default)]
-    required_evaluator_kinds: Vec<String>,
-    #[serde(default)]
-    completed_evaluator_kinds: Vec<String>,
-    #[serde(default)]
-    pending_evaluator_kinds: Vec<String>,
-    #[serde(default)]
-    non_passing_evaluator_kinds: Vec<String>,
-    #[serde(default)]
-    aggregate_evaluation_state: Option<String>,
-    #[serde(default)]
-    last_evaluation_report_path: Option<String>,
-    #[serde(default)]
-    last_evaluation_report_fingerprint: Option<String>,
-    #[serde(default)]
-    last_evaluation_evaluator_kind: Option<String>,
-    #[serde(default)]
-    last_evaluation_verdict: Option<String>,
-    #[serde(default)]
-    current_chunk_retry_count: Option<u32>,
-    #[serde(default)]
-    current_chunk_retry_budget: Option<u32>,
-    #[serde(default)]
-    current_chunk_pivot_threshold: Option<u32>,
-    #[serde(default)]
-    handoff_required: Option<bool>,
-    #[serde(default)]
-    open_failed_criteria: Vec<String>,
-    #[serde(default)]
-    write_authority_state: Option<String>,
-    #[serde(default)]
-    write_authority_holder: Option<String>,
-    #[serde(default)]
-    write_authority_worktree: Option<String>,
-    #[serde(default)]
-    repo_state_baseline_head_sha: Option<String>,
-    #[serde(default)]
-    repo_state_baseline_worktree_fingerprint: Option<String>,
-    #[serde(default)]
-    repo_state_drift_state: Option<String>,
-    #[serde(default)]
-    dependency_index_state: Option<String>,
-    #[serde(default)]
-    final_review_state: Option<String>,
-    #[serde(default)]
-    browser_qa_state: Option<String>,
-    #[serde(default)]
-    release_docs_state: Option<String>,
-    #[serde(default)]
-    last_final_review_artifact_fingerprint: Option<String>,
-    #[serde(default)]
-    last_browser_qa_artifact_fingerprint: Option<String>,
-    #[serde(default)]
-    last_release_docs_artifact_fingerprint: Option<String>,
-    #[serde(default)]
-    reason_codes: Vec<String>,
-}
-
 fn apply_authoritative_status_overlay(
     context: &ExecutionContext,
     status: &mut PlanExecutionStatus,
 ) -> Result<(), JsonFailure> {
-    let state_path = harness_state_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-    );
-    if !state_path.is_file() {
+    let state_path = authoritative_state_path(context);
+    let Some(overlay) = load_status_authoritative_overlay_checked(context)? else {
         return Ok(());
-    }
-
-    let source = fs::read_to_string(&state_path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Could not read authoritative harness state {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
-    let overlay: StatusAuthoritativeOverlay = serde_json::from_str(&source).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state is malformed in {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
+    };
 
     if let Some(phase) = normalize_optional_overlay_value(overlay.harness_phase.as_deref()) {
         status.harness_phase = parse_harness_phase(phase).ok_or_else(|| {
@@ -1344,357 +1151,8 @@ fn parse_reason_codes(
         .collect()
 }
 
-fn pending_chunk_id(context: &ExecutionContext) -> ChunkId {
-    let seed = format!(
-        "pending-chunk\n{}\n{}\n",
-        context.plan_rel, context.plan_document.plan_revision
-    );
-    let digest = sha256_hex(seed.as_bytes());
-    ChunkId::new(format!("chunk-pending-{}", &digest[..12]))
-}
-
 pub fn require_preflight_acceptance(context: &ExecutionContext) -> Result<(), JsonFailure> {
-    if preflight_acceptance_for_plan_revision(context)?.is_none() {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "begin requires a successful execution_preflight acceptance for this approved plan revision.",
-        ));
-    }
-    Ok(())
-}
-
-fn preflight_acceptance_for_context(
-    context: &ExecutionContext,
-) -> Result<Option<PreflightAcceptanceState>, JsonFailure> {
-    Ok(load_preflight_acceptance(&context.runtime)?
-        .filter(|acceptance| acceptance.matches_context(context)))
-}
-
-fn preflight_acceptance_for_plan_revision(
-    context: &ExecutionContext,
-) -> Result<Option<PreflightAcceptanceState>, JsonFailure> {
-    Ok(load_preflight_acceptance(&context.runtime)?
-        .filter(|acceptance| acceptance.matches_plan_revision(context)))
-}
-
-fn load_preflight_acceptance(
-    runtime: &ExecutionRuntime,
-) -> Result<Option<PreflightAcceptanceState>, JsonFailure> {
-    let path = preflight_acceptance_path(runtime);
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let source = fs::read_to_string(&path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Could not read persisted execution preflight acceptance {}: {error}",
-                path.display()
-            ),
-        )
-    })?;
-    let acceptance: PreflightAcceptanceState = serde_json::from_str(&source).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Persisted execution preflight acceptance is malformed in {}: {error}",
-                path.display()
-            ),
-        )
-    })?;
-    if acceptance.schema_version != PreflightAcceptanceState::SCHEMA_VERSION {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Persisted execution preflight acceptance schema version is unsupported in {}.",
-                path.display()
-            ),
-        ));
-    }
-    if acceptance.execution_run_id.as_str().trim().is_empty()
-        || acceptance.chunk_id.as_str().trim().is_empty()
-    {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Persisted execution preflight acceptance must include non-empty run and chunk identities in {}.",
-                path.display()
-            ),
-        ));
-    }
-    Ok(Some(acceptance))
-}
-
-fn persist_preflight_acceptance(
-    context: &ExecutionContext,
-) -> Result<PreflightAcceptanceState, JsonFailure> {
-    if let Some(existing) = preflight_acceptance_for_context(context)? {
-        return Ok(existing);
-    }
-
-    let acceptance = new_preflight_acceptance(context)?;
-    let payload = serde_json::to_string_pretty(&acceptance).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::EvidenceWriteFailed,
-            format!("Could not serialize execution preflight acceptance: {error}"),
-        )
-    })?;
-    let path = preflight_acceptance_path(&context.runtime);
-    write_atomic_file(&path, payload).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::EvidenceWriteFailed,
-            format!(
-                "Could not persist execution preflight acceptance {}: {error}",
-                path.display()
-            ),
-        )
-    })?;
-    Ok(acceptance)
-}
-
-fn new_preflight_acceptance(context: &ExecutionContext) -> Result<PreflightAcceptanceState, JsonFailure> {
-    let baseline_head_sha = current_head_sha(&context.runtime.repo_root)?;
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let seed = format!(
-        "execution-preflight-acceptance\n{}\n{}\n{}\n{}\n{}\n{}\n",
-        context.runtime.repo_slug,
-        context.runtime.branch_name,
-        context.plan_rel,
-        context.plan_document.plan_revision,
-        std::process::id(),
-        nonce,
-    );
-    let digest = sha256_hex(seed.as_bytes());
-    Ok(PreflightAcceptanceState {
-        schema_version: PreflightAcceptanceState::SCHEMA_VERSION,
-        plan_path: context.plan_rel.clone(),
-        plan_revision: context.plan_document.plan_revision,
-        repo_state_baseline_head_sha: Some(baseline_head_sha),
-        execution_run_id: ExecutionRunId::new(format!("run-{}", &digest[..16])),
-        chunk_id: ChunkId::new(format!("chunk-{}", &digest[16..32])),
-        chunking_strategy: default_preflight_chunking_strategy(),
-        evaluator_policy: default_preflight_evaluator_policy(),
-        reset_policy: default_preflight_reset_policy(),
-        review_stack: default_preflight_review_stack(),
-    })
-}
-
-fn preflight_acceptance_path(runtime: &ExecutionRuntime) -> PathBuf {
-    runtime
-        .state_dir
-        .join("projects")
-        .join(&runtime.repo_slug)
-        .join("branches")
-        .join(&runtime.safe_branch)
-        .join(PREFLIGHT_ACCEPTANCE_DIR)
-        .join(PREFLIGHT_ACCEPTANCE_FILE)
-}
-
-#[derive(Debug, Deserialize)]
-struct PreflightAuthoritativeState {
-    #[serde(default)]
-    harness_phase: Option<String>,
-    #[serde(default)]
-    handoff_required: bool,
-    #[serde(default)]
-    latest_authoritative_sequence: Option<u64>,
-    #[serde(default)]
-    authoritative_sequence: Option<u64>,
-}
-
-fn load_preflight_authoritative_state(
-    context: &ExecutionContext,
-) -> Result<Option<PreflightAuthoritativeState>, JsonFailure> {
-    let state_path = harness_state_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-    );
-    let source = match fs::read_to_string(&state_path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Could not read authoritative harness state {}: {error}",
-                    state_path.display()
-                ),
-            ));
-        }
-    };
-    let overlay = serde_json::from_str(&source).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state is malformed in {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
-
-    Ok(Some(overlay))
-}
-
-fn preflight_requires_authoritative_handoff(context: &ExecutionContext) -> Result<bool, JsonFailure> {
-    let Some(overlay) = load_preflight_authoritative_state(context)? else {
-        return Ok(false);
-    };
-    let phase_requires_handoff = overlay
-        .harness_phase
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|phase| phase == "handoff_required");
-    Ok(overlay.handoff_required || phase_requires_handoff)
-}
-
-fn parse_authoritative_sequence_from_artifact(source: &str) -> Option<u64> {
-    source.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("**Authoritative Sequence:**")
-            .and_then(|value| value.trim().parse::<u64>().ok())
-    })
-}
-
-fn latest_authoritative_artifact_sequence(context: &ExecutionContext) -> Result<Option<u64>, JsonFailure> {
-    let artifacts_dir = harness_authoritative_artifacts_dir(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-    );
-    let entries = match fs::read_dir(&artifacts_dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                format!(
-                    "Could not read authoritative artifact directory {}: {error}",
-                    artifacts_dir.display()
-                ),
-            ));
-        }
-    };
-
-    let mut max_sequence: Option<u64> = None;
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                format!(
-                    "Could not enumerate authoritative artifacts in {}: {error}",
-                    artifacts_dir.display()
-                ),
-            )
-        })?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let source = fs::read_to_string(&path).map_err(|error| {
-            JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                format!("Could not read authoritative artifact {}: {error}", path.display()),
-            )
-        })?;
-        if let Some(sequence) = parse_authoritative_sequence_from_artifact(&source) {
-            max_sequence = Some(max_sequence.map_or(sequence, |current| current.max(sequence)));
-        }
-    }
-    Ok(max_sequence)
-}
-
-fn preflight_requires_authoritative_mutation_recovery(
-    context: &ExecutionContext,
-) -> Result<bool, JsonFailure> {
-    let Some(overlay) = load_preflight_authoritative_state(context)? else {
-        return Ok(false);
-    };
-    let persisted_sequence = overlay
-        .latest_authoritative_sequence
-        .or(overlay.authoritative_sequence)
-        .unwrap_or(INITIAL_AUTHORITATIVE_SEQUENCE);
-    let Some(artifact_sequence) = latest_authoritative_artifact_sequence(context)? else {
-        return Ok(false);
-    };
-    Ok(artifact_sequence > persisted_sequence)
-}
-
-enum PreflightWriteAuthorityState {
-    Clear,
-    Conflict,
-}
-
-fn preflight_write_authority_state(
-    context: &ExecutionContext,
-) -> Result<PreflightWriteAuthorityState, JsonFailure> {
-    let lock_path =
-        harness_branch_root(
-            &context.runtime.state_dir,
-            &context.runtime.repo_slug,
-            &context.runtime.branch_name,
-        )
-        .join("write-authority.lock");
-    if !lock_path.exists() {
-        return Ok(PreflightWriteAuthorityState::Clear);
-    }
-
-    let source = fs::read_to_string(&lock_path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            format!(
-                "Could not read write-authority lock {}: {error}",
-                lock_path.display()
-            ),
-        )
-    })?;
-
-    let holder_pid = source.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("pid=")
-            .and_then(|value| value.trim().parse::<u32>().ok())
-    });
-    let Some(holder_pid) = holder_pid else {
-        return Ok(PreflightWriteAuthorityState::Conflict);
-    };
-
-    if process_is_running(holder_pid) {
-        return Ok(PreflightWriteAuthorityState::Conflict);
-    }
-
-    match fs::remove_file(&lock_path) {
-        Ok(()) => Ok(PreflightWriteAuthorityState::Clear),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(PreflightWriteAuthorityState::Clear),
-        Err(error) => Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            format!(
-                "Could not reclaim stale write-authority lock {}: {error}",
-                lock_path.display()
-            ),
-        )),
-    }
-}
-
-fn process_is_running(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(true)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    crate::execution::topology::require_preflight_acceptance(context)
 }
 
 pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
@@ -2266,7 +1724,7 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         if qa
             .headers
             .get("Source Test Plan")
-            .map(|value| strip_backticks(value))
+            .map(|value| value.trim_matches('`').to_owned())
             .as_deref()
             != Some(test_plan_path.to_string_lossy().as_ref())
         {
@@ -3131,122 +2589,6 @@ fn parse_headers_file(path: &Path) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-#[derive(Debug, Default)]
-struct ArtifactDocument {
-    title: Option<String>,
-    headers: BTreeMap<String, String>,
-}
-
-fn parse_artifact_document(path: &Path) -> ArtifactDocument {
-    let Ok(source) = fs::read_to_string(path) else {
-        return ArtifactDocument::default();
-    };
-    ArtifactDocument {
-        title: source
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .map(str::to_owned),
-        headers: parse_headers(&source),
-    }
-}
-
-fn resolve_release_base_branch(git_dir: &Path, current_branch: &str) -> Option<String> {
-    const COMMON_BASE_BRANCHES: &[&str] = &["main", "master", "develop", "dev", "trunk"];
-
-    if COMMON_BASE_BRANCHES.contains(&current_branch) {
-        return Some(current_branch.to_owned());
-    }
-
-    if let Some(branch) = branch_merge_base_from_config(git_dir, current_branch) {
-        return Some(branch);
-    }
-    if let Some(branch) = origin_head_branch(git_dir) {
-        return Some(branch);
-    }
-
-    let branches = local_head_branches(&git_dir.join("refs/heads"));
-    for candidate in COMMON_BASE_BRANCHES {
-        if branches.iter().any(|branch| branch == candidate) {
-            return Some((*candidate).to_owned());
-        }
-    }
-
-    let mut non_current = branches
-        .into_iter()
-        .filter(|branch| branch != current_branch)
-        .collect::<Vec<_>>();
-    non_current.sort();
-    non_current.dedup();
-    if non_current.len() == 1 {
-        return non_current.pop();
-    }
-    None
-}
-
-fn branch_merge_base_from_config(git_dir: &Path, current_branch: &str) -> Option<String> {
-    let source = fs::read_to_string(git_dir.join("config")).ok()?;
-    let target_section = format!(r#"[branch "{current_branch}"]"#);
-    let mut in_target_section = false;
-
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_target_section = trimmed == target_section;
-            continue;
-        }
-        if !in_target_section
-            || trimmed.is_empty()
-            || trimmed.starts_with('#')
-            || trimmed.starts_with(';')
-        {
-            continue;
-        }
-        let (key, value) = trimmed.split_once('=')?;
-        if key.trim() == "gh-merge-base" {
-            let normalized = value.trim();
-            if !normalized.is_empty() {
-                return Some(normalized.to_owned());
-            }
-        }
-    }
-
-    None
-}
-
-fn origin_head_branch(git_dir: &Path) -> Option<String> {
-    let source = fs::read_to_string(git_dir.join("refs/remotes/origin/HEAD")).ok()?;
-    let reference = source.trim().strip_prefix("ref: ")?;
-    let branch = reference.strip_prefix("refs/remotes/origin/")?.trim();
-    if branch.is_empty() {
-        None
-    } else {
-        Some(branch.to_owned())
-    }
-}
-
-fn local_head_branches(heads_dir: &Path) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(heads_dir) else {
-        return Vec::new();
-    };
-    let mut branches = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            branches.extend(local_head_branches(&path).into_iter().filter_map(|branch| {
-                path.file_name()
-                    .and_then(std::ffi::OsStr::to_str)
-                    .map(|prefix| format!("{prefix}/{branch}"))
-            }));
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) {
-            branches.push(name.to_owned());
-        }
-    }
-    branches
-}
-
 fn approved_spec_candidate_paths(repo_root: &Path) -> Vec<String> {
     let mut candidates = markdown_files_under(&repo_root.join(ACTIVE_SPEC_ROOT))
         .into_iter()
@@ -3883,21 +3225,6 @@ fn parse_contract_render(source: &str) -> String {
     format!("{}\n", rendered.join("\n"))
 }
 
-fn tasks_are_independent(plan_document: &PlanDocument) -> bool {
-    if plan_document.tasks.len() <= 1 {
-        return false;
-    }
-    let mut paths = BTreeSet::new();
-    for task in &plan_document.tasks {
-        for entry in &task.files {
-            if !paths.insert(entry.path.clone()) {
-                return false;
-            }
-        }
-    }
-    true
-}
-
 fn latest_completed_attempt<'a>(evidence: &'a ExecutionEvidence) -> Option<&'a EvidenceAttempt> {
     evidence
         .attempts
@@ -3966,158 +3293,4 @@ fn active_step(context: &ExecutionContext, note_state: NoteState) -> Option<&Pla
         .steps
         .iter()
         .find(|step| step.note_state == Some(note_state))
-}
-
-fn latest_branch_artifact_path(
-    artifact_dir: &Path,
-    branch_name: &str,
-    kind: &str,
-) -> Option<PathBuf> {
-    let entries = fs::read_dir(artifact_dir).ok()?;
-    let mut candidates = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(std::ffi::OsStr::to_str) == Some("md"))
-        .filter(|path| {
-            path.file_name()
-                .and_then(std::ffi::OsStr::to_str)
-                .is_some_and(|name| {
-                    name.strip_suffix(".md")
-                        .and_then(|stem| stem.rsplit_once(&format!("-{kind}-")))
-                        .is_some_and(|(_, timestamp)| !timestamp.is_empty())
-                })
-        })
-        .filter(|path| {
-            parse_headers_file(path)
-                .get("Branch")
-                .is_some_and(|value| value == branch_name)
-        })
-        .collect::<Vec<_>>();
-    candidates.sort();
-    candidates.pop()
-}
-
-fn load_status_authoritative_overlay(context: &ExecutionContext) -> Option<StatusAuthoritativeOverlay> {
-    let state_path = harness_state_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-    );
-    let source = fs::read_to_string(&state_path).ok()?;
-    serde_json::from_str(&source).ok()
-}
-
-fn load_status_authoritative_overlay_checked(
-    context: &ExecutionContext,
-) -> Result<Option<StatusAuthoritativeOverlay>, JsonFailure> {
-    let state_path = harness_state_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-    );
-    if !state_path.is_file() {
-        return Ok(None);
-    }
-
-    let source = fs::read_to_string(&state_path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Could not read authoritative harness state {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
-    let overlay: StatusAuthoritativeOverlay = serde_json::from_str(&source).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state is malformed in {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
-    Ok(Some(overlay))
-}
-
-fn authoritative_fingerprinted_artifact_path(
-    context: &ExecutionContext,
-    freshness_state: Option<&str>,
-    fingerprint: Option<&str>,
-    artifact_prefix: &str,
-) -> Option<PathBuf> {
-    let freshness_state = normalize_optional_overlay_value(freshness_state)?;
-    if freshness_state != "fresh" {
-        return None;
-    }
-
-    let fingerprint = fingerprint.map(str::trim).filter(|value| !value.is_empty())?;
-    if fingerprint.len() != 64 || !fingerprint.chars().all(|value| value.is_ascii_hexdigit()) {
-        return None;
-    }
-
-    let path = harness_authoritative_artifacts_dir(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-    )
-    .join(format!("{artifact_prefix}-{fingerprint}.md"));
-    path.is_file().then_some(path)
-}
-
-fn authoritative_final_review_artifact_path(context: &ExecutionContext) -> Option<PathBuf> {
-    let overlay = load_status_authoritative_overlay(context)?;
-    authoritative_fingerprinted_artifact_path(
-        context,
-        overlay.final_review_state.as_deref(),
-        overlay.last_final_review_artifact_fingerprint.as_deref(),
-        "final-review",
-    )
-}
-
-fn authoritative_browser_qa_artifact_path(context: &ExecutionContext) -> Option<PathBuf> {
-    let overlay = load_status_authoritative_overlay(context)?;
-    authoritative_fingerprinted_artifact_path(
-        context,
-        overlay.browser_qa_state.as_deref(),
-        overlay.last_browser_qa_artifact_fingerprint.as_deref(),
-        "browser-qa",
-    )
-}
-
-fn authoritative_release_docs_artifact_path(context: &ExecutionContext) -> Option<PathBuf> {
-    let overlay = load_status_authoritative_overlay(context)?;
-    authoritative_fingerprinted_artifact_path(
-        context,
-        overlay.release_docs_state.as_deref(),
-        overlay.last_release_docs_artifact_fingerprint.as_deref(),
-        "release-docs",
-    )
-}
-
-fn authoritative_test_plan_artifact_path_from_qa(qa_artifact_path: &Path) -> Option<PathBuf> {
-    let qa = parse_artifact_document(qa_artifact_path);
-    let source_test_plan = qa
-        .headers
-        .get("Source Test Plan")
-        .map(|value| strip_backticks(value))?;
-    let source_test_plan = source_test_plan.trim();
-    if source_test_plan.is_empty() {
-        return None;
-    }
-
-    let source_test_plan_path = PathBuf::from(source_test_plan);
-    let resolved_path = if source_test_plan_path.is_absolute() {
-        source_test_plan_path
-    } else {
-        qa_artifact_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(source_test_plan_path)
-    };
-    resolved_path.is_file().then_some(resolved_path)
-}
-
-fn strip_backticks(value: &str) -> String {
-    value.trim_matches('`').to_owned()
 }

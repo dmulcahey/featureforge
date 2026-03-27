@@ -11,7 +11,8 @@ use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::execution::harness::{EvaluatorKind, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
-use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus, RecommendOutput};
+use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
+use crate::execution::topology::RecommendOutput;
 use crate::session_entry::{self, SessionEntryResolveOutput};
 use crate::workflow::status::{SessionEntryState, WorkflowPhase, WorkflowRoute, WorkflowRuntime};
 

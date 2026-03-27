@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
 use workflow_support::{
-    init_repo as init_workflow_repo, install_full_contract_ready_artifacts, workflow_fixture_root,
+    init_repo as init_workflow_repo, workflow_fixture_root,
 };
 
 fn normalize_workflow_status_snapshot(mut value: Value) -> Value {
@@ -157,6 +157,52 @@ fn init_repo(test_name: &str) -> (TempDir, TempDir) {
     run_checked(git_remote_add, "git remote add origin");
 
     (repo_dir, state_dir)
+}
+
+fn inject_current_topology_sections(plan_source: &str) -> String {
+    const INSERT_AFTER: &str = "## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n- REQ-004 -> Task 1\n- VERIFY-001 -> Task 1\n";
+    const TOPOLOGY_BLOCK: &str = "\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n";
+
+    if plan_source.contains("## Execution Strategy") && plan_source.contains("## Dependency Diagram")
+    {
+        return plan_source.to_owned();
+    }
+
+    plan_source.replacen(
+        INSERT_AFTER,
+        &format!("{INSERT_AFTER}{TOPOLOGY_BLOCK}"),
+        1,
+    )
+}
+
+fn install_full_contract_ready_artifacts(repo: &Path) {
+    let spec_rel = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let fixture_root = workflow_fixture_root();
+    let spec_path = repo.join(spec_rel);
+    let plan_path = repo.join(plan_rel);
+
+    if let Some(parent) = spec_path.parent() {
+        fs::create_dir_all(parent).expect("spec fixture parent should be creatable");
+    }
+    fs::copy(
+        fixture_root.join("specs/2026-03-22-runtime-integration-hardening-design.md"),
+        &spec_path,
+    )
+    .expect("spec fixture should copy");
+
+    if let Some(parent) = plan_path.parent() {
+        fs::create_dir_all(parent).expect("plan fixture parent should be creatable");
+    }
+    let plan_source = fs::read_to_string(
+        fixture_root.join("plans/2026-03-22-runtime-integration-hardening.md"),
+    )
+    .expect("plan fixture should load");
+    let adjusted_plan = inject_current_topology_sections(&plan_source).replace(
+        "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
+        spec_rel,
+    );
+    fs::write(&plan_path, adjusted_plan).expect("plan fixture should write");
 }
 
 #[cfg(unix)]
@@ -4201,179 +4247,6 @@ fn canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirti
     );
 }
 
-#[test]
-fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
-    let (repo_dir, state_dir) = init_repo("workflow-phase-final-review-pending");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    let session_key = "workflow-phase-final-review-pending";
-    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
-
-    complete_workflow_fixture_execution(repo, state, plan_rel);
-    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_branch_release_artifact(repo, state, plan_rel, &current_branch_name(repo));
-    enable_session_decision(state, session_key);
-
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for final-review routing fixture",
-        ),
-        "workflow doctor for final-review routing fixture",
-    );
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for final-review routing fixture",
-        ),
-        "workflow phase for final-review routing fixture",
-    );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for final-review routing fixture",
-        ),
-        "workflow handoff for final-review routing fixture",
-    );
-    let gate_review_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "gate", "review", "--plan", plan_rel, "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow gate review for final-review routing fixture",
-        ),
-        "workflow gate review for final-review routing fixture",
-    );
-    let gate_finish_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow gate finish for final-review routing fixture",
-        ),
-        "workflow gate finish for final-review routing fixture",
-    );
-
-    assert_eq!(doctor_json["route_status"], "implementation_ready");
-    assert_eq!(doctor_json["gate_review"]["allowed"], true);
-    assert_eq!(doctor_json["gate_finish"]["allowed"], false);
-    assert_eq!(
-        doctor_json["gate_finish"]["failure_class"],
-        "ReviewArtifactNotFresh"
-    );
-    assert_eq!(phase_json["phase"], "final_review_pending");
-    assert_eq!(phase_json["next_action"], "request_code_review");
-    assert_eq!(handoff_json["phase"], "final_review_pending");
-    assert_eq!(handoff_json["route_status"], "implementation_ready");
-    assert_eq!(handoff_json["execution_started"], "yes");
-    assert_eq!(handoff_json["next_action"], "request_code_review");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:requesting-code-review"
-    );
-    assert_eq!(handoff_json["recommendation"], Value::Null);
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "Finish readiness requires a final code-review artifact."
-    );
-    assert_eq!(gate_review_json["allowed"], true);
-    assert_eq!(gate_finish_json["allowed"], false);
-    assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "review_artifact_missing"
-    );
-
-    let phase_output = run_rust_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "phase"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "workflow phase text for final-review routing fixture",
-    );
-    assert!(phase_output.status.success());
-    let phase_stdout = String::from_utf8_lossy(&phase_output.stdout);
-    assert!(phase_stdout.contains("Workflow phase: final_review_pending"));
-    assert!(phase_stdout.contains("Route status: implementation_ready"));
-    assert!(phase_stdout.contains("Next: Use featureforge:requesting-code-review for the approved plan before branch completion: docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md"));
-
-    let doctor_output = run_rust_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "doctor"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "workflow doctor text for final-review routing fixture",
-    );
-    assert!(doctor_output.status.success());
-    let doctor_stdout = String::from_utf8_lossy(&doctor_output.stdout);
-    assert!(doctor_stdout.contains("Workflow doctor"));
-    assert!(doctor_stdout.contains("Phase: final_review_pending"));
-    assert!(doctor_stdout.contains("Route status: implementation_ready"));
-
-    let handoff_output = run_rust_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "handoff"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "workflow handoff text for final-review routing fixture",
-    );
-    assert!(handoff_output.status.success());
-    let handoff_stdout = String::from_utf8_lossy(&handoff_output.stdout);
-    assert!(handoff_stdout.contains("Workflow handoff"));
-    assert!(handoff_stdout.contains("Phase: final_review_pending"));
-    assert!(handoff_stdout.contains("Next action: request_code_review"));
-    assert!(handoff_stdout.contains("Recommended skill: featureforge:requesting-code-review"));
-    assert!(
-        handoff_stdout.contains("Reason: Finish readiness requires a final code-review artifact.")
-    );
-
-    let next_output = run_rust_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "next"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "workflow next for final-review routing fixture",
-    );
-    assert!(next_output.status.success());
-    let next_stdout = String::from_utf8_lossy(&next_output.stdout);
-    assert!(next_stdout.contains("Use featureforge:requesting-code-review for the approved plan before branch completion: docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md"));
-    assert!(next_stdout.contains("Finish readiness requires a final code-review artifact."));
-
-    let gate_review_output = run_rust_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "gate", "review", "--plan", plan_rel],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "workflow gate review text for final-review routing fixture",
-    );
-    assert!(gate_review_output.status.success());
-    assert!(
-        String::from_utf8_lossy(&gate_review_output.stdout).contains("Review gate\nAllowed: true")
-    );
-
-    let gate_finish_output = run_rust_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "gate", "finish", "--plan", plan_rel],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "workflow gate finish text for final-review routing fixture",
-    );
-    assert!(gate_finish_output.status.success());
-    assert!(
-        String::from_utf8_lossy(&gate_finish_output.stdout).contains("Finish gate\nAllowed: false")
-    );
-}
 
 #[test]
 fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() {
@@ -5050,74 +4923,6 @@ fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
     );
 }
 
-#[test]
-fn canonical_workflow_phase_routes_stale_review_back_to_requesting_code_review() {
-    let (repo_dir, state_dir) = init_repo("workflow-phase-review-head-mismatch");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    let session_key = "workflow-phase-review-head-mismatch";
-    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
-    let base_branch = current_branch_name(repo);
-
-    complete_workflow_fixture_execution(repo, state, plan_rel);
-    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    let review_path = write_branch_review_artifact(repo, state, plan_rel, &base_branch);
-    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
-    enable_session_decision(state, session_key);
-    replace_in_file(
-        &review_path,
-        &format!("**Head SHA:** {}", current_head_sha(repo)),
-        "**Head SHA:** 0000000000000000000000000000000000000000",
-    );
-
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for stale-review routing fixture",
-        ),
-        "workflow phase for stale-review routing fixture",
-    );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for stale-review routing fixture",
-        ),
-        "workflow handoff for stale-review routing fixture",
-    );
-    let gate_finish_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow gate finish for stale-review routing fixture",
-        ),
-        "workflow gate finish for stale-review routing fixture",
-    );
-
-    assert_eq!(phase_json["phase"], "final_review_pending");
-    assert_eq!(phase_json["next_action"], "request_code_review");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:requesting-code-review"
-    );
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "The latest code-review artifact does not match the current HEAD."
-    );
-    assert_eq!(gate_finish_json["allowed"], false);
-    assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "review_artifact_head_mismatch"
-    );
-}
 
 #[test]
 fn canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only() {

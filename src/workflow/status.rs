@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,8 +8,7 @@ use serde::Serialize;
 
 use crate::cli::workflow::{ArtifactKind, PlanFidelityRecordArgs};
 use crate::contracts::plan::{
-    AnalyzePlanReport, PLAN_FIDELITY_REVIEW_STAGE, evaluate_plan_fidelity_receipt_at_path,
-    parse_plan_file,
+    AnalyzePlanReport, evaluate_plan_fidelity_receipt_at_path, parse_plan_file,
 };
 use crate::contracts::runtime::{
     analyze_contract_report, build_plan_fidelity_receipt, persist_plan_fidelity_receipt,
@@ -18,9 +16,13 @@ use crate::contracts::runtime::{
 };
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
 use crate::diagnostics::{DiagnosticError, FailureClass};
+use crate::execution::topology::{
+    ensure_plan_fidelity_source_spec_is_approved, parse_plan_fidelity_review_artifact,
+    validate_plan_fidelity_review_artifact,
+};
 use crate::git::{
     RepositoryIdentity, discover_repo_identity, discover_slug_identity,
-    sha256_hex, stored_repo_root_matches_current,
+    stored_repo_root_matches_current,
 };
 use crate::paths::{RepoPath, featureforge_state_dir};
 use crate::session_entry;
@@ -97,25 +99,6 @@ pub struct PlanFidelityRecord {
     pub reviewer_source: String,
     pub reviewer_id: String,
     pub verified_surfaces: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-struct PlanFidelityReviewArtifact {
-    path: String,
-    fingerprint: String,
-    review_stage: String,
-    review_verdict: String,
-    reviewed_plan_path: String,
-    reviewed_plan_revision: u32,
-    reviewed_plan_fingerprint: String,
-    reviewed_spec_path: String,
-    reviewed_spec_revision: u32,
-    reviewed_spec_fingerprint: String,
-    reviewer_source: String,
-    reviewer_id: String,
-    distinct_from_stages: Vec<String>,
-    verified_surfaces: Vec<String>,
-    verified_requirement_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1425,206 +1408,6 @@ fn load_plan_fidelity_spec_document(
     spec_abs: &Path,
 ) -> Result<SpecDocument, DiagnosticError> {
     parse_spec_file(spec_abs)
-}
-
-fn parse_plan_fidelity_review_artifact(
-    artifact_path: &Path,
-    artifact_path_string: &str,
-) -> Result<PlanFidelityReviewArtifact, DiagnosticError> {
-    let source = fs::read_to_string(artifact_path).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            format!(
-                "Could not read plan-fidelity review artifact {}: {error}",
-                artifact_path.display()
-            ),
-        )
-    })?;
-    if !source.contains("## Plan Fidelity Review Summary") {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact is missing the `## Plan Fidelity Review Summary` block.",
-        ));
-    }
-
-    let reviewed_plan_path = RepoPath::parse(
-        parse_header_value(&source, "Reviewed Plan")?.trim_matches('`'),
-    )
-    .map(|path| path.as_str().to_owned())
-    .map_err(|_| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must keep Reviewed Plan repo-relative.",
-        )
-    })?;
-    let reviewed_plan_revision = parse_header_value(&source, "Reviewed Plan Revision")?
-        .parse::<u32>()
-        .map_err(|_| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                "Plan-fidelity review artifact is missing a numeric Reviewed Plan Revision.",
-            )
-        })?;
-    let reviewed_plan_fingerprint = parse_header_value(&source, "Reviewed Plan Fingerprint")?;
-    let reviewed_spec_path = RepoPath::parse(
-        parse_header_value(&source, "Reviewed Spec")?.trim_matches('`'),
-    )
-    .map(|path| path.as_str().to_owned())
-    .map_err(|_| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must keep Reviewed Spec repo-relative.",
-        )
-    })?;
-    let reviewed_spec_revision = parse_header_value(&source, "Reviewed Spec Revision")?
-        .parse::<u32>()
-        .map_err(|_| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                "Plan-fidelity review artifact is missing a numeric Reviewed Spec Revision.",
-            )
-        })?;
-    let reviewed_spec_fingerprint = parse_header_value(&source, "Reviewed Spec Fingerprint")?;
-    let distinct_from_stages = parse_header_value(&source, "Distinct From Stages")?
-        .split(',')
-        .map(str::trim)
-        .filter(|stage| !stage.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let verified_surfaces = parse_header_value(&source, "Verified Surfaces")?
-        .split(',')
-        .map(str::trim)
-        .filter(|surface| !surface.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let verified_requirement_ids = parse_header_value(&source, "Verified Requirement IDs")?
-        .split(',')
-        .map(str::trim)
-        .filter(|requirement_id| !requirement_id.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-    Ok(PlanFidelityReviewArtifact {
-        path: artifact_path_string.to_owned(),
-        fingerprint: sha256_hex(source.as_bytes()),
-        review_stage: parse_header_value(&source, "Review Stage")?,
-        review_verdict: parse_header_value(&source, "Review Verdict")?,
-        reviewed_plan_path,
-        reviewed_plan_revision,
-        reviewed_plan_fingerprint,
-        reviewed_spec_path,
-        reviewed_spec_revision,
-        reviewed_spec_fingerprint,
-        reviewer_source: parse_header_value(&source, "Reviewer Source")?,
-        reviewer_id: parse_header_value(&source, "Reviewer ID")?,
-        distinct_from_stages,
-        verified_surfaces,
-        verified_requirement_ids,
-    })
-}
-
-fn validate_plan_fidelity_review_artifact(
-    artifact: &PlanFidelityReviewArtifact,
-    plan: &crate::contracts::plan::PlanDocument,
-    spec: &SpecDocument,
-) -> Result<(), DiagnosticError> {
-    if artifact.reviewed_plan_path != plan.path
-        || artifact.reviewed_plan_revision != plan.plan_revision
-        || artifact.reviewed_plan_fingerprint != sha256_hex(plan.source.as_bytes())
-        || artifact.reviewed_spec_path != spec.path
-        || artifact.reviewed_spec_revision != spec.spec_revision
-        || artifact.reviewed_spec_fingerprint != sha256_hex(spec.source.as_bytes())
-    {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact does not match the current draft plan and approved spec revision and fingerprint.",
-        ));
-    }
-    if artifact.review_stage != PLAN_FIDELITY_REVIEW_STAGE {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must record `featureforge:plan-fidelity-review` as the Review Stage.",
-        ));
-    }
-    if artifact.review_verdict != "pass" {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must record `pass` as the Review Verdict before a receipt can be recorded.",
-        ));
-    }
-    if artifact.reviewer_source.trim().is_empty() || artifact.reviewer_id.trim().is_empty() {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must include non-empty Reviewer Source and Reviewer ID headers.",
-        ));
-    }
-    if !matches!(
-        artifact.reviewer_source.as_str(),
-        "fresh-context-subagent" | "cross-model"
-    ) {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must prove an independent reviewer source such as `fresh-context-subagent` or `cross-model`.",
-        ));
-    }
-    let distinct_from_stages = artifact
-        .distinct_from_stages
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if ![
-        "featureforge:writing-plans",
-        "featureforge:plan-eng-review",
-    ]
-    .iter()
-    .all(|stage| distinct_from_stages.contains(stage))
-    {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must declare distinction from both `featureforge:writing-plans` and `featureforge:plan-eng-review`.",
-        ));
-    }
-    let verified_surfaces = artifact
-        .verified_surfaces
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if !["requirement_index", "execution_topology"]
-        .iter()
-        .all(|surface| verified_surfaces.contains(surface))
-    {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must verify both `requirement_index` and `execution_topology`.",
-        ));
-    }
-    let verified_requirement_ids = artifact
-        .verified_requirement_ids
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let expected_requirement_ids = spec
-        .requirements
-        .iter()
-        .map(|requirement| requirement.id.clone())
-        .collect::<BTreeSet<_>>();
-    if verified_requirement_ids != expected_requirement_ids {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must enumerate the exact Requirement Index ids it verified.",
-        ));
-    }
-    Ok(())
-}
-
-fn ensure_plan_fidelity_source_spec_is_approved(spec: &SpecDocument) -> Result<(), DiagnosticError> {
-    if spec.workflow_state == "CEO Approved" && spec.last_reviewed_by == "plan-ceo-review" {
-        return Ok(());
-    }
-    Err(DiagnosticError::new(
-        FailureClass::InstructionParseFailed,
-        "Plan-fidelity review requires a workflow-valid CEO-approved source spec reviewed by plan-ceo-review.",
-    ))
 }
 
 fn plan_fidelity_gate_diagnostics(
