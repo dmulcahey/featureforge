@@ -6,10 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::contracts::plan::{PLAN_FIDELITY_REVIEW_STAGE, PlanDocument};
+use crate::cli::plan_execution::ExecutionTopologyArg;
+use crate::contracts::plan::{AnalyzePlanReport, PLAN_FIDELITY_REVIEW_STAGE, PlanDocument};
 use crate::contracts::spec::SpecDocument;
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::execution::harness::{ChunkingStrategy, EvaluatorPolicyName, ResetPolicy};
+use crate::execution::harness::{
+    ChunkingStrategy, EvaluatorPolicyName, ResetPolicy, TopologySelectionContext,
+};
 use crate::execution::state::{ExecutionContext, ExecutionRuntime, current_head_sha};
 use crate::git::sha256_hex;
 use crate::paths::RepoPath;
@@ -18,7 +21,7 @@ use crate::paths::write_atomic as write_atomic_file;
 const PREFLIGHT_ACCEPTANCE_DIR: &str = "execution-preflight";
 const PREFLIGHT_ACCEPTANCE_FILE: &str = "acceptance-state.json";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RecommendDecisionFlags {
     pub tasks_independent: String,
     pub isolated_agents_available: String,
@@ -37,6 +40,16 @@ pub struct RecommendOutput {
     pub reset_policy: ResetPolicy,
     pub review_stack: Vec<String>,
     pub policy_reason_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecutionTopologyRecommendation {
+    pub selected_topology: ExecutionTopologyArg,
+    pub recommended_skill: String,
+    pub reason: String,
+    pub decision_flags: RecommendDecisionFlags,
+    pub reason_codes: Vec<String>,
+    pub learned_downgrade_reused: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +84,140 @@ pub(crate) fn tasks_are_independent(plan_document: &PlanDocument) -> bool {
         }
     }
     true
+}
+
+fn plan_supports_worktree_parallel(report: &AnalyzePlanReport) -> bool {
+    report.execution_topology_valid
+        && report.parallel_lane_ownership_valid
+        && report.parallel_workspace_isolation_valid
+        && !report.parallel_worktree_groups.is_empty()
+}
+
+fn normalize_isolated_agents_available(value: &str) -> &'static str {
+    match value.trim() {
+        "available" | "yes" => "yes",
+        "unavailable" | "no" => "no",
+        _ => "unknown",
+    }
+}
+
+fn learned_guidance_matches(
+    report: &AnalyzePlanReport,
+    context: &TopologySelectionContext,
+) -> bool {
+    let Some(guidance) = context.learned_guidance.as_ref() else {
+        return false;
+    };
+    if guidance.approved_plan_revision != report.plan_revision {
+        return false;
+    }
+    if guidance.execution_context_key.trim().is_empty()
+        || context.execution_context_key.trim().is_empty()
+    {
+        return false;
+    }
+    guidance.execution_context_key == context.execution_context_key
+        && !guidance.primary_reason_class.trim().is_empty()
+}
+
+pub fn recommend_topology(
+    report: &AnalyzePlanReport,
+    context: &TopologySelectionContext,
+) -> ExecutionTopologyRecommendation {
+    let same_session_viable = match (
+        context.session_intent.as_str(),
+        context.workspace_prepared.as_str(),
+    ) {
+        ("stay", "yes") => "yes",
+        ("separate", _) | (_, "no") => "no",
+        _ => "unknown",
+    };
+    let isolated_agents_available = normalize_isolated_agents_available(
+        context.isolated_agents_available.as_str(),
+    );
+    let tasks_independent = if plan_supports_worktree_parallel(report) {
+        "yes"
+    } else {
+        "no"
+    };
+    let parallel_ready = plan_supports_worktree_parallel(report)
+        && isolated_agents_available == "yes"
+        && same_session_viable == "yes"
+        && context.workspace_prepared == "yes";
+    let learned_guidance_matches = learned_guidance_matches(report, context);
+    let learned_downgrade_reused =
+        learned_guidance_matches && !context.current_parallel_path_ready;
+    let restored_parallel_path =
+        learned_guidance_matches && context.current_parallel_path_ready && parallel_ready;
+
+    let (selected_topology, recommended_skill, reason, reason_codes) = if restored_parallel_path {
+        (
+            ExecutionTopologyArg::WorktreeBackedParallel,
+            String::from("featureforge:subagent-driven-development"),
+            String::from(
+                "Runtime restored the worktree-backed parallel topology because the current run is ready again.",
+            ),
+            vec![String::from("matching_downgrade_history_superseded")],
+        )
+    } else if parallel_ready && !learned_downgrade_reused {
+        (
+            ExecutionTopologyArg::WorktreeBackedParallel,
+            String::from("featureforge:subagent-driven-development"),
+            String::from(
+                "Runtime selected the worktree-backed parallel topology for the current approved plan.",
+            ),
+            vec![String::from("worktree_backed_parallel_ready")],
+        )
+    } else if learned_downgrade_reused {
+        (
+            ExecutionTopologyArg::ConservativeFallback,
+            String::from("featureforge:executing-plans"),
+            String::from(
+                "Runtime reused matching downgrade history and stayed conservative for this run.",
+            ),
+            vec![String::from("matching_downgrade_history_reused")],
+        )
+    } else {
+        let mut codes = Vec::new();
+        if !plan_supports_worktree_parallel(report) {
+            codes.push(String::from("conservative_fallback_parallel_unavailable"));
+        }
+        if isolated_agents_available != "yes" {
+            codes.push(String::from("conservative_fallback_isolated_agents_unavailable"));
+        }
+        if same_session_viable != "yes" {
+            codes.push(String::from("conservative_fallback_same_session_unavailable"));
+        }
+        if context.workspace_prepared != "yes" {
+            codes.push(String::from("conservative_fallback_workspace_unavailable"));
+        }
+        if codes.is_empty() {
+            codes.push(String::from("conservative_fallback_runtime_unavailable"));
+        }
+        (
+            ExecutionTopologyArg::ConservativeFallback,
+            String::from("featureforge:executing-plans"),
+            String::from(
+                "Runtime fell back conservatively because the current run does not satisfy worktree-backed parallel readiness.",
+            ),
+            codes,
+        )
+    };
+
+    ExecutionTopologyRecommendation {
+        selected_topology,
+        recommended_skill,
+        reason,
+        decision_flags: RecommendDecisionFlags {
+            tasks_independent: tasks_independent.to_owned(),
+            isolated_agents_available: isolated_agents_available.to_owned(),
+            session_intent: context.session_intent.clone(),
+            workspace_prepared: context.workspace_prepared.clone(),
+            same_session_viable: same_session_viable.to_owned(),
+        },
+        reason_codes,
+        learned_downgrade_reused,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

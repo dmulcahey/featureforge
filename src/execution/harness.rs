@@ -315,3 +315,21 @@ pub struct AuthoritativeHarnessState {
     pub downstream_freshness: DownstreamFreshnessSnapshot,
     pub reason_codes: Vec<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LearnedTopologyGuidance {
+    pub approved_plan_revision: u32,
+    pub execution_context_key: String,
+    pub primary_reason_class: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TopologySelectionContext {
+    pub execution_context_key: String,
+    pub isolated_agents_available: String,
+    pub session_intent: String,
+    pub workspace_prepared: String,
+    pub current_parallel_path_ready: bool,
+    #[serde(default)]
+    pub learned_guidance: Option<LearnedTopologyGuidance>,
+}

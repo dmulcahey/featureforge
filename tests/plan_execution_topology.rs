@@ -6,6 +6,10 @@ mod json_support;
 mod process_support;
 
 use assert_cmd::cargo::CommandCargoExt;
+use featureforge::cli::plan_execution::ExecutionTopologyArg;
+use featureforge::contracts::plan::{analyze_plan, AnalyzePlanReport};
+use featureforge::execution::harness::{LearnedTopologyGuidance, TopologySelectionContext};
+use featureforge::execution::topology::recommend_topology;
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
@@ -235,6 +239,28 @@ fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Val
     parse_json(&run(command, context), context)
 }
 
+fn topology_report(repo: &Path) -> AnalyzePlanReport {
+    analyze_plan(repo.join(SPEC_REL), repo.join(PLAN_REL)).expect("plan analysis should succeed")
+}
+
+fn topology_context(
+    execution_context_key: &str,
+    isolated_agents_available: &str,
+    session_intent: &str,
+    workspace_prepared: &str,
+    current_parallel_path_ready: bool,
+    learned_guidance: Option<LearnedTopologyGuidance>,
+) -> TopologySelectionContext {
+    TopologySelectionContext {
+        execution_context_key: execution_context_key.to_owned(),
+        isolated_agents_available: isolated_agents_available.to_owned(),
+        session_intent: session_intent.to_owned(),
+        workspace_prepared: workspace_prepared.to_owned(),
+        current_parallel_path_ready,
+        learned_guidance,
+    }
+}
+
 fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) {
     run_checked(
         {
@@ -361,6 +387,139 @@ fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_pr
             "recommend should not mutate preflight-owned {field}, got {value:?}"
         );
     }
+}
+
+#[test]
+fn runtime_topology_recommends_worktree_backed_parallel_when_the_plan_and_workspace_are_ready() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-worktree-backed-parallel");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let report = topology_report(repo);
+    let recommendation = recommend_topology(
+        &report,
+        &topology_context("main@base-a", "available", "stay", "yes", true, None),
+    );
+
+    assert_eq!(
+        recommendation.selected_topology,
+        ExecutionTopologyArg::WorktreeBackedParallel
+    );
+    assert_eq!(
+        recommendation.recommended_skill,
+        "featureforge:subagent-driven-development"
+    );
+    assert!(
+        recommendation
+            .reason
+            .to_lowercase()
+            .contains("worktree-backed parallel"),
+        "reason should explain why runtime selected the worktree-backed parallel topology"
+    );
+    assert!(
+        recommendation
+            .reason_codes
+            .iter()
+            .any(|code| code == "worktree_backed_parallel_ready"),
+        "parallel-ready topology should report the worktree-backed reason code"
+    );
+
+    let shell = run_shell_json(
+        repo,
+        state,
+        &[
+            "recommend",
+            "--plan",
+            PLAN_REL,
+            "--isolated-agents",
+            "available",
+            "--session-intent",
+            "stay",
+            "--workspace-prepared",
+            "yes",
+        ],
+        "shell recommend still available for current routing",
+    );
+    assert_eq!(shell["recommended_skill"], "featureforge:subagent-driven-development");
+}
+
+#[test]
+fn runtime_topology_falls_back_conservatively_when_worktrees_or_agents_are_not_ready() {
+    let (repo_dir, _state_dir) = init_repo("plan-execution-conservative-fallback");
+    let repo = repo_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let report = topology_report(repo);
+    let recommendation = recommend_topology(
+        &report,
+        &topology_context("main@base-a", "unavailable", "stay", "no", false, None),
+    );
+
+    assert_eq!(
+        recommendation.selected_topology,
+        ExecutionTopologyArg::ConservativeFallback
+    );
+    assert_eq!(recommendation.recommended_skill, "featureforge:executing-plans");
+    assert!(
+        recommendation
+            .reason
+            .to_lowercase()
+            .contains("conservative"),
+        "reason should explain the conservative fallback"
+    );
+    assert!(
+        recommendation
+            .reason_codes
+            .iter()
+            .any(|code| code.starts_with("conservative_fallback")),
+        "fallback topology should expose a conservative fallback reason code"
+    );
+}
+
+#[test]
+fn runtime_topology_reuses_matching_downgrade_history_for_same_context() {
+    let (repo_dir, _state_dir) = init_repo("plan-execution-downgrade-reuse");
+    let repo = repo_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let report = topology_report(repo);
+    let learned_guidance = LearnedTopologyGuidance {
+        approved_plan_revision: report.plan_revision,
+        execution_context_key: String::from("main@base-a"),
+        primary_reason_class: String::from("workspace_unavailable"),
+    };
+    let recommendation = recommend_topology(
+        &report,
+        &topology_context(
+            "main@base-a",
+            "available",
+            "stay",
+            "yes",
+            false,
+            Some(learned_guidance),
+        ),
+    );
+
+    assert_eq!(
+        recommendation.selected_topology,
+        ExecutionTopologyArg::ConservativeFallback
+    );
+    assert_eq!(recommendation.recommended_skill, "featureforge:executing-plans");
+    assert!(
+        recommendation.learned_downgrade_reused,
+        "matching downgrade history should be reused as conservative guidance"
+    );
+    assert!(
+        recommendation
+            .reason_codes
+            .iter()
+            .any(|code| code == "matching_downgrade_history_reused"),
+        "matching downgrade history should be visible in the runtime reason codes"
+    );
 }
 
 #[test]
