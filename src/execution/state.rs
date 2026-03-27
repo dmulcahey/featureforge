@@ -855,6 +855,34 @@ struct StatusAuthoritativeOverlay {
     handoff_required: Option<bool>,
     #[serde(default)]
     open_failed_criteria: Vec<String>,
+    #[serde(default)]
+    write_authority_state: Option<String>,
+    #[serde(default)]
+    write_authority_holder: Option<String>,
+    #[serde(default)]
+    write_authority_worktree: Option<String>,
+    #[serde(default)]
+    repo_state_baseline_head_sha: Option<String>,
+    #[serde(default)]
+    repo_state_baseline_worktree_fingerprint: Option<String>,
+    #[serde(default)]
+    repo_state_drift_state: Option<String>,
+    #[serde(default)]
+    dependency_index_state: Option<String>,
+    #[serde(default)]
+    final_review_state: Option<String>,
+    #[serde(default)]
+    browser_qa_state: Option<String>,
+    #[serde(default)]
+    release_docs_state: Option<String>,
+    #[serde(default)]
+    last_final_review_artifact_fingerprint: Option<String>,
+    #[serde(default)]
+    last_browser_qa_artifact_fingerprint: Option<String>,
+    #[serde(default)]
+    last_release_docs_artifact_fingerprint: Option<String>,
+    #[serde(default)]
+    reason_codes: Vec<String>,
 }
 
 fn apply_authoritative_status_overlay(
@@ -986,6 +1014,62 @@ fn apply_authoritative_status_overlay(
     if !overlay.open_failed_criteria.is_empty() {
         status.open_failed_criteria = overlay.open_failed_criteria;
     }
+    if let Some(value) = normalize_optional_overlay_value(overlay.write_authority_state.as_deref()) {
+        status.write_authority_state = value.to_owned();
+    }
+    status.write_authority_holder = overlay
+        .write_authority_holder
+        .filter(|value| !value.trim().is_empty());
+    status.write_authority_worktree = overlay
+        .write_authority_worktree
+        .filter(|value| !value.trim().is_empty());
+    status.repo_state_baseline_head_sha = overlay
+        .repo_state_baseline_head_sha
+        .filter(|value| !value.trim().is_empty());
+    status.repo_state_baseline_worktree_fingerprint = overlay
+        .repo_state_baseline_worktree_fingerprint
+        .filter(|value| !value.trim().is_empty());
+    if let Some(value) = normalize_optional_overlay_value(overlay.repo_state_drift_state.as_deref())
+    {
+        status.repo_state_drift_state = value.to_owned();
+    }
+    if let Some(value) = normalize_optional_overlay_value(overlay.dependency_index_state.as_deref())
+    {
+        status.dependency_index_state = value.to_owned();
+    }
+    if let Some(value) = parse_optional_downstream_freshness_state(
+        overlay.final_review_state.as_deref(),
+        "final_review_state",
+        &state_path,
+    )? {
+        status.final_review_state = value;
+    }
+    if let Some(value) = parse_optional_downstream_freshness_state(
+        overlay.browser_qa_state.as_deref(),
+        "browser_qa_state",
+        &state_path,
+    )? {
+        status.browser_qa_state = value;
+    }
+    if let Some(value) = parse_optional_downstream_freshness_state(
+        overlay.release_docs_state.as_deref(),
+        "release_docs_state",
+        &state_path,
+    )? {
+        status.release_docs_state = value;
+    }
+    status.last_final_review_artifact_fingerprint = overlay
+        .last_final_review_artifact_fingerprint
+        .filter(|value| !value.trim().is_empty());
+    status.last_browser_qa_artifact_fingerprint = overlay
+        .last_browser_qa_artifact_fingerprint
+        .filter(|value| !value.trim().is_empty());
+    status.last_release_docs_artifact_fingerprint = overlay
+        .last_release_docs_artifact_fingerprint
+        .filter(|value| !value.trim().is_empty());
+    if !overlay.reason_codes.is_empty() {
+        status.reason_codes = parse_reason_codes(&overlay.reason_codes, "reason_codes", &state_path)?;
+    }
 
     Ok(())
 }
@@ -1020,6 +1104,16 @@ fn parse_aggregate_evaluation_state(value: &str) -> Option<AggregateEvaluationSt
         "fail" => Some(AggregateEvaluationState::Fail),
         "blocked" => Some(AggregateEvaluationState::Blocked),
         "pending" => Some(AggregateEvaluationState::Pending),
+        _ => None,
+    }
+}
+
+fn parse_downstream_freshness_state(value: &str) -> Option<DownstreamFreshnessState> {
+    match value {
+        "not_required" => Some(DownstreamFreshnessState::NotRequired),
+        "missing" => Some(DownstreamFreshnessState::Missing),
+        "fresh" => Some(DownstreamFreshnessState::Fresh),
+        "stale" => Some(DownstreamFreshnessState::Stale),
         _ => None,
     }
 }
@@ -1163,6 +1257,48 @@ fn parse_optional_evaluation_verdict(
             "must be pass, fail, or blocked",
         )
     })
+}
+
+fn parse_optional_downstream_freshness_state(
+    value: Option<&str>,
+    field_name: &str,
+    state_path: &Path,
+) -> Result<Option<DownstreamFreshnessState>, JsonFailure> {
+    let Some(value) = normalize_optional_overlay_value(value) else {
+        return Ok(None);
+    };
+    parse_downstream_freshness_state(value)
+        .map(Some)
+        .ok_or_else(|| {
+            malformed_overlay_field(
+                state_path,
+                field_name,
+                value,
+                "must be not_required, missing, fresh, or stale",
+            )
+        })
+}
+
+fn parse_reason_codes(
+    values: &[String],
+    field_name: &str,
+    state_path: &Path,
+) -> Result<Vec<String>, JsonFailure> {
+    values
+        .iter()
+        .map(|value| {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(malformed_overlay_field(
+                    state_path,
+                    field_name,
+                    "<empty>",
+                    "must contain non-empty strings",
+                ));
+            }
+            Ok(value.to_owned())
+        })
+        .collect()
 }
 
 fn pending_chunk_id(context: &ExecutionContext) -> ChunkId {

@@ -832,6 +832,79 @@ fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_
 }
 
 #[test]
+fn status_projects_authoritative_state_for_write_repo_dependency_downstream_and_reason_codes() {
+    let (repo_dir, state_dir) = init_repo("execution-harness-state-authoritative-projection");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 17,
+            "write_authority_state": "held_by_other",
+            "write_authority_holder": "controller-B",
+            "write_authority_worktree": "worktree-B",
+            "repo_state_baseline_head_sha": "1111111111111111111111111111111111111111",
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "repo_state_drift_state": "drifted",
+            "dependency_index_state": "inconsistent",
+            "final_review_state": "stale",
+            "browser_qa_state": "missing",
+            "release_docs_state": "fresh",
+            "last_final_review_artifact_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "last_browser_qa_artifact_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "last_release_docs_artifact_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "reason_codes": ["write_authority_conflict", "blocked_on_plan_revision"]
+        }),
+    );
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "plan execution status authoritative projection",
+    );
+
+    assert_eq!(status["write_authority_state"], "held_by_other");
+    assert_eq!(status["write_authority_holder"], "controller-B");
+    assert_eq!(status["write_authority_worktree"], "worktree-B");
+    assert_eq!(
+        status["repo_state_baseline_head_sha"],
+        "1111111111111111111111111111111111111111"
+    );
+    assert_eq!(
+        status["repo_state_baseline_worktree_fingerprint"],
+        "2222222222222222222222222222222222222222222222222222222222222222"
+    );
+    assert_eq!(status["repo_state_drift_state"], "drifted");
+    assert_eq!(status["dependency_index_state"], "inconsistent");
+    assert_eq!(status["final_review_state"], "stale");
+    assert_eq!(status["browser_qa_state"], "missing");
+    assert_eq!(status["release_docs_state"], "fresh");
+    assert_eq!(
+        status["last_final_review_artifact_fingerprint"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(
+        status["last_browser_qa_artifact_fingerprint"],
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    );
+    assert_eq!(
+        status["last_release_docs_artifact_fingerprint"],
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    );
+    assert_eq!(
+        status["reason_codes"],
+        json!(["write_authority_conflict", "blocked_on_plan_revision"])
+    );
+}
+
+#[test]
 fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
     let (repo_dir, state_dir) = init_repo("execution-harness-state-overlay-validation");
     let repo = repo_dir.path();
