@@ -2354,6 +2354,82 @@ fn preflight_replay_mints_new_run_identity_when_accepted_policy_tuple_changes() 
 }
 
 #[test]
+fn preflight_blocks_unresolved_authoritative_mutation_recovery_before_acceptance() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-recovery-required");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout execution-preflight-fixture");
+
+    let contract_rel = "docs/featureforge/execution-evidence/preflight-recovery-contract.md";
+    let contract_fingerprint =
+        write_execution_contract_artifact_custom(repo, contract_rel, 18, "[]", 1, 1, None);
+    let authoritative_contract_file = format!("contract-{contract_fingerprint}.md");
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch_name(repo),
+            &authoritative_contract_file,
+        ),
+        &fs::read_to_string(repo.join(contract_rel)).expect("contract source should be readable"),
+    );
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 17,
+            "active_contract_path": authoritative_contract_file,
+            "active_contract_fingerprint": contract_fingerprint,
+            "required_evaluator_kinds": [],
+            "completed_evaluator_kinds": [],
+            "pending_evaluator_kinds": [],
+            "non_passing_evaluator_kinds": [],
+            "aggregate_evaluation_state": "pending",
+            "current_chunk_retry_count": 0,
+            "current_chunk_retry_budget": 1,
+            "current_chunk_pivot_threshold": 1,
+            "handoff_required": false,
+            "open_failed_criteria": []
+        }),
+    );
+
+    let acceptance_path = preflight_acceptance_state_path(repo, state);
+    assert!(
+        !acceptance_path.exists(),
+        "preflight acceptance state should not exist before unresolved recovery fixture"
+    );
+
+    let preflight = run_rust_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight with unresolved authoritative mutation recovery fixture",
+    );
+    assert_eq!(preflight["allowed"], false);
+    assert_eq!(preflight["failure_class"], "ExecutionStateNotReady");
+    assert!(
+        preflight["reason_codes"].as_array().is_some_and(|codes| codes
+            .iter()
+            .any(|code| code.as_str() == Some("authoritative_mutation_recovery_required"))),
+        "preflight should expose authoritative_mutation_recovery_required when authoritative history is ahead of state, got {preflight}"
+    );
+    assert!(
+        !acceptance_path.exists(),
+        "preflight must not persist acceptance state while authoritative mutation recovery is unresolved"
+    );
+}
+
+#[test]
 fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_changes() {
     let (repo_dir, state_dir) = init_repo("plan-execution-preflight-stable-identities");
     let repo = repo_dir.path();

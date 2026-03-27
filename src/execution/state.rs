@@ -25,8 +25,9 @@ use crate::git::{
     derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
 };
 use crate::paths::{
-    branch_storage_key, featureforge_state_dir, harness_branch_root, harness_state_path,
-    normalize_repo_relative_path, normalize_whitespace, write_atomic as write_atomic_file, RepoPath,
+    branch_storage_key, featureforge_state_dir, harness_authoritative_artifacts_dir,
+    harness_branch_root, harness_state_path, normalize_repo_relative_path, normalize_whitespace,
+    write_atomic as write_atomic_file, RepoPath,
 };
 use crate::repo_safety::RepoSafetyRuntime;
 use crate::workflow::manifest::{load_manifest_read_only, ManifestLoadResult, WorkflowManifest};
@@ -1486,9 +1487,15 @@ struct PreflightAuthoritativeState {
     harness_phase: Option<String>,
     #[serde(default)]
     handoff_required: bool,
+    #[serde(default)]
+    latest_authoritative_sequence: Option<u64>,
+    #[serde(default)]
+    authoritative_sequence: Option<u64>,
 }
 
-fn preflight_requires_authoritative_handoff(context: &ExecutionContext) -> Result<bool, JsonFailure> {
+fn load_preflight_authoritative_state(
+    context: &ExecutionContext,
+) -> Result<Option<PreflightAuthoritativeState>, JsonFailure> {
     let state_path = harness_state_path(
         &context.runtime.state_dir,
         &context.runtime.repo_slug,
@@ -1496,7 +1503,7 @@ fn preflight_requires_authoritative_handoff(context: &ExecutionContext) -> Resul
     );
     let source = match fs::read_to_string(&state_path) {
         Ok(source) => source,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(JsonFailure::new(
                 FailureClass::MalformedExecutionState,
@@ -1507,7 +1514,7 @@ fn preflight_requires_authoritative_handoff(context: &ExecutionContext) -> Resul
             ));
         }
     };
-    let overlay: PreflightAuthoritativeState = serde_json::from_str(&source).map_err(|error| {
+    let overlay = serde_json::from_str(&source).map_err(|error| {
         JsonFailure::new(
             FailureClass::MalformedExecutionState,
             format!(
@@ -1517,12 +1524,91 @@ fn preflight_requires_authoritative_handoff(context: &ExecutionContext) -> Resul
         )
     })?;
 
+    Ok(Some(overlay))
+}
+
+fn preflight_requires_authoritative_handoff(context: &ExecutionContext) -> Result<bool, JsonFailure> {
+    let Some(overlay) = load_preflight_authoritative_state(context)? else {
+        return Ok(false);
+    };
     let phase_requires_handoff = overlay
         .harness_phase
         .as_deref()
         .map(str::trim)
         .is_some_and(|phase| phase == "handoff_required");
     Ok(overlay.handoff_required || phase_requires_handoff)
+}
+
+fn parse_authoritative_sequence_from_artifact(source: &str) -> Option<u64> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("**Authoritative Sequence:**")
+            .and_then(|value| value.trim().parse::<u64>().ok())
+    })
+}
+
+fn latest_authoritative_artifact_sequence(context: &ExecutionContext) -> Result<Option<u64>, JsonFailure> {
+    let artifacts_dir = harness_authoritative_artifacts_dir(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    );
+    let entries = match fs::read_dir(&artifacts_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                format!(
+                    "Could not read authoritative artifact directory {}: {error}",
+                    artifacts_dir.display()
+                ),
+            ));
+        }
+    };
+
+    let mut max_sequence: Option<u64> = None;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                format!(
+                    "Could not enumerate authoritative artifacts in {}: {error}",
+                    artifacts_dir.display()
+                ),
+            )
+        })?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let source = fs::read_to_string(&path).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                format!("Could not read authoritative artifact {}: {error}", path.display()),
+            )
+        })?;
+        if let Some(sequence) = parse_authoritative_sequence_from_artifact(&source) {
+            max_sequence = Some(max_sequence.map_or(sequence, |current| current.max(sequence)));
+        }
+    }
+    Ok(max_sequence)
+}
+
+fn preflight_requires_authoritative_mutation_recovery(
+    context: &ExecutionContext,
+) -> Result<bool, JsonFailure> {
+    let Some(overlay) = load_preflight_authoritative_state(context)? else {
+        return Ok(false);
+    };
+    let persisted_sequence = overlay
+        .latest_authoritative_sequence
+        .or(overlay.authoritative_sequence)
+        .unwrap_or(INITIAL_AUTHORITATIVE_SEQUENCE);
+    let Some(artifact_sequence) = latest_authoritative_artifact_sequence(context)? else {
+        return Ok(false);
+    };
+    Ok(artifact_sequence > persisted_sequence)
 }
 
 enum PreflightWriteAuthorityState {
@@ -1630,6 +1716,21 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
             "authoritative_state_unavailable",
             error.message,
             "Restore authoritative harness state readability and validity before retrying preflight.",
+        ),
+    }
+    match preflight_requires_authoritative_mutation_recovery(context) {
+        Ok(true) => gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "authoritative_mutation_recovery_required",
+            "Execution preflight cannot continue while authoritative artifact history is ahead of persisted harness state.",
+            "Recover interrupted authoritative mutation state before retrying preflight.",
+        ),
+        Ok(false) => {}
+        Err(error) => gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "authoritative_state_unavailable",
+            error.message,
+            "Restore authoritative harness state and artifact readability before retrying preflight.",
         ),
     }
 
