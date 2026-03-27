@@ -7,7 +7,7 @@ pub mod runtime;
 pub mod spec;
 
 pub use harness::{
-    DowngradeBlockingEvidence, DowngradeOperatorImpact, DowngradeOperatorImpactSeverity,
-    DowngradeReasonClass, ExecutionTopologyDowngradeDetail, ExecutionTopologyDowngradeRecord,
-    WorktreeLease, WorktreeLeaseState,
+    BlockingEvidenceReference, DowngradeBlockingEvidence, DowngradeOperatorImpact,
+    DowngradeOperatorImpactSeverity, DowngradeReasonClass, ExecutionTopologyDowngradeDetail,
+    ExecutionTopologyDowngradeRecord, WorktreeLease, WorktreeLeaseState,
 };

@@ -6,8 +6,8 @@ mod process_support;
 use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::harness::{
     read_evaluation_report, read_evidence_artifact, read_execution_contract,
-    read_execution_handoff, DowngradeReasonClass, ExecutionTopologyDowngradeRecord, WorktreeLease,
-    WorktreeLeaseState,
+    read_execution_handoff, BlockingEvidenceReference, DowngradeReasonClass,
+    ExecutionTopologyDowngradeRecord, WorktreeLease, WorktreeLeaseState,
 };
 use featureforge::contracts::packet::{
     build_harness_contract_provenance, build_task_packet_with_timestamp, TaskPacket,
@@ -217,6 +217,10 @@ fn markdown_list(values: &[&str]) -> String {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+fn blocking_evidence_reference(value: &str) -> BlockingEvidenceReference {
+    BlockingEvidenceReference::try_new(value).expect("valid blocking evidence reference")
 }
 
 fn replace_section_between_markers(
@@ -1593,6 +1597,34 @@ fn worktree_lease_contract_rejects_unknown_lifecycle_state() {
 }
 
 #[test]
+fn worktree_lease_contract_rejects_terminal_state_without_reviewed_checkpoint() {
+    for lease_state in ["reconciled", "cleaned"] {
+        let lease = json!({
+            "lease_version": 1,
+            "authoritative_sequence": 21,
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1,
+            "execution_unit_id": "unit-a",
+            "source_branch": "feature/task-5",
+            "authoritative_integration_branch": "main",
+            "worktree_path": "/tmp/task5-worktree",
+            "repo_state_baseline_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "repo_state_baseline_worktree_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "lease_state": lease_state,
+            "cleanup_state": "pending",
+            "generated_by": "featureforge:executing-plans",
+            "generated_at": "2026-03-27T21:15:21Z",
+            "lease_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        });
+
+        assert!(
+            serde_json::from_value::<WorktreeLease>(lease).is_err(),
+            "terminal leases must fail closed without reviewed checkpoint provenance"
+        );
+    }
+}
+
+#[test]
 fn downgrade_record_contract_exposes_closed_reason_class_vocabulary() {
     let reason_classes = DowngradeReasonClass::ALL
         .iter()
@@ -1695,7 +1727,7 @@ fn downgrade_record_contract_rejects_missing_blocking_evidence_summary() {
             affected_units: vec![String::from("task-a")],
             blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
                 summary: String::new(),
-                references: vec![String::from("artifact:lease-1")],
+                references: vec![blocking_evidence_reference("artifact:lease-1")],
             },
             operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
                 severity:
@@ -1723,40 +1755,35 @@ fn downgrade_record_contract_rejects_missing_blocking_evidence_summary() {
 
 #[test]
 fn downgrade_record_contract_rejects_malformed_blocking_evidence_reference() {
-    let downgrade = ExecutionTopologyDowngradeRecord {
-        record_version: 1,
-        authoritative_sequence: 88,
-        source_plan_path: PLAN_REL.to_owned(),
-        source_plan_revision: 1,
-        execution_context_key: String::from("dm/todos-task5-lease-lane:main"),
-        primary_reason_class: DowngradeReasonClass::ReconcileConflict,
-        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
-            trigger_summary: String::from("parallel execution became unsafe"),
-            affected_units: vec![String::from("task-a")],
-            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
-                summary: String::from("conflict observed during reconcile"),
-                references: vec![String::from("not-a-locator")],
+    let downgrade = json!({
+        "record_version": 1,
+        "authoritative_sequence": 88,
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_context_key": "dm/todos-task5-lease-lane:main",
+        "primary_reason_class": "reconcile_conflict",
+        "detail": {
+            "trigger_summary": "parallel execution became unsafe",
+            "affected_units": ["task-a"],
+            "blocking_evidence": {
+                "summary": "conflict observed during reconcile",
+                "references": ["not-a-locator"]
             },
-            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
-                severity:
-                    featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Warning,
-                changed_or_blocked_stage: String::from("execution"),
-                expected_response: String::from("downgrade the slice"),
+            "operator_impact": {
+                "severity": "warning",
+                "changed_or_blocked_stage": "execution",
+                "expected_response": "downgrade the slice"
             },
-            notes: vec![],
+            "notes": []
         },
-        rerun_guidance_superseded: false,
-        generated_by: String::from("featureforge:executing-plans"),
-        generated_at: String::from("2026-03-27T21:15:21Z"),
-        record_fingerprint: String::from(
-            "9999999999999999999999999999999999999999999999999999999999999999",
-        ),
-    };
+        "rerun_guidance_superseded": false,
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T21:15:21Z",
+        "record_fingerprint": "9999999999999999999999999999999999999999999999999999999999999999"
+    });
 
-    let error = validate_execution_topology_downgrade_record(&downgrade)
-        .expect_err("malformed blocking evidence references should fail");
     assert!(
-        error.message.contains("blocking_evidence.references[0]"),
-        "malformed evidence locators should be rejected explicitly"
+        serde_json::from_value::<ExecutionTopologyDowngradeRecord>(downgrade).is_err(),
+        "malformed evidence locators must fail closed during deserialization"
     );
 }

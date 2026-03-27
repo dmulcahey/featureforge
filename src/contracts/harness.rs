@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::convert::TryFrom;
 use std::fs;
 use std::path::Path;
 
@@ -97,9 +98,59 @@ impl DowngradeOperatorImpactSeverity {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(try_from = "String", into = "String")]
+pub struct BlockingEvidenceReference(String);
+
+impl BlockingEvidenceReference {
+    pub fn try_new(value: impl Into<String>) -> Result<Self, String> {
+        Self::try_from(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for BlockingEvidenceReference {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let trimmed = value.trim();
+        if trimmed.is_empty()
+            || trimmed != value
+            || trimmed.chars().any(char::is_whitespace)
+            || trimmed.split_once(':').is_none()
+        {
+            return Err(String::from(
+                "BlockingEvidenceReference must be a whitespace-free scheme:payload locator.",
+            ));
+        }
+
+        let Some((scheme, payload)) = trimmed.split_once(':') else {
+            return Err(String::from(
+                "BlockingEvidenceReference must be a whitespace-free scheme:payload locator.",
+            ));
+        };
+        if scheme.trim().is_empty() || payload.trim().is_empty() {
+            return Err(String::from(
+                "BlockingEvidenceReference must be a whitespace-free scheme:payload locator.",
+            ));
+        }
+
+        Ok(Self(value))
+    }
+}
+
+impl From<BlockingEvidenceReference> for String {
+    fn from(reference: BlockingEvidenceReference) -> Self {
+        reference.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DowngradeBlockingEvidence {
     pub summary: String,
-    pub references: Vec<String>,
+    pub references: Vec<BlockingEvidenceReference>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -135,6 +186,7 @@ pub struct ExecutionTopologyDowngradeRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(try_from = "WorktreeLeaseSerde", into = "WorktreeLeaseSerde")]
 pub struct WorktreeLease {
     pub lease_version: u32,
     pub authoritative_sequence: u64,
@@ -152,6 +204,102 @@ pub struct WorktreeLease {
     pub generated_by: String,
     pub generated_at: String,
     pub lease_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+struct WorktreeLeaseSerde {
+    pub lease_version: u32,
+    pub authoritative_sequence: u64,
+    pub source_plan_path: String,
+    pub source_plan_revision: u32,
+    pub execution_unit_id: String,
+    pub source_branch: String,
+    pub authoritative_integration_branch: String,
+    pub worktree_path: String,
+    pub repo_state_baseline_head_sha: String,
+    pub repo_state_baseline_worktree_fingerprint: String,
+    pub lease_state: WorktreeLeaseState,
+    pub cleanup_state: String,
+    pub reviewed_checkpoint_commit_sha: Option<String>,
+    pub generated_by: String,
+    pub generated_at: String,
+    pub lease_fingerprint: String,
+}
+
+impl TryFrom<WorktreeLeaseSerde> for WorktreeLease {
+    type Error = String;
+
+    fn try_from(raw: WorktreeLeaseSerde) -> Result<Self, Self::Error> {
+        validate_worktree_lease_reviewed_checkpoint(
+            raw.lease_state,
+            raw.reviewed_checkpoint_commit_sha.as_deref(),
+        )?;
+
+        Ok(Self {
+            lease_version: raw.lease_version,
+            authoritative_sequence: raw.authoritative_sequence,
+            source_plan_path: raw.source_plan_path,
+            source_plan_revision: raw.source_plan_revision,
+            execution_unit_id: raw.execution_unit_id,
+            source_branch: raw.source_branch,
+            authoritative_integration_branch: raw.authoritative_integration_branch,
+            worktree_path: raw.worktree_path,
+            repo_state_baseline_head_sha: raw.repo_state_baseline_head_sha,
+            repo_state_baseline_worktree_fingerprint: raw.repo_state_baseline_worktree_fingerprint,
+            lease_state: raw.lease_state,
+            cleanup_state: raw.cleanup_state,
+            reviewed_checkpoint_commit_sha: raw.reviewed_checkpoint_commit_sha,
+            generated_by: raw.generated_by,
+            generated_at: raw.generated_at,
+            lease_fingerprint: raw.lease_fingerprint,
+        })
+    }
+}
+
+impl From<WorktreeLease> for WorktreeLeaseSerde {
+    fn from(lease: WorktreeLease) -> Self {
+        Self {
+            lease_version: lease.lease_version,
+            authoritative_sequence: lease.authoritative_sequence,
+            source_plan_path: lease.source_plan_path,
+            source_plan_revision: lease.source_plan_revision,
+            execution_unit_id: lease.execution_unit_id,
+            source_branch: lease.source_branch,
+            authoritative_integration_branch: lease.authoritative_integration_branch,
+            worktree_path: lease.worktree_path,
+            repo_state_baseline_head_sha: lease.repo_state_baseline_head_sha,
+            repo_state_baseline_worktree_fingerprint: lease
+                .repo_state_baseline_worktree_fingerprint,
+            lease_state: lease.lease_state,
+            cleanup_state: lease.cleanup_state,
+            reviewed_checkpoint_commit_sha: lease.reviewed_checkpoint_commit_sha,
+            generated_by: lease.generated_by,
+            generated_at: lease.generated_at,
+            lease_fingerprint: lease.lease_fingerprint,
+        }
+    }
+}
+
+fn validate_worktree_lease_reviewed_checkpoint(
+    lease_state: WorktreeLeaseState,
+    reviewed_checkpoint_commit_sha: Option<&str>,
+) -> Result<(), String> {
+    if let Some(reviewed_checkpoint_commit_sha) = reviewed_checkpoint_commit_sha {
+        if reviewed_checkpoint_commit_sha.trim().is_empty() {
+            return Err(String::from(
+                "WorktreeLease is missing non-empty reviewed_checkpoint_commit_sha.",
+            ));
+        }
+        return Ok(());
+    }
+
+    if matches!(lease_state, WorktreeLeaseState::Open) {
+        return Ok(());
+    }
+
+    Err(String::from(
+        "WorktreeLease must include reviewed_checkpoint_commit_sha while lease_state is not open.",
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]

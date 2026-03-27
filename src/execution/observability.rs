@@ -265,7 +265,7 @@ pub fn validate_execution_topology_downgrade_detail(
 fn validate_blocking_evidence(evidence: &DowngradeBlockingEvidence) -> Result<(), JsonFailure> {
     require_non_empty(&evidence.summary, "blocking_evidence.summary")?;
     for (index, reference) in evidence.references.iter().enumerate() {
-        validate_blocking_evidence_reference(reference, index)?;
+        validate_blocking_evidence_reference(reference.as_str(), index)?;
     }
     Ok(())
 }

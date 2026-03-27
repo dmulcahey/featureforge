@@ -7,7 +7,8 @@ mod process_support;
 
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::contracts::harness::{
-    DowngradeReasonClass, ExecutionTopologyDowngradeRecord, WorktreeLease, WorktreeLeaseState,
+    BlockingEvidenceReference, DowngradeReasonClass, ExecutionTopologyDowngradeRecord,
+    WorktreeLease, WorktreeLeaseState,
 };
 use featureforge::execution::leases::{
     is_worktree_lease_terminal_state, validate_worktree_lease, worktree_lease_states,
@@ -153,6 +154,10 @@ Task 1
 "#
         ),
     );
+}
+
+fn blocking_evidence_reference(value: &str) -> BlockingEvidenceReference {
+    BlockingEvidenceReference::try_new(value).expect("valid blocking evidence reference")
 }
 
 fn branch_name(repo: &Path) -> String {
@@ -483,7 +488,7 @@ fn downgrade_rerun_guidance_uses_primary_reason_class_only() {
             affected_units: vec![String::from("task-a")],
             blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
                 summary: String::from("conflict observed during reconcile"),
-                references: vec![String::from("artifact:lease-1")],
+                references: vec![blocking_evidence_reference("artifact:lease-1")],
             },
             operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
                 severity:
@@ -506,7 +511,7 @@ fn downgrade_rerun_guidance_uses_primary_reason_class_only() {
             affected_units: vec![String::from("task-b")],
             blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
                 summary: String::from("different evidence"),
-                references: vec![String::from("artifact:lease-2")],
+                references: vec![blocking_evidence_reference("artifact:lease-2")],
             },
             operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
                 severity: featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Info,
@@ -549,7 +554,7 @@ fn downgrade_rerun_guidance_distinguishes_superseded_records() {
             affected_units: vec![String::from("task-a")],
             blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
                 summary: String::from("conflict observed during reconcile"),
-                references: vec![String::from("artifact:lease-1")],
+                references: vec![blocking_evidence_reference("artifact:lease-1")],
             },
             operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
                 severity:
@@ -598,7 +603,7 @@ fn downgrade_rerun_guidance_persists_through_json_round_trip() {
             affected_units: vec![String::from("task-b")],
             blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
                 summary: String::from("temporary worktree was removed"),
-                references: vec![String::from("lease:worktree-1")],
+                references: vec![blocking_evidence_reference("lease:worktree-1")],
             },
             operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
                 severity:
