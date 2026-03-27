@@ -575,6 +575,53 @@ fn runtime_topology_reuses_matching_downgrade_history_for_same_context() {
 }
 
 #[test]
+fn runtime_topology_supersedes_downgrade_history_when_the_blocker_clears() {
+    let (repo_dir, _state_dir) = init_repo("plan-execution-downgrade-recovery");
+    let repo = repo_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let report = topology_report(repo);
+    let learned_guidance = LearnedTopologyGuidance {
+        approved_plan_revision: report.plan_revision,
+        execution_context_key: String::from("main@base-a"),
+        primary_reason_class: String::from("workspace_unavailable"),
+    };
+    let recommendation = recommend_topology(
+        &report,
+        &topology_context(
+            "main@base-a",
+            true,
+            "available",
+            "stay",
+            "yes",
+            true,
+            Some(learned_guidance),
+        ),
+    );
+
+    assert_eq!(
+        recommendation.selected_topology,
+        ExecutionTopologyArg::WorktreeBackedParallel
+    );
+    assert_eq!(
+        recommendation.recommended_skill,
+        "featureforge:subagent-driven-development"
+    );
+    assert!(
+        !recommendation.learned_downgrade_reused,
+        "restored runs should supersede old conservative guidance rather than reuse it"
+    );
+    assert!(
+        recommendation
+            .reason_codes
+            .iter()
+            .any(|code| code == "matching_downgrade_history_superseded"),
+        "recovery should explicitly supersede the learned downgrade history"
+    );
+}
+
+#[test]
 fn runtime_topology_serializes_selected_topology_with_contract_values() {
     let serialized = serde_json::to_value(ExecutionTopologyArg::WorktreeBackedParallel)
         .expect("topology enum should serialize");

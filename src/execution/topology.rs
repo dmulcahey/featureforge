@@ -128,12 +128,30 @@ fn current_parallel_blocker_reason_class(
 fn learned_guidance_matches(
     report: &AnalyzePlanReport,
     context: &TopologySelectionContext,
-    current_blocker_reason_class: Option<&str>,
 ) -> bool {
     let Some(guidance): Option<&LearnedTopologyGuidance> = context.learned_guidance.as_ref() else {
         return false;
     };
+    if guidance.approved_plan_revision != report.plan_revision {
+        return false;
+    }
+    if guidance.execution_context_key.trim().is_empty()
+        || context.execution_context_key.trim().is_empty()
+    {
+        return false;
+    }
+    guidance.execution_context_key == context.execution_context_key
+}
+
+fn learned_guidance_stale_reuse_matches(
+    report: &AnalyzePlanReport,
+    context: &TopologySelectionContext,
+    current_blocker_reason_class: Option<&str>,
+) -> bool {
     let Some(current_blocker_reason_class) = current_blocker_reason_class else {
+        return false;
+    };
+    let Some(guidance): Option<&LearnedTopologyGuidance> = context.learned_guidance.as_ref() else {
         return false;
     };
     if guidance.approved_plan_revision != report.plan_revision {
@@ -169,10 +187,11 @@ pub fn recommend_topology(
         && isolated_agents_available == "yes"
         && context.workspace_prepared == "yes";
     let current_blocker_reason_class = current_parallel_blocker_reason_class(report, context);
-    let learned_guidance_matches =
-        learned_guidance_matches(report, context, current_blocker_reason_class);
+    let learned_guidance_matches = learned_guidance_matches(report, context);
+    let learned_guidance_stale_reuse_matches =
+        learned_guidance_stale_reuse_matches(report, context, current_blocker_reason_class);
     let learned_downgrade_reused =
-        learned_guidance_matches && !context.current_parallel_path_ready;
+        learned_guidance_stale_reuse_matches && !context.current_parallel_path_ready;
     let restored_parallel_path =
         learned_guidance_matches && context.current_parallel_path_ready && worktree_parallel_available;
 
