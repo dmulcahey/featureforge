@@ -2242,6 +2242,65 @@ fn preflight_accepts_default_policy_snapshot_and_replays_same_run_identity_in_st
 }
 
 #[test]
+fn preflight_replay_mints_new_run_identity_when_authoritative_baseline_changes() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-baseline-replay");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let after_first_preflight = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after first preflight baseline acceptance",
+    );
+    let first_run_id = after_first_preflight["execution_run_id"]
+        .as_str()
+        .expect("status should expose execution_run_id after first preflight acceptance")
+        .to_owned();
+    let first_head = current_head_sha(repo);
+
+    write_file(
+        &repo.join("docs/preflight-baseline-change.md"),
+        "# baseline change for replay-key coverage\n",
+    );
+    let mut git_add = Command::new("git");
+    git_add
+        .args(["add", "docs/preflight-baseline-change.md"])
+        .current_dir(repo);
+    run_checked(git_add, "git add preflight baseline change");
+    let mut git_commit = Command::new("git");
+    git_commit
+        .args(["commit", "-m", "baseline change for preflight replay coverage"])
+        .current_dir(repo);
+    run_checked(git_commit, "git commit preflight baseline change");
+
+    let new_head = current_head_sha(repo);
+    assert_ne!(
+        new_head, first_head,
+        "fixture should move HEAD to a new baseline before replay preflight"
+    );
+
+    accept_execution_preflight(repo, state, PLAN_REL);
+    let after_second_preflight = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after second preflight with changed authoritative baseline",
+    );
+    let second_run_id = after_second_preflight["execution_run_id"]
+        .as_str()
+        .expect("status should expose execution_run_id after second preflight acceptance");
+
+    assert_ne!(
+        second_run_id, first_run_id,
+        "execution_preflight should mint a new execution_run_id when authoritative baseline changes"
+    );
+}
+
+#[test]
 fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_changes() {
     let (repo_dir, state_dir) = init_repo("plan-execution-preflight-stable-identities");
     let repo = repo_dir.path();

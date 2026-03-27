@@ -291,6 +291,8 @@ struct PreflightAcceptanceState {
     schema_version: u32,
     plan_path: String,
     plan_revision: u32,
+    #[serde(default)]
+    repo_state_baseline_head_sha: Option<String>,
     execution_run_id: ExecutionRunId,
     chunk_id: ChunkId,
     #[serde(default = "default_preflight_chunking_strategy")]
@@ -307,8 +309,21 @@ impl PreflightAcceptanceState {
     const SCHEMA_VERSION: u32 = 1;
 
     fn matches_context(&self, context: &ExecutionContext) -> bool {
+        let Some(saved_baseline_head_sha) = self
+            .repo_state_baseline_head_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return false;
+        };
+        let current_baseline_head_sha = match current_head_sha(&context.runtime.repo_root) {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
         self.plan_path == context.plan_rel
             && self.plan_revision == context.plan_document.plan_revision
+            && saved_baseline_head_sha == current_baseline_head_sha
     }
 }
 
@@ -1382,7 +1397,7 @@ fn persist_preflight_acceptance(
         return Ok(existing);
     }
 
-    let acceptance = new_preflight_acceptance(context);
+    let acceptance = new_preflight_acceptance(context)?;
     let payload = serde_json::to_string_pretty(&acceptance).map_err(|error| {
         JsonFailure::new(
             FailureClass::EvidenceWriteFailed,
@@ -1402,7 +1417,8 @@ fn persist_preflight_acceptance(
     Ok(acceptance)
 }
 
-fn new_preflight_acceptance(context: &ExecutionContext) -> PreflightAcceptanceState {
+fn new_preflight_acceptance(context: &ExecutionContext) -> Result<PreflightAcceptanceState, JsonFailure> {
+    let baseline_head_sha = current_head_sha(&context.runtime.repo_root)?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -1417,17 +1433,18 @@ fn new_preflight_acceptance(context: &ExecutionContext) -> PreflightAcceptanceSt
         nonce,
     );
     let digest = sha256_hex(seed.as_bytes());
-    PreflightAcceptanceState {
+    Ok(PreflightAcceptanceState {
         schema_version: PreflightAcceptanceState::SCHEMA_VERSION,
         plan_path: context.plan_rel.clone(),
         plan_revision: context.plan_document.plan_revision,
+        repo_state_baseline_head_sha: Some(baseline_head_sha),
         execution_run_id: ExecutionRunId::new(format!("run-{}", &digest[..16])),
         chunk_id: ChunkId::new(format!("chunk-{}", &digest[16..32])),
         chunking_strategy: default_preflight_chunking_strategy(),
         evaluator_policy: default_preflight_evaluator_policy(),
         reset_policy: default_preflight_reset_policy(),
         review_stack: default_preflight_review_stack(),
-    }
+    })
 }
 
 fn preflight_acceptance_path(runtime: &ExecutionRuntime) -> PathBuf {
