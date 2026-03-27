@@ -7,24 +7,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::{RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs};
 use crate::contracts::harness::{
-    EvaluationReport, ExecutionContract, ExecutionHandoff, read_evaluation_report,
-    read_execution_contract, read_execution_handoff,
+    read_evaluation_report, read_execution_contract, read_execution_handoff, EvaluationReport,
+    ExecutionContract, ExecutionHandoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::dependency_index::{
+    DependencyIndex, DependencyIndexHealth, DependencyIndexState, DependencyNode, DependencyNodeId,
+    IndexedArtifactKind, DEPENDENCY_INDEX_VERSION,
+};
 use crate::execution::gates::{
-    GateAuthorityState, normalize_artifact_repo_path, require_active_contract_state,
-    validate_contract_provenance, validate_evaluator_semantics, validate_handoff_provenance,
-    validate_handoff_semantics, validate_harness_provenance, validate_report_provenance,
+    normalize_artifact_repo_path, require_active_contract_state, validate_contract_provenance,
+    validate_evaluator_semantics, validate_handoff_provenance, validate_handoff_semantics,
+    validate_harness_provenance, validate_report_provenance, GateAuthorityState,
 };
 use crate::execution::harness::INITIAL_AUTHORITATIVE_SEQUENCE;
 use crate::execution::state::{
-    ExecutionContext, ExecutionRuntime, GateResult, GateState, load_execution_context,
+    load_execution_context, ExecutionContext, ExecutionRuntime, GateResult, GateState,
 };
 use crate::git::sha256_hex;
 use crate::paths::{
     harness_authoritative_artifact_path, harness_authoritative_artifacts_dir, harness_branch_root,
-    harness_state_path,
-    write_atomic as write_atomic_file,
+    harness_dependency_index_path, harness_state_path, write_atomic as write_atomic_file,
 };
 
 pub fn record_contract(
@@ -744,6 +747,20 @@ where
                     );
                 }
             }
+            if gate.allowed {
+                if let Err(error) = persist_dependency_index_after_authoritative_record(
+                    runtime,
+                    artifact_file_name,
+                    authoritative_sequence,
+                ) {
+                    gate.fail(
+                        FailureClass::PartialAuthoritativeMutation,
+                        "dependency_index_publish_failed",
+                        error,
+                        "Restore dependency-index write access and retry.",
+                    );
+                }
+            }
             return Ok(gate.finish());
         }
         gate.fail(
@@ -773,6 +790,24 @@ where
 
     apply_transition(&mut state);
     state.set_latest_sequence(authoritative_sequence);
+    set_dependency_index_state_healthy(&mut state);
+    if let Err(error) = persist_dependency_index_after_authoritative_record(
+        runtime,
+        artifact_file_name,
+        authoritative_sequence,
+    ) {
+        if artifact_written_this_call {
+            let _ = fs::remove_file(&target_path);
+        }
+        gate.fail(
+            FailureClass::PartialAuthoritativeMutation,
+            "dependency_index_publish_failed",
+            error,
+            "Restore dependency-index write access and retry.",
+        );
+        return Ok(gate.finish());
+    }
+
     let serialized = match serde_json::to_string_pretty(&state) {
         Ok(serialized) => serialized,
         Err(error) => {
@@ -800,6 +835,148 @@ where
         );
     }
     Ok(gate.finish())
+}
+
+fn set_dependency_index_state_healthy(state: &mut MutableHarnessState) {
+    state.extra.insert(
+        String::from("dependency_index_state"),
+        serde_json::Value::String(String::from("healthy")),
+    );
+}
+
+fn persist_dependency_index_after_authoritative_record(
+    runtime: &ExecutionRuntime,
+    artifact_file_name: &str,
+    authoritative_sequence: u64,
+) -> Result<(), String> {
+    let Some((artifact_kind, artifact_fingerprint)) =
+        authoritative_dependency_identity_from_file_name(artifact_file_name)
+    else {
+        return Ok(());
+    };
+
+    let dependency_index_path =
+        harness_dependency_index_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
+    let mut dependency_index =
+        load_dependency_index_for_authoritative_write(&dependency_index_path)?;
+    dependency_index.version = DEPENDENCY_INDEX_VERSION;
+    dependency_index.state = DependencyIndexState::Healthy;
+    dependency_index.health = DependencyIndexHealth::healthy();
+    upsert_authoritative_dependency_node(
+        &mut dependency_index,
+        artifact_kind,
+        &artifact_fingerprint,
+        authoritative_sequence,
+    );
+
+    let serialized = serde_json::to_string_pretty(&dependency_index).map_err(|error| {
+        format!(
+            "Could not serialize dependency index {}: {error}",
+            dependency_index_path.display()
+        )
+    })?;
+    write_atomic_file(&dependency_index_path, serialized).map_err(|error| {
+        format!(
+            "Could not publish dependency index {}: {error}",
+            dependency_index_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn load_dependency_index_for_authoritative_write(
+    dependency_index_path: &std::path::Path,
+) -> Result<DependencyIndex, String> {
+    let source = match fs::read_to_string(dependency_index_path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(DependencyIndex::healthy_empty());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not read dependency index {}: {error}",
+                dependency_index_path.display()
+            ));
+        }
+    };
+
+    let dependency_index: DependencyIndex = serde_json::from_str(&source).map_err(|error| {
+        format!(
+            "Dependency index is malformed in {}: {error}",
+            dependency_index_path.display()
+        )
+    })?;
+    if dependency_index.version != DEPENDENCY_INDEX_VERSION {
+        return Err(format!(
+            "Dependency index version {} is unsupported in {} (expected {}).",
+            dependency_index.version,
+            dependency_index_path.display(),
+            DEPENDENCY_INDEX_VERSION
+        ));
+    }
+    Ok(dependency_index)
+}
+
+fn upsert_authoritative_dependency_node(
+    dependency_index: &mut DependencyIndex,
+    artifact_kind: IndexedArtifactKind,
+    artifact_fingerprint: &str,
+    authoritative_sequence: u64,
+) {
+    let node_id = DependencyNodeId(format!(
+        "authoritative:{}:{}",
+        artifact_kind.as_str(),
+        artifact_fingerprint
+    ));
+    let node = DependencyNode {
+        node_id: node_id.clone(),
+        artifact_kind,
+        artifact_fingerprint: artifact_fingerprint.to_owned(),
+        authoritative: true,
+        execution_run_id: None,
+        chunk_id: None,
+        authoritative_sequence: Some(authoritative_sequence),
+        source_plan_path: None,
+        source_plan_revision: None,
+    };
+    if let Some(existing) = dependency_index
+        .nodes
+        .iter_mut()
+        .find(|existing| existing.node_id == node_id)
+    {
+        *existing = node;
+    } else {
+        dependency_index.nodes.push(node);
+    }
+}
+
+fn authoritative_dependency_identity_from_file_name(
+    artifact_file_name: &str,
+) -> Option<(IndexedArtifactKind, String)> {
+    if let Some(fingerprint) = parse_authoritative_fingerprint(artifact_file_name, "contract-") {
+        return Some((IndexedArtifactKind::Contract, fingerprint));
+    }
+    if let Some(fingerprint) = parse_authoritative_fingerprint(artifact_file_name, "evaluation-") {
+        return Some((IndexedArtifactKind::EvaluationReport, fingerprint));
+    }
+    if let Some(fingerprint) = parse_authoritative_fingerprint(artifact_file_name, "handoff-") {
+        return Some((IndexedArtifactKind::Handoff, fingerprint));
+    }
+    None
+}
+
+fn parse_authoritative_fingerprint(artifact_file_name: &str, prefix: &str) -> Option<String> {
+    let fingerprint = artifact_file_name
+        .strip_prefix(prefix)?
+        .strip_suffix(".md")?;
+    if fingerprint.is_empty() || !fingerprint.bytes().all(is_lower_hex_ascii) {
+        return None;
+    }
+    Some(fingerprint.to_owned())
+}
+
+fn is_lower_hex_ascii(byte: u8) -> bool {
+    byte.is_ascii_digit() || (byte >= b'a' && byte <= b'f')
 }
 
 enum MutableStateLoadError {
@@ -851,9 +1028,11 @@ fn bootstrap_verdict_buckets_from_legacy_state(
     }
 
     let legacy_non_passing = state.non_passing_evaluator_kinds.clone();
-    if let Some(latest_verdicts) =
-        derive_latest_evaluator_verdicts_from_authoritative_history(runtime, state, &legacy_non_passing)
-    {
+    if let Some(latest_verdicts) = derive_latest_evaluator_verdicts_from_authoritative_history(
+        runtime,
+        state,
+        &legacy_non_passing,
+    ) {
         for evaluator_kind in &legacy_non_passing {
             match latest_verdicts.get(evaluator_kind).map(String::as_str) {
                 Some("fail") => push_unique(&mut state.failed_evaluator_kinds, evaluator_kind),
@@ -897,8 +1076,7 @@ fn derive_latest_evaluator_verdicts_from_authoritative_history(
         let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let Some(expected_fingerprint) =
-            evaluation_fingerprint_from_authoritative_name(&file_name)
+        let Some(expected_fingerprint) = evaluation_fingerprint_from_authoritative_name(&file_name)
         else {
             continue;
         };
@@ -985,9 +1163,7 @@ fn derive_latest_evaluator_verdicts_from_authoritative_history(
 }
 
 fn evaluation_fingerprint_from_authoritative_name(file_name: &str) -> Option<&str> {
-    let fingerprint = file_name
-        .strip_suffix(".md")?
-        .strip_prefix("evaluation-")?;
+    let fingerprint = file_name.strip_suffix(".md")?.strip_prefix("evaluation-")?;
     if fingerprint.is_empty()
         || !fingerprint
             .bytes()

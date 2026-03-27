@@ -28,6 +28,12 @@ impl DependencyIndexState {
     }
 }
 
+impl Default for DependencyIndexState {
+    fn default() -> Self {
+        Self::Missing
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DependencyIndexIssue {
     pub code: String,
@@ -57,6 +63,23 @@ pub enum IndexedArtifactKind {
     CandidateContract,
     CandidateEvaluationReport,
     CandidateHandoff,
+}
+
+impl IndexedArtifactKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Contract => "contract",
+            Self::EvaluationReport => "evaluation_report",
+            Self::Handoff => "handoff",
+            Self::EvidenceArtifact => "evidence_artifact",
+            Self::FinalReviewArtifact => "final_review_artifact",
+            Self::BrowserQaArtifact => "browser_qa_artifact",
+            Self::ReleaseDocsArtifact => "release_docs_artifact",
+            Self::CandidateContract => "candidate_contract",
+            Self::CandidateEvaluationReport => "candidate_evaluation_report",
+            Self::CandidateHandoff => "candidate_handoff",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -110,6 +133,29 @@ pub struct DependencyIndex {
     pub nodes: Vec<DependencyNode>,
     pub edges: Vec<DependencyEdge>,
     pub candidate_claims: Vec<CandidateArtifactDependencyClaim>,
+}
+
+impl DependencyIndex {
+    pub fn healthy_empty() -> Self {
+        Self {
+            version: DEPENDENCY_INDEX_VERSION,
+            state: DependencyIndexState::Healthy,
+            health: DependencyIndexHealth::healthy(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            candidate_claims: Vec::new(),
+        }
+    }
+}
+
+impl DependencyIndexHealth {
+    pub fn healthy() -> Self {
+        Self {
+            state: DependencyIndexState::Healthy,
+            issues: Vec::new(),
+            requires_fail_closed: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
