@@ -3733,7 +3733,7 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
     write_file(
         &authoritative_state_path,
         &format!(
-            "{{\"schema_version\":1,\"harness_phase\":\"executing\",\"latest_authoritative_sequence\":17,\"final_review_state\":\"fresh\",\"last_final_review_artifact_fingerprint\":\"{authoritative_review_fingerprint}\"}}"
+            "{{\"schema_version\":1,\"harness_phase\":\"executing\",\"latest_authoritative_sequence\":17,\"dependency_index_state\":\"fresh\",\"final_review_state\":\"fresh\",\"browser_qa_state\":\"not_required\",\"release_docs_state\":\"not_required\",\"last_final_review_artifact_fingerprint\":\"{authoritative_review_fingerprint}\"}}"
         ),
     );
 
