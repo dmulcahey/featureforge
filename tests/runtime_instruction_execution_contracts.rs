@@ -22,14 +22,22 @@ fn execution_skill_docs_describe_worktree_backed_parallel_dispatch() {
 
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "worktree",
+        "runtime-selected topology",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "worktree-first orchestration",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "fresh isolated agent per task",
+        "runtime-selected topology",
     );
     assert_file_contains(
         root.join("skills/using-git-worktrees/SKILL.md"),
-        "Git worktrees create isolated workspaces",
+        "worktree-backed parallel",
+    );
+    assert_file_contains(
+        root.join("skills/dispatching-parallel-agents/SKILL.md"),
+        "runtime-selected topology",
     );
 }

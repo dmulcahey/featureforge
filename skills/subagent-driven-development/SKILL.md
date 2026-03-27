@@ -108,7 +108,7 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 
 # Subagent-Driven Development
 
-Execute plan by dispatching a fresh sub-agent or custom agent per task, with two-stage review after each: spec compliance review first, then code quality review.
+Execute plan by dispatching a fresh sub-agent or custom agent per task, with two-stage review after each: spec compliance review first, then code quality review. The runtime-selected topology still wins: when it chooses worktree-backed parallel execution, follow the worktree-first orchestration model and keep each task in its isolated workspace.
 
 **Why isolated agents:** You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
 

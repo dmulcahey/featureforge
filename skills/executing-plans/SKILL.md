@@ -110,11 +110,11 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 
 ## Overview
 
-Load plan, review critically, execute all tasks in a separate session, request final review, then report when complete.
+Load the approved plan, follow the runtime-selected topology, execute all tasks, request final review, then report when complete. When the runtime-selected topology is worktree-backed parallel, create isolated worktrees first and dispatch the parallel lanes; when it is conservative fallback, stay serial.
 
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
 
-**Note:** Prefer `featureforge:subagent-driven-development` whenever isolated-agent support is available and you want same-session isolated-agent execution. Use this skill when implementation should happen in a separate session.
+**Note:** Use this skill when the runtime-selected topology calls for a separate-session coordinator or conservative fallback. Prefer `featureforge:subagent-driven-development` when the runtime-selected topology keeps execution in one session and the worktree-first orchestration model is already in place.
 
 ## The Process
 
