@@ -573,6 +573,48 @@ fn preflight_fails_closed_when_write_authority_lock_is_dangling_symlink() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn preflight_fails_closed_when_authoritative_state_is_dangling_symlink() {
+    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-preflight-symlink");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args(["checkout", "-B", "execution-preflight-fixture"])
+                .current_dir(repo);
+            command
+        },
+        "git checkout execution-preflight-fixture",
+    );
+
+    let harness_dir = harness_branch_dir(repo, state).join("execution-harness");
+    fs::create_dir_all(&harness_dir).expect("harness directory should be creatable");
+    let state_path = harness_dir.join("state.json");
+    symlink("missing-state-target.json", &state_path)
+        .expect("dangling authoritative state symlink should be creatable");
+
+    let gate = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "plan execution preflight with dangling authoritative state symlink",
+    );
+
+    assert_eq!(gate["allowed"], false);
+    assert!(
+        gate["reason_codes"].as_array().is_some_and(|codes| codes
+            .iter()
+            .any(|code| code == "authoritative_state_unavailable")),
+        "dangling authoritative state symlink should fail closed instead of clearing preflight"
+    );
+}
+
 #[test]
 fn worktree_lease_helper_exposes_closed_lifecycle_state_vocab() {
     let lifecycle_states = worktree_lease_states()
