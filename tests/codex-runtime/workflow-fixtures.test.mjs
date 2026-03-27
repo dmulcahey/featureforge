@@ -55,6 +55,27 @@ const ACTIVE_DOC_PATHS = [
   'docs/test-suite-enhancement-plan.md',
   'tests/evals/README.md',
 ];
+const TASK8_HARNESS_MATRIX_FIXTURES = [
+  'harness/pivot-required-status.json',
+  'harness/handoff-required-status.json',
+  'harness/candidate-execution-contract.md',
+  'harness/candidate-evaluation-report.md',
+  'harness/candidate-execution-handoff.md',
+  'harness/stale-execution-contract.md',
+  'harness/stale-evaluation-report.md',
+  'harness/repo-state-drift-status.json',
+  'harness/partial-authoritative-mutation-status.json',
+  'harness/dependency-index-mismatch-status.json',
+  'harness/dependency-index-clean.json',
+  'harness/dependency-index-stale.json',
+  'harness/dependency-index-malformed.json',
+  'harness/non-harness-review-artifact.md',
+  'harness/indexed-final-review-artifact.md',
+  'harness/indexed-browser-qa-artifact.md',
+  'harness/indexed-release-doc-artifact.md',
+  'harness/retention-prunable-stale-artifact.md',
+  'harness/retention-active-authoritative-artifact.md',
+];
 
 function retiredProductName() {
   const readme = readUtf8(path.join(REPO_ROOT, 'README.md'));
@@ -83,6 +104,13 @@ test('all workflow fixture files exist', () => {
   for (const relPath of [...SPEC_FIXTURES, ...PLAN_FIXTURES, STALE_PATH_PLAN_FIXTURE]) {
     const filePath = path.join(FIXTURE_ROOT, relPath);
     assert.equal(true, readUtf8(filePath).length > 0, `${relPath} should exist`);
+  }
+});
+
+test('task 8 harness fixture matrix files exist by exact filename before runtime assertions run', () => {
+  for (const relPath of TASK8_HARNESS_MATRIX_FIXTURES) {
+    const filePath = path.join(FIXTURE_ROOT, relPath);
+    assert.equal(true, fs.existsSync(filePath), `${relPath} should exist`);
   }
 });
 
