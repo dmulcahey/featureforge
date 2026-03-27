@@ -6,6 +6,15 @@ mod json_support;
 mod process_support;
 
 use assert_cmd::cargo::CommandCargoExt;
+use featureforge::contracts::harness::{
+    DowngradeReasonClass, ExecutionTopologyDowngradeRecord, WorktreeLease, WorktreeLeaseState,
+};
+use featureforge::execution::leases::{
+    is_worktree_lease_terminal_state, validate_worktree_lease, worktree_lease_states,
+};
+use featureforge::execution::observability::{
+    downgrade_records_share_rerun_guidance, validate_execution_topology_downgrade_record,
+};
 use featureforge::paths::branch_storage_key;
 use files_support::write_file;
 use json_support::parse_json;
@@ -70,7 +79,9 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     run_checked(
         {
             let mut command = Command::new("git");
-            command.args(["checkout", "-B", "fixture-work"]).current_dir(repo);
+            command
+                .args(["checkout", "-B", "fixture-work"])
+                .current_dir(repo);
             command
         },
         "git checkout fixture-work",
@@ -262,7 +273,10 @@ fn preflight_reclaims_stale_write_authority_lock_before_acceptance() {
         "preflight should run",
     );
 
-    assert_eq!(gate["allowed"], true, "stale write-authority locks should be reclaimed");
+    assert_eq!(
+        gate["allowed"], true,
+        "stale write-authority locks should be reclaimed"
+    );
     assert!(
         !lock_path.exists(),
         "stale write-authority lock should be removed after reclamation"
@@ -328,4 +342,206 @@ fn preflight_blocks_live_write_authority_conflict_without_persisting_acceptance(
         !acceptance_path.exists(),
         "preflight must not persist acceptance state when write authority is held by a live process"
     );
+}
+
+#[test]
+fn worktree_lease_helper_exposes_closed_lifecycle_state_vocab() {
+    let lifecycle_states = worktree_lease_states()
+        .iter()
+        .copied()
+        .map(WorktreeLeaseState::as_str)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        lifecycle_states,
+        vec![
+            "open",
+            "review_passed_pending_reconcile",
+            "reconciled",
+            "cleaned"
+        ]
+    );
+    assert!(is_worktree_lease_terminal_state(
+        WorktreeLeaseState::Reconciled
+    ));
+    assert!(is_worktree_lease_terminal_state(
+        WorktreeLeaseState::Cleaned
+    ));
+    assert!(!is_worktree_lease_terminal_state(WorktreeLeaseState::Open));
+}
+
+#[test]
+fn worktree_lease_helper_requires_reviewed_checkpoint_when_pending_reconcile() {
+    let lease = WorktreeLease {
+        lease_version: 1,
+        authoritative_sequence: 32,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_unit_id: String::from("task-a"),
+        source_branch: String::from("feature/task-a"),
+        authoritative_integration_branch: String::from("main"),
+        worktree_path: String::from("/tmp/task-a"),
+        repo_state_baseline_head_sha: String::from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        repo_state_baseline_worktree_fingerprint: String::from(
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ),
+        lease_state: WorktreeLeaseState::ReviewPassedPendingReconcile,
+        cleanup_state: String::from("pending"),
+        reviewed_checkpoint_commit_sha: None,
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        lease_fingerprint: String::from(
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ),
+    };
+
+    let error = validate_worktree_lease(&lease)
+        .expect_err("pending reconcile leases require a reviewed checkpoint commit SHA");
+    assert!(
+        error.message.contains("reviewed_checkpoint_commit_sha"),
+        "pending reconcile validation should identify the missing reviewed checkpoint"
+    );
+}
+
+#[test]
+fn worktree_lease_helper_accepts_terminal_lease_state_with_reviewed_checkpoint() {
+    let lease = WorktreeLease {
+        lease_version: 1,
+        authoritative_sequence: 32,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_unit_id: String::from("task-a"),
+        source_branch: String::from("feature/task-a"),
+        authoritative_integration_branch: String::from("main"),
+        worktree_path: String::from("/tmp/task-a"),
+        repo_state_baseline_head_sha: String::from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        repo_state_baseline_worktree_fingerprint: String::from(
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ),
+        lease_state: WorktreeLeaseState::Reconciled,
+        cleanup_state: String::from("cleaned"),
+        reviewed_checkpoint_commit_sha: Some(String::from(
+            "dddddddddddddddddddddddddddddddddddddddd",
+        )),
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        lease_fingerprint: String::from(
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        ),
+    };
+
+    validate_worktree_lease(&lease).expect("reconciled leases with provenance should validate");
+}
+
+#[test]
+fn downgrade_rerun_guidance_uses_primary_reason_class_only() {
+    let base_record = ExecutionTopologyDowngradeRecord {
+        record_version: 1,
+        authoritative_sequence: 88,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_context_key: String::from("dm/todos-task5-lease-lane:main"),
+        primary_reason_class: DowngradeReasonClass::ReconcileConflict,
+        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
+            trigger_summary: String::from("parallel execution became unsafe"),
+            affected_units: vec![String::from("task-a")],
+            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
+                summary: String::from("conflict observed during reconcile"),
+                references: vec![String::from("artifact:lease-1")],
+            },
+            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
+                severity:
+                    featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Blocking,
+                changed_or_blocked_stage: String::from("execution"),
+                expected_response: String::from("downgrade the slice"),
+            },
+            notes: vec![String::from("restore after proof")],
+        },
+        rerun_guidance_superseded: false,
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        record_fingerprint: String::from(
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ),
+    };
+    let same_class_different_detail = ExecutionTopologyDowngradeRecord {
+        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
+            trigger_summary: String::from("different trigger"),
+            affected_units: vec![String::from("task-b")],
+            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
+                summary: String::from("different evidence"),
+                references: vec![String::from("artifact:lease-2")],
+            },
+            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
+                severity: featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Info,
+                changed_or_blocked_stage: String::from("review"),
+                expected_response: String::from("keep working"),
+            },
+            notes: vec![],
+        },
+        record_fingerprint: String::from(
+            "1111111111111111111111111111111111111111111111111111111111111111",
+        ),
+        ..base_record.clone()
+    };
+    let different_class = ExecutionTopologyDowngradeRecord {
+        primary_reason_class: DowngradeReasonClass::WorkspaceUnavailable,
+        ..same_class_different_detail.clone()
+    };
+
+    assert!(
+        downgrade_records_share_rerun_guidance(&base_record, &same_class_different_detail),
+        "rerun guidance should key on the closed primary reason class and ignore detail payload drift"
+    );
+    assert!(
+        !downgrade_records_share_rerun_guidance(&base_record, &different_class),
+        "different reason classes must not share rerun guidance"
+    );
+}
+
+#[test]
+fn downgrade_rerun_guidance_persists_through_json_round_trip() {
+    let record = ExecutionTopologyDowngradeRecord {
+        record_version: 1,
+        authoritative_sequence: 88,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_context_key: String::from("dm/todos-task5-lease-lane:main"),
+        primary_reason_class: DowngradeReasonClass::WorkspaceUnavailable,
+        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
+            trigger_summary: String::from("workspace vanished"),
+            affected_units: vec![String::from("task-b")],
+            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
+                summary: String::from("temporary worktree was removed"),
+                references: vec![String::from("lease:worktree-1")],
+            },
+            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
+                severity:
+                    featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Warning,
+                changed_or_blocked_stage: String::from("execution"),
+                expected_response: String::from("recreate the workspace"),
+            },
+            notes: vec![String::from("recreated on retry")],
+        },
+        rerun_guidance_superseded: false,
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        record_fingerprint: String::from(
+            "2222222222222222222222222222222222222222222222222222222222222222",
+        ),
+    };
+    let serialized = serde_json::to_string(&record).expect("downgrade record should serialize");
+    let persisted: ExecutionTopologyDowngradeRecord =
+        serde_json::from_str(&serialized).expect("downgrade record should deserialize");
+
+    assert_eq!(
+        persisted.primary_reason_class,
+        DowngradeReasonClass::WorkspaceUnavailable
+    );
+    assert!(
+        downgrade_records_share_rerun_guidance(&record, &persisted),
+        "round-tripped downgrade records must keep the same rerun guidance class"
+    );
+    validate_execution_topology_downgrade_record(&persisted)
+        .expect("round-tripped downgrade record should validate");
 }

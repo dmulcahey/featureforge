@@ -4,9 +4,10 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::contracts::harness::{WorktreeLease, WorktreeLeaseState, WORKTREE_LEASE_VERSION};
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::state::ExecutionContext;
 use crate::execution::harness::INITIAL_AUTHORITATIVE_SEQUENCE;
+use crate::execution::state::ExecutionContext;
 use crate::paths::{harness_authoritative_artifacts_dir, harness_branch_root, harness_state_path};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -230,7 +231,10 @@ pub(crate) fn latest_authoritative_artifact_sequence(
         let source = fs::read_to_string(&path).map_err(|error| {
             JsonFailure::new(
                 FailureClass::ExecutionStateNotReady,
-                format!("Could not read authoritative artifact {}: {error}", path.display()),
+                format!(
+                    "Could not read authoritative artifact {}: {error}",
+                    path.display()
+                ),
             )
         })?;
         if let Some(sequence) = parse_authoritative_sequence_from_artifact(&source) {
@@ -299,7 +303,9 @@ pub(crate) fn preflight_write_authority_state(
 
     match fs::remove_file(&lock_path) {
         Ok(()) => Ok(PreflightWriteAuthorityState::Clear),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(PreflightWriteAuthorityState::Clear),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            Ok(PreflightWriteAuthorityState::Clear)
+        }
         Err(error) => Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
             format!(
@@ -327,4 +333,90 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
     {
         true
     }
+}
+
+pub fn worktree_lease_states() -> &'static [WorktreeLeaseState] {
+    &WorktreeLeaseState::ALL
+}
+
+pub fn is_worktree_lease_terminal_state(state: WorktreeLeaseState) -> bool {
+    matches!(
+        state,
+        WorktreeLeaseState::Reconciled | WorktreeLeaseState::Cleaned
+    )
+}
+
+pub fn validate_worktree_lease(lease: &WorktreeLease) -> Result<(), JsonFailure> {
+    if lease.lease_version != WORKTREE_LEASE_VERSION {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "WorktreeLease has unsupported lease_version {}.",
+                lease.lease_version
+            ),
+        ));
+    }
+
+    if lease.authoritative_sequence == 0 {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "WorktreeLease must record a non-zero authoritative_sequence.",
+        ));
+    }
+
+    require_non_empty(&lease.source_plan_path, "source_plan_path")?;
+    require_non_empty(&lease.execution_unit_id, "execution_unit_id")?;
+    require_non_empty(&lease.source_branch, "source_branch")?;
+    require_non_empty(
+        &lease.authoritative_integration_branch,
+        "authoritative_integration_branch",
+    )?;
+    require_non_empty(&lease.worktree_path, "worktree_path")?;
+    require_non_empty(
+        &lease.repo_state_baseline_head_sha,
+        "repo_state_baseline_head_sha",
+    )?;
+    require_non_empty(
+        &lease.repo_state_baseline_worktree_fingerprint,
+        "repo_state_baseline_worktree_fingerprint",
+    )?;
+    require_non_empty(&lease.cleanup_state, "cleanup_state")?;
+    require_non_empty(&lease.generated_by, "generated_by")?;
+    require_non_empty(&lease.generated_at, "generated_at")?;
+    require_non_empty(&lease.lease_fingerprint, "lease_fingerprint")?;
+
+    if matches!(
+        lease.lease_state,
+        WorktreeLeaseState::ReviewPassedPendingReconcile
+    ) && lease
+        .reviewed_checkpoint_commit_sha
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "WorktreeLease must include reviewed_checkpoint_commit_sha while lease_state is review_passed_pending_reconcile.",
+        ));
+    }
+
+    if let Some(reviewed_checkpoint_commit_sha) = lease.reviewed_checkpoint_commit_sha.as_deref() {
+        require_non_empty(
+            reviewed_checkpoint_commit_sha,
+            "reviewed_checkpoint_commit_sha",
+        )?;
+    }
+
+    Ok(())
+}
+
+fn require_non_empty(value: &str, field_name: &str) -> Result<(), JsonFailure> {
+    if value.trim().is_empty() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!("WorktreeLease is missing non-empty {field_name}."),
+        ));
+    }
+    Ok(())
 }

@@ -5,17 +5,20 @@ mod process_support;
 
 use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::harness::{
-    read_evaluation_report, read_evidence_artifact, read_execution_contract, read_execution_handoff,
+    read_evaluation_report, read_evidence_artifact, read_execution_contract,
+    read_execution_handoff, DowngradeReasonClass, ExecutionTopologyDowngradeRecord, WorktreeLease,
+    WorktreeLeaseState,
 };
 use featureforge::contracts::packet::{
-    TaskPacket, build_harness_contract_provenance, build_task_packet_with_timestamp,
+    build_harness_contract_provenance, build_task_packet_with_timestamp, TaskPacket,
 };
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::contracts::spec::parse_spec_file;
+use featureforge::execution::observability::validate_execution_topology_downgrade_record;
 use featureforge::execution::observability::HarnessTelemetryCounters;
 use files_support::write_file;
 use process_support::run_checked;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1535,5 +1538,185 @@ fn telemetry_counters_default_serialization_matches_exact_counter_key_vocabulary
     assert_eq!(
         serialized_keys, expected_keys,
         "HarnessTelemetryCounters serialized key vocabulary drifted from src/execution/observability.rs"
+    );
+}
+
+#[test]
+fn worktree_lease_contract_exposes_closed_lifecycle_vocabulary() {
+    let lifecycle_states = WorktreeLeaseState::ALL
+        .iter()
+        .copied()
+        .map(WorktreeLeaseState::as_str)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        lifecycle_states,
+        vec![
+            "open",
+            "review_passed_pending_reconcile",
+            "reconciled",
+            "cleaned"
+        ]
+    );
+    assert_eq!(
+        serde_json::to_value(WorktreeLeaseState::ReviewPassedPendingReconcile)
+            .expect("lease state should serialize"),
+        Value::String(String::from("review_passed_pending_reconcile"))
+    );
+}
+
+#[test]
+fn worktree_lease_contract_rejects_unknown_lifecycle_state() {
+    let lease = json!({
+        "lease_version": 1,
+        "authoritative_sequence": 21,
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_unit_id": "unit-a",
+        "source_branch": "feature/task-5",
+        "authoritative_integration_branch": "main",
+        "worktree_path": "/tmp/task5-worktree",
+        "repo_state_baseline_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "repo_state_baseline_worktree_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "lease_state": "transitioning",
+        "cleanup_state": "pending",
+        "reviewed_checkpoint_commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T21:15:21Z",
+        "lease_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    });
+
+    assert!(
+        serde_json::from_value::<WorktreeLease>(lease).is_err(),
+        "unknown lease states must fail closed during deserialization"
+    );
+}
+
+#[test]
+fn downgrade_record_contract_exposes_closed_reason_class_vocabulary() {
+    let reason_classes = DowngradeReasonClass::ALL
+        .iter()
+        .copied()
+        .map(DowngradeReasonClass::as_str)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        reason_classes,
+        vec![
+            "write_scope_overlap",
+            "dependency_mismatch",
+            "workspace_unavailable",
+            "reconcile_conflict",
+            "baseline_drift",
+            "policy_safety_block"
+        ]
+    );
+}
+
+#[test]
+fn downgrade_record_contract_rejects_unknown_reason_class() {
+    let downgrade = json!({
+        "record_version": 1,
+        "authoritative_sequence": 88,
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_context_key": "dm/todos-task5-lease-lane:main",
+        "primary_reason_class": "made_up_reason",
+        "detail": {
+            "trigger_summary": "parallel execution became unsafe",
+            "affected_units": ["task-a"],
+            "blocking_evidence": {
+                "summary": "conflict observed during reconcile",
+                "references": ["artifact:lease-1"]
+            },
+            "operator_impact": {
+                "severity": "warning",
+                "changed_or_blocked_stage": "execution",
+                "expected_response": "downgrade the slice"
+            }
+        },
+        "rerun_guidance_superseded": false,
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T21:15:21Z",
+        "record_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    });
+
+    assert!(
+        serde_json::from_value::<ExecutionTopologyDowngradeRecord>(downgrade).is_err(),
+        "unknown downgrade reason classes must fail closed during deserialization"
+    );
+}
+
+#[test]
+fn downgrade_record_contract_rejects_unknown_operator_impact_severity() {
+    let downgrade = json!({
+        "record_version": 1,
+        "authoritative_sequence": 88,
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_context_key": "dm/todos-task5-lease-lane:main",
+        "primary_reason_class": "reconcile_conflict",
+        "detail": {
+            "trigger_summary": "parallel execution became unsafe",
+            "affected_units": ["task-a"],
+            "blocking_evidence": {
+                "summary": "conflict observed during reconcile",
+                "references": ["artifact:lease-1"]
+            },
+            "operator_impact": {
+                "severity": "critical",
+                "changed_or_blocked_stage": "execution",
+                "expected_response": "downgrade the slice"
+            }
+        },
+        "rerun_guidance_superseded": false,
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T21:15:21Z",
+        "record_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    });
+
+    assert!(
+        serde_json::from_value::<ExecutionTopologyDowngradeRecord>(downgrade).is_err(),
+        "unknown operator impact severity values must fail closed during deserialization"
+    );
+}
+
+#[test]
+fn downgrade_record_contract_rejects_missing_blocking_evidence_summary() {
+    let downgrade = ExecutionTopologyDowngradeRecord {
+        record_version: 1,
+        authoritative_sequence: 88,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_context_key: String::from("dm/todos-task5-lease-lane:main"),
+        primary_reason_class: DowngradeReasonClass::ReconcileConflict,
+        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
+            trigger_summary: String::from("parallel execution became unsafe"),
+            affected_units: vec![String::from("task-a")],
+            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
+                summary: String::new(),
+                references: vec![String::from("artifact:lease-1")],
+            },
+            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
+                severity:
+                    featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Warning,
+                changed_or_blocked_stage: String::from("execution"),
+                expected_response: String::from("downgrade the slice"),
+            },
+            notes: vec![],
+        },
+        rerun_guidance_superseded: false,
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        record_fingerprint: String::from(
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        ),
+    };
+
+    let error = validate_execution_topology_downgrade_record(&downgrade)
+        .expect_err("downgrade records missing blocking evidence summary should fail");
+    assert!(
+        error.message.contains("blocking_evidence.summary"),
+        "structured evidence validation should surface the missing summary field"
     );
 }

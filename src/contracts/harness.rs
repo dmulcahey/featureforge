@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::diagnostics::{DiagnosticError, FailureClass};
@@ -15,6 +15,144 @@ const EVIDENCE_ARTIFACT_VERSION: u32 = 1;
 
 const SUPPORTED_SATISFACTION_RULES: [&str; 3] = ["all_of", "any_of", "per_step"];
 const SUPPORTED_EVALUATOR_KINDS: [&str; 2] = ["spec_compliance", "code_quality"];
+pub const WORKTREE_LEASE_VERSION: u32 = 1;
+pub const EXECUTION_TOPOLOGY_DOWNGRADE_RECORD_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeLeaseState {
+    Open,
+    ReviewPassedPendingReconcile,
+    Reconciled,
+    Cleaned,
+}
+
+impl WorktreeLeaseState {
+    pub const ALL: [Self; 4] = [
+        Self::Open,
+        Self::ReviewPassedPendingReconcile,
+        Self::Reconciled,
+        Self::Cleaned,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::ReviewPassedPendingReconcile => "review_passed_pending_reconcile",
+            Self::Reconciled => "reconciled",
+            Self::Cleaned => "cleaned",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DowngradeReasonClass {
+    WriteScopeOverlap,
+    DependencyMismatch,
+    WorkspaceUnavailable,
+    ReconcileConflict,
+    BaselineDrift,
+    PolicySafetyBlock,
+}
+
+impl DowngradeReasonClass {
+    pub const ALL: [Self; 6] = [
+        Self::WriteScopeOverlap,
+        Self::DependencyMismatch,
+        Self::WorkspaceUnavailable,
+        Self::ReconcileConflict,
+        Self::BaselineDrift,
+        Self::PolicySafetyBlock,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WriteScopeOverlap => "write_scope_overlap",
+            Self::DependencyMismatch => "dependency_mismatch",
+            Self::WorkspaceUnavailable => "workspace_unavailable",
+            Self::ReconcileConflict => "reconcile_conflict",
+            Self::BaselineDrift => "baseline_drift",
+            Self::PolicySafetyBlock => "policy_safety_block",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DowngradeOperatorImpactSeverity {
+    Info,
+    Warning,
+    Blocking,
+}
+
+impl DowngradeOperatorImpactSeverity {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Blocking => "blocking",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DowngradeBlockingEvidence {
+    pub summary: String,
+    pub references: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DowngradeOperatorImpact {
+    pub severity: DowngradeOperatorImpactSeverity,
+    pub changed_or_blocked_stage: String,
+    pub expected_response: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecutionTopologyDowngradeDetail {
+    pub trigger_summary: String,
+    pub affected_units: Vec<String>,
+    pub blocking_evidence: DowngradeBlockingEvidence,
+    pub operator_impact: DowngradeOperatorImpact,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ExecutionTopologyDowngradeRecord {
+    pub record_version: u32,
+    pub authoritative_sequence: u64,
+    pub source_plan_path: String,
+    pub source_plan_revision: u32,
+    pub execution_context_key: String,
+    pub primary_reason_class: DowngradeReasonClass,
+    pub detail: ExecutionTopologyDowngradeDetail,
+    pub rerun_guidance_superseded: bool,
+    pub generated_by: String,
+    pub generated_at: String,
+    pub record_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorktreeLease {
+    pub lease_version: u32,
+    pub authoritative_sequence: u64,
+    pub source_plan_path: String,
+    pub source_plan_revision: u32,
+    pub execution_unit_id: String,
+    pub source_branch: String,
+    pub authoritative_integration_branch: String,
+    pub worktree_path: String,
+    pub repo_state_baseline_head_sha: String,
+    pub repo_state_baseline_worktree_fingerprint: String,
+    pub lease_state: WorktreeLeaseState,
+    pub cleanup_state: String,
+    pub reviewed_checkpoint_commit_sha: Option<String>,
+    pub generated_by: String,
+    pub generated_at: String,
+    pub lease_fingerprint: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct ExecutionContract {
