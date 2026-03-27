@@ -105,6 +105,7 @@ pub struct RecommendArgs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
 pub enum ExecutionTopologyArg {
     #[value(name = "worktree-backed-parallel")]
     WorktreeBackedParallel,

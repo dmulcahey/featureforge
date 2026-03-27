@@ -476,8 +476,8 @@ fn runtime_topology_falls_back_conservatively_when_worktrees_or_agents_are_not_r
         recommendation
             .reason_codes
             .iter()
-            .any(|code: &String| code.starts_with("conservative_fallback")),
-        "fallback topology should expose a conservative fallback reason code"
+            .any(|code: &String| code == "conservative_fallback_policy_safety_block"),
+        "fallback topology should expose the actual blocker reason code"
     );
     assert!(
         !recommendation
@@ -514,7 +514,7 @@ fn runtime_topology_separate_session_fallback_uses_actual_blocker_reason_codes()
         recommendation
             .reason_codes
             .iter()
-            .any(|code| code == "conservative_fallback_isolated_agents_unavailable"),
+            .any(|code| code == "conservative_fallback_policy_safety_block"),
         "separate-session fallback should name the actual blocker"
     );
     assert!(
@@ -550,7 +550,7 @@ fn runtime_topology_reuses_matching_downgrade_history_for_same_context() {
             true,
             "available",
             "stay",
-            "yes",
+            "no",
             false,
             Some(learned_guidance),
         ),
@@ -571,6 +571,41 @@ fn runtime_topology_reuses_matching_downgrade_history_for_same_context() {
             .iter()
             .any(|code| code == "matching_downgrade_history_reused"),
         "matching downgrade history should be visible in the runtime reason codes"
+    );
+}
+
+#[test]
+fn runtime_topology_serializes_selected_topology_with_contract_values() {
+    let serialized = serde_json::to_value(ExecutionTopologyArg::WorktreeBackedParallel)
+        .expect("topology enum should serialize");
+    assert_eq!(
+        serialized,
+        Value::String(String::from("worktree-backed-parallel"))
+    );
+
+    let round_tripped: ExecutionTopologyArg = serde_json::from_value(Value::String(String::from(
+        "conservative-fallback",
+    )))
+    .expect("topology enum should deserialize from contract value");
+    assert_eq!(
+        round_tripped,
+        ExecutionTopologyArg::ConservativeFallback
+    );
+
+    let (repo_dir, _state_dir) = init_repo("plan-execution-topology-json-contract");
+    let repo = repo_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let report = topology_report(repo);
+    let recommendation = recommend_topology(
+        &report,
+        &topology_context("main@base-a", true, "available", "stay", "yes", true, None),
+    );
+    let json = serde_json::to_value(&recommendation).expect("recommendation should serialize");
+    assert_eq!(
+        json["selected_topology"],
+        Value::String(String::from("worktree-backed-parallel"))
     );
 }
 

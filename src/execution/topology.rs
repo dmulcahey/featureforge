@@ -11,7 +11,8 @@ use crate::contracts::plan::{AnalyzePlanReport, PLAN_FIDELITY_REVIEW_STAGE, Plan
 use crate::contracts::spec::SpecDocument;
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::execution::harness::{
-    ChunkingStrategy, EvaluatorPolicyName, ResetPolicy, TopologySelectionContext,
+    ChunkingStrategy, EvaluatorPolicyName, LearnedTopologyGuidance, ResetPolicy,
+    TopologySelectionContext,
 };
 use crate::execution::state::{ExecutionContext, ExecutionRuntime, current_head_sha};
 use crate::git::sha256_hex;
@@ -108,11 +109,31 @@ fn recommended_skill_for_session(context: &TopologySelectionContext) -> String {
     }
 }
 
+fn current_parallel_blocker_reason_class(
+    report: &AnalyzePlanReport,
+    context: &TopologySelectionContext,
+) -> Option<&'static str> {
+    if !plan_supports_worktree_parallel(report) {
+        return Some("dependency_mismatch");
+    }
+    if normalize_isolated_agents_available(context.isolated_agents_available.as_str()) != "yes" {
+        return Some("policy_safety_block");
+    }
+    if context.workspace_prepared != "yes" {
+        return Some("workspace_unavailable");
+    }
+    None
+}
+
 fn learned_guidance_matches(
     report: &AnalyzePlanReport,
     context: &TopologySelectionContext,
+    current_blocker_reason_class: Option<&str>,
 ) -> bool {
-    let Some(guidance) = context.learned_guidance.as_ref() else {
+    let Some(guidance): Option<&LearnedTopologyGuidance> = context.learned_guidance.as_ref() else {
+        return false;
+    };
+    let Some(current_blocker_reason_class) = current_blocker_reason_class else {
         return false;
     };
     if guidance.approved_plan_revision != report.plan_revision {
@@ -124,7 +145,7 @@ fn learned_guidance_matches(
         return false;
     }
     guidance.execution_context_key == context.execution_context_key
-        && !guidance.primary_reason_class.trim().is_empty()
+        && guidance.primary_reason_class.trim() == current_blocker_reason_class
 }
 
 pub fn recommend_topology(
@@ -147,7 +168,9 @@ pub fn recommend_topology(
         && context.tasks_independent
         && isolated_agents_available == "yes"
         && context.workspace_prepared == "yes";
-    let learned_guidance_matches = learned_guidance_matches(report, context);
+    let current_blocker_reason_class = current_parallel_blocker_reason_class(report, context);
+    let learned_guidance_matches =
+        learned_guidance_matches(report, context, current_blocker_reason_class);
     let learned_downgrade_reused =
         learned_guidance_matches && !context.current_parallel_path_ready;
     let restored_parallel_path =
@@ -181,19 +204,9 @@ pub fn recommend_topology(
             vec![String::from("matching_downgrade_history_reused")],
         )
     } else {
-        let mut codes = Vec::new();
-        if !plan_supports_worktree_parallel(report) {
-            codes.push(String::from("conservative_fallback_parallel_unavailable"));
-        }
-        if isolated_agents_available != "yes" {
-            codes.push(String::from("conservative_fallback_isolated_agents_unavailable"));
-        }
-        if context.workspace_prepared != "yes" {
-            codes.push(String::from("conservative_fallback_workspace_unavailable"));
-        }
-        if codes.is_empty() {
-            codes.push(String::from("conservative_fallback_runtime_unavailable"));
-        }
+        let codes = current_blocker_reason_class
+            .map(|reason_class| vec![format!("conservative_fallback_{reason_class}")])
+            .unwrap_or_else(|| vec![String::from("conservative_fallback_runtime_unavailable")]);
         (
             ExecutionTopologyArg::ConservativeFallback,
             String::from("featureforge:executing-plans"),
