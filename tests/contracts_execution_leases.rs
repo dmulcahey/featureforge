@@ -21,8 +21,11 @@ use featureforge::paths::branch_storage_key;
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 use tempfile::TempDir;
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-plan.md";
@@ -216,6 +219,13 @@ fn run_plan_execution_json(
     args: &[&str],
     context: &str,
 ) -> serde_json::Value {
+    parse_json(
+        &run_plan_execution_output(repo, state, args, context),
+        context,
+    )
+}
+
+fn run_plan_execution_output(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
     let mut command =
         Command::cargo_bin("featureforge").expect("featureforge binary should be available");
     command
@@ -223,7 +233,37 @@ fn run_plan_execution_json(
         .env("FEATUREFORGE_STATE_DIR", state)
         .args(["plan", "execution"])
         .args(args);
-    parse_json(&run(command, context), context)
+    run(command, context)
+}
+
+#[cfg(unix)]
+struct DirectoryModeGuard {
+    path: PathBuf,
+    original_permissions: fs::Permissions,
+}
+
+#[cfg(unix)]
+impl DirectoryModeGuard {
+    fn new(path: impl Into<PathBuf>, mode: u32) -> Self {
+        let path = path.into();
+        let original_permissions = fs::metadata(&path)
+            .expect("directory should exist")
+            .permissions();
+        let mut permissions = original_permissions.clone();
+        permissions.set_mode(mode);
+        fs::set_permissions(&path, permissions).expect("directory permissions should update");
+        Self {
+            path,
+            original_permissions,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for DirectoryModeGuard {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.path, self.original_permissions.clone());
+    }
 }
 
 #[test]
@@ -347,6 +387,96 @@ fn preflight_blocks_live_write_authority_conflict_without_persisting_acceptance(
     assert!(
         !acceptance_path.exists(),
         "preflight must not persist acceptance state when write authority is held by a live process"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn status_fails_closed_when_authoritative_state_is_unreadable() {
+    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-status-unreadable");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args(["checkout", "-B", "execution-status-fixture"])
+                .current_dir(repo);
+            command
+        },
+        "git checkout execution-status-fixture",
+    );
+
+    let harness_dir = harness_branch_dir(repo, state);
+    let state_path = harness_dir.join("state.json");
+    write_file(&state_path, r#"{"harness_phase":"executing"}"#);
+    let _guard = DirectoryModeGuard::new(&harness_dir, 0o000);
+
+    let mut command =
+        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["plan", "execution", "status", "--plan", PLAN_REL]);
+    let output = run(
+        command,
+        "plan execution status with unreadable authoritative state",
+    );
+
+    assert!(
+        !output.status.success(),
+        "status must fail closed when authoritative harness state cannot be inspected"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("Could not inspect authoritative harness state")
+            || stdout.contains("Could not inspect authoritative harness state"),
+        "status should surface the unreadable authoritative state failure"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn preflight_fails_closed_when_write_authority_lock_is_unreadable() {
+    let (repo_dir, state_dir) = init_repo("contracts-execution-leases-lock-unreadable");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args(["checkout", "-B", "execution-preflight-fixture"])
+                .current_dir(repo);
+            command
+        },
+        "git checkout execution-preflight-fixture",
+    );
+
+    let harness_dir = harness_branch_dir(repo, state);
+    let lock_path = harness_dir.join("write-authority.lock");
+    write_file(&lock_path, "pid=12345\n");
+    let _guard = DirectoryModeGuard::new(&harness_dir, 0o000);
+
+    let gate = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "plan execution preflight with unreadable write-authority lock",
+    );
+
+    assert_eq!(gate["allowed"], false);
+    assert!(
+        gate["reason_codes"].as_array().is_some_and(|codes| codes
+            .iter()
+            .any(|code| code == "write_authority_unavailable")),
+        "unreadable write-authority lock should fail closed instead of clearing the preflight"
     );
 }
 

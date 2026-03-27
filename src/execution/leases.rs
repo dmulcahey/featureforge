@@ -94,8 +94,27 @@ pub(crate) fn load_status_authoritative_overlay_checked(
     context: &ExecutionContext,
 ) -> Result<Option<StatusAuthoritativeOverlay>, JsonFailure> {
     let state_path = authoritative_state_path(context);
-    if !state_path.is_file() {
-        return Ok(None);
+    let metadata = match fs::metadata(&state_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not inspect authoritative harness state {}: {error}",
+                    state_path.display()
+                ),
+            ));
+        }
+    };
+    if !metadata.is_file() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state must be a regular file in {}.",
+                state_path.display()
+            ),
+        ));
     }
 
     let source = fs::read_to_string(&state_path).map_err(|error| {
@@ -143,9 +162,31 @@ pub(crate) fn load_preflight_authoritative_state(
     context: &ExecutionContext,
 ) -> Result<Option<PreflightAuthoritativeState>, JsonFailure> {
     let state_path = authoritative_state_path(context);
+    let metadata = match fs::metadata(&state_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not inspect authoritative harness state {}: {error}",
+                    state_path.display()
+                ),
+            ));
+        }
+    };
+    if !metadata.is_file() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state must be a regular file in {}.",
+                state_path.display()
+            ),
+        ));
+    }
+
     let source = match fs::read_to_string(&state_path) {
         Ok(source) => source,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(JsonFailure::new(
                 FailureClass::MalformedExecutionState,
@@ -274,8 +315,29 @@ pub(crate) fn preflight_write_authority_state(
         &context.runtime.branch_name,
     )
     .join("write-authority.lock");
-    if !lock_path.exists() {
-        return Ok(PreflightWriteAuthorityState::Clear);
+    let metadata = match fs::metadata(&lock_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(PreflightWriteAuthorityState::Clear);
+        }
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                format!(
+                    "Could not inspect write-authority lock {}: {error}",
+                    lock_path.display()
+                ),
+            ));
+        }
+    };
+    if !metadata.is_file() {
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            format!(
+                "Write-authority lock must be a regular file in {}.",
+                lock_path.display()
+            ),
+        ));
     }
 
     let source = fs::read_to_string(&lock_path).map_err(|error| {
