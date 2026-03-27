@@ -1720,3 +1720,43 @@ fn downgrade_record_contract_rejects_missing_blocking_evidence_summary() {
         "structured evidence validation should surface the missing summary field"
     );
 }
+
+#[test]
+fn downgrade_record_contract_rejects_malformed_blocking_evidence_reference() {
+    let downgrade = ExecutionTopologyDowngradeRecord {
+        record_version: 1,
+        authoritative_sequence: 88,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_context_key: String::from("dm/todos-task5-lease-lane:main"),
+        primary_reason_class: DowngradeReasonClass::ReconcileConflict,
+        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
+            trigger_summary: String::from("parallel execution became unsafe"),
+            affected_units: vec![String::from("task-a")],
+            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
+                summary: String::from("conflict observed during reconcile"),
+                references: vec![String::from("not-a-locator")],
+            },
+            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
+                severity:
+                    featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Warning,
+                changed_or_blocked_stage: String::from("execution"),
+                expected_response: String::from("downgrade the slice"),
+            },
+            notes: vec![],
+        },
+        rerun_guidance_superseded: false,
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        record_fingerprint: String::from(
+            "9999999999999999999999999999999999999999999999999999999999999999",
+        ),
+    };
+
+    let error = validate_execution_topology_downgrade_record(&downgrade)
+        .expect_err("malformed blocking evidence references should fail");
+    assert!(
+        error.message.contains("blocking_evidence.references[0]"),
+        "malformed evidence locators should be rejected explicitly"
+    );
+}

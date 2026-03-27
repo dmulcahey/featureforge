@@ -195,13 +195,23 @@ pub fn downgrade_records_share_rerun_guidance(
     left: &ExecutionTopologyDowngradeRecord,
     right: &ExecutionTopologyDowngradeRecord,
 ) -> bool {
-    left.primary_reason_class == right.primary_reason_class
+    downgrade_record_is_active_guidance(left)
+        && downgrade_record_is_active_guidance(right)
+        && left.primary_reason_class == right.primary_reason_class
 }
 
 pub fn downgrade_rerun_guidance_key(
     record: &ExecutionTopologyDowngradeRecord,
 ) -> DowngradeReasonClass {
     record.primary_reason_class
+}
+
+pub fn downgrade_record_is_active_guidance(record: &ExecutionTopologyDowngradeRecord) -> bool {
+    !record.rerun_guidance_superseded
+}
+
+pub fn downgrade_record_is_superseded_guidance(record: &ExecutionTopologyDowngradeRecord) -> bool {
+    record.rerun_guidance_superseded
 }
 
 pub fn validate_execution_topology_downgrade_record(
@@ -255,8 +265,43 @@ pub fn validate_execution_topology_downgrade_detail(
 fn validate_blocking_evidence(evidence: &DowngradeBlockingEvidence) -> Result<(), JsonFailure> {
     require_non_empty(&evidence.summary, "blocking_evidence.summary")?;
     for (index, reference) in evidence.references.iter().enumerate() {
-        require_non_empty(reference, &format!("blocking_evidence.references[{index}]"))?;
+        validate_blocking_evidence_reference(reference, index)?;
     }
+    Ok(())
+}
+
+fn validate_blocking_evidence_reference(reference: &str, index: usize) -> Result<(), JsonFailure> {
+    let trimmed = reference.trim();
+    if trimmed.is_empty()
+        || trimmed != reference
+        || trimmed.chars().any(char::is_whitespace)
+        || trimmed.split_once(':').is_none()
+    {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "ExecutionTopologyDowngradeRecord has malformed blocking_evidence.references[{index}] locator."
+            ),
+        ));
+    }
+
+    let Some((scheme, payload)) = trimmed.split_once(':') else {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "ExecutionTopologyDowngradeRecord has malformed blocking_evidence.references[{index}] locator."
+            ),
+        ));
+    };
+    if scheme.trim().is_empty() || payload.trim().is_empty() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "ExecutionTopologyDowngradeRecord has malformed blocking_evidence.references[{index}] locator."
+            ),
+        ));
+    }
+
     Ok(())
 }
 

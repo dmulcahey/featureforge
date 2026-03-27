@@ -13,6 +13,7 @@ use featureforge::execution::leases::{
     is_worktree_lease_terminal_state, validate_worktree_lease, worktree_lease_states,
 };
 use featureforge::execution::observability::{
+    downgrade_record_is_active_guidance, downgrade_record_is_superseded_guidance,
     downgrade_records_share_rerun_guidance, validate_execution_topology_downgrade_record,
 };
 use featureforge::paths::branch_storage_key;
@@ -434,6 +435,41 @@ fn worktree_lease_helper_accepts_terminal_lease_state_with_reviewed_checkpoint()
 }
 
 #[test]
+fn worktree_lease_helper_rejects_terminal_lease_without_reviewed_checkpoint() {
+    for lease_state in [WorktreeLeaseState::Reconciled, WorktreeLeaseState::Cleaned] {
+        let lease = WorktreeLease {
+            lease_version: 1,
+            authoritative_sequence: 32,
+            source_plan_path: PLAN_REL.to_owned(),
+            source_plan_revision: 1,
+            execution_unit_id: String::from("task-a"),
+            source_branch: String::from("feature/task-a"),
+            authoritative_integration_branch: String::from("main"),
+            worktree_path: String::from("/tmp/task-a"),
+            repo_state_baseline_head_sha: String::from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            repo_state_baseline_worktree_fingerprint: String::from(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+            lease_state,
+            cleanup_state: String::from("cleaned"),
+            reviewed_checkpoint_commit_sha: None,
+            generated_by: String::from("featureforge:executing-plans"),
+            generated_at: String::from("2026-03-27T21:15:21Z"),
+            lease_fingerprint: String::from(
+                "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            ),
+        };
+
+        let error = validate_worktree_lease(&lease)
+            .expect_err("terminal leases require reviewed checkpoint provenance");
+        assert!(
+            error.message.contains("reviewed_checkpoint_commit_sha"),
+            "terminal lease validation should reject missing reviewed checkpoint provenance"
+        );
+    }
+}
+
+#[test]
 fn downgrade_rerun_guidance_uses_primary_reason_class_only() {
     let base_record = ExecutionTopologyDowngradeRecord {
         record_version: 1,
@@ -496,6 +532,55 @@ fn downgrade_rerun_guidance_uses_primary_reason_class_only() {
     assert!(
         !downgrade_records_share_rerun_guidance(&base_record, &different_class),
         "different reason classes must not share rerun guidance"
+    );
+}
+
+#[test]
+fn downgrade_rerun_guidance_distinguishes_superseded_records() {
+    let active = ExecutionTopologyDowngradeRecord {
+        record_version: 1,
+        authoritative_sequence: 88,
+        source_plan_path: PLAN_REL.to_owned(),
+        source_plan_revision: 1,
+        execution_context_key: String::from("dm/todos-task5-lease-lane:main"),
+        primary_reason_class: DowngradeReasonClass::ReconcileConflict,
+        detail: featureforge::contracts::harness::ExecutionTopologyDowngradeDetail {
+            trigger_summary: String::from("parallel execution became unsafe"),
+            affected_units: vec![String::from("task-a")],
+            blocking_evidence: featureforge::contracts::harness::DowngradeBlockingEvidence {
+                summary: String::from("conflict observed during reconcile"),
+                references: vec![String::from("artifact:lease-1")],
+            },
+            operator_impact: featureforge::contracts::harness::DowngradeOperatorImpact {
+                severity:
+                    featureforge::contracts::harness::DowngradeOperatorImpactSeverity::Blocking,
+                changed_or_blocked_stage: String::from("execution"),
+                expected_response: String::from("downgrade the slice"),
+            },
+            notes: vec![],
+        },
+        rerun_guidance_superseded: false,
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("2026-03-27T21:15:21Z"),
+        record_fingerprint: String::from(
+            "3333333333333333333333333333333333333333333333333333333333333333",
+        ),
+    };
+    let superseded = ExecutionTopologyDowngradeRecord {
+        rerun_guidance_superseded: true,
+        record_fingerprint: String::from(
+            "4444444444444444444444444444444444444444444444444444444444444444",
+        ),
+        ..active.clone()
+    };
+
+    assert!(downgrade_record_is_active_guidance(&active));
+    assert!(!downgrade_record_is_superseded_guidance(&active));
+    assert!(!downgrade_record_is_active_guidance(&superseded));
+    assert!(downgrade_record_is_superseded_guidance(&superseded));
+    assert!(
+        !downgrade_records_share_rerun_guidance(&active, &superseded),
+        "superseded downgrade guidance must not participate in active rerun matching"
     );
 }
 

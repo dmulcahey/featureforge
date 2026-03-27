@@ -385,19 +385,18 @@ pub fn validate_worktree_lease(lease: &WorktreeLease) -> Result<(), JsonFailure>
     require_non_empty(&lease.generated_at, "generated_at")?;
     require_non_empty(&lease.lease_fingerprint, "lease_fingerprint")?;
 
-    if matches!(
-        lease.lease_state,
-        WorktreeLeaseState::ReviewPassedPendingReconcile
-    ) && lease
-        .reviewed_checkpoint_commit_sha
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_none()
+    let requires_reviewed_checkpoint = !matches!(lease.lease_state, WorktreeLeaseState::Open);
+    if requires_reviewed_checkpoint
+        && lease
+            .reviewed_checkpoint_commit_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
     {
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
-            "WorktreeLease must include reviewed_checkpoint_commit_sha while lease_state is review_passed_pending_reconcile.",
+            "WorktreeLease must include reviewed_checkpoint_commit_sha while lease_state is not open.",
         ));
     }
 
