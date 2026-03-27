@@ -76,6 +76,34 @@ const TASK8_HARNESS_MATRIX_FIXTURES = [
   'harness/retention-prunable-stale-artifact.md',
   'harness/retention-active-authoritative-artifact.md',
 ];
+const DEPENDENCY_INDEX_STATUS_FIXTURES = [
+  'harness/dependency-index-mismatch-status.json',
+  'harness/dependency-index-clean.json',
+  'harness/dependency-index-stale.json',
+  'harness/dependency-index-malformed.json',
+];
+const REQUIRED_DEPENDENCY_INDEX_STATES = new Set([
+  'healthy',
+  'missing',
+  'malformed',
+  'inconsistent',
+  'recovering',
+]);
+const OBSERVABILITY_SEAM_EVENT_KINDS_FIXTURE = 'harness/observability-seam-event-kinds.json';
+const REQUIRED_ADVANCED_RUNTIME_EVENT_KINDS = [
+  'authoritative_mutation_recorded',
+  'blocked_state_cleared',
+  'blocked_state_entered',
+  'integrity_mismatch_detected',
+  'ordering_gap_detected',
+  'partial_mutation_recovered',
+  'replay_accepted',
+  'replay_conflict',
+  'repo_state_drift_detected',
+  'repo_state_reconciled',
+  'write_authority_conflict',
+  'write_authority_reclaimed',
+];
 
 function retiredProductName() {
   const readme = readUtf8(path.join(REPO_ROOT, 'README.md'));
@@ -112,6 +140,46 @@ test('task 8 harness fixture matrix files exist by exact filename before runtime
     const filePath = path.join(FIXTURE_ROOT, relPath);
     assert.equal(true, fs.existsSync(filePath), `${relPath} should exist`);
   }
+});
+
+test('task 8 dependency-index fixtures pin minimum status key and canonical state vocabulary', () => {
+  for (const relPath of DEPENDENCY_INDEX_STATUS_FIXTURES) {
+    const filePath = path.join(FIXTURE_ROOT, relPath);
+    assert.equal(true, fs.existsSync(filePath), `${relPath} should exist`);
+
+    const payload = JSON.parse(readUtf8(filePath));
+    assert.equal(typeof payload, 'object', `${relPath} should contain a JSON object`);
+    assert.notEqual(payload, null, `${relPath} should not be null`);
+    assert.equal(
+      typeof payload.dependency_index_state,
+      'string',
+      `${relPath} should include dependency_index_state`,
+    );
+    assert.equal(
+      REQUIRED_DEPENDENCY_INDEX_STATES.has(payload.dependency_index_state),
+      true,
+      `${relPath} should use canonical dependency_index_state vocabulary`,
+    );
+  }
+});
+
+test('observability seam fixture pins advanced runtime event_kind vocabulary', () => {
+  const fixturePath = path.join(FIXTURE_ROOT, OBSERVABILITY_SEAM_EVENT_KINDS_FIXTURE);
+  const payload = JSON.parse(readUtf8(fixturePath));
+  assert.equal(Array.isArray(payload.observability_event_examples), true);
+
+  const observedEventKinds = payload.observability_event_examples
+    .map((entry) => entry?.event_kind)
+    .filter((eventKind) => typeof eventKind === 'string' && eventKind.length > 0);
+  const missingEventKinds = REQUIRED_ADVANCED_RUNTIME_EVENT_KINDS.filter(
+    (eventKind) => !observedEventKinds.includes(eventKind),
+  );
+
+  assert.deepEqual(
+    missingEventKinds,
+    [],
+    'observability seam fixture should include advanced runtime-stable event_kind literals',
+  );
 });
 
 test('spec fixtures carry the required workflow headers', () => {
