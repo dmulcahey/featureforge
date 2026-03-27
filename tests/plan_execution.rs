@@ -2524,6 +2524,81 @@ fn canonical_preflight_blocks_active_blocked_and_interrupted_steps() {
 }
 
 #[test]
+fn canonical_preflight_rejects_resume_when_authoritative_handoff_is_required() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-authoritative-handoff");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout execution-preflight-fixture");
+
+    let contract_rel = "docs/featureforge/execution-evidence/preflight-handoff-required-contract.md";
+    let contract_fingerprint = write_execution_contract_artifact(repo, contract_rel, None);
+    write_harness_state_fixture(
+        repo,
+        state,
+        "handoff_required",
+        contract_rel,
+        &contract_fingerprint,
+        &[],
+        &[],
+        true,
+    );
+
+    let acceptance_path = preflight_acceptance_state_path(repo, state);
+    assert!(
+        !acceptance_path.exists(),
+        "preflight acceptance state should not exist before blocked authoritative resume preflight"
+    );
+    let status_before = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before authoritative handoff-required preflight",
+    );
+    assert!(
+        status_before["execution_run_id"].is_null(),
+        "status should keep execution_run_id null before blocked authoritative resume preflight"
+    );
+
+    let preflight = run_rust_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight with authoritative handoff-required state",
+    );
+
+    assert_eq!(preflight["allowed"], false);
+    assert_eq!(preflight["failure_class"], "ExecutionStateNotReady");
+    assert!(
+        preflight["reason_codes"].as_array().is_some_and(|codes| codes
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|code| code.contains("handoff_required"))),
+        "preflight should include a stable handoff_required reason code, got {preflight}"
+    );
+
+    assert!(
+        !acceptance_path.exists(),
+        "preflight must not persist acceptance state when authoritative handoff is required"
+    );
+    let status_after = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after authoritative handoff-required preflight",
+    );
+    assert!(
+        status_after["execution_run_id"].is_null(),
+        "preflight rejection must not persist a new execution_run_id"
+    );
+}
+
+#[test]
 fn canonical_preflight_blocks_workspace_hazards() {
     for (case_name, setup, expected_reason) in [
         (

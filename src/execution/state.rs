@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1304,8 +1305,68 @@ fn preflight_acceptance_path(runtime: &ExecutionRuntime) -> PathBuf {
         .join(PREFLIGHT_ACCEPTANCE_FILE)
 }
 
+#[derive(Debug, Deserialize)]
+struct PreflightAuthoritativeState {
+    #[serde(default)]
+    harness_phase: Option<String>,
+    #[serde(default)]
+    handoff_required: bool,
+}
+
+fn preflight_requires_authoritative_handoff(context: &ExecutionContext) -> Result<bool, JsonFailure> {
+    let state_path = harness_state_path(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    );
+    let source = match fs::read_to_string(&state_path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not read authoritative harness state {}: {error}",
+                    state_path.display()
+                ),
+            ));
+        }
+    };
+    let overlay: PreflightAuthoritativeState = serde_json::from_str(&source).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state is malformed in {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+
+    let phase_requires_handoff = overlay
+        .harness_phase
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|phase| phase == "handoff_required");
+    Ok(overlay.handoff_required || phase_requires_handoff)
+}
+
 pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
     let mut gate = GateState::default();
+    match preflight_requires_authoritative_handoff(context) {
+        Ok(true) => gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "authoritative_handoff_required",
+            "Execution preflight cannot continue while authoritative harness state requires handoff.",
+            "Publish a valid handoff (or clear handoff_required in authoritative state) before retrying preflight.",
+        ),
+        Ok(false) => {}
+        Err(error) => gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "authoritative_state_unavailable",
+            error.message,
+            "Restore authoritative harness state readability and validity before retrying preflight.",
+        ),
+    }
 
     if let Some(step) = active_step(context, NoteState::Active) {
         gate.fail(
