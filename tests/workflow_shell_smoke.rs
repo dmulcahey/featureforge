@@ -11,7 +11,7 @@ mod workflow_support;
 
 use assert_cmd::cargo::CommandCargoExt;
 use executable_support::make_executable;
-use featureforge::paths::branch_storage_key;
+use featureforge::paths::{branch_storage_key, harness_state_path};
 use files_support::write_file;
 use prebuilt_support::write_canonical_prebuilt_layout;
 use process_support::run;
@@ -833,6 +833,55 @@ fn workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_an
             .as_str()
             .expect("workflow handoff json should expose recommendation_reason")
     )));
+}
+
+#[test]
+fn workflow_phase_doctor_handoff_json_parity_for_pivot_required_plan_revision_block() {
+    let (repo_dir, state_dir) = init_repo("workflow-shell-smoke-pivot-plan-block");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let session_key = "workflow-shell-smoke-pivot-plan-block";
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    enable_session_decision(state, session_key);
+
+    let authoritative_state_path =
+        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
+    write_file(
+        &authoritative_state_path,
+        r#"{"harness_phase":"pivot_required","latest_authoritative_sequence":23,"reason_codes":["blocked_on_plan_revision"]}"#,
+    );
+
+    let env = [("FEATUREFORGE_SESSION_KEY", session_key)];
+    let phase_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "phase", "--json"],
+        &env,
+        "workflow phase json for shell-smoke pivot plan-block parity",
+    );
+    let doctor_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "doctor", "--json"],
+        &env,
+        "workflow doctor json for shell-smoke pivot plan-block parity",
+    );
+    let handoff_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "handoff", "--json"],
+        &env,
+        "workflow handoff json for shell-smoke pivot plan-block parity",
+    );
+
+    assert_eq!(phase_json["phase"], "pivot_required");
+    assert_eq!(doctor_json["phase"], phase_json["phase"]);
+    assert_eq!(handoff_json["phase"], phase_json["phase"]);
+    assert_eq!(phase_json["next_action"], "plan_update");
+    assert_eq!(doctor_json["next_action"], phase_json["next_action"]);
+    assert_eq!(handoff_json["next_action"], phase_json["next_action"]);
 }
 
 #[test]

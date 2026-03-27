@@ -10,7 +10,7 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
-use crate::execution::harness::{EvaluatorKind, HarnessPhase};
+use crate::execution::harness::{EvaluatorKind, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus, RecommendOutput};
 use crate::session_entry::{self, SessionEntryResolveOutput};
 use crate::workflow::status::{SessionEntryState, WorkflowPhase, WorkflowRoute, WorkflowRuntime};
@@ -651,6 +651,10 @@ fn derive_phase(
         return String::from("implementation_handoff");
     };
 
+    if let Some(authoritative_phase) = authoritative_public_phase(execution_status) {
+        return authoritative_phase.to_owned();
+    }
+
     if execution_status.execution_started != "yes" {
         if status_has_accepted_preflight(execution_status)
             || preflight.map(|result| result.allowed).unwrap_or(false)
@@ -684,6 +688,14 @@ fn derive_phase(
         "ReleaseArtifactNotFresh" => String::from("document_release_pending"),
         _ => String::from("final_review_pending"),
     }
+}
+
+fn authoritative_public_phase(status: &PlanExecutionStatus) -> Option<&'static str> {
+    if status.latest_authoritative_sequence <= INITIAL_AUTHORITATIVE_SEQUENCE {
+        return None;
+    }
+
+    Some(status.harness_phase.as_str())
 }
 
 fn status_has_accepted_preflight(status: &PlanExecutionStatus) -> bool {
@@ -767,6 +779,25 @@ fn next_text_for_phase(
                 format!("Return to the current execution flow for the approved plan: {plan_path}")
             }
         }
+        "contract_drafting"
+        | "contract_pending_approval"
+        | "contract_approved"
+        | "evaluating"
+        | "repairing"
+        | "handoff_required" => {
+            if plan_path.is_empty() {
+                String::from("Return to the current execution flow for the approved plan.")
+            } else {
+                format!("Return to the current execution flow for the approved plan: {plan_path}")
+            }
+        }
+        "pivot_required" => {
+            if plan_path.is_empty() {
+                String::from("Update and re-approve the plan before continuing execution.")
+            } else {
+                format!("Update and re-approve the plan before continuing execution: {plan_path}")
+            }
+        }
         "final_review_pending" => {
             if plan_path.is_empty() {
                 String::from("Use featureforge:requesting-code-review for the final review gate.")
@@ -811,6 +842,17 @@ fn reason_text(context: &OperatorContext) -> String {
                 )
             }),
         "executing" => String::from(
+            "Execution already started for the approved plan and should continue through the current execution flow.",
+        ),
+        "pivot_required" => {
+            String::from("Execution is blocked pending an approved plan revision.")
+        }
+        "contract_drafting"
+        | "contract_pending_approval"
+        | "contract_approved"
+        | "evaluating"
+        | "repairing"
+        | "handoff_required" => String::from(
             "Execution already started for the approved plan and should continue through the current execution flow.",
         ),
         "final_review_pending" => gate_first_diagnostic_message(context.gate_review.as_ref())
@@ -863,7 +905,14 @@ fn next_action_for_phase(phase: &str) -> &'static str {
         | "plan_update"
         | "workflow_unresolved" => "use_next_skill",
         "implementation_handoff" | "execution_preflight" => "execution_preflight",
-        "executing" => "return_to_execution",
+        "executing"
+        | "contract_drafting"
+        | "contract_pending_approval"
+        | "contract_approved"
+        | "evaluating"
+        | "repairing"
+        | "handoff_required" => "return_to_execution",
+        "pivot_required" => "plan_update",
         "final_review_pending" => "request_code_review",
         "qa_pending" => "run_qa_only",
         "document_release_pending" => "run_document_release",

@@ -18,7 +18,7 @@ use featureforge::execution::observability::{
     STABLE_REASON_CODES,
 };
 use featureforge::git::{RepositoryIdentity, discover_repo_identity};
-use featureforge::paths::branch_storage_key;
+use featureforge::paths::{branch_storage_key, harness_state_path};
 use featureforge::workflow::manifest::{
     WorkflowManifest, manifest_path, recover_slug_changed_manifest,
 };
@@ -3537,6 +3537,118 @@ fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
     assert!(
         String::from_utf8_lossy(&gate_finish_output.stdout).contains("Finish gate\nAllowed: false")
     );
+}
+
+#[test]
+fn canonical_workflow_operator_pins_authoritative_contract_drafting_phase_in_public_surfaces() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-authoritative-contract-drafting");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-authoritative-contract-drafting";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    enable_session_decision(state, session_key);
+
+    let expected_phase = public_harness_phase_from_spec("contract_drafting");
+    let authoritative_state_path =
+        harness_state_path(state, &repo_slug(repo), &current_branch_name(repo));
+    write_file(
+        &authoritative_state_path,
+        &format!(
+            "{{\"harness_phase\":\"{}\",\"latest_authoritative_sequence\":17}}",
+            expected_phase
+        ),
+    );
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase should pin authoritative contract_drafting phase",
+        ),
+        "workflow phase should pin authoritative contract_drafting phase",
+    );
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff should pin authoritative contract_drafting phase",
+        ),
+        "workflow handoff should pin authoritative contract_drafting phase",
+    );
+
+    assert_eq!(phase_json["route_status"], "implementation_ready");
+    assert_eq!(phase_json["phase"], expected_phase);
+    assert_eq!(handoff_json["route_status"], "implementation_ready");
+    assert_eq!(handoff_json["phase"], expected_phase);
+}
+
+#[test]
+fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase_and_next_action() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-authoritative-pivot-required");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-authoritative-pivot-required";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    enable_session_decision(state, session_key);
+
+    let authoritative_state_path =
+        harness_state_path(state, &repo_slug(repo), &current_branch_name(repo));
+    write_file(
+        &authoritative_state_path,
+        r#"{"harness_phase":"pivot_required","latest_authoritative_sequence":23,"reason_codes":["blocked_on_plan_revision"]}"#,
+    );
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase should surface authoritative pivot_required plan-revision blocks",
+        ),
+        "workflow phase should surface authoritative pivot_required plan-revision blocks",
+    );
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow doctor should surface authoritative pivot_required plan-revision blocks",
+        ),
+        "workflow doctor should surface authoritative pivot_required plan-revision blocks",
+    );
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff should surface authoritative pivot_required plan-revision blocks",
+        ),
+        "workflow handoff should surface authoritative pivot_required plan-revision blocks",
+    );
+
+    let expected_phase = public_harness_phase_from_spec("pivot_required");
+
+    assert_eq!(
+        doctor_json["execution_status"]["harness_phase"],
+        Value::String(expected_phase.clone())
+    );
+    assert_eq!(phase_json["phase"], expected_phase);
+    assert_eq!(doctor_json["phase"], expected_phase);
+    assert_eq!(handoff_json["phase"], expected_phase);
+    assert_eq!(phase_json["next_action"], "plan_update");
+    assert_eq!(doctor_json["next_action"], "plan_update");
+    assert_eq!(handoff_json["next_action"], "plan_update");
 }
 
 #[test]
