@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use schemars::{JsonSchema, schema_for};
+use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::{
@@ -13,22 +13,22 @@ use crate::cli::plan_execution::{
     RecordEvaluationArgs, RecordHandoffArgs, ReopenArgs, StatusArgs, TransferArgs,
 };
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
-use crate::contracts::plan::{PlanDocument, PlanTask, parse_plan_file};
+use crate::contracts::plan::{parse_plan_file, PlanDocument, PlanTask};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
     EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
-    INITIAL_AUTHORITATIVE_SEQUENCE, ResetPolicy,
+    ResetPolicy, INITIAL_AUTHORITATIVE_SEQUENCE,
 };
 use crate::git::{
     derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
 };
 use crate::paths::{
-    RepoPath, branch_storage_key, featureforge_state_dir, harness_state_path,
-    normalize_repo_relative_path, normalize_whitespace, write_atomic as write_atomic_file,
+    branch_storage_key, featureforge_state_dir, harness_state_path, normalize_repo_relative_path,
+    normalize_whitespace, write_atomic as write_atomic_file, RepoPath,
 };
 use crate::repo_safety::RepoSafetyRuntime;
-use crate::workflow::manifest::{ManifestLoadResult, WorkflowManifest, load_manifest_read_only};
+use crate::workflow::manifest::{load_manifest_read_only, ManifestLoadResult, WorkflowManifest};
 use crate::workflow::markdown_scan::markdown_files_under;
 
 pub const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
@@ -194,6 +194,14 @@ pub struct EvidenceAttempt {
     pub packet_fingerprint: Option<String>,
     pub head_sha: Option<String>,
     pub base_sha: Option<String>,
+    pub source_contract_path: Option<String>,
+    pub source_contract_fingerprint: Option<String>,
+    pub source_evaluation_report_fingerprint: Option<String>,
+    pub evaluator_verdict: Option<String>,
+    pub failing_criterion_ids: Vec<String>,
+    pub source_handoff_fingerprint: Option<String>,
+    pub repo_state_baseline_head_sha: Option<String>,
+    pub repo_state_baseline_worktree_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2945,6 +2953,14 @@ fn parse_evidence_attempts(
             let mut packet_fingerprint = None;
             let mut head_sha = None;
             let mut base_sha = None;
+            let mut source_contract_path = None;
+            let mut source_contract_fingerprint = None;
+            let mut source_evaluation_report_fingerprint = None;
+            let mut evaluator_verdict = None;
+            let mut failing_criterion_ids = Vec::new();
+            let mut source_handoff_fingerprint = None;
+            let mut repo_state_baseline_head_sha = None;
+            let mut repo_state_baseline_worktree_fingerprint = None;
 
             line_index += 1;
             while line_index < lines.len() {
@@ -2968,6 +2984,55 @@ fn parse_evidence_attempts(
                     base_sha = Some(normalize_whitespace(value));
                 } else if let Some(value) = line.strip_prefix("**Claim:** ") {
                     claim = normalize_whitespace(value);
+                } else if let Some(value) = line.strip_prefix("**Source Contract Path:** ") {
+                    source_contract_path = parse_optional_evidence_scalar(value);
+                } else if let Some(value) = line.strip_prefix("**Source Contract Fingerprint:** ") {
+                    source_contract_fingerprint = parse_optional_evidence_scalar(value);
+                } else if let Some(value) =
+                    line.strip_prefix("**Source Evaluation Report Fingerprint:** ")
+                {
+                    source_evaluation_report_fingerprint = parse_optional_evidence_scalar(value);
+                } else if let Some(value) = line.strip_prefix("**Evaluator Verdict:** ") {
+                    evaluator_verdict = parse_optional_evidence_scalar(value);
+                } else if line == "**Failing Criterion IDs:**" {
+                    line_index += 1;
+                    while line_index < lines.len() {
+                        let criterion_line = lines[line_index].trim();
+                        if criterion_line.is_empty() {
+                            line_index += 1;
+                            continue;
+                        }
+                        if criterion_line == "[]" {
+                            line_index += 1;
+                            continue;
+                        }
+                        if criterion_line.starts_with("**")
+                            || criterion_line.starts_with("### ")
+                            || criterion_line.starts_with("#### ")
+                        {
+                            line_index = line_index.saturating_sub(1);
+                            break;
+                        }
+                        if let Some(value) = criterion_line.strip_prefix("- ") {
+                            if let Some(criterion_id) = parse_optional_evidence_scalar(value) {
+                                failing_criterion_ids.push(criterion_id);
+                            }
+                            line_index += 1;
+                            continue;
+                        }
+                        line_index = line_index.saturating_sub(1);
+                        break;
+                    }
+                } else if let Some(value) = line.strip_prefix("**Source Handoff Fingerprint:** ") {
+                    source_handoff_fingerprint = parse_optional_evidence_scalar(value);
+                } else if let Some(value) = line.strip_prefix("**Repo State Baseline Head SHA:** ")
+                {
+                    repo_state_baseline_head_sha = parse_optional_evidence_scalar(value);
+                } else if let Some(value) =
+                    line.strip_prefix("**Repo State Baseline Worktree Fingerprint:** ")
+                {
+                    repo_state_baseline_worktree_fingerprint =
+                        parse_optional_evidence_scalar(value);
                 } else if line == "**Files Proven:**" {
                     line_index += 1;
                     while line_index < lines.len() {
@@ -3107,6 +3172,14 @@ fn parse_evidence_attempts(
                 packet_fingerprint,
                 head_sha,
                 base_sha,
+                source_contract_path,
+                source_contract_fingerprint,
+                source_evaluation_report_fingerprint,
+                evaluator_verdict,
+                failing_criterion_ids,
+                source_handoff_fingerprint,
+                repo_state_baseline_head_sha,
+                repo_state_baseline_worktree_fingerprint,
             });
         }
 
@@ -3120,6 +3193,16 @@ fn parse_evidence_attempts(
         ));
     }
     Ok(attempts)
+}
+
+fn parse_optional_evidence_scalar(value: &str) -> Option<String> {
+    let normalized = normalize_whitespace(value);
+    let trimmed = normalized.trim().trim_matches('`').trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
 }
 
 fn compute_execution_fingerprint(plan_source: &str, evidence_source: Option<&str>) -> String {

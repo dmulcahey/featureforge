@@ -5,3 +5,4 @@ pub mod harness;
 pub mod mutate;
 pub mod observability;
 pub mod state;
+pub mod transitions;

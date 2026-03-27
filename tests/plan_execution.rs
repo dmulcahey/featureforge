@@ -59,6 +59,23 @@ fn parse_json(output: &Output, context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
+fn parse_failure_json(output: &Output, context: &str) -> Value {
+    assert!(
+        !output.status.success(),
+        "{context} should fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = if output.stdout.is_empty() {
+        &output.stderr
+    } else {
+        &output.stdout
+    };
+    serde_json::from_slice(payload)
+        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
+}
+
 fn missing_null_fields(object: &Value, fields: &[&str]) -> Vec<String> {
     fields
         .iter()
@@ -864,6 +881,34 @@ fn rewrite_contract_first_criterion_verifier_types_with_canonical_fingerprint(
     );
 }
 
+fn rewrite_contract_reset_policy_with_canonical_fingerprint(
+    repo: &Path,
+    artifact_rel: &str,
+    reset_policy: &str,
+) -> String {
+    let artifact_path = repo.join(artifact_rel);
+    let source =
+        fs::read_to_string(&artifact_path).expect("execution contract fixture should be readable");
+    let source = source.replacen(
+        "**Reset Policy:** none",
+        &format!("**Reset Policy:** {reset_policy}"),
+        1,
+    );
+    assert!(
+        source.contains(&format!("**Reset Policy:** {reset_policy}")),
+        "fixture should update Reset Policy to `{reset_policy}`"
+    );
+    let source =
+        replace_markdown_header_value(&source, "Contract Fingerprint", "__CONTRACT_FINGERPRINT__");
+    let contract_fingerprint =
+        canonical_fingerprint_without_header_value(&source, "Contract Fingerprint");
+    write_file(
+        &artifact_path,
+        &source.replace("__CONTRACT_FINGERPRINT__", &contract_fingerprint),
+    );
+    contract_fingerprint
+}
+
 fn replace_markdown_header_value(source: &str, header_label: &str, replacement: &str) -> String {
     let marker = format!("**{header_label}:**");
     let mut replaced = false;
@@ -1191,8 +1236,11 @@ fn write_execution_evidence_artifact_custom(
 Fixture captured content for authoritative evidence locator resolution tests.
 "#
     );
-    let canonical_fingerprint =
-        sha256_hex(template.replace("__EVIDENCE_ARTIFACT_FINGERPRINT__", "").as_bytes());
+    let canonical_fingerprint = sha256_hex(
+        template
+            .replace("__EVIDENCE_ARTIFACT_FINGERPRINT__", "")
+            .as_bytes(),
+    );
     let declared_fingerprint = fingerprint_override.unwrap_or(canonical_fingerprint.as_str());
     write_file(
         &repo.join(artifact_rel),
@@ -3968,6 +4016,892 @@ fn canonical_reopen_invalidates_completed_attempt_and_sets_resume_state() {
         .expect("evidence should exist after reopen");
     assert!(evidence.contains("**Status:** Invalidated"));
     assert!(evidence.contains("**Invalidation Reason:** Claim is stale after later repo changes"));
+}
+
+#[test]
+fn task4_begin_rejects_step_outside_active_contract_scope_without_mutating_plan_or_evidence() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-task4-begin-contract-scope-reject");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+    accept_execution_preflight(repo, state, PLAN_REL);
+
+    let contract_rel = "docs/featureforge/execution-evidence/task4-scope-contract.md";
+    let contract_fingerprint = write_execution_contract_artifact(repo, contract_rel, None);
+    write_harness_state_fixture(
+        repo,
+        state,
+        "contract_approved",
+        contract_rel,
+        &contract_fingerprint,
+        &["spec_compliance"],
+        &["spec_compliance"],
+        false,
+    );
+
+    let status_before = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before out-of-scope begin",
+    );
+    let plan_before =
+        fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable before begin");
+    let evidence_path = repo.join(evidence_rel_path());
+    assert!(
+        !evidence_path.exists(),
+        "single-step evidence should not exist before out-of-scope begin"
+    );
+
+    let begin = run_rust(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "begin should reject task/step outside active contract covered scope",
+    );
+    let begin_failure = parse_failure_json(&begin, "out-of-scope begin");
+    assert_eq!(begin_failure["error_class"], "ContractMismatch");
+
+    let plan_after =
+        fs::read_to_string(repo.join(PLAN_REL)).expect("plan should remain readable after begin");
+    assert_eq!(
+        plan_after, plan_before,
+        "out-of-scope begin must leave plan unchanged"
+    );
+    assert!(
+        !evidence_path.exists(),
+        "out-of-scope begin must not create execution evidence"
+    );
+
+    let status_after = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after out-of-scope begin rejection",
+    );
+    assert_eq!(status_after["active_task"], Value::Null);
+    assert_eq!(status_after["active_step"], Value::Null);
+}
+
+#[test]
+fn task4_begin_fails_closed_when_active_contract_pointer_is_non_authoritative() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-task4-begin-invalid-contract-pointer");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    accept_execution_preflight(repo, state, PLAN_REL);
+
+    let status_before = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before invalid active-contract pointer begin",
+    );
+    let plan_before = fs::read_to_string(repo.join(PLAN_REL))
+        .expect("plan should stay readable before invalid active-contract pointer begin");
+    let evidence_path = repo.join(evidence_rel_path());
+    assert!(
+        !evidence_path.exists(),
+        "single-step evidence should not exist before invalid active-contract pointer begin"
+    );
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 41,
+            "active_contract_path": "contract-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.md",
+            "active_contract_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "required_evaluator_kinds": ["spec_compliance"],
+            "completed_evaluator_kinds": [],
+            "pending_evaluator_kinds": ["spec_compliance"],
+            "non_passing_evaluator_kinds": [],
+            "aggregate_evaluation_state": "pending",
+            "current_chunk_retry_count": 0,
+            "current_chunk_retry_budget": 1,
+            "current_chunk_pivot_threshold": 1,
+            "handoff_required": false,
+            "open_failed_criteria": []
+        }),
+    );
+
+    let begin = run_rust(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "begin should fail closed when authoritative active-contract pointer is non-authoritative",
+    );
+    let failure = parse_failure_json(&begin, "invalid active-contract pointer begin");
+    assert_eq!(
+        failure["error_class"], "NonAuthoritativeArtifact",
+        "invalid authoritative active-contract pointer should fail closed"
+    );
+
+    let plan_after = fs::read_to_string(repo.join(PLAN_REL))
+        .expect("plan should stay readable after invalid active-contract pointer begin");
+    assert_eq!(
+        plan_after, plan_before,
+        "invalid authoritative active-contract pointer begin must leave plan unchanged"
+    );
+    assert!(
+        !evidence_path.exists(),
+        "invalid authoritative active-contract pointer begin must not create execution evidence"
+    );
+}
+
+#[test]
+fn task4_begin_and_complete_claim_write_authority_before_mutable_validation() {
+    {
+        let (repo_dir, state_dir) = init_repo("plan-execution-task4-begin-lock-precedence");
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        write_approved_spec(repo);
+        write_two_step_shared_file_plan(repo, "none");
+        accept_execution_preflight(repo, state, PLAN_REL);
+
+        let status_before_begin = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status before begin setup for lock-precedence assertion",
+        );
+        run_rust_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status_before_begin["execution_fingerprint"]
+                    .as_str()
+                    .expect("status fingerprint should be present"),
+            ],
+            "begin setup before second begin lock-precedence assertion",
+        );
+        write_file(
+            &harness_branch_dir(repo, state)
+                .join("execution-harness")
+                .join("write-authority.lock"),
+            "pid=fixture\n",
+        );
+        let status = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status before second begin lock-precedence assertion",
+        );
+
+        let begin = run_rust(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status["execution_fingerprint"]
+                    .as_str()
+                    .expect("status fingerprint should be present"),
+            ],
+            "begin lock-precedence failure",
+        );
+        let begin_failure = parse_failure_json(&begin, "begin lock-precedence failure");
+        assert_eq!(begin_failure["error_class"], "ConcurrentWriterConflict");
+    }
+
+    {
+        let (repo_dir, state_dir) = init_repo("plan-execution-task4-complete-lock-precedence");
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        write_approved_spec(repo);
+        write_single_step_plan(repo, "none");
+        accept_execution_preflight(repo, state, PLAN_REL);
+
+        let status = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status before complete lock-precedence assertion",
+        );
+        write_file(
+            &harness_branch_dir(repo, state)
+                .join("execution-harness")
+                .join("write-authority.lock"),
+            "pid=fixture\n",
+        );
+
+        let complete = run_rust(
+            repo,
+            state,
+            &[
+                "complete",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--claim",
+                "Complete should lock before mutable step validation.",
+                "--file",
+                "README.md",
+                "--manual-verify-summary",
+                "Lock-precedence fixture",
+                "--source",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status["execution_fingerprint"]
+                    .as_str()
+                    .expect("status fingerprint should be present"),
+            ],
+            "complete lock-precedence failure",
+        );
+        let complete_failure = parse_failure_json(&complete, "complete lock-precedence failure");
+        assert_eq!(complete_failure["error_class"], "ConcurrentWriterConflict");
+    }
+}
+
+#[test]
+fn task4_begin_rejects_handoff_and_pivot_required_authoritative_phases() {
+    for (phase, expected_error_class) in [
+        ("handoff_required", "IllegalHarnessPhase"),
+        ("pivot_required", "BlockedOnPlanPivot"),
+    ] {
+        let (repo_dir, state_dir) = init_repo("plan-execution-task4-begin-phase-rejection");
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        write_approved_spec(repo);
+        write_single_step_plan(repo, "none");
+        accept_execution_preflight(repo, state, PLAN_REL);
+
+        let contract_rel = "docs/featureforge/execution-evidence/task4-phase-contract.md";
+        let contract_fingerprint = write_execution_contract_artifact(repo, contract_rel, None);
+        write_harness_state_fixture(
+            repo,
+            state,
+            phase,
+            contract_rel,
+            &contract_fingerprint,
+            &["spec_compliance"],
+            &["spec_compliance"],
+            phase == "handoff_required",
+        );
+
+        let status = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status before begin phase rejection",
+        );
+        let begin = run_rust(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status["execution_fingerprint"]
+                    .as_str()
+                    .expect("status fingerprint should be present"),
+            ],
+            "begin should reject authoritative blocked phases",
+        );
+        let begin_failure = parse_failure_json(&begin, "begin phase rejection");
+        assert_eq!(
+            begin_failure["error_class"], expected_error_class,
+            "begin should emit stable failure class for harness phase `{phase}`"
+        );
+    }
+}
+
+#[test]
+fn task4_complete_rejects_handoff_and_pivot_required_authoritative_phases() {
+    for (phase, expected_error_class) in [
+        ("handoff_required", "IllegalHarnessPhase"),
+        ("pivot_required", "BlockedOnPlanPivot"),
+    ] {
+        let (repo_dir, state_dir) = init_repo("plan-execution-task4-complete-phase-rejection");
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        write_approved_spec(repo);
+        write_single_step_plan(repo, "none");
+        accept_execution_preflight(repo, state, PLAN_REL);
+
+        let status_before_begin = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status before complete phase begin setup",
+        );
+        run_rust_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status_before_begin["execution_fingerprint"]
+                    .as_str()
+                    .expect("status fingerprint should be present"),
+            ],
+            "begin setup before complete phase rejection",
+        );
+
+        let contract_rel = "docs/featureforge/execution-evidence/task4-complete-phase-contract.md";
+        let contract_fingerprint = write_execution_contract_artifact(repo, contract_rel, None);
+        write_harness_state_fixture(
+            repo,
+            state,
+            phase,
+            contract_rel,
+            &contract_fingerprint,
+            &["spec_compliance"],
+            &["spec_compliance"],
+            phase == "handoff_required",
+        );
+
+        let status_before_complete = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status before complete phase rejection",
+        );
+        let complete = run_rust(
+            repo,
+            state,
+            &[
+                "complete",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--claim",
+                "Complete should reject blocked authoritative harness phases.",
+                "--file",
+                "README.md",
+                "--manual-verify-summary",
+                "Phase gating fixture",
+                "--source",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status_before_complete["execution_fingerprint"]
+                    .as_str()
+                    .expect("status fingerprint should be present"),
+            ],
+            "complete should reject authoritative blocked phases",
+        );
+        let complete_failure = parse_failure_json(&complete, "complete phase rejection");
+        assert_eq!(
+            complete_failure["error_class"], expected_error_class,
+            "complete should emit stable failure class for harness phase `{phase}`"
+        );
+    }
+}
+
+#[test]
+fn task4_blocked_note_under_adaptive_or_chunk_boundary_sets_macro_blocking_state() {
+    for reset_policy in ["adaptive", "chunk-boundary"] {
+        let (repo_dir, state_dir) = init_repo("plan-execution-task4-blocked-note-reset-policy");
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        write_approved_spec(repo);
+        write_single_step_plan(repo, "none");
+        accept_execution_preflight(repo, state, PLAN_REL);
+
+        let contract_rel = "docs/featureforge/execution-evidence/task4-reset-policy-contract.md";
+        let _ = write_execution_contract_artifact(repo, contract_rel, None);
+        let contract_fingerprint = rewrite_contract_reset_policy_with_canonical_fingerprint(
+            repo,
+            contract_rel,
+            reset_policy,
+        );
+        write_harness_state_fixture(
+            repo,
+            state,
+            "executing",
+            contract_rel,
+            &contract_fingerprint,
+            &["spec_compliance"],
+            &["spec_compliance"],
+            false,
+        );
+
+        let status_before_begin = run_rust_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status before blocked-note begin",
+        );
+        let begin = run_rust_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status_before_begin["execution_fingerprint"]
+                    .as_str()
+                    .expect("status fingerprint should be present"),
+            ],
+            "begin before blocked-note reset-policy behavior",
+        );
+
+        let _ = run_rust_json(
+            repo,
+            state,
+            &[
+                "note",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--state",
+                "blocked",
+                "--message",
+                "Blocked note should trigger macro blocking state.",
+                "--expect-execution-fingerprint",
+                begin["execution_fingerprint"]
+                    .as_str()
+                    .expect("begin fingerprint should be present"),
+            ],
+            "blocked note under adaptive/chunk-boundary reset policy",
+        );
+
+        let persisted: Value = serde_json::from_str(
+            &fs::read_to_string(harness_state_file_path(repo, state))
+                .expect("harness state should remain readable after blocked note"),
+        )
+        .expect("harness state should remain valid json after blocked note");
+        assert_eq!(
+            persisted["handoff_required"],
+            Value::Bool(true),
+            "blocked note with reset_policy `{reset_policy}` should set handoff_required"
+        );
+        assert!(
+            matches!(
+                persisted["harness_phase"].as_str(),
+                Some("handoff_required" | "pivot_required")
+            ),
+            "blocked note with reset_policy `{reset_policy}` should advance macro blocking phase, got {}",
+            persisted["harness_phase"]
+        );
+    }
+}
+
+#[test]
+fn task4_note_rolls_back_plan_when_authoritative_state_publish_fails() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-task4-note-state-publish-rollback");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    accept_execution_preflight(repo, state, PLAN_REL);
+
+    let contract_rel = "docs/featureforge/execution-evidence/task4-note-rollback-contract.md";
+    let _ = write_execution_contract_artifact(repo, contract_rel, None);
+    let contract_fingerprint =
+        rewrite_contract_reset_policy_with_canonical_fingerprint(repo, contract_rel, "adaptive");
+    write_harness_state_fixture(
+        repo,
+        state,
+        "executing",
+        contract_rel,
+        &contract_fingerprint,
+        &["spec_compliance"],
+        &["spec_compliance"],
+        false,
+    );
+
+    let status_before_begin = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before note rollback begin",
+    );
+    let began = run_rust_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "begin before note rollback state-publish failpoint",
+    );
+
+    let plan_before =
+        fs::read_to_string(repo.join(PLAN_REL)).expect("plan should remain readable before note");
+    let evidence_path = repo.join(evidence_rel_path());
+    assert!(
+        !evidence_path.exists(),
+        "note rollback fixture should not create evidence before note"
+    );
+    let harness_before = fs::read_to_string(harness_state_file_path(repo, state))
+        .expect("harness state should remain readable before note");
+
+    let note = run_rust_with_env(
+        repo,
+        state,
+        &[
+            "note",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--state",
+            "blocked",
+            "--message",
+            "Blocked note should hit authoritative state publish rollback.",
+            "--expect-execution-fingerprint",
+            began["execution_fingerprint"]
+                .as_str()
+                .expect("begin fingerprint should be present"),
+        ],
+        &[(
+            "FEATUREFORGE_PLAN_EXECUTION_TEST_FAILPOINT",
+            "note_after_plan_write_before_authoritative_state_publish",
+        )],
+        "note with authoritative state publish failpoint",
+    );
+    let failure = parse_failure_json(&note, "note authoritative state publish failpoint");
+    assert_eq!(
+        failure["error_class"], "PartialAuthoritativeMutation",
+        "note should classify authoritative state publish failures as partial mutations"
+    );
+
+    assert_eq!(
+        fs::read_to_string(repo.join(PLAN_REL)).expect("plan should remain readable after note"),
+        plan_before,
+        "note should roll back plan mutation when authoritative state publish fails"
+    );
+    assert!(
+        !evidence_path.exists(),
+        "note should not create evidence when authoritative state publish fails"
+    );
+    assert_eq!(
+        fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should remain readable after note"),
+        harness_before,
+        "note should roll back authoritative harness state mutation when publish fails"
+    );
+}
+
+#[test]
+fn task4_reopen_stales_active_evaluation_handoff_and_downstream_provenance() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-task4-reopen-stales-provenance");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+
+    let contract_rel = "docs/featureforge/execution-evidence/task4-reopen-provenance-contract.md";
+    let contract_fingerprint = write_execution_contract_artifact(repo, contract_rel, None);
+    let authoritative_contract_file = format!("contract-{contract_fingerprint}.md");
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch_name(repo),
+            &authoritative_contract_file,
+        ),
+        &fs::read_to_string(repo.join(contract_rel)).expect("contract source should be readable"),
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 41,
+            "active_contract_path": authoritative_contract_file,
+            "active_contract_fingerprint": contract_fingerprint,
+            "required_evaluator_kinds": ["spec_compliance"],
+            "completed_evaluator_kinds": ["spec_compliance"],
+            "pending_evaluator_kinds": [],
+            "non_passing_evaluator_kinds": [],
+            "aggregate_evaluation_state": "pass",
+            "last_evaluation_report_path": "evaluation-before-reopen.md",
+            "last_evaluation_report_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "last_evaluation_evaluator_kind": "spec_compliance",
+            "last_evaluation_verdict": "pass",
+            "current_chunk_retry_count": 0,
+            "current_chunk_retry_budget": 2,
+            "current_chunk_pivot_threshold": 2,
+            "handoff_required": false,
+            "open_failed_criteria": [],
+            "last_handoff_path": "handoff-before-reopen.md",
+            "last_handoff_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "final_review_state": "fresh",
+            "browser_qa_state": "fresh",
+            "release_docs_state": "fresh",
+            "last_final_review_artifact_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "last_browser_qa_artifact_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "last_release_docs_artifact_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }),
+    );
+
+    let status_before = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before reopen provenance stale cascade",
+    );
+    assert_eq!(
+        status_before["last_evaluation_report_fingerprint"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+
+    let _ = run_rust_json(
+        repo,
+        state,
+        &[
+            "reopen",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--reason",
+            "Reopen should stale macro provenance graph.",
+            "--expect-execution-fingerprint",
+            status_before["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "reopen should stale active evaluation/handoff/downstream provenance",
+    );
+
+    let status_after = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status after reopen provenance stale cascade",
+    );
+    assert_eq!(
+        status_after["last_evaluation_report_path"],
+        Value::Null,
+        "reopen should stale active evaluation provenance path"
+    );
+    assert_eq!(
+        status_after["last_evaluation_report_fingerprint"],
+        Value::Null,
+        "reopen should stale active evaluation provenance fingerprint"
+    );
+    assert_eq!(
+        status_after["last_evaluation_evaluator_kind"],
+        Value::Null,
+        "reopen should stale evaluator provenance kind"
+    );
+    assert_eq!(
+        status_after["last_evaluation_verdict"],
+        Value::Null,
+        "reopen should stale evaluator provenance verdict"
+    );
+
+    let persisted: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should remain readable after reopen"),
+    )
+    .expect("harness state should remain valid json after reopen");
+    assert_eq!(
+        persisted["final_review_state"], "stale",
+        "reopen should stale downstream final-review provenance"
+    );
+    assert_eq!(
+        persisted["browser_qa_state"], "stale",
+        "reopen should stale downstream browser-qa provenance"
+    );
+    assert_eq!(
+        persisted["release_docs_state"], "stale",
+        "reopen should stale downstream release-doc provenance"
+    );
+    for field in [
+        "last_handoff_path",
+        "last_handoff_fingerprint",
+        "last_final_review_artifact_fingerprint",
+        "last_browser_qa_artifact_fingerprint",
+        "last_release_docs_artifact_fingerprint",
+    ] {
+        assert!(
+            persisted.get(field).is_none() || persisted[field].is_null(),
+            "reopen should stale `{field}` provenance pointer, got {}",
+            persisted[field]
+        );
+    }
+}
+
+#[test]
+fn task4_reopen_rolls_back_plan_evidence_and_harness_state_when_state_publish_fails() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-task4-reopen-state-publish-rollback");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+
+    let contract_rel = "docs/featureforge/execution-evidence/task4-reopen-rollback-contract.md";
+    let contract_fingerprint = write_execution_contract_artifact(repo, contract_rel, None);
+    write_harness_state_fixture(
+        repo,
+        state,
+        "executing",
+        contract_rel,
+        &contract_fingerprint,
+        &["spec_compliance"],
+        &[],
+        false,
+    );
+
+    let status_before = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before reopen rollback failpoint",
+    );
+    let plan_before = fs::read_to_string(repo.join(PLAN_REL))
+        .expect("plan should remain readable before reopen rollback failpoint");
+    let evidence_path = repo.join(evidence_rel_path());
+    let evidence_before = fs::read_to_string(&evidence_path)
+        .expect("evidence should remain readable before reopen rollback failpoint");
+    let harness_before = fs::read_to_string(harness_state_file_path(repo, state))
+        .expect("harness state should remain readable before reopen rollback failpoint");
+
+    let reopen = run_rust_with_env(
+        repo,
+        state,
+        &[
+            "reopen",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--reason",
+            "Reopen should roll back plan/evidence/state when state publish fails.",
+            "--expect-execution-fingerprint",
+            status_before["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        &[(
+            "FEATUREFORGE_PLAN_EXECUTION_TEST_FAILPOINT",
+            "reopen_after_plan_and_evidence_write_before_authoritative_state_publish",
+        )],
+        "reopen with authoritative state publish failpoint",
+    );
+    let failure = parse_failure_json(&reopen, "reopen authoritative state publish failpoint");
+    assert_eq!(
+        failure["error_class"], "PartialAuthoritativeMutation",
+        "reopen should classify authoritative state publish failures as partial mutations"
+    );
+
+    assert_eq!(
+        fs::read_to_string(repo.join(PLAN_REL)).expect("plan should remain readable after reopen"),
+        plan_before,
+        "reopen should roll back plan mutation when authoritative state publish fails"
+    );
+    assert_eq!(
+        fs::read_to_string(&evidence_path).expect("evidence should remain readable after reopen"),
+        evidence_before,
+        "reopen should roll back evidence mutation when authoritative state publish fails"
+    );
+    assert_eq!(
+        fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should remain readable after reopen"),
+        harness_before,
+        "reopen should roll back authoritative harness state mutation when publish fails"
+    );
 }
 
 #[test]
@@ -7399,17 +8333,17 @@ fn task3_gate_and_record_evaluator_accept_verified_authoritative_contract_artifa
 }
 
 #[test]
-fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_mismatched_authoritative_evidence_kinds(
-) {
-    let (repo_dir, state_dir) = init_repo(
-        "plan-execution-task3-evidence-ref-kind-specific-evidence-kind-mismatch",
-    );
+fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_mismatched_authoritative_evidence_kinds()
+ {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-task3-evidence-ref-kind-specific-evidence-kind-mismatch");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
     write_single_step_plan(repo, "none");
 
-    let contract_rel = "docs/featureforge/execution-evidence/evidence-ref-kind-specific-kind-contract.md";
+    let contract_rel =
+        "docs/featureforge/execution-evidence/evidence-ref-kind-specific-kind-contract.md";
     let evidence_requirements = r#"### Evidence Requirement 1
 **Evidence Requirement ID:** evidence-test
 **Kind:** test_result
@@ -7461,8 +8395,7 @@ fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_mismatched_
             .expect("source evidence artifact fixture should remain readable"),
     );
 
-    let evaluation_rel =
-        "docs/featureforge/execution-evidence/evidence-ref-kind-specific-evidence-kind-mismatch-evaluation.md";
+    let evaluation_rel = "docs/featureforge/execution-evidence/evidence-ref-kind-specific-evidence-kind-mismatch-evaluation.md";
     let criterion_results = r#"### Criterion Result 1
 **Criterion ID:** criterion-1
 **Status:** pass
@@ -7528,8 +8461,8 @@ fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_mismatched_
 }
 
 #[test]
-fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_wrong_authoritative_artifact_family(
-) {
+fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_wrong_authoritative_artifact_family()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-task3-evidence-ref-kind-specific-family-mismatch");
     let repo = repo_dir.path();
@@ -8363,7 +9296,8 @@ fn task3_record_evaluation_legacy_mixed_recovery_degrades_to_fail_phase() {
         }),
     );
 
-    let historical_fail_rel = "docs/featureforge/execution-evidence/legacy-code-fail-before-mixed-state.md";
+    let historical_fail_rel =
+        "docs/featureforge/execution-evidence/legacy-code-fail-before-mixed-state.md";
     let historical_fail_criterion_results = r#"### Criterion Result 1
 **Criterion ID:** criterion-2
 **Status:** fail
@@ -8535,7 +9469,8 @@ fn task3_record_evaluation_legacy_bootstrap_ignores_unverified_and_future_histor
     let spec_fingerprint =
         sha256_hex(&fs::read(repo.join(SPEC_REL)).expect("spec should be readable"));
     let packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
-    let contract_rel = "docs/featureforge/execution-evidence/legacy-bootstrap-poisoning-contract.md";
+    let contract_rel =
+        "docs/featureforge/execution-evidence/legacy-bootstrap-poisoning-contract.md";
     let contract_source = format!(
         r#"# Execution Contract
 
@@ -8758,8 +9693,10 @@ fn task3_record_evaluation_legacy_bootstrap_ignores_unverified_and_future_histor
     );
     let poisoned_non_harness_source = fs::read_to_string(repo.join(poisoned_non_harness_rel))
         .expect("poisoned non-harness evaluation fixture should be readable");
-    let poisoned_non_harness_fingerprint =
-        canonical_fingerprint_without_header_value(&poisoned_non_harness_source, "Report Fingerprint");
+    let poisoned_non_harness_fingerprint = canonical_fingerprint_without_header_value(
+        &poisoned_non_harness_source,
+        "Report Fingerprint",
+    );
     write_file(
         &harness_authoritative_artifact_path(
             state,
@@ -8853,8 +9790,9 @@ fn task3_record_evaluation_legacy_bootstrap_ignores_unverified_and_future_histor
     assert_eq!(recovery_json["allowed"], Value::Bool(true));
 
     let persisted_after_recovery: Value = serde_json::from_str(
-        &fs::read_to_string(harness_state_file_path(repo, state))
-            .expect("harness state should remain readable after poisoned legacy bootstrap recovery"),
+        &fs::read_to_string(harness_state_file_path(repo, state)).expect(
+            "harness state should remain readable after poisoned legacy bootstrap recovery",
+        ),
     )
     .expect("harness state should remain valid json after poisoned legacy bootstrap recovery");
     assert_eq!(
