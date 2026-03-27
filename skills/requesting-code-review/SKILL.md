@@ -190,6 +190,8 @@ The reviewer should use the shared review checklist from `review/checklist.md` i
 
 Use the `code-reviewer` agent and fill the template at `code-reviewer.md`
 
+For workflow-routed final review, dispatch a dedicated fresh-context reviewer independent of the implementation context. Do not reuse the implementation agent or its session for the terminal whole-diff review gate.
+
 When the implementation introduces unfamiliar patterns, framework APIs, dependencies, or bespoke wrappers around platform behavior, make sure the review considers built-in-before-bespoke and known ecosystem footguns.
 
 If the approved plan already called out a likely external-pattern target, you may pass that context into the reviewer briefing, but this is optional in v1.
@@ -219,6 +221,8 @@ For workflow-routed final review, also write a project-scoped code-review artifa
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - Use the base branch detected in Step 2 exactly as written; do not substitute a different branch name when persisting the artifact.
 - Use the current `HEAD` exactly as written; if new repo changes land after review, treat the earlier artifact as stale and rerun `requesting-code-review`.
+- Persist dedicated-review provenance in the artifact. For plan-routed final review, `Review Stage` must be `featureforge:requesting-code-review`, `Reviewer Provenance` must be `dedicated-independent`, and `Distinct From Stages` must enumerate the implementation stages this reviewer is independent from.
+- Persist explicit deviation disposition. When execution evidence recorded topology downgrades or other runtime execution deviations for the current run, set `Recorded Execution Deviations: present` and `Deviation Review Verdict: pass` only after the reviewer explicitly inspects those deviations. When no deviations were recorded, write `Recorded Execution Deviations: none` and `Deviation Review Verdict: not_required`.
 
 ```bash
 _SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
@@ -241,6 +245,11 @@ Use this structure:
 
 ```markdown
 # Code Review Result
+**Review Stage:** featureforge:requesting-code-review
+**Reviewer Provenance:** dedicated-independent
+**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development
+**Recorded Execution Deviations:** none
+**Deviation Review Verdict:** not_required
 **Source Plan:** `docs/featureforge/plans/...`
 **Source Plan Revision:** 3
 **Branch:** feature/foo
@@ -347,6 +356,7 @@ You: [Fix progress indicators]
 - runs `gate-review --plan ...` as the helper-owned fail-closed provenance gate before dispatching final review
 - consumes the execution evidence artifact for checked-off steps
 - consumes completed task-packet context and the approved plan's coverage matrix for plan-routed review
+- requires the persisted final-review artifact to prove dedicated independent reviewer provenance and, when present, explicit deviation disposition
 - must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself
 
 ## Red Flags

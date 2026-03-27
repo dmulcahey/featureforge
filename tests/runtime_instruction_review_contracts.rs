@@ -29,7 +29,35 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
         "featureforge:requesting-code-review",
     );
     assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "dedicated fresh-context reviewer independent of the implementation context",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Reviewer Provenance:** dedicated-independent",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Recorded Execution Deviations:** none",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Deviation Review Verdict:** not_required",
+    );
+    assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
         "approved plan",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "dedicated independent reviewer",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "explicitly inspect them and state whether those deviations pass final review",
     );
 }
