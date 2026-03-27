@@ -18,7 +18,7 @@ use featureforge::execution::observability::{
     STABLE_REASON_CODES,
 };
 use featureforge::git::{RepositoryIdentity, discover_repo_identity};
-use featureforge::paths::{branch_storage_key, harness_state_path};
+use featureforge::paths::{branch_storage_key, harness_authoritative_artifact_path, harness_state_path};
 use featureforge::workflow::manifest::{
     WorkflowManifest, manifest_path, recover_slug_changed_manifest,
 };
@@ -27,6 +27,7 @@ use files_support::write_file;
 use json_support::parse_json;
 use process_support::{repo_root, run, run_checked};
 use serde_json::{Value, to_value};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 #[cfg(unix)]
@@ -210,6 +211,39 @@ fn current_branch_name(repo: &Path) -> String {
         .to_owned()
 }
 
+fn expected_release_base_branch(repo: &Path) -> String {
+    const COMMON_BASE_BRANCHES: [&str; 5] = ["main", "master", "develop", "dev", "trunk"];
+
+    let current_branch = current_branch_name(repo);
+    if COMMON_BASE_BRANCHES.contains(&current_branch.as_str()) {
+        return current_branch;
+    }
+
+    let output = run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+                .current_dir(repo);
+            command
+        },
+        "git for-each-ref refs/heads for expected base branch",
+    );
+    let branches = String::from_utf8(output.stdout)
+        .expect("branch listing output should be utf-8")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    for candidate in COMMON_BASE_BRANCHES {
+        if branches.contains(candidate) {
+            return candidate.to_owned();
+        }
+    }
+    current_branch
+}
+
 fn current_head_sha(repo: &Path) -> String {
     let mut command = Command::new("git");
     command.args(["rev-parse", "HEAD"]).current_dir(repo);
@@ -235,6 +269,12 @@ fn repo_slug(repo: &Path) -> String {
         .find_map(|line| line.strip_prefix("SLUG="))
         .unwrap_or_else(|| panic!("repo slug output should include SLUG=..., got missing slug"))
         .to_owned()
+}
+
+fn sha256_hex(contents: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(contents);
+    format!("{:x}", hasher.finalize())
 }
 
 fn project_artifact_dir(repo: &Path, state_dir: &Path) -> PathBuf {
@@ -3536,6 +3576,88 @@ fn canonical_workflow_phase_requires_final_review_before_branch_completion() {
     assert!(gate_finish_output.status.success());
     assert!(
         String::from_utf8_lossy(&gate_finish_output.stdout).contains("Finish gate\nAllowed: false")
+    );
+}
+
+#[test]
+fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final_review_over_newer_branch_decoy()
+{
+    let (repo_dir, state_dir) = init_repo("workflow-phase-authoritative-final-review-provenance");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-authoritative-final-review-provenance";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    let branch = current_branch_name(repo);
+    let expected_base_branch = expected_release_base_branch(repo);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    let review_path = write_branch_review_artifact(repo, state, plan_rel, &expected_base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &expected_base_branch);
+    enable_session_decision(state, session_key);
+
+    let authoritative_review_source = fs::read_to_string(&review_path).expect(
+        "source review artifact should be readable for authoritative provenance fixture",
+    );
+    let authoritative_review_fingerprint = sha256_hex(authoritative_review_source.as_bytes());
+    let authoritative_review_file = format!("final-review-{authoritative_review_fingerprint}.md");
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch,
+            &authoritative_review_file,
+        ),
+        &authoritative_review_source,
+    );
+
+    let authoritative_state_path = harness_state_path(state, &repo_slug(repo), &branch);
+    write_file(
+        &authoritative_state_path,
+        &format!(
+            "{{\"schema_version\":1,\"harness_phase\":\"executing\",\"latest_authoritative_sequence\":17,\"final_review_state\":\"fresh\",\"last_final_review_artifact_fingerprint\":\"{authoritative_review_fingerprint}\"}}"
+        ),
+    );
+
+    write_file(
+        &project_artifact_dir(repo, state).join(format!(
+            "tester-{}-code-review-99999999-999999.md",
+            branch_storage_key(&branch)
+        )),
+        &format!(
+            "# Code Review Result\n**Source Plan:** `{plan_rel}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {branch}\n**Head SHA:** 0000000000000000000000000000000000000000\n**Result:** pass\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-24T23:59:59Z\n\n## Summary\n- newer same-branch decoy should not override recorded authoritative final-review provenance.\n",
+            repo_slug(repo)
+        ),
+    );
+
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow doctor for authoritative final-review provenance override fixture",
+        ),
+        "workflow doctor for authoritative final-review provenance override fixture",
+    );
+    let gate_finish_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate finish for authoritative final-review provenance override fixture",
+        ),
+        "workflow gate finish for authoritative final-review provenance override fixture",
+    );
+
+    assert_eq!(
+        gate_finish_json["allowed"], true,
+        "workflow gate finish should resolve final-review freshness from recorded authoritative provenance instead of scanning the newest branch artifact; got {gate_finish_json:?}"
+    );
+    assert_eq!(
+        doctor_json["gate_finish"]["allowed"], true,
+        "workflow doctor should report final-review freshness from recorded authoritative provenance instead of scanning the newest branch artifact; got {doctor_json:?}"
     );
 }
 

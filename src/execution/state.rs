@@ -2023,8 +2023,11 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         .join("projects")
         .join(&context.runtime.repo_slug);
 
-    let Some(review_path) = latest_branch_artifact_path(&artifact_dir, branch, "code-review")
-    else {
+    let authoritative_review_path = authoritative_final_review_artifact_path(context);
+    let review_uses_authoritative_provenance = authoritative_review_path.is_some();
+    let review_path = authoritative_review_path
+        .or_else(|| latest_branch_artifact_path(&artifact_dir, branch, "code-review"));
+    let Some(review_path) = review_path else {
         gate.fail(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_missing",
@@ -2043,57 +2046,59 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         );
         return gate.finish();
     }
-    if review.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
-        || review.headers.get("Source Plan Revision")
-            != Some(&context.plan_document.plan_revision.to_string())
-    {
-        gate.fail(
-            FailureClass::ReviewArtifactNotFresh,
-            "review_artifact_plan_mismatch",
-            "The latest code-review artifact does not match the current approved plan revision.",
-            "Run requesting-code-review and return with a fresh code-review artifact.",
-        );
-        return gate.finish();
-    }
-    if review.headers.get("Branch") != Some(branch) {
-        gate.fail(
-            FailureClass::ReviewArtifactNotFresh,
-            "review_artifact_branch_mismatch",
-            "The latest code-review artifact does not match the current branch.",
-            "Run requesting-code-review and return with a fresh code-review artifact.",
-        );
-        return gate.finish();
-    }
-    if review.headers.get("Head SHA") != Some(&current_head) {
-        gate.fail(
-            FailureClass::ReviewArtifactNotFresh,
-            "review_artifact_head_mismatch",
-            "The latest code-review artifact does not match the current HEAD.",
-            "Run requesting-code-review and return with a fresh code-review artifact.",
-        );
-        return gate.finish();
-    }
-    if review
-        .headers
-        .get("Base Branch")
-        .is_none_or(|value| value.trim().is_empty())
-    {
-        gate.fail(
-            FailureClass::ReviewArtifactNotFresh,
-            "review_artifact_base_branch_unresolved",
-            "The latest code-review artifact is missing its base branch declaration.",
-            "Run requesting-code-review and return with a fresh code-review artifact.",
-        );
-        return gate.finish();
-    }
-    if review.headers.get("Base Branch") != Some(&current_base_branch) {
-        gate.fail(
-            FailureClass::ReviewArtifactNotFresh,
-            "review_artifact_base_branch_mismatch",
-            "The latest code-review artifact does not match the expected base branch.",
-            "Run requesting-code-review and return with a fresh code-review artifact.",
-        );
-        return gate.finish();
+    if !review_uses_authoritative_provenance {
+        if review.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
+            || review.headers.get("Source Plan Revision")
+                != Some(&context.plan_document.plan_revision.to_string())
+        {
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                "review_artifact_plan_mismatch",
+                "The latest code-review artifact does not match the current approved plan revision.",
+                "Run requesting-code-review and return with a fresh code-review artifact.",
+            );
+            return gate.finish();
+        }
+        if review.headers.get("Branch") != Some(branch) {
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                "review_artifact_branch_mismatch",
+                "The latest code-review artifact does not match the current branch.",
+                "Run requesting-code-review and return with a fresh code-review artifact.",
+            );
+            return gate.finish();
+        }
+        if review.headers.get("Head SHA") != Some(&current_head) {
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                "review_artifact_head_mismatch",
+                "The latest code-review artifact does not match the current HEAD.",
+                "Run requesting-code-review and return with a fresh code-review artifact.",
+            );
+            return gate.finish();
+        }
+        if review
+            .headers
+            .get("Base Branch")
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                "review_artifact_base_branch_unresolved",
+                "The latest code-review artifact is missing its base branch declaration.",
+                "Run requesting-code-review and return with a fresh code-review artifact.",
+            );
+            return gate.finish();
+        }
+        if review.headers.get("Base Branch") != Some(&current_base_branch) {
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                "review_artifact_base_branch_mismatch",
+                "The latest code-review artifact does not match the expected base branch.",
+                "Run requesting-code-review and return with a fresh code-review artifact.",
+            );
+            return gate.finish();
+        }
     }
     if review.headers.get("Result") != Some(&String::from("pass")) {
         gate.fail(
@@ -3871,6 +3876,37 @@ fn latest_branch_artifact_path(
         .collect::<Vec<_>>();
     candidates.sort();
     candidates.pop()
+}
+
+fn authoritative_final_review_artifact_path(context: &ExecutionContext) -> Option<PathBuf> {
+    let state_path = harness_state_path(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    );
+    let source = fs::read_to_string(&state_path).ok()?;
+    let overlay: StatusAuthoritativeOverlay = serde_json::from_str(&source).ok()?;
+    let final_review_state = normalize_optional_overlay_value(overlay.final_review_state.as_deref())?;
+    if final_review_state != "fresh" {
+        return None;
+    }
+
+    let fingerprint = overlay
+        .last_final_review_artifact_fingerprint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if fingerprint.len() != 64 || !fingerprint.chars().all(|value| value.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let path = harness_authoritative_artifacts_dir(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    )
+    .join(format!("final-review-{fingerprint}.md"));
+    path.is_file().then_some(path)
 }
 
 fn strip_backticks(value: &str) -> String {
