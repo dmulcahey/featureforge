@@ -38,6 +38,22 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
+        "**Reviewer Source:** fresh-context-subagent",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Reviewer ID:** 019d3550-c932-7bb2-9903-33f68d7c30ca",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Reviewer Artifact Path:** `$_SP_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-independent-review-{datetime}.md`",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Reviewer Artifact Fingerprint:**",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
         "**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development",
     );
     assert_file_contains(
@@ -47,6 +63,18 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "**Deviation Review Verdict:** not_required",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Branch:** feature/foo",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Repo:** featureforge",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "**Strategy Checkpoint Fingerprint:**",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
@@ -59,5 +87,17 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
         "explicitly inspect them and state whether those deviations pass final review",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "Dedicated Reviewer Receipt Contract",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "include structured receipt-ready metadata in your response",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/code-reviewer.md"),
+        "Source Plan`, `Source Plan Revision`, `Strategy Checkpoint Fingerprint`, `Branch`, `Repo`, `Base Branch`, `Head SHA`",
     );
 }

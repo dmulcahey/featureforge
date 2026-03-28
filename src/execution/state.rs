@@ -22,9 +22,10 @@ use crate::contracts::plan::{PlanDocument, PlanTask, analyze_documents, parse_pl
 use crate::contracts::spec::parse_spec_file;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::final_review::{
-    authoritative_browser_qa_artifact_path_checked,
+    FinalReviewReceiptExpectations, authoritative_browser_qa_artifact_path_checked,
     authoritative_final_review_artifact_path_checked,
     authoritative_release_docs_artifact_path_checked,
+    authoritative_strategy_checkpoint_fingerprint_checked,
     authoritative_test_plan_artifact_path_from_qa_checked, latest_branch_artifact_path,
     parse_artifact_document, parse_final_review_receipt, resolve_release_base_branch,
     validate_final_review_receipt,
@@ -46,6 +47,9 @@ use crate::execution::topology::{
     default_preflight_reset_policy, default_preflight_review_stack, pending_chunk_id,
     persist_preflight_acceptance, preflight_acceptance_for_context, recommend_topology,
     tasks_are_independent,
+};
+use crate::execution::transitions::{
+    claim_step_write_authority, load_authoritative_transition_state,
 };
 use crate::git::{
     derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
@@ -524,6 +528,26 @@ impl ExecutionRuntime {
         }
     }
 
+    pub fn gate_review_dispatch(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
+        match load_execution_context(self, &args.plan) {
+            Ok(context) => {
+                record_review_dispatch_strategy_checkpoint(&context)?;
+                Ok(gate_review_from_context(&context))
+            }
+            Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
+                let mut gate = GateState::default();
+                gate.fail(
+                    FailureClass::PlanNotExecutionReady,
+                    "plan_not_execution_ready",
+                    error.message,
+                    "Refresh the approved plan/spec pair before running gate-review.",
+                );
+                Ok(gate.finish())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn gate_finish(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
         let context = load_execution_context(self, &args.plan)?;
         Ok(gate_finish_from_context(&context))
@@ -535,6 +559,71 @@ fn recommendation_execution_context_key(context: &ExecutionContext) -> String {
         resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
             .unwrap_or_else(|| String::from("unknown"));
     format!("{}@{}", context.runtime.branch_name, base_branch)
+}
+
+fn record_review_dispatch_strategy_checkpoint(
+    context: &ExecutionContext,
+) -> Result<(), JsonFailure> {
+    let _write_authority = claim_step_write_authority(&context.runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(());
+    };
+    let cycle_target = match review_dispatch_cycle_target(context) {
+        ReviewDispatchCycleTarget::Bound(task, step) => Some((task, step)),
+        ReviewDispatchCycleTarget::UnboundCompletedPlan => None,
+        ReviewDispatchCycleTarget::None => return Ok(()),
+    };
+    authoritative_state.record_review_dispatch_strategy_checkpoint(
+        context,
+        &context.plan_document.execution_mode,
+        cycle_target,
+    )?;
+    authoritative_state.persist_if_dirty_with_failpoint(None)
+}
+
+enum ReviewDispatchCycleTarget {
+    Bound(u32, u32),
+    UnboundCompletedPlan,
+    None,
+}
+
+fn review_dispatch_cycle_target(context: &ExecutionContext) -> ReviewDispatchCycleTarget {
+    for state in [
+        NoteState::Active,
+        NoteState::Blocked,
+        NoteState::Interrupted,
+    ] {
+        if let Some(step) = active_step(context, state) {
+            return ReviewDispatchCycleTarget::Bound(step.task_number, step.step_number);
+        }
+    }
+    if context.steps.iter().all(|step| step.checked) {
+        return ReviewDispatchCycleTarget::UnboundCompletedPlan;
+    }
+    if let Some(attempt) = context.evidence.attempts.iter().rev().find(|attempt| {
+        context.steps.iter().any(|step| {
+            step.task_number == attempt.task_number && step.step_number == attempt.step_number
+        })
+    }) {
+        return ReviewDispatchCycleTarget::Bound(attempt.task_number, attempt.step_number);
+    }
+    if let Some(step) = context.steps.iter().rev().find(|step| step.checked) {
+        return ReviewDispatchCycleTarget::Bound(step.task_number, step.step_number);
+    }
+    if let Some(step) = context
+        .steps
+        .iter()
+        .find(|step| step.note_state.is_some() && !step.checked)
+    {
+        return ReviewDispatchCycleTarget::Bound(step.task_number, step.step_number);
+    }
+    if !context.evidence.attempts.is_empty()
+        && let Some(attempt) = context.evidence.attempts.last()
+    {
+        return ReviewDispatchCycleTarget::Bound(attempt.task_number, attempt.step_number);
+    }
+    ReviewDispatchCycleTarget::None
 }
 
 fn select_active_learned_topology_guidance(
@@ -3554,8 +3643,14 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
     {
         Ok(path) => path,
         Err(error) => {
+            let failure_class =
+                if error.error_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
+                    FailureClass::ArtifactIntegrityMismatch
+                } else {
+                    FailureClass::MalformedExecutionState
+                };
             gate.fail(
-                FailureClass::MalformedExecutionState,
+                failure_class,
                 "review_artifact_authoritative_provenance_invalid",
                 error.message,
                 "Restore the authoritative final-review provenance and retry gate-finish.",
@@ -3585,6 +3680,19 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         return gate.finish();
     }
     let review_receipt = parse_final_review_receipt(&review_path);
+    let expected_strategy_checkpoint_fingerprint =
+        match authoritative_strategy_checkpoint_fingerprint_checked(context) {
+            Ok(value) => value,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "review_receipt_strategy_checkpoint_truth_unavailable",
+                    error.message,
+                    "Restore authoritative strategy checkpoint provenance before running gate-finish.",
+                );
+                return gate.finish();
+            }
+        };
     let deviations_required =
         match authoritative_matching_execution_topology_downgrade_records_checked(
             context,
@@ -3601,13 +3709,18 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
                 return gate.finish();
             }
         };
-    if let Err(issue) = validate_final_review_receipt(
-        &review_receipt,
-        &context.plan_rel,
-        context.plan_document.plan_revision,
-        &current_head,
+    let review_expectations = FinalReviewReceiptExpectations {
+        expected_plan_path: &context.plan_rel,
+        expected_plan_revision: context.plan_document.plan_revision,
+        expected_strategy_checkpoint_fingerprint: expected_strategy_checkpoint_fingerprint
+            .as_deref(),
+        expected_head_sha: &current_head,
+        expected_base_branch: &current_base_branch,
         deviations_required,
-    ) {
+    };
+    if let Err(issue) =
+        validate_final_review_receipt(&review_receipt, &review_path, &review_expectations)
+    {
         gate.fail(
             FailureClass::ReviewArtifactNotFresh,
             issue.reason_code(),
@@ -3660,8 +3773,14 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
     let authoritative_qa_path = match authoritative_browser_qa_artifact_path_checked(context) {
         Ok(path) => path,
         Err(error) => {
+            let failure_class =
+                if error.error_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
+                    FailureClass::ArtifactIntegrityMismatch
+                } else {
+                    FailureClass::MalformedExecutionState
+                };
             gate.fail(
-                FailureClass::MalformedExecutionState,
+                failure_class,
                 "qa_artifact_authoritative_provenance_invalid",
                 error.message,
                 "Restore the authoritative browser-QA provenance and retry gate-finish.",
@@ -3673,8 +3792,14 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         Some(qa_path) => match authoritative_test_plan_artifact_path_from_qa_checked(qa_path) {
             Ok(path) => path,
             Err(error) => {
+                let failure_class =
+                    if error.error_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
+                        FailureClass::ArtifactIntegrityMismatch
+                    } else {
+                        FailureClass::MalformedExecutionState
+                    };
                 gate.fail(
-                    FailureClass::MalformedExecutionState,
+                    failure_class,
                     "test_plan_artifact_authoritative_provenance_invalid",
                     error.message,
                     "Restore the authoritative browser-QA to test-plan provenance and retry gate-finish.",
@@ -3796,13 +3921,30 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
             );
             return gate.finish();
         }
-        if qa
+        let qa_source_test_plan_matches = qa
             .headers
             .get("Source Test Plan")
-            .map(|value| value.trim_matches('`').to_owned())
-            .as_deref()
-            != Some(test_plan_path.to_string_lossy().as_ref())
-        {
+            .map(|value| value.trim_matches('`').trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .and_then(|raw| {
+                let source_path = PathBuf::from(raw);
+                let resolved = if source_path.is_absolute() {
+                    source_path
+                } else {
+                    qa_path
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(source_path)
+                };
+                fs::canonicalize(resolved).ok()
+            })
+            .and_then(|source| {
+                fs::canonicalize(test_plan_path)
+                    .ok()
+                    .map(|target| source == target)
+            })
+            .unwrap_or(false);
+        if !qa_source_test_plan_matches {
             gate.fail(
                 FailureClass::QaArtifactNotFresh,
                 "qa_artifact_source_test_plan_mismatch",
@@ -3844,8 +3986,14 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
     {
         Ok(path) => path,
         Err(error) => {
+            let failure_class =
+                if error.error_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
+                    FailureClass::ArtifactIntegrityMismatch
+                } else {
+                    FailureClass::MalformedExecutionState
+                };
             gate.fail(
-                FailureClass::MalformedExecutionState,
+                failure_class,
                 "release_artifact_authoritative_provenance_invalid",
                 error.message,
                 "Restore the authoritative release-doc provenance and retry gate-finish.",

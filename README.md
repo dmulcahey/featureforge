@@ -90,8 +90,8 @@ Completion then flows through:
 Execution strategy checkpoints are runtime-owned execution state, not planning-stage transitions.
 
 - `initial_dispatch` is required before repo-writing execution dispatch
-- `review_remediation` is required before remediation after actionable review findings
-- `cycle_break` is recorded automatically when the same task reaches three reopen/remediation cycles
+- `review_remediation` is recorded automatically for reviewable `gate-review` dispatches and remediation reopen events
+- `cycle_break` is recorded automatically when the same task reaches three reviewable dispatch/remediation cycles
 
 The approved plan path/revision remains fixed during execution. Runtime strategy may adjust topology, lane/worktree allocation, and remediation order without sending the workflow back to planning stages.
 

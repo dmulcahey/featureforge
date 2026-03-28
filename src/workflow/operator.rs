@@ -353,7 +353,7 @@ pub fn preflight(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, Json
 
 pub fn gate_review(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, JsonFailure> {
     let runtime = ExecutionRuntime::discover(current_dir)?;
-    runtime.gate_review(&execution_status_args(args))
+    runtime.gate_review_dispatch(&execution_status_args(args))
 }
 
 pub fn gate_finish(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, JsonFailure> {
@@ -644,6 +644,22 @@ fn derive_phase(
         return String::from("ready_for_branch_completion");
     }
 
+    if gate_has_any_reason(
+        Some(gate_finish),
+        &[
+            "qa_artifact_authoritative_provenance_invalid",
+            "test_plan_artifact_authoritative_provenance_invalid",
+        ],
+    ) {
+        return String::from("qa_pending");
+    }
+    if gate_has_any_reason(
+        Some(gate_finish),
+        &["release_artifact_authoritative_provenance_invalid"],
+    ) {
+        return String::from("document_release_pending");
+    }
+
     match gate_finish.failure_class.as_str() {
         "ReviewArtifactNotFresh" => String::from("final_review_pending"),
         "QaArtifactNotFresh" => String::from("qa_pending"),
@@ -896,6 +912,7 @@ fn finish_requires_test_plan_refresh(context: &OperatorContext) -> bool {
             "test_plan_artifact_missing",
             "test_plan_artifact_malformed",
             "test_plan_artifact_stale",
+            "test_plan_artifact_authoritative_provenance_invalid",
         ],
     )
 }

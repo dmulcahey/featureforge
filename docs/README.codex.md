@@ -68,8 +68,8 @@ Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-re
 Runtime strategy checkpointing is execution-owned, not planning-owned. The runtime records:
 
 - `initial_dispatch` before repo-writing execution starts
-- `review_remediation` before remediation after actionable review findings
-- `cycle_break` automatically when the same task reaches three reopen/remediation cycles
+- `review_remediation` for reviewable `gate-review` dispatches and remediation reopen events
+- `cycle_break` automatically when the same task reaches three reviewable dispatch/remediation cycles
 
 This does not send the workflow back to planning stages; it keeps remediation in execution while preserving approved plan scope.
 

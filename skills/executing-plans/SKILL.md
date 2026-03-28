@@ -158,9 +158,9 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 - The approved plan/spec scope is fixed during execution. Runtime strategy checkpoints may change topology, lane/worktree allocation, subagent assignment, and remediation order, but must not change approved scope, source plan revision, or required coverage.
 - Required checkpoint kinds:
   - `initial_dispatch`: required before repo-writing implementation starts. Runtime records it automatically on first dispatch/begin when missing.
-  - `review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when remediation reopens execution work.
-  - `cycle_break`: required when churn is detected. Runtime records it automatically when the same task hits three reopen/remediation cycles in one run.
-- Cycle-break trigger: cap remediation churn at 3 reopen cycles per task. On the third cycle, transition to `cycle_break` strategy automatically (no human replanning loopback).
+  - `review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically for each `gate-review` dispatch that targets reviewable execution work and when remediation reopens execution work.
+  - `cycle_break`: required when churn is detected. Runtime records it automatically when the same task hits three review-dispatch/reopen cycles in one run.
+- Cycle-break trigger: cap remediation churn at 3 cycles per task. On the third cycle, transition to `cycle_break` strategy automatically (no human replanning loopback).
 - Unit-review receipts and downstream final-review evidence must reference the checkpoint fingerprint from the runtime status for traceability.
 - Surface and respect runtime strategy status from `featureforge plan execution status --plan ...`:
   - `strategy_state`
