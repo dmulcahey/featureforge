@@ -1068,9 +1068,7 @@ fn validate_contract_evaluator_kinds(
 }
 
 fn is_supported_evaluator_kind(value: &str) -> bool {
-    SUPPORTED_EVALUATOR_KINDS
-        .iter()
-        .any(|supported| *supported == value)
+    SUPPORTED_EVALUATOR_KINDS.contains(&value)
 }
 
 fn parse_blocks(
@@ -1083,11 +1081,9 @@ fn parse_blocks(
 
     for line in section.lines() {
         let trimmed_start = line.trim_start();
-        if trimmed_start.starts_with(block_prefix) {
-            if !current.is_empty() {
-                blocks.push(current.join("\n"));
-                current.clear();
-            }
+        if trimmed_start.starts_with(block_prefix) && !current.is_empty() {
+            blocks.push(current.join("\n"));
+            current.clear();
         }
         if !current.is_empty() || trimmed_start.starts_with(block_prefix) {
             current.push(line.to_owned());

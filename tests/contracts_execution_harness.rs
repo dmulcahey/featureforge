@@ -5,20 +5,20 @@ mod process_support;
 
 use featureforge::contracts::evidence::read_execution_evidence;
 use featureforge::contracts::harness::{
-    read_evaluation_report, read_evidence_artifact, read_execution_contract,
-    read_execution_handoff, BlockingEvidenceReference, DowngradeReasonClass,
-    ExecutionTopologyDowngradeRecord, WorktreeLease, WorktreeLeaseState,
+    BlockingEvidenceReference, DowngradeReasonClass, ExecutionTopologyDowngradeRecord,
+    WorktreeLease, WorktreeLeaseState, read_evaluation_report, read_evidence_artifact,
+    read_execution_contract, read_execution_handoff,
 };
 use featureforge::contracts::packet::{
-    build_harness_contract_provenance, build_task_packet_with_timestamp, TaskPacket,
+    TaskPacket, build_harness_contract_provenance, build_task_packet_with_timestamp,
 };
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::contracts::spec::parse_spec_file;
-use featureforge::execution::observability::validate_execution_topology_downgrade_record;
 use featureforge::execution::observability::HarnessTelemetryCounters;
+use featureforge::execution::observability::validate_execution_topology_downgrade_record;
 use files_support::write_file;
 use process_support::run_checked;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};

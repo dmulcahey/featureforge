@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::contracts::harness::{
     DowngradeBlockingEvidence, DowngradeOperatorImpact, DowngradeOperatorImpactSeverity,
-    DowngradeReasonClass, ExecutionTopologyDowngradeDetail, ExecutionTopologyDowngradeRecord,
-    EXECUTION_TOPOLOGY_DOWNGRADE_RECORD_VERSION,
+    DowngradeReasonClass, EXECUTION_TOPOLOGY_DOWNGRADE_RECORD_VERSION,
+    ExecutionTopologyDowngradeDetail, ExecutionTopologyDowngradeRecord,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::harness::{ChunkId, EvaluatorKind, ExecutionRunId, HarnessPhase};

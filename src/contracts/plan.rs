@@ -1062,19 +1062,19 @@ pub(crate) fn analyze_execution_topology(
                         ),
                     );
                 }
-                if let Some(task) = sorted_tasks.first().copied() {
-                    if task != *task_numbers.last().unwrap_or(&task) {
-                        serial_hazards_resolved = false;
-                        push_diagnostic(
-                            &mut diagnostics,
-                            &mut reason_codes,
-                            "last_execution_not_final_task",
-                            &format!(
-                                "`Execute Task {} last` is only valid for the numerically final task in the plan.",
-                                task
-                            ),
-                        );
-                    }
+                if let Some(task) = sorted_tasks.first().copied()
+                    && task != *task_numbers.last().unwrap_or(&task)
+                {
+                    serial_hazards_resolved = false;
+                    push_diagnostic(
+                        &mut diagnostics,
+                        &mut reason_codes,
+                        "last_execution_not_final_task",
+                        &format!(
+                            "`Execute Task {} last` is only valid for the numerically final task in the plan.",
+                            task
+                        ),
+                    );
                 }
             }
         }
@@ -1349,23 +1349,21 @@ fn diagram_nodes(lines: &[&str]) -> Vec<DiagramNode> {
 fn dependency_starts(node: &DiagramNode, grid: &[Vec<char>]) -> Vec<(usize, usize)> {
     let mut starts = Vec::new();
     if let Some(row) = grid.get(node.row) {
-        for col in node.end + 1..row.len() {
-            let ch = row[col];
-            if ch == ' ' {
+        for (col, ch) in row.iter().enumerate().skip(node.end + 1) {
+            if *ch == ' ' {
                 continue;
             }
-            if is_dependency_connector(ch) {
+            if is_dependency_connector(*ch) {
                 starts.push((node.row, col));
             }
             break;
         }
     }
     let max_row = usize::min(node.row + 4, grid.len().saturating_sub(1));
-    for row in node.row + 1..=max_row {
-        for col in node.start..=node.end {
-            let ch = grid[row][col];
-            if is_dependency_connector(ch) {
-                starts.push((row, col));
+    for (row_index, row) in grid.iter().enumerate().take(max_row + 1).skip(node.row + 1) {
+        for (col, ch) in row.iter().enumerate().take(node.end + 1).skip(node.start) {
+            if is_dependency_connector(*ch) {
+                starts.push((row_index, col));
             }
         }
         if !starts.is_empty() {
@@ -1680,10 +1678,10 @@ fn extract_numbers(value: &str) -> Vec<u32> {
             current.clear();
         }
     }
-    if !current.is_empty() {
-        if let Ok(number) = current.parse::<u32>() {
-            numbers.push(number);
-        }
+    if !current.is_empty()
+        && let Ok(number) = current.parse::<u32>()
+    {
+        numbers.push(number);
     }
     numbers
 }

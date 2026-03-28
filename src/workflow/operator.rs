@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArgs};
 use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
-use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
+use crate::diagnostics::{DiagnosticError, JsonFailure};
 use crate::execution::harness::{EvaluatorKind, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
@@ -72,28 +72,6 @@ struct OperatorContext {
     execution_preflight_block_reason: Option<String>,
     phase: String,
 }
-
-#[derive(Clone, Copy)]
-struct BuildContextOptions {
-    allow_legacy_pre_harness_cutover_handoff_block: bool,
-}
-
-impl BuildContextOptions {
-    const fn strict() -> Self {
-        Self {
-            allow_legacy_pre_harness_cutover_handoff_block: false,
-        }
-    }
-
-    const fn allow_legacy_pre_harness_cutover_handoff_block() -> Self {
-        Self {
-            allow_legacy_pre_harness_cutover_handoff_block: true,
-        }
-    }
-}
-
-const LEGACY_PRE_HARNESS_CUTOVER_MESSAGE: &str =
-    "Legacy pre-harness execution evidence is no longer accepted; regenerate execution evidence using the harness v2 format.";
 
 pub fn render_next(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
@@ -221,10 +199,7 @@ pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
 }
 
 pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
-    let context = build_context_with_options(
-        current_dir,
-        BuildContextOptions::allow_legacy_pre_harness_cutover_handoff_block(),
-    )?;
+    let context = build_context(current_dir)?;
     let contract_state = context
         .plan_contract
         .as_ref()
@@ -307,12 +282,10 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
                 String::from("featureforge:finishing-a-development-branch"),
                 reason_text(&context),
             ),
-            "pivot_required" => {
-                (
-                    String::from("featureforge:writing-plans"),
-                    reason_text(&context),
-                )
-            }
+            "pivot_required" => (
+                String::from("featureforge:writing-plans"),
+                reason_text(&context),
+            ),
             _ if execution_started == "yes" => {
                 let skill = context
                     .execution_status
@@ -397,13 +370,6 @@ pub fn render_gate(title: &str, gate: &GateResult) -> String {
 }
 
 fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
-    build_context_with_options(current_dir, BuildContextOptions::strict())
-}
-
-fn build_context_with_options(
-    current_dir: &Path,
-    options: BuildContextOptions,
-) -> Result<OperatorContext, JsonFailure> {
     let workflow = WorkflowRuntime::discover_read_only(current_dir).map_err(JsonFailure::from)?;
     let route = workflow.resolve().map_err(JsonFailure::from)?;
     let session_entry =
@@ -413,7 +379,7 @@ fn build_context_with_options(
     let mut preflight = None;
     let mut gate_review = None;
     let mut gate_finish = None;
-    let mut execution_preflight_block_reason = None;
+    let execution_preflight_block_reason = None;
 
     if session_entry.outcome == "enabled" && route.status == "implementation_ready" {
         if let Some(report) = analyze_plan_if_available(&route).map_err(JsonFailure::from)? {
@@ -446,12 +412,6 @@ fn build_context_with_options(
                     }
                     execution_status = Some(status);
                 }
-                Err(error)
-                    if options.allow_legacy_pre_harness_cutover_handoff_block
-                        && is_legacy_pre_harness_cutover_block(&error) =>
-                {
-                    execution_preflight_block_reason = Some(error.message.clone());
-                }
                 Err(error) => return Err(error),
             }
         }
@@ -477,11 +437,6 @@ fn build_context_with_options(
         execution_preflight_block_reason,
         phase,
     })
-}
-
-fn is_legacy_pre_harness_cutover_block(error: &JsonFailure) -> bool {
-    error.error_class == FailureClass::MalformedExecutionState.as_str()
-        && error.message == LEGACY_PRE_HARNESS_CUTOVER_MESSAGE
 }
 
 fn doctor_phase_for_context(context: &OperatorContext) -> String {
@@ -587,12 +542,12 @@ fn same_branch_worktree_roots(current_repo_root: &Path) -> Vec<PathBuf> {
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(current_repo_root)
             .output();
-        if let Ok(output) = branch_output {
-            if output.status.success() {
-                let branch = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                if !branch.is_empty() && branch != "HEAD" {
-                    current_branch_ref = Some(format!("refs/heads/{branch}"));
-                }
+        if let Ok(output) = branch_output
+            && output.status.success()
+        {
+            let branch = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if !branch.is_empty() && branch != "HEAD" {
+                current_branch_ref = Some(format!("refs/heads/{branch}"));
             }
         }
     }
@@ -675,10 +630,10 @@ fn derive_phase(
         return String::from("executing");
     }
 
-    if let Some(gate_review) = gate_review {
-        if !gate_review.allowed {
-            return String::from("final_review_pending");
-        }
+    if let Some(gate_review) = gate_review
+        && !gate_review.allowed
+    {
+        return String::from("final_review_pending");
     }
 
     let Some(gate_finish) = gate_finish else {
@@ -698,7 +653,7 @@ fn derive_phase(
 }
 
 fn authoritative_public_phase(status: &PlanExecutionStatus) -> Option<&'static str> {
-    if status.latest_authoritative_sequence <= INITIAL_AUTHORITATIVE_SEQUENCE {
+    if status.latest_authoritative_sequence == INITIAL_AUTHORITATIVE_SEQUENCE {
         return None;
     }
 
@@ -885,11 +840,7 @@ fn reason_text(context: &OperatorContext) -> String {
 }
 
 fn display_or_none(value: &str) -> &str {
-    if value.is_empty() {
-        "none"
-    } else {
-        value
-    }
+    if value.is_empty() { "none" } else { value }
 }
 
 fn public_next_skill(context: &OperatorContext) -> String {
@@ -1009,6 +960,23 @@ fn append_execution_status_metadata(output: &mut String, status: &PlanExecutionS
     output.push_str(&format!(
         "Write authority worktree: {}\n",
         optional_text(status.write_authority_worktree.as_deref())
+    ));
+    output.push_str(&format!("Strategy state: {}\n", status.strategy_state));
+    output.push_str(&format!(
+        "Strategy checkpoint kind: {}\n",
+        status.strategy_checkpoint_kind
+    ));
+    output.push_str(&format!(
+        "Strategy checkpoint fingerprint: {}\n",
+        optional_text(status.last_strategy_checkpoint_fingerprint.as_deref())
+    ));
+    output.push_str(&format!(
+        "Strategy reset required: {}\n",
+        if status.strategy_reset_required {
+            "yes"
+        } else {
+            "no"
+        }
     ));
 }
 

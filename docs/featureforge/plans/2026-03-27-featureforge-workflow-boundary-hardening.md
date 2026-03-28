@@ -76,7 +76,7 @@ This plan owns implementation order, task boundaries, and done criteria. It does
 ## Execution Strategy
 
 - Execute Tasks 1, 2, and 3 serially. They all revise the approved entry, review, and plan-contract foundation that later execution work depends on.
-- Execute Task 4 serially as the only upfront seam-extraction slice. Its purpose is to move future lane-owned behavior into new modules and test shards so the later worktree lanes can stay disjoint.
+- Execute Task 4 serially after Task 3. It is the only upfront seam-extraction slice and establishes lane-isolation boundaries before parallel lanes.
 - After Task 4, create three worktrees and run Tasks 5, 6, and 7 in parallel:
   - Task 5 owns lease and downgrade artifact contracts plus observability helpers.
   - Task 6 owns topology recommendation and execution-skill orchestration.
@@ -84,8 +84,8 @@ This plan owns implementation order, task boundaries, and done criteria. It does
 - Keep Tasks 5, 6, and 7 off the shared glue reserved for the serial seam:
   - Task 8 owns `src/execution/authority.rs`, `src/execution/dependency_index.rs`, `src/execution/gates.rs`, `src/execution/mutate.rs`, `src/execution/state.rs`, `src/execution/transitions.rs`, and `tests/plan_execution.rs`.
   - Task 9 owns `src/workflow/status.rs`, `src/workflow/operator.rs`, `schemas/plan-execution-status.schema.json`, `skills/finishing-a-development-branch/*`, `tests/workflow_runtime.rs`, `tests/workflow_runtime_final_review.rs`, and `tests/workflow_shell_smoke.rs`.
-- Execute Task 8 serially after Tasks 5 and 6 merge back. It is the execution-state and reconcile reintegration point.
-- Execute Task 9 serially after Task 8 is green and Task 7 is ready. It is the status, final-review freshness, and finish-gate reintegration point.
+- Execute Task 8 serially after Tasks 5, 6, and 7. It is the execution-state and reconcile reintegration point.
+- Execute Task 9 serially after Task 8. It is the status, final-review freshness, and finish-gate reintegration point.
 - Execute Task 10 last as the release-facing parity and regression gate.
 
 ## Evidence Expectations
@@ -160,26 +160,17 @@ Task 3  parallel-first plan contract and engineering-review enforcement
    |
    v
 Task 4  seam extraction and test sharding for parallel lane ownership
+   +--> Task 5  lease+downgrade artifact lane
    |
-   +-------------------+-------------------+
-   |                   |                   |
-   v                   v                   v
-Task 5             Task 6              Task 7
-lease+downgrade    topology+skills     final-review+reviewer docs
-artifact lane      orchestration lane  lane
-   |                   |                   |
-   +---------+---------+                   |
-             |                             |
-             v                             v
-Task 8  execution-state and reconcile glue integration
-             |
-             +-----------------------------+
-                                           |
-                                           v
-Task 9  status, final-review freshness, and finish-gate integration
-                                           |
-                                           v
-Task 10  fixture/doc parity and full regression gate
+   +--> Task 6  topology+skills orchestration lane
+   |
+   +--> Task 7  final-review+reviewer docs lane
+
+Task 5 --> Task 8  execution-state and reconcile glue integration
+Task 6 --> Task 8
+Task 7 --> Task 8
+Task 8 --> Task 9  status, final-review freshness, and finish-gate integration
+Task 9 --> Task 10 fixture/doc parity and full regression gate
 ```
 
 ## Requirement Coverage Matrix

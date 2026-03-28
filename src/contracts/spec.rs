@@ -130,10 +130,10 @@ pub(crate) fn repo_relative_string(path: &Path) -> String {
         path.parent().unwrap_or(path)
     };
     for ancestor in start.ancestors() {
-        if ancestor.join(".git").is_dir() || ancestor.join("docs/featureforge").is_dir() {
-            if let Ok(relative) = path.strip_prefix(ancestor) {
-                return relative.display().to_string().replace('\\', "/");
-            }
+        if (ancestor.join(".git").is_dir() || ancestor.join("docs/featureforge").is_dir())
+            && let Ok(relative) = path.strip_prefix(ancestor)
+        {
+            return relative.display().to_string().replace('\\', "/");
         }
     }
     path.file_name()

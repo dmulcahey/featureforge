@@ -249,8 +249,6 @@ pub struct WorktreeLeaseBindingSnapshot {
     pub lease_fingerprint: String,
     pub lease_artifact_path: String,
     #[serde(default)]
-    pub lease_artifact_source: Option<String>,
-    #[serde(default)]
     pub execution_context_key: Option<String>,
     #[serde(default)]
     pub approved_task_packet_fingerprint: Option<String>,
@@ -268,8 +266,6 @@ pub struct WorktreeLeaseBindingSnapshot {
     pub review_receipt_fingerprint: Option<String>,
     #[serde(default)]
     pub review_receipt_artifact_path: Option<String>,
-    #[serde(default)]
-    pub review_receipt_artifact_source: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -4,9 +4,12 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::contracts::harness::{WorktreeLease, WorktreeLeaseState, WORKTREE_LEASE_VERSION};
+use crate::contracts::harness::{
+    ExecutionTopologyDowngradeRecord, WORKTREE_LEASE_VERSION, WorktreeLease, WorktreeLeaseState,
+};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::harness::INITIAL_AUTHORITATIVE_SEQUENCE;
+use crate::execution::observability::validate_execution_topology_downgrade_record;
 use crate::execution::state::ExecutionContext;
 use crate::paths::{harness_authoritative_artifacts_dir, harness_branch_root, harness_state_path};
 
@@ -79,15 +82,15 @@ pub(crate) struct StatusAuthoritativeOverlay {
     #[serde(default)]
     pub(crate) last_release_docs_artifact_fingerprint: Option<String>,
     #[serde(default)]
+    pub(crate) strategy_state: Option<String>,
+    #[serde(default)]
+    pub(crate) last_strategy_checkpoint_fingerprint: Option<String>,
+    #[serde(default)]
+    pub(crate) strategy_checkpoint_kind: Option<String>,
+    #[serde(default)]
+    pub(crate) strategy_reset_required: Option<bool>,
+    #[serde(default)]
     pub(crate) reason_codes: Vec<String>,
-}
-
-pub(crate) fn load_status_authoritative_overlay(
-    context: &ExecutionContext,
-) -> Option<StatusAuthoritativeOverlay> {
-    load_status_authoritative_overlay_checked(context)
-        .ok()
-        .flatten()
 }
 
 pub(crate) fn load_status_authoritative_overlay_checked(
@@ -350,6 +353,116 @@ pub(crate) fn preflight_requires_authoritative_mutation_recovery(
         return Ok(false);
     };
     Ok(artifact_sequence > persisted_sequence)
+}
+
+pub(crate) fn authoritative_matching_execution_topology_downgrade_records_checked(
+    context: &ExecutionContext,
+    execution_context_key: &str,
+) -> Result<Vec<ExecutionTopologyDowngradeRecord>, JsonFailure> {
+    const TOPOLOGY_DOWNGRADE_FILE_PREFIX: &str = "execution-topology-downgrade-";
+    const TOPOLOGY_DOWNGRADE_FILE_SUFFIX: &str = ".json";
+
+    let artifacts_dir = harness_authoritative_artifacts_dir(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    );
+    let entries = match fs::read_dir(&artifacts_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not read authoritative artifact directory {}: {error}",
+                    artifacts_dir.display()
+                ),
+            ));
+        }
+    };
+
+    let mut records = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not enumerate authoritative artifacts in {}: {error}",
+                    artifacts_dir.display()
+                ),
+            )
+        })?;
+        let path = entry.path();
+        let file_name = path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or_default();
+        if !file_name.starts_with(TOPOLOGY_DOWNGRADE_FILE_PREFIX)
+            || !file_name.ends_with(TOPOLOGY_DOWNGRADE_FILE_SUFFIX)
+        {
+            continue;
+        }
+
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not inspect authoritative topology downgrade record {}: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Authoritative topology downgrade record must be a regular file in {}.",
+                    path.display()
+                ),
+            ));
+        }
+
+        let source = fs::read_to_string(&path).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not read authoritative topology downgrade record {}: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+        let record: ExecutionTopologyDowngradeRecord =
+            serde_json::from_str(&source).map_err(|error| {
+                JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    format!(
+                        "Authoritative topology downgrade record is malformed in {}: {error}",
+                        path.display()
+                    ),
+                )
+            })?;
+        validate_execution_topology_downgrade_record(&record)?;
+
+        if record.source_plan_path != context.plan_rel
+            || record.source_plan_revision != context.plan_document.plan_revision
+        {
+            continue;
+        }
+        if !execution_context_key.trim().is_empty()
+            && record.execution_context_key != execution_context_key
+        {
+            continue;
+        }
+        records.push(record);
+    }
+
+    records.sort_by(|left, right| {
+        left.authoritative_sequence
+            .cmp(&right.authoritative_sequence)
+            .then_with(|| left.generated_at.cmp(&right.generated_at))
+            .then_with(|| left.record_fingerprint.cmp(&right.record_fingerprint))
+    });
+    Ok(records)
 }
 
 pub(crate) enum PreflightWriteAuthorityState {

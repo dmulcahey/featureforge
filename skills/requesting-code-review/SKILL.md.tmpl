@@ -113,6 +113,22 @@ If the approved plan already called out a likely external-pattern target, you ma
 - Capture documentation or TODO follow-ups instead of silently dropping them
 - Push back if reviewer is wrong (with reasoning)
 
+**4.25. Enforce runtime-owned remediation checkpoints before fixes:**
+
+- Do not jump directly into patching after actionable findings. In plan-routed execution, route through helper-owned reopen/remediation commands so runtime can record strategy checkpoints first.
+- Runtime strategy checkpoints are execution-owned state, not planning-stage transitions. Do not route back to `writing-plans` or `plan-eng-review` just because remediation is needed.
+- Required checkpoint behavior:
+  - `review_remediation`: runtime records this automatically when remediation work is reopened after non-pass review findings.
+  - `cycle_break`: runtime records this automatically when the same task hits three reopen/remediation cycles in one run.
+- Cycle-break trigger: cap remediation churn at 3 reopen cycles per task. On the third cycle, runtime enters `cycle_break` strategy automatically (no human replanning loopback required).
+- Keep plan/scope fixed during remediation. Runtime strategy may change topology, lane ownership, worktree allocation, subagent assignment, and remediation order, but must not change approved scope or source plan revision.
+- Carry the active runtime checkpoint fingerprint into review artifacts and receipts so remediation and final review can be tied to the exact runtime strategy state.
+- Check and surface runtime strategy status through `featureforge plan execution status --plan ...`:
+  - `strategy_state`
+  - `strategy_checkpoint_kind`
+  - `last_strategy_checkpoint_fingerprint`
+  - `strategy_reset_required`
+
 **4.5. Persist workflow-routed review resolution:**
 
 For workflow-routed final review, also write a project-scoped code-review artifact after the review is resolved and any required fixes land:

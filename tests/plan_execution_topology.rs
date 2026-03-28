@@ -7,7 +7,7 @@ mod process_support;
 
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::cli::plan_execution::ExecutionTopologyArg;
-use featureforge::contracts::plan::{analyze_plan, AnalyzePlanReport};
+use featureforge::contracts::plan::{AnalyzePlanReport, analyze_plan};
 use featureforge::execution::harness::{LearnedTopologyGuidance, TopologySelectionContext};
 use featureforge::execution::topology::recommend_topology;
 use files_support::write_file;
@@ -74,7 +74,9 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     run_checked(
         {
             let mut command = Command::new("git");
-            command.args(["checkout", "-B", "fixture-work"]).current_dir(repo);
+            command
+                .args(["checkout", "-B", "fixture-work"])
+                .current_dir(repo);
             command
         },
         "git checkout fixture-work",
@@ -362,9 +364,21 @@ fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_pr
         ],
         "recommend policy tuple",
     );
-    assert_eq!(recommend["recommended_skill"], "featureforge:subagent-driven-development");
+    assert_eq!(
+        recommend["recommended_skill"],
+        "featureforge:subagent-driven-development"
+    );
+    assert_eq!(recommend["selected_topology"], "worktree-backed-parallel");
     assert!(
-        recommend["reason"].as_str().is_some_and(|value| !value.is_empty()),
+        recommend["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| !codes.is_empty()),
+        "recommend should expose topology reason_codes"
+    );
+    assert!(
+        recommend["reason"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
         "recommend should preserve reason as a non-empty string"
     );
 
@@ -444,7 +458,10 @@ fn runtime_topology_recommends_worktree_backed_parallel_when_the_plan_and_worksp
         ],
         "shell recommend still available for current routing",
     );
-    assert_eq!(shell["recommended_skill"], "featureforge:subagent-driven-development");
+    assert_eq!(
+        shell["recommended_skill"],
+        "featureforge:subagent-driven-development"
+    );
 }
 
 #[test]
@@ -457,14 +474,25 @@ fn runtime_topology_falls_back_conservatively_when_worktrees_or_agents_are_not_r
     let report = topology_report(repo);
     let recommendation = recommend_topology(
         &report,
-        &topology_context("main@base-a", true, "unavailable", "stay", "no", false, None),
+        &topology_context(
+            "main@base-a",
+            true,
+            "unavailable",
+            "stay",
+            "no",
+            false,
+            None,
+        ),
     );
 
     assert_eq!(
         recommendation.selected_topology,
         ExecutionTopologyArg::ConservativeFallback
     );
-    assert_eq!(recommendation.recommended_skill, "featureforge:executing-plans");
+    assert_eq!(
+        recommendation.recommended_skill,
+        "featureforge:executing-plans"
+    );
     assert!(
         recommendation
             .reason
@@ -502,14 +530,25 @@ fn runtime_topology_separate_session_fallback_uses_actual_blocker_reason_codes()
     let report = topology_report(repo);
     let recommendation = recommend_topology(
         &report,
-        &topology_context("main@base-a", true, "unavailable", "separate", "yes", false, None),
+        &topology_context(
+            "main@base-a",
+            true,
+            "unavailable",
+            "separate",
+            "yes",
+            false,
+            None,
+        ),
     );
 
     assert_eq!(
         recommendation.selected_topology,
         ExecutionTopologyArg::ConservativeFallback
     );
-    assert_eq!(recommendation.recommended_skill, "featureforge:executing-plans");
+    assert_eq!(
+        recommendation.recommended_skill,
+        "featureforge:executing-plans"
+    );
     assert!(
         recommendation
             .reason_codes
@@ -560,7 +599,10 @@ fn runtime_topology_reuses_matching_downgrade_history_for_same_context() {
         recommendation.selected_topology,
         ExecutionTopologyArg::ConservativeFallback
     );
-    assert_eq!(recommendation.recommended_skill, "featureforge:executing-plans");
+    assert_eq!(
+        recommendation.recommended_skill,
+        "featureforge:executing-plans"
+    );
     assert!(
         recommendation.learned_downgrade_reused,
         "matching downgrade history should be reused as conservative guidance"
@@ -630,14 +672,10 @@ fn runtime_topology_serializes_selected_topology_with_contract_values() {
         Value::String(String::from("worktree-backed-parallel"))
     );
 
-    let round_tripped: ExecutionTopologyArg = serde_json::from_value(Value::String(String::from(
-        "conservative-fallback",
-    )))
-    .expect("topology enum should deserialize from contract value");
-    assert_eq!(
-        round_tripped,
-        ExecutionTopologyArg::ConservativeFallback
-    );
+    let round_tripped: ExecutionTopologyArg =
+        serde_json::from_value(Value::String(String::from("conservative-fallback")))
+            .expect("topology enum should deserialize from contract value");
+    assert_eq!(round_tripped, ExecutionTopologyArg::ConservativeFallback);
 
     let (repo_dir, _state_dir) = init_repo("plan-execution-topology-json-contract");
     let repo = repo_dir.path();
@@ -666,7 +704,15 @@ fn runtime_topology_can_select_worktree_backed_parallel_for_separate_session_coo
     let report = topology_report(repo);
     let recommendation = recommend_topology(
         &report,
-        &topology_context("main@base-a", true, "available", "separate", "yes", true, None),
+        &topology_context(
+            "main@base-a",
+            true,
+            "available",
+            "separate",
+            "yes",
+            true,
+            None,
+        ),
     );
 
     assert_eq!(
@@ -674,8 +720,7 @@ fn runtime_topology_can_select_worktree_backed_parallel_for_separate_session_coo
         ExecutionTopologyArg::WorktreeBackedParallel
     );
     assert_eq!(
-        recommendation.recommended_skill,
-        "featureforge:executing-plans",
+        recommendation.recommended_skill, "featureforge:executing-plans",
         "a separate-session coordinator should still drive the worktree-backed parallel topology"
     );
     assert_eq!(

@@ -454,18 +454,18 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
             statement: requirement.statement.clone(),
         })
         .collect::<Vec<_>>();
-    let packet_markdown = render_packet_markdown(
-        &plan_path,
-        headers.plan_revision,
-        &plan_fingerprint,
-        &headers.source_spec_path,
-        headers.source_spec_revision,
-        &source_spec_fingerprint,
+    let packet_markdown = render_packet_markdown(&PacketMarkdownInput {
+        plan_path: &plan_path,
+        plan_revision: headers.plan_revision,
+        plan_fingerprint: &plan_fingerprint,
+        source_spec_path: &headers.source_spec_path,
+        source_spec_revision: headers.source_spec_revision,
+        source_spec_fingerprint: &source_spec_fingerprint,
         task,
-        &requirement_statements,
-        &generated_at,
-        &packet_fingerprint,
-    );
+        requirement_statements: &requirement_statements,
+        generated_at: &generated_at,
+        packet_fingerprint: &packet_fingerprint,
+    });
 
     let persisted = args.persist == PersistMode::Yes;
     let mut cache_status = String::from("ephemeral");
@@ -1084,7 +1084,7 @@ fn apply_plan_fidelity_gate_to_report(
     plan_source: &str,
     report: &mut AnalyzePlanReport,
 ) {
-    if find_header_value(plan_source, "Workflow State").as_deref() != Some("Draft") {
+    if find_header_value(plan_source, "Workflow State") != Some("Draft") {
         return;
     }
 
@@ -1776,48 +1776,64 @@ fn build_packet_fingerprint(
     sha256_hex(body.as_bytes())
 }
 
-fn render_packet_markdown(
-    plan_path: &str,
+struct PacketMarkdownInput<'a> {
+    plan_path: &'a str,
     plan_revision: u32,
-    plan_fingerprint: &str,
-    source_spec_path: &str,
+    plan_fingerprint: &'a str,
+    source_spec_path: &'a str,
     source_spec_revision: u32,
-    source_spec_fingerprint: &str,
-    task: &ParsedTask,
-    requirement_statements: &[RequirementStatement],
-    generated_at: &str,
-    packet_fingerprint: &str,
-) -> String {
+    source_spec_fingerprint: &'a str,
+    task: &'a ParsedTask,
+    requirement_statements: &'a [RequirementStatement],
+    generated_at: &'a str,
+    packet_fingerprint: &'a str,
+}
+
+fn render_packet_markdown(input: &PacketMarkdownInput<'_>) -> String {
     let mut markdown = String::new();
     markdown.push_str("## Task Packet\n\n");
-    markdown.push_str(&format!("**Plan Path:** `{plan_path}`\n"));
-    markdown.push_str(&format!("**Plan Revision:** {plan_revision}\n"));
-    markdown.push_str(&format!("**Plan Fingerprint:** `{plan_fingerprint}`\n"));
-    markdown.push_str(&format!("**Source Spec Path:** `{source_spec_path}`\n"));
+    markdown.push_str(&format!("**Plan Path:** `{}`\n", input.plan_path));
+    markdown.push_str(&format!("**Plan Revision:** {}\n", input.plan_revision));
     markdown.push_str(&format!(
-        "**Source Spec Revision:** {source_spec_revision}\n"
+        "**Plan Fingerprint:** `{}`\n",
+        input.plan_fingerprint
     ));
     markdown.push_str(&format!(
-        "**Source Spec Fingerprint:** `{source_spec_fingerprint}`\n"
+        "**Source Spec Path:** `{}`\n",
+        input.source_spec_path
     ));
-    markdown.push_str(&format!("**Task Number:** {}\n", task.number));
-    markdown.push_str(&format!("**Task Title:** {}\n", task.title));
-    markdown.push_str(&format!("**Open Questions:** {}\n", task.open_questions));
-    markdown.push_str(&format!("**Packet Fingerprint:** `{packet_fingerprint}`\n"));
-    markdown.push_str(&format!("**Generated At:** {generated_at}\n\n"));
+    markdown.push_str(&format!(
+        "**Source Spec Revision:** {}\n",
+        input.source_spec_revision
+    ));
+    markdown.push_str(&format!(
+        "**Source Spec Fingerprint:** `{}`\n",
+        input.source_spec_fingerprint
+    ));
+    markdown.push_str(&format!("**Task Number:** {}\n", input.task.number));
+    markdown.push_str(&format!("**Task Title:** {}\n", input.task.title));
+    markdown.push_str(&format!(
+        "**Open Questions:** {}\n",
+        input.task.open_questions
+    ));
+    markdown.push_str(&format!(
+        "**Packet Fingerprint:** `{}`\n",
+        input.packet_fingerprint
+    ));
+    markdown.push_str(&format!("**Generated At:** {}\n\n", input.generated_at));
     markdown.push_str("## Covered Requirements\n\n");
-    for requirement in requirement_statements {
+    for requirement in input.requirement_statements {
         markdown.push_str(&format!(
             "- [{}][{}] {}\n",
             requirement.id, requirement.kind, requirement.statement
         ));
     }
     markdown.push_str("\n## Plan Constraints\n\n");
-    for constraint in &task.plan_constraints {
+    for constraint in &input.task.plan_constraints {
         markdown.push_str(&format!("- {constraint}\n"));
     }
     markdown.push_str("\n## Task Block\n\n");
-    markdown.push_str(&task.block);
+    markdown.push_str(&input.task.block);
     markdown.push('\n');
     markdown
 }
@@ -2102,40 +2118,42 @@ pub fn plan_fidelity_receipt_path(state_dir: &Path, repo_slug: &str, branch_name
         .join("plan-fidelity-receipt.json")
 }
 
-pub fn build_plan_fidelity_receipt(
-    spec: &SpecDocument,
-    plan: &PlanDocument,
-    verdict: &str,
-    review_artifact_path: &str,
-    review_artifact_fingerprint: &str,
-    reviewer_stage: &str,
-    reviewer_source: &str,
-    reviewer_id: &str,
-    distinct_from_stages: &[String],
-    checked_surfaces: &[String],
-    verified_requirement_ids: &[String],
-) -> PlanFidelityReceipt {
+pub struct PlanFidelityReceiptInput<'a> {
+    pub spec: &'a SpecDocument,
+    pub plan: &'a PlanDocument,
+    pub verdict: &'a str,
+    pub review_artifact_path: &'a str,
+    pub review_artifact_fingerprint: &'a str,
+    pub reviewer_stage: &'a str,
+    pub reviewer_source: &'a str,
+    pub reviewer_id: &'a str,
+    pub distinct_from_stages: &'a [String],
+    pub checked_surfaces: &'a [String],
+    pub verified_requirement_ids: &'a [String],
+}
+
+pub fn build_plan_fidelity_receipt(input: PlanFidelityReceiptInput<'_>) -> PlanFidelityReceipt {
     PlanFidelityReceipt {
         schema_version: PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION,
         receipt_kind: String::from(PLAN_FIDELITY_RECEIPT_KIND),
-        verdict: verdict.to_owned(),
-        spec_path: spec.path.clone(),
-        spec_revision: spec.spec_revision,
-        spec_fingerprint: sha256_hex(spec.source.as_bytes()),
-        plan_path: plan.path.clone(),
-        plan_revision: plan.plan_revision,
-        plan_fingerprint: sha256_hex(plan.source.as_bytes()),
-        review_artifact_path: review_artifact_path.to_owned(),
-        review_artifact_fingerprint: review_artifact_fingerprint.to_owned(),
+        verdict: input.verdict.to_owned(),
+        spec_path: input.spec.path.clone(),
+        spec_revision: input.spec.spec_revision,
+        spec_fingerprint: sha256_hex(input.spec.source.as_bytes()),
+        plan_path: input.plan.path.clone(),
+        plan_revision: input.plan.plan_revision,
+        plan_fingerprint: sha256_hex(input.plan.source.as_bytes()),
+        review_artifact_path: input.review_artifact_path.to_owned(),
+        review_artifact_fingerprint: input.review_artifact_fingerprint.to_owned(),
         reviewer_provenance: PlanFidelityReviewerProvenance {
-            review_stage: reviewer_stage.to_owned(),
-            reviewer_source: reviewer_source.to_owned(),
-            reviewer_id: reviewer_id.to_owned(),
-            distinct_from_stages: distinct_from_stages.to_vec(),
+            review_stage: input.reviewer_stage.to_owned(),
+            reviewer_source: input.reviewer_source.to_owned(),
+            reviewer_id: input.reviewer_id.to_owned(),
+            distinct_from_stages: input.distinct_from_stages.to_vec(),
         },
         verification: PlanFidelityVerification {
-            checked_surfaces: checked_surfaces.to_vec(),
-            verified_requirement_ids: verified_requirement_ids.to_vec(),
+            checked_surfaces: input.checked_surfaces.to_vec(),
+            verified_requirement_ids: input.verified_requirement_ids.to_vec(),
         },
     }
 }

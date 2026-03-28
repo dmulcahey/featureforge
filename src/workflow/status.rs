@@ -218,7 +218,7 @@ impl WorkflowRuntime {
             updated_at: String::from("1970-01-01T00:00:00Z"),
         };
         if let Err(route) = self.persist_manifest_with_retry(manifest.clone(), &route) {
-            return Ok(route);
+            return Ok(*route);
         }
         self.manifest = Some(manifest);
         self.manifest_warning = None;
@@ -285,7 +285,7 @@ impl WorkflowRuntime {
         preview.manifest = Some(manifest.clone());
         let route = preview.status()?;
         if let Err(route) = self.persist_manifest_with_retry(manifest.clone(), &route) {
-            return Ok(route);
+            return Ok(*route);
         }
         self.manifest = Some(manifest);
         Ok(route)
@@ -363,7 +363,7 @@ impl WorkflowRuntime {
             route.note = route.reason.clone();
         }
         if let Err(route) = self.persist_manifest_with_retry(manifest.clone(), &route) {
-            return Ok(route);
+            return Ok(*route);
         }
         self.manifest = Some(manifest);
 
@@ -447,14 +447,14 @@ impl WorkflowRuntime {
         &mut self,
         manifest: WorkflowManifest,
         route: &WorkflowRoute,
-    ) -> Result<(), WorkflowRoute> {
+    ) -> Result<(), Box<WorkflowRoute>> {
         if save_manifest(&self.manifest_path, &manifest).is_ok() {
             return Ok(());
         }
         if save_manifest(&self.manifest_path, &manifest).is_ok() {
             return Ok(());
         }
-        Err(self.manifest_write_conflict_route(route))
+        Err(Box::new(self.manifest_write_conflict_route(route)))
     }
 
     fn manifest_write_conflict_route(&self, route: &WorkflowRoute) -> WorkflowRoute {
@@ -500,33 +500,32 @@ fn resolve_route(
     let manifest_path = runtime.manifest_path.display().to_string();
     let root = runtime.identity.repo_root.to_string_lossy().into_owned();
 
-    if let Some(manifest) = runtime.matching_manifest() {
-        if !manifest.expected_spec_path.is_empty()
-            && !runtime
-                .identity
-                .repo_root
-                .join(&manifest.expected_spec_path)
-                .is_file()
-            && !(refresh && spec_candidates.len() == 1)
-        {
-            return Ok(WorkflowRoute {
-                schema_version: 2,
-                status: String::from("needs_brainstorming"),
-                next_skill: String::from("featureforge:brainstorming"),
-                spec_path: manifest.expected_spec_path.clone(),
-                plan_path: String::new(),
-                contract_state: String::from("unknown"),
-                reason_codes: vec![String::from("missing_expected_spec")],
-                diagnostics: Vec::new(),
-                scan_truncated,
-                spec_candidate_count: 0,
-                plan_candidate_count: 0,
-                manifest_path,
-                root,
-                reason: String::from("missing_expected_spec"),
-                note: String::from("missing_expected_spec"),
-            });
-        }
+    if let Some(manifest) = runtime.matching_manifest()
+        && !manifest.expected_spec_path.is_empty()
+        && !runtime
+            .identity
+            .repo_root
+            .join(&manifest.expected_spec_path)
+            .is_file()
+        && !(refresh && spec_candidates.len() == 1)
+    {
+        return Ok(WorkflowRoute {
+            schema_version: 2,
+            status: String::from("needs_brainstorming"),
+            next_skill: String::from("featureforge:brainstorming"),
+            spec_path: manifest.expected_spec_path.clone(),
+            plan_path: String::new(),
+            contract_state: String::from("unknown"),
+            reason_codes: vec![String::from("missing_expected_spec")],
+            diagnostics: Vec::new(),
+            scan_truncated,
+            spec_candidate_count: 0,
+            plan_candidate_count: 0,
+            manifest_path,
+            root,
+            reason: String::from("missing_expected_spec"),
+            note: String::from("missing_expected_spec"),
+        });
     }
 
     if spec_candidates.is_empty() && !malformed_spec_candidates.is_empty() {
@@ -668,10 +667,10 @@ fn resolve_route(
             parse_workflow_plan_candidate(&path).ok()
         })
         .filter(|plan| {
-            plan.path
-                == runtime
-                    .matching_manifest()
-                    .map_or("", |manifest| manifest.expected_plan_path.as_str())
+            runtime
+                .matching_manifest()
+                .as_ref()
+                .is_some_and(|manifest| plan.path == manifest.expected_plan_path)
         });
     let exact_matching_plans = plan_candidates
         .iter()
@@ -829,10 +828,10 @@ fn resolve_route(
             && plan.workflow_state == "Engineering Approved"
             && report
                 .as_ref()
-                .map_or(false, |report| report.contract_state == "valid")
+                .is_some_and(|report| report.contract_state == "valid")
         {
             if read_only {
-                return Ok(resolve_route(runtime, false, false)?);
+                return resolve_route(runtime, false, false);
             }
             return Ok(WorkflowRoute {
                 schema_version: 2,
@@ -1035,19 +1034,20 @@ pub fn record_plan_fidelity_receipt(
         parse_plan_fidelity_review_artifact(&review_artifact_abs, &review_artifact_path)?;
     validate_plan_fidelity_review_artifact(&review_artifact, &plan, &spec)?;
 
-    let receipt = build_plan_fidelity_receipt(
-        &spec,
-        &plan,
-        &review_artifact.review_verdict,
-        &review_artifact.path,
-        &review_artifact.fingerprint,
-        &review_artifact.review_stage,
-        &review_artifact.reviewer_source,
-        &review_artifact.reviewer_id,
-        &review_artifact.distinct_from_stages,
-        &review_artifact.verified_surfaces,
-        &review_artifact.verified_requirement_ids,
-    );
+    let receipt =
+        build_plan_fidelity_receipt(crate::contracts::runtime::PlanFidelityReceiptInput {
+            spec: &spec,
+            plan: &plan,
+            verdict: &review_artifact.review_verdict,
+            review_artifact_path: &review_artifact.path,
+            review_artifact_fingerprint: &review_artifact.fingerprint,
+            reviewer_stage: &review_artifact.review_stage,
+            reviewer_source: &review_artifact.reviewer_source,
+            reviewer_id: &review_artifact.reviewer_id,
+            distinct_from_stages: &review_artifact.distinct_from_stages,
+            checked_surfaces: &review_artifact.verified_surfaces,
+            verified_requirement_ids: &review_artifact.verified_requirement_ids,
+        });
     let receipt_path = plan_fidelity_receipt_path(
         &state_dir,
         &slug_identity.repo_slug,
@@ -1186,8 +1186,7 @@ fn parse_workflow_plan_candidate(path: &Path) -> Result<WorkflowPlanCandidate, D
             | ("Engineering Approved", Some("plan-eng-review"))
     );
     let source_spec_path = normalize_repo_path(Path::new(
-        parse_header_value(&source, "Source Spec")?
-            .trim_matches('`'),
+        parse_header_value(&source, "Source Spec")?.trim_matches('`'),
     ))?;
     let source_spec_revision = parse_header_value(&source, "Source Spec Revision")
         .ok()
@@ -1209,10 +1208,10 @@ fn analyze_full_contract(
     spec: &WorkflowSpecCandidate,
     plan: &WorkflowPlanCandidate,
 ) -> Option<AnalyzePlanReport> {
-    if let Ok(json) = env::var("FEATUREFORGE_WORKFLOW_STATUS_TEST_ANALYZE_REPORT_JSON") {
-        if let Ok(report) = serde_json::from_str::<AnalyzePlanReport>(&json) {
-            return Some(report);
-        }
+    if let Ok(json) = env::var("FEATUREFORGE_WORKFLOW_STATUS_TEST_ANALYZE_REPORT_JSON")
+        && let Ok(report) = serde_json::from_str::<AnalyzePlanReport>(&json)
+    {
+        return Some(report);
     }
 
     let spec_path = repo_root.join(&spec.path);
@@ -1378,9 +1377,7 @@ fn evaluate_plan_fidelity_gate(
             };
         }
     };
-    let spec = match load_plan_fidelity_spec_document(
-        &spec_abs,
-    ) {
+    let spec = match load_plan_fidelity_spec_document(&spec_abs) {
         Ok(spec) => spec,
         Err(_) => {
             return crate::contracts::plan::PlanFidelityGateReport {
@@ -1401,12 +1398,15 @@ fn evaluate_plan_fidelity_gate(
         }
     };
 
-    evaluate_plan_fidelity_receipt_at_path(&spec, &plan, runtime.identity.repo_root.as_path(), receipt_path)
+    evaluate_plan_fidelity_receipt_at_path(
+        &spec,
+        &plan,
+        runtime.identity.repo_root.as_path(),
+        receipt_path,
+    )
 }
 
-fn load_plan_fidelity_spec_document(
-    spec_abs: &Path,
-) -> Result<SpecDocument, DiagnosticError> {
+fn load_plan_fidelity_spec_document(spec_abs: &Path) -> Result<SpecDocument, DiagnosticError> {
     parse_spec_file(spec_abs)
 }
 

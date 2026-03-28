@@ -13,11 +13,11 @@ mod workflow_support;
 
 use assert_cmd::cargo::cargo_bin;
 use bin_support::compiled_featureforge_path;
+use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters, STABLE_EVENT_KINDS,
     STABLE_REASON_CODES,
 };
-use featureforge::contracts::spec::parse_spec_file;
 use featureforge::git::{RepositoryIdentity, discover_repo_identity};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
@@ -38,9 +38,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use tempfile::TempDir;
-use workflow_support::{
-    init_repo as init_workflow_repo, workflow_fixture_root,
-};
+use workflow_support::{init_repo as init_workflow_repo, workflow_fixture_root};
 
 fn normalize_workflow_status_snapshot(mut value: Value) -> Value {
     let object = value
@@ -59,22 +57,25 @@ fn write_manifest(path: &Path, manifest: &WorkflowManifest) {
     fs::write(path, json).expect("manifest should be writable");
 }
 
-fn write_plan_fidelity_review_artifact(
-    repo: &Path,
-    artifact_rel: &str,
-    plan_path: &str,
+struct PlanFidelityReviewArtifactInput<'a> {
+    artifact_rel: &'a str,
+    plan_path: &'a str,
     plan_revision: u32,
-    spec_path: &str,
+    spec_path: &'a str,
     spec_revision: u32,
-    review_verdict: &str,
-    reviewer_source: &str,
-    reviewer_id: &str,
-    verified_surfaces: &[&str],
-) {
-    let artifact_path = repo.join(artifact_rel);
-    let plan_fingerprint = sha256_hex(&fs::read(repo.join(plan_path)).expect("plan should be readable"));
-    let spec_fingerprint = sha256_hex(&fs::read(repo.join(spec_path)).expect("spec should be readable"));
-    let verified_requirement_ids = parse_spec_file(repo.join(spec_path))
+    review_verdict: &'a str,
+    reviewer_source: &'a str,
+    reviewer_id: &'a str,
+    verified_surfaces: &'a [&'a str],
+}
+
+fn write_plan_fidelity_review_artifact(repo: &Path, input: PlanFidelityReviewArtifactInput<'_>) {
+    let artifact_path = repo.join(input.artifact_rel);
+    let plan_fingerprint =
+        sha256_hex(&fs::read(repo.join(input.plan_path)).expect("plan should be readable"));
+    let spec_fingerprint =
+        sha256_hex(&fs::read(repo.join(input.spec_path)).expect("spec should be readable"));
+    let verified_requirement_ids = parse_spec_file(repo.join(input.spec_path))
         .map(|spec| {
             spec.requirements
                 .iter()
@@ -89,8 +90,15 @@ fn write_plan_fidelity_review_artifact(
         artifact_path,
         format!(
             "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** {review_verdict}\n**Reviewed Plan:** `{plan_path}`\n**Reviewed Plan Revision:** {plan_revision}\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{spec_path}`\n**Reviewed Spec Revision:** {spec_revision}\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** {reviewer_source}\n**Reviewer ID:** {reviewer_id}\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** {}\n**Verified Requirement IDs:** {}\n",
-            verified_surfaces.join(", "),
-            verified_requirement_ids.join(", ")
+            input.verified_surfaces.join(", "),
+            verified_requirement_ids.join(", "),
+            review_verdict = input.review_verdict,
+            plan_path = input.plan_path,
+            plan_revision = input.plan_revision,
+            spec_path = input.spec_path,
+            spec_revision = input.spec_revision,
+            reviewer_source = input.reviewer_source,
+            reviewer_id = input.reviewer_id,
         ),
     )
     .expect("plan-fidelity review artifact should write");
@@ -163,16 +171,13 @@ fn inject_current_topology_sections(plan_source: &str) -> String {
     const INSERT_AFTER: &str = "## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n- REQ-004 -> Task 1\n- VERIFY-001 -> Task 1\n";
     const TOPOLOGY_BLOCK: &str = "\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n";
 
-    if plan_source.contains("## Execution Strategy") && plan_source.contains("## Dependency Diagram")
+    if plan_source.contains("## Execution Strategy")
+        && plan_source.contains("## Dependency Diagram")
     {
         return plan_source.to_owned();
     }
 
-    plan_source.replacen(
-        INSERT_AFTER,
-        &format!("{INSERT_AFTER}{TOPOLOGY_BLOCK}"),
-        1,
-    )
+    plan_source.replacen(INSERT_AFTER, &format!("{INSERT_AFTER}{TOPOLOGY_BLOCK}"), 1)
 }
 
 fn install_full_contract_ready_artifacts(repo: &Path) {
@@ -194,10 +199,9 @@ fn install_full_contract_ready_artifacts(repo: &Path) {
     if let Some(parent) = plan_path.parent() {
         fs::create_dir_all(parent).expect("plan fixture parent should be creatable");
     }
-    let plan_source = fs::read_to_string(
-        fixture_root.join("plans/2026-03-22-runtime-integration-hardening.md"),
-    )
-    .expect("plan fixture should load");
+    let plan_source =
+        fs::read_to_string(fixture_root.join("plans/2026-03-22-runtime-integration-hardening.md"))
+            .expect("plan fixture should load");
     let adjusted_plan = inject_current_topology_sections(&plan_source).replace(
         "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
         spec_rel,
@@ -400,6 +404,106 @@ fn sha256_hex(contents: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn canonical_unit_review_receipt_fingerprint(source: &str) -> String {
+    let filtered = source
+        .lines()
+        .filter(|line| !line.trim().starts_with("**Receipt Fingerprint:**"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    sha256_hex(filtered.as_bytes())
+}
+
+fn write_authoritative_active_contract_and_serial_unit_review_receipt(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+    plan_revision: u32,
+) -> (String, String) {
+    let branch = current_branch_name(repo);
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status for authoritative serial unit-review fixture",
+    );
+    let execution_run_id = status_json["execution_run_id"].as_str().expect(
+        "status should expose execution_run_id for authoritative serial unit-review fixture",
+    );
+    let approved_task_packet_fingerprint = status_json["latest_packet_fingerprint"]
+        .as_str()
+        .expect(
+            "status should expose latest_packet_fingerprint for authoritative serial unit-review fixture",
+        );
+    let execution_unit_id = "task-1-step-1";
+    let reviewed_checkpoint_commit_sha = current_head_sha(repo);
+    let active_contract_fingerprint =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    let active_contract_path = format!("contract-{active_contract_fingerprint}.md");
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch,
+            &active_contract_path,
+        ),
+        &format!("# Execution Contract\n**Contract Fingerprint:** {active_contract_fingerprint}\n"),
+    );
+
+    let execution_context_key = sha256_hex(
+        format!(
+            "run={execution_run_id}\nunit={execution_unit_id}\nplan={plan_rel}\nplan_revision={plan_revision}\nbranch={branch}\nreviewed_checkpoint={reviewed_checkpoint_commit_sha}\n"
+        )
+        .as_bytes(),
+    );
+    let approved_unit_contract_fingerprint = sha256_hex(
+        format!(
+            "approved-unit-contract:{active_contract_fingerprint}:{approved_task_packet_fingerprint}:{execution_unit_id}"
+        )
+        .as_bytes(),
+    );
+    let reconcile_result_proof_fingerprint = {
+        let mut command = Command::new("git");
+        command
+            .args(["cat-file", "commit", &reviewed_checkpoint_commit_sha])
+            .current_dir(repo);
+        let output = run_checked(
+            command,
+            "git cat-file commit for authoritative serial unit-review fixture",
+        );
+        sha256_hex(&output.stdout)
+    };
+    let lease_fingerprint = sha256_hex(
+        format!(
+            "serial-unit-review:{execution_run_id}:{execution_unit_id}:{execution_context_key}:{reviewed_checkpoint_commit_sha}:{approved_task_packet_fingerprint}:{approved_unit_contract_fingerprint}"
+        )
+        .as_bytes(),
+    );
+    let reviewed_worktree = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    let unsigned_source = format!(
+        "# Unit Review Result\n**Review Stage:** featureforge:unit-review\n**Reviewer Provenance:** dedicated-independent\n**Source Plan:** {plan_rel}\n**Source Plan Revision:** {plan_revision}\n**Execution Run ID:** {execution_run_id}\n**Execution Unit ID:** {execution_unit_id}\n**Lease Fingerprint:** {lease_fingerprint}\n**Execution Context Key:** {execution_context_key}\n**Approved Task Packet Fingerprint:** {approved_task_packet_fingerprint}\n**Approved Unit Contract Fingerprint:** {approved_unit_contract_fingerprint}\n**Reconciled Result SHA:** {reviewed_checkpoint_commit_sha}\n**Reconcile Result Proof Fingerprint:** {reconcile_result_proof_fingerprint}\n**Reconcile Mode:** identity_preserving\n**Reviewed Worktree:** {}\n**Reviewed Checkpoint SHA:** {reviewed_checkpoint_commit_sha}\n**Result:** pass\n**Generated By:** featureforge:unit-review\n**Generated At:** 2026-03-28T12:00:00Z\n",
+        reviewed_worktree.display()
+    );
+    let receipt_fingerprint = canonical_unit_review_receipt_fingerprint(&unsigned_source);
+    let receipt_source = format!(
+        "# Unit Review Result\n**Receipt Fingerprint:** {receipt_fingerprint}\n{}",
+        unsigned_source.trim_start_matches("# Unit Review Result\n")
+    );
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch,
+            &format!("unit-review-{execution_run_id}-{execution_unit_id}.md"),
+        ),
+        &receipt_source,
+    );
+
+    (
+        active_contract_path,
+        active_contract_fingerprint.to_string(),
+    )
+}
+
 fn project_artifact_dir(repo: &Path, state_dir: &Path) -> PathBuf {
     state_dir.join("projects").join(repo_slug(repo))
 }
@@ -439,7 +543,7 @@ fn write_branch_review_artifact(
     write_file(
         &artifact_path,
         &format!(
-            "# Code Review Result\n**Source Plan:** `{plan_rel}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {}\n**Result:** pass\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-24T12:10:00Z\n\n## Summary\n- synthetic code-review fixture for workflow phase coverage.\n",
+            "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Source Plan:** `{plan_rel}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {}\n**Recorded Execution Deviations:** none\n**Deviation Review Verdict:** not_required\n**Result:** pass\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-24T12:10:00Z\n\n## Summary\n- synthetic code-review fixture for workflow phase coverage.\n",
             repo_slug(repo),
             current_head_sha(repo)
         ),
@@ -610,7 +714,10 @@ fn update_authoritative_harness_state(
             object.insert(
                 "run_identity".to_string(),
                 Value::Object(serde_json::Map::from_iter([
-                    ("execution_run_id".to_string(), Value::from(execution_run_id)),
+                    (
+                        "execution_run_id".to_string(),
+                        Value::from(execution_run_id),
+                    ),
                     ("source_plan_path".to_string(), Value::from(plan_rel)),
                     (
                         "source_plan_revision".to_string(),
@@ -631,9 +738,9 @@ fn update_authoritative_harness_state(
             );
             Value::Object(object)
         }
-        Err(error) => panic!(
-            "authoritative harness state should be readable for fixture mutation: {error}"
-        ),
+        Err(error) => {
+            panic!("authoritative harness state should be readable for fixture mutation: {error}")
+        }
     };
     let object = payload
         .as_object_mut()
@@ -943,15 +1050,17 @@ fn canonical_workflow_status_routes_draft_plan_to_eng_review_after_matching_pass
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-pass.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-019d",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-pass.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
 
     let receipt_json = run_workflow_plan_fidelity_json(
@@ -1007,15 +1116,17 @@ fn canonical_workflow_status_normalizes_dot_slash_source_spec_paths() {
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-dot-slash-spec.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-dot-slash-spec",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-dot-slash-spec.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-dot-slash-spec",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
     let receipt_json = run_workflow_plan_fidelity_json(
         repo,
@@ -1062,15 +1173,17 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-stale.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-019d",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-stale.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
 
     let receipt_json = run_workflow_plan_fidelity_json(
@@ -1171,15 +1284,17 @@ fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_rec
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-non-independent.md",
-        "docs/featureforge/plans/2026-01-22-document-review-system.md",
-        1,
-        "docs/featureforge/specs/2026-01-22-document-review-system-design.md",
-        1,
-        "pass",
-        "same-context",
-        "writer-context",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-non-independent.md",
+            plan_path: "docs/featureforge/plans/2026-01-22-document-review-system.md",
+            plan_revision: 1,
+            spec_path: "docs/featureforge/specs/2026-01-22-document-review-system-design.md",
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "same-context",
+            reviewer_id: "writer-context",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
     let output = run_rust_featureforge(
         repo,
@@ -1238,15 +1353,17 @@ fn workflow_plan_fidelity_record_rejects_incomplete_verification_artifacts() {
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-incomplete.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-incomplete",
-        &[],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-incomplete.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-incomplete",
+            verified_surfaces: &[],
+        },
     );
 
     let output = run_rust_featureforge(
@@ -1289,15 +1406,17 @@ fn workflow_plan_fidelity_record_rejects_non_pass_verdicts() {
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-non-pass.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "clear",
-        "fresh-context-subagent",
-        "reviewer-non-pass",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-non-pass.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "clear",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-non-pass",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
 
     let output = run_rust_featureforge(
@@ -1340,15 +1459,17 @@ fn workflow_plan_fidelity_record_normalizes_dot_slash_review_targets() {
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-dot-slash-targets.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-dot-slash-targets",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-dot-slash-targets.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-dot-slash-targets",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
     replace_in_file(
         &repo.join(".featureforge/reviews/plan-fidelity-dot-slash-targets.md"),
@@ -1393,15 +1514,17 @@ fn workflow_plan_fidelity_record_rejects_stale_review_artifact_fingerprints() {
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-stale-fingerprint.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-stale-fingerprint",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-stale-fingerprint.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-stale-fingerprint",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
     replace_in_file(
         &repo.join(plan_path),
@@ -1449,15 +1572,17 @@ fn workflow_plan_fidelity_record_resolves_repo_relative_paths_from_subdirectorie
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-subdir.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-subdir",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-subdir.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-subdir",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
     fs::create_dir_all(repo.join("src/runtime")).expect("subdirectory should exist");
 
@@ -1496,15 +1621,17 @@ fn workflow_plan_fidelity_record_rejects_malformed_spec_requirement_index() {
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-malformed-spec.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-malformed-spec",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-malformed-spec.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-malformed-spec",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
 
     let output = run_rust_featureforge(
@@ -1562,15 +1689,17 @@ fn workflow_plan_fidelity_record_rejects_invalid_ceo_review_provenance_on_source
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-invalid-spec-reviewer.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-invalid-spec-reviewer",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-invalid-spec-reviewer.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-invalid-spec-reviewer",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
 
     let output = run_rust_featureforge(
@@ -1624,15 +1753,17 @@ fn workflow_plan_fidelity_record_rejects_out_of_repo_source_spec_paths() {
     );
     write_plan_fidelity_review_artifact(
         repo,
-        ".featureforge/reviews/plan-fidelity-external-source-spec.md",
-        plan_path,
-        1,
-        spec_path,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-external-source-spec",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-external-source-spec.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-external-source-spec",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
 
     let output = run_rust_featureforge(
@@ -3295,6 +3426,10 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
         handoff_json["recommendation"]["recommended_skill"],
         "featureforge:executing-plans"
     );
+    assert_eq!(
+        handoff_json["recommendation"]["selected_topology"],
+        "conservative-fallback"
+    );
     assert!(
         handoff_json["recommendation_reason"]
             .as_str()
@@ -4061,7 +4196,7 @@ fn canonical_workflow_routes_dirty_worktree_back_to_execution_handoff() {
 }
 
 #[test]
-fn canonical_workflow_handoff_surfaces_legacy_pre_harness_cutover_block() {
+fn canonical_workflow_handoff_rejects_legacy_pre_harness_cutover_state() {
     let (repo_dir, state_dir) = init_repo("workflow-handoff-legacy-pre-harness-cutover");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -4119,26 +4254,20 @@ fn canonical_workflow_handoff_surfaces_legacy_pre_harness_cutover_block() {
         "workflow handoff for legacy pre-harness cutover fixture",
     );
     assert!(
-        handoff_output.status.success(),
-        "workflow handoff --json should surface legacy pre-harness cutover blocks without raw errors, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        !handoff_output.status.success(),
+        "workflow handoff --json should fail closed for legacy pre-harness cutover state, got {:?}\nstdout:\n{}\nstderr:\n{}",
         handoff_output.status,
         String::from_utf8_lossy(&handoff_output.stdout),
         String::from_utf8_lossy(&handoff_output.stderr)
     );
-
-    let handoff_json = parse_json(
-        &handoff_output,
-        "workflow handoff for legacy pre-harness cutover fixture",
-    );
-    assert_eq!(handoff_json["phase"], "implementation_handoff");
-    assert_eq!(handoff_json["next_action"], "execution_preflight");
-    assert_eq!(handoff_json["recommended_skill"], "");
+    let stderr = String::from_utf8_lossy(&handoff_output.stderr);
     assert!(
-        handoff_json["recommendation_reason"]
-            .as_str()
-            .expect("recommendation_reason should stay a string")
-            .contains(cutover_message),
-        "recommendation_reason should surface the execution-state legacy cutover message"
+        stderr.contains("MalformedExecutionState"),
+        "workflow handoff should report malformed legacy execution evidence, stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(cutover_message),
+        "workflow handoff should explain legacy pre-harness cutover rejection, stderr:\n{stderr}"
     );
 }
 
@@ -4313,7 +4442,6 @@ fn canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirti
     );
 }
 
-
 #[test]
 fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-gate-review-stale-authoritative-truth");
@@ -4421,6 +4549,10 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
     complete_workflow_fixture_execution(repo, state, plan_rel);
     let branch = current_branch_name(repo);
     let expected_base_branch = expected_release_base_branch(repo);
+    let (active_contract_path, active_contract_fingerprint) =
+        write_authoritative_active_contract_and_serial_unit_review_receipt(
+            repo, state, plan_rel, 1,
+        );
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     let review_path = write_branch_review_artifact(repo, state, plan_rel, &expected_base_branch);
     write_branch_release_artifact(repo, state, plan_rel, &expected_base_branch);
@@ -4450,6 +4582,11 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
             ("schema_version", Value::from(1)),
             ("harness_phase", Value::from("executing")),
             ("latest_authoritative_sequence", Value::from(17)),
+            ("active_contract_path", Value::from(active_contract_path)),
+            (
+                "active_contract_fingerprint",
+                Value::from(active_contract_fingerprint),
+            ),
             ("dependency_index_state", Value::from("fresh")),
             ("final_review_state", Value::from("fresh")),
             ("browser_qa_state", Value::from("not_required")),
@@ -4515,6 +4652,10 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_relea
     complete_workflow_fixture_execution(repo, state, plan_rel);
     let branch = current_branch_name(repo);
     let expected_base_branch = expected_release_base_branch(repo);
+    let (active_contract_path, active_contract_fingerprint) =
+        write_authoritative_active_contract_and_serial_unit_review_receipt(
+            repo, state, plan_rel, 1,
+        );
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
     let review_path = write_branch_review_artifact(repo, state, plan_rel, &expected_base_branch);
     let qa_path = write_branch_qa_artifact(repo, state, plan_rel, &test_plan_path);
@@ -4573,6 +4714,11 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_relea
             ("schema_version", Value::from(1)),
             ("harness_phase", Value::from("executing")),
             ("latest_authoritative_sequence", Value::from(17)),
+            ("active_contract_path", Value::from(active_contract_path)),
+            (
+                "active_contract_fingerprint",
+                Value::from(active_contract_fingerprint),
+            ),
             ("dependency_index_state", Value::from("fresh")),
             ("final_review_state", Value::from("fresh")),
             ("browser_qa_state", Value::from("fresh")),
@@ -5022,7 +5168,6 @@ fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
         "test_plan_artifact_stale"
     );
 }
-
 
 #[test]
 fn canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only() {

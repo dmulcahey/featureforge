@@ -92,26 +92,30 @@ fn write_plan_fidelity_receipt(path: &Path, receipt: &PlanFidelityReceipt) {
     .expect("receipt should write");
 }
 
+struct PlanFidelityReviewArtifactInput<'a> {
+    artifact_rel: &'a str,
+    plan_path: &'a str,
+    plan_revision: u32,
+    spec_path: &'a str,
+    spec_revision: u32,
+    review_verdict: &'a str,
+    reviewer_source: &'a str,
+    reviewer_id: &'a str,
+    verified_surfaces: &'a [&'a str],
+}
+
 fn write_plan_fidelity_review_artifact(
     repo_root: &Path,
-    artifact_rel: &str,
-    plan_path: &str,
-    plan_revision: u32,
-    spec_path: &str,
-    spec_revision: u32,
-    review_verdict: &str,
-    reviewer_source: &str,
-    reviewer_id: &str,
-    verified_surfaces: &[&str],
+    input: PlanFidelityReviewArtifactInput<'_>,
 ) {
-    let artifact_path = repo_root.join(artifact_rel);
+    let artifact_path = repo_root.join(input.artifact_rel);
     let plan_fingerprint = featureforge::git::sha256_hex(
-        &fs::read(repo_root.join(plan_path)).expect("plan fixture should be readable"),
+        &fs::read(repo_root.join(input.plan_path)).expect("plan fixture should be readable"),
     );
     let spec_fingerprint = featureforge::git::sha256_hex(
-        &fs::read(repo_root.join(spec_path)).expect("spec fixture should be readable"),
+        &fs::read(repo_root.join(input.spec_path)).expect("spec fixture should be readable"),
     );
-    let verified_requirement_ids = parse_spec_file(repo_root.join(spec_path))
+    let verified_requirement_ids = parse_spec_file(repo_root.join(input.spec_path))
         .map(|spec| {
             spec.requirements
                 .iter()
@@ -126,8 +130,15 @@ fn write_plan_fidelity_review_artifact(
         artifact_path,
         format!(
             "## Plan Fidelity Review Summary\n\n**Review Stage:** featureforge:plan-fidelity-review\n**Review Verdict:** {review_verdict}\n**Reviewed Plan:** `{plan_path}`\n**Reviewed Plan Revision:** {plan_revision}\n**Reviewed Plan Fingerprint:** {plan_fingerprint}\n**Reviewed Spec:** `{spec_path}`\n**Reviewed Spec Revision:** {spec_revision}\n**Reviewed Spec Fingerprint:** {spec_fingerprint}\n**Reviewer Source:** {reviewer_source}\n**Reviewer ID:** {reviewer_id}\n**Distinct From Stages:** featureforge:writing-plans, featureforge:plan-eng-review\n**Verified Surfaces:** {}\n**Verified Requirement IDs:** {}\n",
-            verified_surfaces.join(", "),
-            verified_requirement_ids.join(", ")
+            input.verified_surfaces.join(", "),
+            verified_requirement_ids.join(", "),
+            review_verdict = input.review_verdict,
+            plan_path = input.plan_path,
+            plan_revision = input.plan_revision,
+            spec_path = input.spec_path,
+            spec_revision = input.spec_revision,
+            reviewer_source = input.reviewer_source,
+            reviewer_id = input.reviewer_id,
         ),
     )
     .expect("review artifact should write");
@@ -137,15 +148,17 @@ fn seed_direct_plan_fidelity_review_artifact(repo_root: &Path) -> (String, Strin
     let artifact_rel = ".featureforge/reviews/plan-fidelity-direct.md";
     write_plan_fidelity_review_artifact(
         repo_root,
-        artifact_rel,
-        PLAN_REL,
-        1,
-        SPEC_REL,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "reviewer-019d",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel,
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
     let artifact_source = fs::read(repo_root.join(artifact_rel))
         .expect("direct review artifact should be readable after write");
@@ -1024,15 +1037,17 @@ fn analyze_plan_cli_resolves_repo_relative_paths_from_subdirectories() {
     install_valid_draft_artifacts(&repo_root);
     write_plan_fidelity_review_artifact(
         &repo_root,
-        ".featureforge/reviews/plan-fidelity-cli-subdir.md",
-        PLAN_REL,
-        1,
-        SPEC_REL,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "independent-reviewer-subdir",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-cli-subdir.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "independent-reviewer-subdir",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
     parse_success_json(
         &run_record_plan_fidelity(
@@ -2016,15 +2031,17 @@ fn analyze_plan_accepts_matching_pass_plan_fidelity_receipt_for_draft_plan() {
     install_valid_draft_artifacts(&repo_root);
     write_plan_fidelity_review_artifact(
         &repo_root,
-        ".featureforge/reviews/plan-fidelity-pass.md",
-        PLAN_REL,
-        1,
-        SPEC_REL,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "independent-reviewer-1",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-pass.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "independent-reviewer-1",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
 
     let record = parse_success_json(
@@ -2129,15 +2146,17 @@ fn analyze_plan_rejects_stale_or_non_independent_plan_fidelity_receipts() {
     fs::remove_file(&runtime_receipt_path).expect("invalid runtime receipt should be removable");
     write_plan_fidelity_review_artifact(
         &repo_root,
-        ".featureforge/reviews/plan-fidelity-stale.md",
-        PLAN_REL,
-        1,
-        SPEC_REL,
-        1,
-        "pass",
-        "fresh-context-subagent",
-        "independent-reviewer-2",
-        &["requirement_index", "execution_topology"],
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-stale.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "independent-reviewer-2",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
     );
 
     parse_success_json(

@@ -33,9 +33,12 @@ pub struct RecommendDecisionFlags {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct RecommendOutput {
+    pub selected_topology: ExecutionTopologyArg,
     pub recommended_skill: String,
     pub reason: String,
     pub decision_flags: RecommendDecisionFlags,
+    pub reason_codes: Vec<String>,
+    pub learned_downgrade_reused: bool,
     pub chunking_strategy: ChunkingStrategy,
     pub evaluator_policy: EvaluatorPolicyName,
     pub reset_policy: ResetPolicy,
@@ -178,10 +181,13 @@ pub fn recommend_topology(
         ("separate", _) | (_, "no") => "no",
         _ => "unknown",
     };
-    let isolated_agents_available = normalize_isolated_agents_available(
-        context.isolated_agents_available.as_str(),
-    );
-    let tasks_independent = if context.tasks_independent { "yes" } else { "no" };
+    let isolated_agents_available =
+        normalize_isolated_agents_available(context.isolated_agents_available.as_str());
+    let tasks_independent = if context.tasks_independent {
+        "yes"
+    } else {
+        "no"
+    };
     let worktree_parallel_available = plan_supports_worktree_parallel(report)
         && context.tasks_independent
         && isolated_agents_available == "yes"
@@ -192,8 +198,9 @@ pub fn recommend_topology(
         learned_guidance_stale_reuse_matches(report, context, current_blocker_reason_class);
     let learned_downgrade_reused =
         learned_guidance_stale_reuse_matches && !context.current_parallel_path_ready;
-    let restored_parallel_path =
-        learned_guidance_matches && context.current_parallel_path_ready && worktree_parallel_available;
+    let restored_parallel_path = learned_guidance_matches
+        && context.current_parallel_path_ready
+        && worktree_parallel_available;
 
     let (selected_topology, recommended_skill, reason, reason_codes) = if restored_parallel_path {
         (
@@ -516,16 +523,15 @@ pub(crate) fn parse_plan_fidelity_review_artifact(
         ));
     }
 
-    let reviewed_plan_path = RepoPath::parse(
-        parse_header_value(&source, "Reviewed Plan")?.trim_matches('`'),
-    )
-    .map(|path| path.as_str().to_owned())
-    .map_err(|_| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must keep Reviewed Plan repo-relative.",
-        )
-    })?;
+    let reviewed_plan_path =
+        RepoPath::parse(parse_header_value(&source, "Reviewed Plan")?.trim_matches('`'))
+            .map(|path| path.as_str().to_owned())
+            .map_err(|_| {
+                DiagnosticError::new(
+                    FailureClass::InstructionParseFailed,
+                    "Plan-fidelity review artifact must keep Reviewed Plan repo-relative.",
+                )
+            })?;
     let reviewed_plan_revision = parse_header_value(&source, "Reviewed Plan Revision")?
         .parse::<u32>()
         .map_err(|_| {
@@ -535,16 +541,15 @@ pub(crate) fn parse_plan_fidelity_review_artifact(
             )
         })?;
     let reviewed_plan_fingerprint = parse_header_value(&source, "Reviewed Plan Fingerprint")?;
-    let reviewed_spec_path = RepoPath::parse(
-        parse_header_value(&source, "Reviewed Spec")?.trim_matches('`'),
-    )
-    .map(|path| path.as_str().to_owned())
-    .map_err(|_| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must keep Reviewed Spec repo-relative.",
-        )
-    })?;
+    let reviewed_spec_path =
+        RepoPath::parse(parse_header_value(&source, "Reviewed Spec")?.trim_matches('`'))
+            .map(|path| path.as_str().to_owned())
+            .map_err(|_| {
+                DiagnosticError::new(
+                    FailureClass::InstructionParseFailed,
+                    "Plan-fidelity review artifact must keep Reviewed Spec repo-relative.",
+                )
+            })?;
     let reviewed_spec_revision = parse_header_value(&source, "Reviewed Spec Revision")?
         .parse::<u32>()
         .map_err(|_| {
@@ -641,12 +646,9 @@ pub(crate) fn validate_plan_fidelity_review_artifact(
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    if ![
-        "featureforge:writing-plans",
-        "featureforge:plan-eng-review",
-    ]
-    .iter()
-    .all(|stage| distinct_from_stages.contains(stage))
+    if !["featureforge:writing-plans", "featureforge:plan-eng-review"]
+        .iter()
+        .all(|stage| distinct_from_stages.contains(stage))
     {
         return Err(DiagnosticError::new(
             FailureClass::InstructionParseFailed,

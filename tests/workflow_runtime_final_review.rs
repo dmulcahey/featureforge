@@ -75,7 +75,9 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     run_checked(
         {
             let mut command = Command::new("git");
-            command.args(["checkout", "-B", "fixture-work"]).current_dir(repo);
+            command
+                .args(["checkout", "-B", "fixture-work"])
+                .current_dir(repo);
             command
         },
         "git checkout fixture-work",
@@ -84,7 +86,12 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
         {
             let mut command = Command::new("git");
             command
-                .args(["remote", "add", "origin", &format!("git@github.com:example/{name}.git")])
+                .args([
+                    "remote",
+                    "add",
+                    "origin",
+                    &format!("git@github.com:example/{name}.git"),
+                ])
                 .current_dir(repo);
             command
         },
@@ -279,8 +286,9 @@ fn expected_packet_fingerprint(repo: &Path, task: u32, step: u32) -> String {
 }
 
 fn write_single_step_v2_completed_attempt(repo: &Path, packet_fingerprint: &str) {
-    let evidence_path =
-        repo.join("docs/featureforge/execution-evidence/2026-03-17-example-execution-plan-r1-evidence.md");
+    let evidence_path = repo.join(
+        "docs/featureforge/execution-evidence/2026-03-17-example-execution-plan-r1-evidence.md",
+    );
     let plan_fingerprint =
         sha256_hex(&fs::read(repo.join(PLAN_REL)).expect("plan should be readable"));
     let spec_fingerprint =
@@ -318,8 +326,9 @@ fn write_code_review_artifact(repo: &Path, state: &Path, base_branch: &str) -> P
     let branch = branch_name(repo);
     let safe_branch = branch_storage_key(&branch);
     let head_sha = current_head_sha(repo);
-    let artifact_path = project_artifact_dir(repo, state)
-        .join(format!("tester-{safe_branch}-code-review-20260322-171100.md"));
+    let artifact_path = project_artifact_dir(repo, state).join(format!(
+        "tester-{safe_branch}-code-review-20260322-171100.md"
+    ));
     write_file(
         &artifact_path,
         &format!(
@@ -334,8 +343,9 @@ fn write_release_readiness_artifact(repo: &Path, state: &Path, base_branch: &str
     let branch = branch_name(repo);
     let safe_branch = branch_storage_key(&branch);
     let head_sha = current_head_sha(repo);
-    let artifact_path = project_artifact_dir(repo, state)
-        .join(format!("tester-{safe_branch}-release-readiness-20260322-171500.md"));
+    let artifact_path = project_artifact_dir(repo, state).join(format!(
+        "tester-{safe_branch}-release-readiness-20260322-171500.md"
+    ));
     write_file(
         &artifact_path,
         &format!(
@@ -417,14 +427,20 @@ fn workflow_phase_routes_missing_final_review_back_to_requesting_code_review() {
     assert_eq!(phase_json["phase"], "final_review_pending");
     assert_eq!(phase_json["next_action"], "request_code_review");
     assert_eq!(handoff_json["phase"], "final_review_pending");
-    assert_eq!(handoff_json["recommended_skill"], "featureforge:requesting-code-review");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:requesting-code-review"
+    );
     assert_eq!(
         handoff_json["recommendation_reason"],
         "Finish readiness requires a final code-review artifact."
     );
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
-    assert_eq!(gate_finish_json["reason_codes"][0], "review_artifact_missing");
+    assert_eq!(
+        gate_finish_json["reason_codes"][0],
+        "review_artifact_missing"
+    );
 }
 
 #[test]
@@ -473,12 +489,18 @@ fn workflow_phase_routes_stale_review_back_to_requesting_code_review() {
 
     assert_eq!(phase_json["phase"], "final_review_pending");
     assert_eq!(phase_json["next_action"], "request_code_review");
-    assert_eq!(handoff_json["recommended_skill"], "featureforge:requesting-code-review");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:requesting-code-review"
+    );
     assert_eq!(
         handoff_json["recommendation_reason"],
         "The latest code-review artifact does not match the current HEAD."
     );
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
-    assert_eq!(gate_finish_json["reason_codes"][0], "review_artifact_head_mismatch");
+    assert_eq!(
+        gate_finish_json["reason_codes"][0],
+        "review_receipt_head_mismatch"
+    );
 }

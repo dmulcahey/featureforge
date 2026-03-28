@@ -9,29 +9,29 @@ use serde_json::Value;
 
 use crate::cli::plan_execution::{RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs};
 use crate::contracts::harness::{
-    read_evaluation_report, read_execution_contract, read_execution_handoff, EvaluationReport,
-    ExecutionContract, ExecutionHandoff, WorktreeLease,
+    EvaluationReport, ExecutionContract, ExecutionHandoff, WorktreeLease, read_evaluation_report,
+    read_execution_contract, read_execution_handoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::dependency_index::{
-    DependencyIndex, DependencyIndexHealth, DependencyIndexState, DependencyNode, DependencyNodeId,
-    IndexedArtifactKind, DEPENDENCY_INDEX_VERSION,
+    DEPENDENCY_INDEX_VERSION, DependencyIndex, DependencyIndexHealth, DependencyIndexState,
+    DependencyNode, DependencyNodeId, IndexedArtifactKind,
 };
 use crate::execution::gates::{
-    normalize_artifact_repo_path, require_active_contract_state, validate_contract_provenance,
-    validate_evaluator_semantics, validate_handoff_provenance, validate_handoff_semantics,
-    validate_harness_provenance, validate_report_provenance, GateAuthorityState,
+    GateAuthorityState, normalize_artifact_repo_path, require_active_contract_state,
+    validate_contract_provenance, validate_evaluator_semantics, validate_handoff_provenance,
+    validate_handoff_semantics, validate_harness_provenance, validate_report_provenance,
 };
 use crate::execution::harness::{
-    ChunkId, HarnessPhase, RunIdentitySnapshot, WorktreeLeaseBindingSnapshot,
-    INITIAL_AUTHORITATIVE_SEQUENCE,
+    ChunkId, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE, RunIdentitySnapshot,
+    WorktreeLeaseBindingSnapshot,
 };
 use crate::execution::leases::validate_worktree_lease;
 use crate::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters,
 };
 use crate::execution::state::{
-    load_execution_context, ExecutionContext, ExecutionRuntime, GateResult, GateState,
+    ExecutionContext, ExecutionRuntime, GateResult, GateState, load_execution_context,
 };
 use crate::git::sha256_hex;
 use crate::paths::{
@@ -301,6 +301,14 @@ struct MutableHarnessState {
     handoff_required: bool,
     #[serde(default)]
     open_failed_criteria: Vec<String>,
+    #[serde(default)]
+    strategy_state: Option<String>,
+    #[serde(default)]
+    last_strategy_checkpoint_fingerprint: Option<String>,
+    #[serde(default)]
+    strategy_checkpoint_kind: Option<String>,
+    #[serde(default)]
+    strategy_reset_required: bool,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
 }
@@ -326,6 +334,12 @@ impl MutableHarnessState {
         }
         if self.aggregate_evaluation_state.is_none() {
             self.aggregate_evaluation_state = Some(String::from("pending"));
+        }
+        if self.strategy_state.is_none() {
+            self.strategy_state = Some(String::from("checkpoint_missing"));
+        }
+        if self.strategy_checkpoint_kind.is_none() {
+            self.strategy_checkpoint_kind = Some(String::from("none"));
         }
     }
 }
@@ -765,32 +779,30 @@ where
         let mut expected_replay_state = state.clone();
         apply_transition(&mut expected_replay_state);
         if state == expected_replay_state {
-            if !target_exists {
-                if let Err(error) = write_atomic_file(&target_path, &source) {
-                    gate.fail(
-                        FailureClass::PartialAuthoritativeMutation,
-                        "authoritative_publish_failed",
-                        format!(
-                            "Could not publish authoritative artifact {}: {error}",
-                            target_path.display()
-                        ),
-                        "Restore authoritative artifact write access and retry.",
-                    );
-                }
+            if !target_exists && let Err(error) = write_atomic_file(&target_path, &source) {
+                gate.fail(
+                    FailureClass::PartialAuthoritativeMutation,
+                    "authoritative_publish_failed",
+                    format!(
+                        "Could not publish authoritative artifact {}: {error}",
+                        target_path.display()
+                    ),
+                    "Restore authoritative artifact write access and retry.",
+                );
             }
-            if gate.allowed {
-                if let Err(error) = persist_dependency_index_after_authoritative_record(
+            if gate.allowed
+                && let Err(error) = persist_dependency_index_after_authoritative_record(
                     runtime,
                     artifact_file_name,
                     authoritative_sequence,
-                ) {
-                    gate.fail(
-                        FailureClass::PartialAuthoritativeMutation,
-                        "dependency_index_publish_failed",
-                        error,
-                        "Restore dependency-index write access and retry.",
-                    );
-                }
+                )
+            {
+                gate.fail(
+                    FailureClass::PartialAuthoritativeMutation,
+                    "dependency_index_publish_failed",
+                    error,
+                    "Restore dependency-index write access and retry.",
+                );
             }
             return Ok(gate.finish());
         }
@@ -894,13 +906,13 @@ pub fn write_authoritative_worktree_lease_artifact(
     validate_safe_identifier_token(&lease.execution_run_id, "execution_run_id")?;
     validate_safe_identifier_token(&lease.execution_context_key, "execution_context_key")?;
     validate_safe_identifier_token(&lease.execution_unit_id, "execution_unit_id")?;
-    if let Some(run_identity) = state.run_identity.as_ref() {
-        if run_identity.execution_run_id.as_str() != lease.execution_run_id {
-            return Err(JsonFailure::new(
-                FailureClass::ArtifactIntegrityMismatch,
-                "Authoritative worktree lease execution_run_id does not match active run identity.",
-            ));
-        }
+    if let Some(run_identity) = state.run_identity.as_ref()
+        && run_identity.execution_run_id.as_str() != lease.execution_run_id
+    {
+        return Err(JsonFailure::new(
+            FailureClass::ArtifactIntegrityMismatch,
+            "Authoritative worktree lease execution_run_id does not match active run identity.",
+        ));
     }
     if lease.authoritative_sequence < state.latest_sequence() {
         return Err(JsonFailure::new(
@@ -965,15 +977,25 @@ pub fn write_authoritative_unit_review_receipt_artifact(
         execution_unit_id.trim_start_matches("unit-"),
         "execution_unit_id",
     )?;
-    if let Some(run_identity) = state.run_identity.as_ref() {
-        if run_identity.execution_run_id.as_str() != execution_run_id {
-            return Err(JsonFailure::new(
-                FailureClass::ArtifactIntegrityMismatch,
-                "Authoritative unit-review receipt execution_run_id does not match active run identity.",
-            ));
-        }
+    if let Some(run_identity) = state.run_identity.as_ref()
+        && run_identity.execution_run_id.as_str() != execution_run_id
+    {
+        return Err(JsonFailure::new(
+            FailureClass::ArtifactIntegrityMismatch,
+            "Authoritative unit-review receipt execution_run_id does not match active run identity.",
+        ));
     }
-    validate_receipt_identity_headers(source, execution_run_id, execution_unit_id)?;
+    let expected_strategy_checkpoint_fingerprint = state
+        .last_strategy_checkpoint_fingerprint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    validate_receipt_identity_headers(
+        source,
+        execution_run_id,
+        execution_unit_id,
+        expected_strategy_checkpoint_fingerprint,
+    )?;
     let Some(canonical_fingerprint) = canonical_unit_review_receipt_fingerprint(source) else {
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
@@ -998,7 +1020,7 @@ pub fn write_authoritative_unit_review_receipt_artifact(
         &runtime.branch_name,
         &receipt_file_name,
     );
-    write_atomic_file(&artifact_path, source.to_owned()).map_err(|error| {
+    write_atomic_file(&artifact_path, source).map_err(|error| {
         JsonFailure::new(
             FailureClass::PartialAuthoritativeMutation,
             format!(
@@ -1136,6 +1158,7 @@ fn validate_receipt_identity_headers(
     source: &str,
     execution_run_id: &str,
     execution_unit_id: &str,
+    expected_strategy_checkpoint_fingerprint: Option<&str>,
 ) -> Result<(), JsonFailure> {
     let Some(receipt_execution_run_id) = parse_markdown_header_value(source, "Execution Run ID")
     else {
@@ -1163,6 +1186,23 @@ fn validate_receipt_identity_headers(
             FailureClass::ArtifactIntegrityMismatch,
             "Authoritative unit-review receipt Execution Unit ID does not match the requested unit.",
         ));
+    }
+    if let Some(expected_strategy_checkpoint_fingerprint) = expected_strategy_checkpoint_fingerprint
+    {
+        let Some(strategy_checkpoint_fingerprint) =
+            parse_markdown_header_value(source, "Strategy Checkpoint Fingerprint")
+        else {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                "Authoritative unit-review receipt is missing Strategy Checkpoint Fingerprint.",
+            ));
+        };
+        if strategy_checkpoint_fingerprint != expected_strategy_checkpoint_fingerprint {
+            return Err(JsonFailure::new(
+                FailureClass::ArtifactIntegrityMismatch,
+                "Authoritative unit-review receipt Strategy Checkpoint Fingerprint does not match the active runtime strategy checkpoint.",
+            ));
+        }
     }
     Ok(())
 }
@@ -1456,7 +1496,7 @@ fn parse_authoritative_fingerprint(artifact_file_name: &str, prefix: &str) -> Op
 }
 
 fn is_lower_hex_ascii(byte: u8) -> bool {
-    byte.is_ascii_digit() || (byte >= b'a' && byte <= b'f')
+    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
 }
 
 enum MutableStateLoadError {
@@ -1672,7 +1712,7 @@ fn evaluation_fingerprint_from_authoritative_name(file_name: &str) -> Option<&st
     if fingerprint.is_empty()
         || !fingerprint
             .bytes()
-            .all(|byte| byte.is_ascii_digit() || (byte >= b'a' && byte <= b'f'))
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
         return None;
     }
@@ -1796,20 +1836,18 @@ fn canonical_fingerprint_without_header_value(source: &str, header_label: &str) 
             None => (segment, ""),
         };
 
-        if !replaced {
-            if let Some(marker_index) = line.find(&marker) {
-                let after_marker = &line[marker_index + marker.len()..];
-                let leading_whitespace_len = after_marker
-                    .chars()
-                    .take_while(|ch| matches!(ch, ' ' | '\t'))
-                    .map(char::len_utf8)
-                    .sum::<usize>();
-                canonical_source
-                    .push_str(&line[..marker_index + marker.len() + leading_whitespace_len]);
-                canonical_source.push_str(newline);
-                replaced = true;
-                continue;
-            }
+        if !replaced && let Some(marker_index) = line.find(&marker) {
+            let after_marker = &line[marker_index + marker.len()..];
+            let leading_whitespace_len = after_marker
+                .chars()
+                .take_while(|ch| matches!(ch, ' ' | '\t'))
+                .map(char::len_utf8)
+                .sum::<usize>();
+            canonical_source
+                .push_str(&line[..marker_index + marker.len() + leading_whitespace_len]);
+            canonical_source.push_str(newline);
+            replaced = true;
+            continue;
         }
 
         canonical_source.push_str(segment);
