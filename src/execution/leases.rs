@@ -85,9 +85,9 @@ pub(crate) struct StatusAuthoritativeOverlay {
 pub(crate) fn load_status_authoritative_overlay(
     context: &ExecutionContext,
 ) -> Option<StatusAuthoritativeOverlay> {
-    let state_path = authoritative_state_path(context);
-    let source = fs::read_to_string(&state_path).ok()?;
-    serde_json::from_str(&source).ok()
+    load_status_authoritative_overlay_checked(context)
+        .ok()
+        .flatten()
 }
 
 pub(crate) fn load_status_authoritative_overlay_checked(
@@ -250,6 +250,18 @@ pub(crate) fn parse_authoritative_sequence_from_artifact(source: &str) -> Option
     })
 }
 
+fn parse_authoritative_sequence_from_worktree_lease_artifact(
+    source: &str,
+) -> Result<Option<u64>, JsonFailure> {
+    let lease: WorktreeLease = serde_json::from_str(source).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            format!("Authoritative worktree lease is malformed: {error}"),
+        )
+    })?;
+    Ok(Some(lease.authoritative_sequence))
+}
+
 pub(crate) fn latest_authoritative_artifact_sequence(
     context: &ExecutionContext,
 ) -> Result<Option<u64>, JsonFailure> {
@@ -285,6 +297,27 @@ pub(crate) fn latest_authoritative_artifact_sequence(
         })?;
         let path = entry.path();
         if !path.is_file() {
+            continue;
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if file_name.starts_with("worktree-lease-") && file_name.ends_with(".json") {
+            let source = fs::read_to_string(&path).map_err(|error| {
+                JsonFailure::new(
+                    FailureClass::ExecutionStateNotReady,
+                    format!(
+                        "Could not read authoritative worktree lease {}: {error}",
+                        path.display()
+                    ),
+                )
+            })?;
+            if let Some(sequence) =
+                parse_authoritative_sequence_from_worktree_lease_artifact(&source)?
+            {
+                max_sequence = Some(max_sequence.map_or(sequence, |current| current.max(sequence)));
+            }
             continue;
         }
         let source = fs::read_to_string(&path).map_err(|error| {
@@ -453,6 +486,8 @@ pub fn validate_worktree_lease(lease: &WorktreeLease) -> Result<(), JsonFailure>
         ));
     }
 
+    require_non_empty(&lease.execution_run_id, "execution_run_id")?;
+    require_non_empty(&lease.execution_context_key, "execution_context_key")?;
     require_non_empty(&lease.source_plan_path, "source_plan_path")?;
     require_non_empty(&lease.execution_unit_id, "execution_unit_id")?;
     require_non_empty(&lease.source_branch, "source_branch")?;
@@ -470,6 +505,7 @@ pub fn validate_worktree_lease(lease: &WorktreeLease) -> Result<(), JsonFailure>
         "repo_state_baseline_worktree_fingerprint",
     )?;
     require_non_empty(&lease.cleanup_state, "cleanup_state")?;
+    require_non_empty(&lease.reconcile_mode, "reconcile_mode")?;
     require_non_empty(&lease.generated_by, "generated_by")?;
     require_non_empty(&lease.generated_at, "generated_at")?;
     require_non_empty(&lease.lease_fingerprint, "lease_fingerprint")?;
@@ -493,6 +529,49 @@ pub fn validate_worktree_lease(lease: &WorktreeLease) -> Result<(), JsonFailure>
         require_non_empty(
             reviewed_checkpoint_commit_sha,
             "reviewed_checkpoint_commit_sha",
+        )?;
+    }
+
+    let requires_reconcile_provenance = !matches!(
+        lease.lease_state,
+        WorktreeLeaseState::Open | WorktreeLeaseState::ReviewPassedPendingReconcile
+    );
+    if requires_reconcile_provenance
+        && lease
+            .reconcile_result_commit_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+    {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "WorktreeLease must include reconcile_result_commit_sha while lease_state is terminal.",
+        ));
+    }
+    if let Some(reconcile_result_commit_sha) = lease.reconcile_result_commit_sha.as_deref() {
+        require_non_empty(reconcile_result_commit_sha, "reconcile_result_commit_sha")?;
+    }
+
+    if requires_reconcile_provenance
+        && lease
+            .reconcile_result_proof_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+    {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "WorktreeLease must include reconcile_result_proof_fingerprint while lease_state is terminal.",
+        ));
+    }
+    if let Some(reconcile_result_proof_fingerprint) =
+        lease.reconcile_result_proof_fingerprint.as_deref()
+    {
+        require_non_empty(
+            reconcile_result_proof_fingerprint,
+            "reconcile_result_proof_fingerprint",
         )?;
     }
 

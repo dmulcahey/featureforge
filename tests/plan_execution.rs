@@ -1,9 +1,17 @@
 use assert_cmd::cargo::CommandCargoExt;
+use featureforge::contracts::harness::{WorktreeLease, WorktreeLeaseState};
+use featureforge::execution::authority::{
+    persist_active_worktree_lease_index, write_authoritative_unit_review_receipt_artifact,
+    write_authoritative_worktree_lease_artifact,
+};
+use featureforge::execution::harness::{
+    ChunkId, ExecutionRunId, RunIdentitySnapshot, WorktreeLeaseBindingSnapshot,
+};
 use featureforge::execution::state::{
-    ExecutionRuntime, gate_finish_from_context, load_execution_context, preflight_from_context,
+    gate_finish_from_context, load_execution_context, preflight_from_context, ExecutionRuntime,
 };
 use featureforge::paths::{branch_storage_key, harness_authoritative_artifact_path};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -669,10 +677,475 @@ fn harness_state_file_path(repo: &Path, state: &Path) -> PathBuf {
         .join("state.json")
 }
 
+fn execution_runtime(repo: &Path, state: &Path) -> ExecutionRuntime {
+    let git_dir = gix::discover(repo)
+        .expect("git repo should be discoverable")
+        .path()
+        .to_path_buf();
+    let branch = branch_name(repo);
+    ExecutionRuntime {
+        repo_root: repo.to_path_buf(),
+        git_dir,
+        branch_name: branch.clone(),
+        repo_slug: repo_slug(repo),
+        safe_branch: normalize_identifier(&branch),
+        state_dir: state.to_path_buf(),
+    }
+}
+
 fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
+    let state_path = harness_state_file_path(repo, state);
+    let merged = if state_path.is_file() {
+        let existing: Value = serde_json::from_str(
+            &fs::read_to_string(&state_path)
+                .expect("existing harness state should be readable for merge"),
+        )
+        .expect("existing harness state should be valid json for merge");
+        match (existing, payload.clone()) {
+            (Value::Object(mut existing), Value::Object(patch)) => {
+                for (key, value) in patch {
+                    existing.insert(key, value);
+                }
+                Value::Object(existing)
+            }
+            (_, replacement) => replacement,
+        }
+    } else {
+        payload.clone()
+    };
     write_file(
-        &harness_state_file_path(repo, state),
-        &serde_json::to_string_pretty(payload).expect("harness state payload should serialize"),
+        &state_path,
+        &serde_json::to_string_pretty(&merged).expect("harness state payload should serialize"),
+    );
+}
+
+fn current_authoritative_run_identity(repo: &Path, state: &Path) -> (String, String) {
+    let state_json: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable for current run identity"),
+    )
+    .expect("harness state should be valid json for current run identity");
+    let run_identity = state_json
+        .get("run_identity")
+        .and_then(Value::as_object)
+        .expect("authoritative harness state should expose run_identity");
+    let execution_run_id = run_identity
+        .get("execution_run_id")
+        .and_then(Value::as_str)
+        .expect("authoritative harness state should expose execution_run_id")
+        .to_owned();
+    let chunk_id = state_json
+        .get("chunk_id")
+        .and_then(Value::as_str)
+        .expect("authoritative harness state should expose chunk_id")
+        .to_owned();
+    (execution_run_id, chunk_id)
+}
+
+fn current_active_contract_fingerprint(repo: &Path, state: &Path) -> String {
+    let state_json: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable for active contract fingerprint"),
+    )
+    .expect("harness state should be valid json for active contract fingerprint");
+    state_json
+        .get("active_contract_fingerprint")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .expect("authoritative harness state should expose active_contract_fingerprint")
+        .to_owned()
+}
+
+fn current_worktree_lease_execution_context_key(
+    execution_run_id: &str,
+    execution_unit_id: &str,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    authoritative_integration_branch: &str,
+    reviewed_checkpoint_commit_sha: &str,
+) -> String {
+    sha256_hex(
+        format!(
+            "run={execution_run_id}\nunit={execution_unit_id}\nplan={source_plan_path}\nplan_revision={source_plan_revision}\nbranch={authoritative_integration_branch}\nreviewed_checkpoint={reviewed_checkpoint_commit_sha}\n"
+        )
+        .as_bytes(),
+    )
+}
+
+fn approved_unit_contract_fingerprint_for_review(
+    active_contract_fingerprint: &str,
+    approved_task_packet_fingerprint: &str,
+    execution_unit_id: &str,
+) -> String {
+    sha256_hex(
+        format!(
+            "approved-unit-contract:{active_contract_fingerprint}:{approved_task_packet_fingerprint}:{execution_unit_id}"
+        )
+            .as_bytes(),
+    )
+}
+
+fn append_active_worktree_lease_fingerprint(repo: &Path, state: &Path, fingerprint: &str) {
+    let state_path = harness_state_file_path(repo, state);
+    let mut state_json: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path)
+            .expect("harness state should be readable to append active lease fingerprint"),
+    )
+    .expect("harness state should be valid json to append active lease fingerprint");
+    let state_object = state_json
+        .as_object_mut()
+        .expect("harness state should remain a JSON object");
+    let entry = state_object
+        .entry(String::from("active_worktree_lease_fingerprints"))
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let entry_array = entry
+        .as_array_mut()
+        .expect("active_worktree_lease_fingerprints should be an array");
+    if !entry_array
+        .iter()
+        .any(|value| value.as_str().is_some_and(|value| value == fingerprint))
+    {
+        entry_array.push(Value::String(fingerprint.to_owned()));
+    }
+    write_file(
+        &state_path,
+        &serde_json::to_string_pretty(&state_json)
+            .expect("harness state should serialize after appending lease fingerprint"),
+    );
+}
+
+fn append_active_worktree_lease_binding(repo: &Path, state: &Path, mut binding: Value) {
+    let state_path = harness_state_file_path(repo, state);
+    let mut state_json: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path)
+            .expect("harness state should be readable to append active lease binding"),
+    )
+    .expect("harness state should be valid json to append active lease binding");
+    let active_contract_fingerprint = state_json
+        .get("active_contract_fingerprint")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned);
+    let state_object = state_json
+        .as_object_mut()
+        .expect("harness state should remain a JSON object");
+    let entry = state_object
+        .entry(String::from("active_worktree_lease_bindings"))
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let entry_array = entry
+        .as_array_mut()
+        .expect("active_worktree_lease_bindings should be an array");
+    if let Some(binding_object) = binding.as_object_mut() {
+        if binding_object
+            .get("execution_context_key")
+            .is_none_or(Value::is_null)
+        {
+            let receipt_artifact_path = binding_object
+                .get("review_receipt_artifact_path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty());
+            let lease_artifact_path = binding_object
+                .get("lease_artifact_path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty());
+            let from_receipt = receipt_artifact_path.and_then(|receipt_artifact_path| {
+                let receipt_path = harness_authoritative_artifact_path(
+                    state,
+                    &repo_slug(repo),
+                    &branch_name(repo),
+                    receipt_artifact_path,
+                );
+                fs::read_to_string(&receipt_path)
+                    .ok()
+                    .and_then(|receipt_source| {
+                        execution_context_key_from_unit_review_receipt(&receipt_source)
+                    })
+            });
+            let from_lease = lease_artifact_path.and_then(|lease_artifact_path| {
+                let lease_path = harness_authoritative_artifact_path(
+                    state,
+                    &repo_slug(repo),
+                    &branch_name(repo),
+                    lease_artifact_path,
+                );
+                fs::read_to_string(&lease_path)
+                    .ok()
+                    .and_then(|lease_source| {
+                        execution_context_key_from_worktree_lease(&lease_source)
+                    })
+            });
+            if let Some(execution_context_key) = from_receipt.or(from_lease) {
+                binding_object.insert(
+                    String::from("execution_context_key"),
+                    Value::String(execution_context_key),
+                );
+            }
+        }
+        if binding_object
+            .get("reviewed_checkpoint_commit_sha")
+            .is_none_or(Value::is_null)
+        {
+            if let Some(receipt_artifact_path) = binding_object
+                .get("review_receipt_artifact_path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let receipt_path = harness_authoritative_artifact_path(
+                    state,
+                    &repo_slug(repo),
+                    &branch_name(repo),
+                    receipt_artifact_path,
+                );
+                if let Ok(receipt_source) = fs::read_to_string(&receipt_path) {
+                    if let Some(reviewed_checkpoint_commit_sha) =
+                        reviewed_checkpoint_from_unit_review_receipt(&receipt_source)
+                    {
+                        binding_object.insert(
+                            String::from("reviewed_checkpoint_commit_sha"),
+                            Value::String(reviewed_checkpoint_commit_sha),
+                        );
+                    }
+                }
+            }
+        }
+        if binding_object
+            .get("approved_task_packet_fingerprint")
+            .is_none_or(Value::is_null)
+        {
+            if let Some(receipt_artifact_path) = binding_object
+                .get("review_receipt_artifact_path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let receipt_path = harness_authoritative_artifact_path(
+                    state,
+                    &repo_slug(repo),
+                    &branch_name(repo),
+                    receipt_artifact_path,
+                );
+                if let Ok(receipt_source) = fs::read_to_string(&receipt_path) {
+                    if let Some(approved_task_packet_fingerprint) =
+                        approved_task_packet_from_unit_review_receipt(&receipt_source)
+                    {
+                        binding_object.insert(
+                            String::from("approved_task_packet_fingerprint"),
+                            Value::String(approved_task_packet_fingerprint),
+                        );
+                    }
+                }
+            }
+        }
+        if binding_object
+            .get("approved_unit_contract_fingerprint")
+            .is_none_or(Value::is_null)
+        {
+            if let (
+                Some(active_contract_fingerprint),
+                Some(task_packet_fingerprint),
+                Some(execution_unit_id),
+            ) = (
+                active_contract_fingerprint.as_deref(),
+                binding_object
+                    .get("approved_task_packet_fingerprint")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty()),
+                binding_object
+                    .get("execution_unit_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty()),
+            ) {
+                binding_object.insert(
+                    String::from("approved_unit_contract_fingerprint"),
+                    Value::String(approved_unit_contract_fingerprint_for_review(
+                        active_contract_fingerprint,
+                        task_packet_fingerprint,
+                        execution_unit_id,
+                    )),
+                );
+            } else if let Some(receipt_artifact_path) = binding_object
+                .get("review_receipt_artifact_path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let receipt_path = harness_authoritative_artifact_path(
+                    state,
+                    &repo_slug(repo),
+                    &branch_name(repo),
+                    receipt_artifact_path,
+                );
+                if let Ok(receipt_source) = fs::read_to_string(&receipt_path) {
+                    if let Some(approved_unit_contract_fingerprint) =
+                        approved_unit_contract_from_unit_review_receipt(&receipt_source)
+                    {
+                        binding_object.insert(
+                            String::from("approved_unit_contract_fingerprint"),
+                            Value::String(approved_unit_contract_fingerprint),
+                        );
+                    }
+                }
+            }
+        }
+        if binding_object
+            .get("reconcile_result_proof_fingerprint")
+            .is_none_or(Value::is_null)
+        {
+            if let Some(receipt_artifact_path) = binding_object
+                .get("review_receipt_artifact_path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let receipt_path = harness_authoritative_artifact_path(
+                    state,
+                    &repo_slug(repo),
+                    &branch_name(repo),
+                    receipt_artifact_path,
+                );
+                if let Ok(receipt_source) = fs::read_to_string(&receipt_path) {
+                    if let Some(reconcile_result_proof_fingerprint) =
+                        reconcile_result_proof_fingerprint_from_unit_review_receipt(&receipt_source)
+                    {
+                        binding_object.insert(
+                            String::from("reconcile_result_proof_fingerprint"),
+                            Value::String(reconcile_result_proof_fingerprint),
+                        );
+                    } else if let Some(lease_artifact_path) = binding_object
+                        .get("lease_artifact_path")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                    {
+                        let lease_path = harness_authoritative_artifact_path(
+                            state,
+                            &repo_slug(repo),
+                            &branch_name(repo),
+                            lease_artifact_path,
+                        );
+                        if let Ok(lease_source) = fs::read_to_string(&lease_path) {
+                            if let Some(reconcile_result_proof_fingerprint) =
+                                reconcile_result_proof_fingerprint_from_worktree_lease(
+                                    &lease_source,
+                                )
+                            {
+                                binding_object.insert(
+                                    String::from("reconcile_result_proof_fingerprint"),
+                                    Value::String(reconcile_result_proof_fingerprint),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if binding_object
+            .get("reconcile_mode")
+            .is_none_or(Value::is_null)
+        {
+            if let Some(receipt_artifact_path) = binding_object
+                .get("review_receipt_artifact_path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let receipt_path = harness_authoritative_artifact_path(
+                    state,
+                    &repo_slug(repo),
+                    &branch_name(repo),
+                    receipt_artifact_path,
+                );
+                if let Ok(receipt_source) = fs::read_to_string(&receipt_path) {
+                    if let Some(reconcile_mode) =
+                        reconcile_mode_from_unit_review_receipt(&receipt_source)
+                    {
+                        binding_object.insert(
+                            String::from("reconcile_mode"),
+                            Value::String(reconcile_mode),
+                        );
+                    }
+                }
+            }
+        }
+        if binding_object
+            .get("reconcile_result_commit_sha")
+            .is_none_or(Value::is_null)
+        {
+            if let Some(receipt_artifact_path) = binding_object
+                .get("review_receipt_artifact_path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let receipt_path = harness_authoritative_artifact_path(
+                    state,
+                    &repo_slug(repo),
+                    &branch_name(repo),
+                    receipt_artifact_path,
+                );
+                if let Ok(receipt_source) = fs::read_to_string(&receipt_path) {
+                    if let Some(reconcile_result_commit_sha) =
+                        reconcile_result_commit_sha_from_unit_review_receipt(&receipt_source)
+                    {
+                        binding_object.insert(
+                            String::from("reconcile_result_commit_sha"),
+                            Value::String(reconcile_result_commit_sha),
+                        );
+                    }
+                    if binding_object
+                        .get("reconcile_result_proof_fingerprint")
+                        .is_none_or(Value::is_null)
+                    {
+                        if let Some(reconcile_result_proof_fingerprint) =
+                            reconcile_result_proof_fingerprint_from_unit_review_receipt(
+                                &receipt_source,
+                            )
+                        {
+                            binding_object.insert(
+                                String::from("reconcile_result_proof_fingerprint"),
+                                Value::String(reconcile_result_proof_fingerprint),
+                            );
+                        }
+                    } else if let Some(lease_artifact_path) = binding_object
+                        .get("lease_artifact_path")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                    {
+                        let lease_path = harness_authoritative_artifact_path(
+                            state,
+                            &repo_slug(repo),
+                            &branch_name(repo),
+                            lease_artifact_path,
+                        );
+                        if let Ok(lease_source) = fs::read_to_string(&lease_path) {
+                            if let Some(reconcile_result_commit_sha) =
+                                reconcile_result_commit_sha_from_worktree_lease(&lease_source)
+                            {
+                                binding_object.insert(
+                                    String::from("reconcile_result_commit_sha"),
+                                    Value::String(reconcile_result_commit_sha),
+                                );
+                            }
+                            if binding_object
+                                .get("reconcile_result_proof_fingerprint")
+                                .is_none_or(Value::is_null)
+                            {
+                                if let Some(reconcile_result_proof_fingerprint) =
+                                    reconcile_result_proof_fingerprint_from_worktree_lease(
+                                        &lease_source,
+                                    )
+                                {
+                                    binding_object.insert(
+                                        String::from("reconcile_result_proof_fingerprint"),
+                                        Value::String(reconcile_result_proof_fingerprint),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    entry_array.push(binding);
+    write_file(
+        &state_path,
+        &serde_json::to_string_pretty(&state_json)
+            .expect("harness state should serialize after appending lease binding"),
     );
 }
 
@@ -1339,6 +1812,428 @@ fn write_release_readiness_artifact(repo: &Path, state: &Path, base_branch: &str
     artifact_path
 }
 
+fn write_worktree_lease_artifact(
+    repo: &Path,
+    state: &Path,
+    lease_state: WorktreeLeaseState,
+    cleanup_state: &str,
+    reviewed_checkpoint_commit_sha: Option<&str>,
+    label: &str,
+) -> PathBuf {
+    write_worktree_lease_artifact_for_plan_with_sequence(
+        repo,
+        state,
+        PLAN_REL,
+        1,
+        17,
+        lease_state,
+        cleanup_state,
+        reviewed_checkpoint_commit_sha,
+        label,
+    )
+}
+
+fn write_worktree_lease_artifact_for_plan(
+    repo: &Path,
+    state: &Path,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    lease_state: WorktreeLeaseState,
+    cleanup_state: &str,
+    reviewed_checkpoint_commit_sha: Option<&str>,
+    label: &str,
+) -> PathBuf {
+    write_worktree_lease_artifact_for_plan_with_sequence(
+        repo,
+        state,
+        source_plan_path,
+        source_plan_revision,
+        17,
+        lease_state,
+        cleanup_state,
+        reviewed_checkpoint_commit_sha,
+        label,
+    )
+}
+
+fn write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+    repo: &Path,
+    state: &Path,
+    execution_run_id: &str,
+    chunk_id: &str,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    authoritative_sequence: u64,
+    lease_state: WorktreeLeaseState,
+    cleanup_state: &str,
+    reviewed_checkpoint_commit_sha: Option<&str>,
+    label: &str,
+    index_active_fingerprint: bool,
+) -> (PathBuf, String) {
+    write_worktree_lease_artifact_for_run_identity_with_fingerprint_and_branches(
+        repo,
+        state,
+        execution_run_id,
+        chunk_id,
+        source_plan_path,
+        source_plan_revision,
+        authoritative_sequence,
+        lease_state,
+        cleanup_state,
+        reviewed_checkpoint_commit_sha,
+        label,
+        index_active_fingerprint,
+        &branch_name(repo),
+        &branch_name(repo),
+    )
+}
+
+fn write_worktree_lease_artifact_for_run_identity_with_fingerprint_and_branches(
+    repo: &Path,
+    state: &Path,
+    execution_run_id: &str,
+    _chunk_id: &str,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    authoritative_sequence: u64,
+    lease_state: WorktreeLeaseState,
+    cleanup_state: &str,
+    reviewed_checkpoint_commit_sha: Option<&str>,
+    label: &str,
+    index_active_fingerprint: bool,
+    source_branch: &str,
+    authoritative_integration_branch: &str,
+) -> (PathBuf, String) {
+    let branch = branch_name(repo);
+    let safe_branch = normalize_identifier(&branch);
+    let current_head = current_head_sha(repo);
+    let reviewed_checkpoint_commit_sha = reviewed_checkpoint_commit_sha
+        .map(str::to_owned)
+        .unwrap_or_else(|| String::from("open"));
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        execution_run_id,
+        &format!("unit-{label}"),
+        source_plan_path,
+        source_plan_revision,
+        authoritative_integration_branch,
+        &reviewed_checkpoint_commit_sha,
+    );
+    let lease_json = json!({
+        "lease_version": 1,
+        "authoritative_sequence": authoritative_sequence,
+        "execution_run_id": execution_run_id,
+        "execution_context_key": execution_context_key,
+        "source_plan_path": source_plan_path,
+        "source_plan_revision": source_plan_revision,
+        "execution_unit_id": format!("unit-{label}"),
+        "source_branch": source_branch,
+        "authoritative_integration_branch": authoritative_integration_branch,
+        "worktree_path": state.join("worktrees").join(label).display().to_string(),
+        "repo_state_baseline_head_sha": current_head,
+        "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+        "lease_state": lease_state,
+        "cleanup_state": cleanup_state,
+        "reviewed_checkpoint_commit_sha": if reviewed_checkpoint_commit_sha == "open" { Value::Null } else { Value::String(reviewed_checkpoint_commit_sha.clone()) },
+        "reconcile_result_commit_sha": if matches!(lease_state, WorktreeLeaseState::Open | WorktreeLeaseState::ReviewPassedPendingReconcile) { Value::Null } else { Value::String(current_head.clone()) },
+        "reconcile_result_proof_fingerprint": if matches!(lease_state, WorktreeLeaseState::Open | WorktreeLeaseState::ReviewPassedPendingReconcile) { Value::Null } else { Value::String(commit_object_fingerprint(repo, &current_head)) },
+        "reconcile_mode": "identity_preserving",
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T12:00:00Z",
+        "lease_fingerprint": "",
+    });
+    let lease_fingerprint = canonical_worktree_lease_fingerprint(&lease_json);
+    let artifact_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch,
+        &format!("worktree-lease-{safe_branch}-{execution_run_id}-{execution_context_key}.json"),
+    );
+    write_file(
+        &artifact_path,
+        &serde_json::to_string_pretty(&json!({
+            "lease_version": 1,
+            "authoritative_sequence": authoritative_sequence,
+            "execution_run_id": execution_run_id,
+            "execution_context_key": execution_context_key,
+            "source_plan_path": source_plan_path,
+            "source_plan_revision": source_plan_revision,
+            "execution_unit_id": format!("unit-{label}"),
+            "source_branch": source_branch,
+            "authoritative_integration_branch": authoritative_integration_branch,
+            "worktree_path": state.join("worktrees").join(label).display().to_string(),
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "lease_state": lease_state,
+            "cleanup_state": cleanup_state,
+            "reviewed_checkpoint_commit_sha": if reviewed_checkpoint_commit_sha == "open" { Value::Null } else { Value::String(reviewed_checkpoint_commit_sha.clone()) },
+            "reconcile_result_commit_sha": if matches!(lease_state, WorktreeLeaseState::Open | WorktreeLeaseState::ReviewPassedPendingReconcile) { Value::Null } else { Value::String(current_head.clone()) },
+            "reconcile_result_proof_fingerprint": if matches!(lease_state, WorktreeLeaseState::Open | WorktreeLeaseState::ReviewPassedPendingReconcile) { Value::Null } else { Value::String(commit_object_fingerprint(repo, &current_head)) },
+            "reconcile_mode": "identity_preserving",
+            "generated_by": "featureforge:executing-plans",
+            "generated_at": "2026-03-27T12:00:00Z",
+            "lease_fingerprint": lease_fingerprint,
+        }))
+        .expect("lease artifact should be serializable"),
+    );
+    if index_active_fingerprint {
+        append_active_worktree_lease_fingerprint(repo, state, &lease_fingerprint);
+    }
+    (artifact_path, lease_fingerprint)
+}
+
+fn write_worktree_lease_artifact_for_run_identity(
+    repo: &Path,
+    state: &Path,
+    execution_run_id: &str,
+    chunk_id: &str,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    authoritative_sequence: u64,
+    lease_state: WorktreeLeaseState,
+    cleanup_state: &str,
+    reviewed_checkpoint_commit_sha: Option<&str>,
+    label: &str,
+    index_active_fingerprint: bool,
+) -> PathBuf {
+    write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+        repo,
+        state,
+        execution_run_id,
+        chunk_id,
+        source_plan_path,
+        source_plan_revision,
+        authoritative_sequence,
+        lease_state,
+        cleanup_state,
+        reviewed_checkpoint_commit_sha,
+        label,
+        index_active_fingerprint,
+    )
+    .0
+}
+
+fn write_worktree_lease_artifact_for_plan_with_sequence(
+    repo: &Path,
+    state: &Path,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    authoritative_sequence: u64,
+    lease_state: WorktreeLeaseState,
+    cleanup_state: &str,
+    reviewed_checkpoint_commit_sha: Option<&str>,
+    label: &str,
+) -> PathBuf {
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    write_worktree_lease_artifact_for_run_identity(
+        repo,
+        state,
+        &execution_run_id,
+        &chunk_id,
+        source_plan_path,
+        source_plan_revision,
+        authoritative_sequence,
+        lease_state,
+        cleanup_state,
+        reviewed_checkpoint_commit_sha,
+        label,
+        true,
+    )
+}
+
+fn write_unit_review_receipt_artifact_for_lease(
+    repo: &Path,
+    state: &Path,
+    execution_run_id: &str,
+    lease_fingerprint: &str,
+    approved_task_packet_fingerprint: &str,
+    execution_unit_id: &str,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    reviewed_worktree: &str,
+    reviewed_checkpoint_commit_sha: &str,
+    label: &str,
+) -> (PathBuf, String) {
+    let branch = branch_name(repo);
+    let reconcile_result_commit_sha = current_head_sha(repo);
+    let reconcile_result_proof_fingerprint =
+        commit_object_fingerprint(repo, &reconcile_result_commit_sha);
+    let state_json: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable for unit-review receipt"),
+    )
+    .expect("harness state should be valid json for unit-review receipt");
+    let active_contract_fingerprint = state_json
+        .get("active_contract_fingerprint")
+        .and_then(Value::as_str)
+        .expect("active contract fingerprint should be present for unit-review receipt");
+    let approved_unit_contract_fingerprint = approved_unit_contract_fingerprint_for_review(
+        active_contract_fingerprint,
+        approved_task_packet_fingerprint,
+        execution_unit_id,
+    );
+    let receipt_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch,
+        &format!("unit-review-{execution_run_id}-{label}.md"),
+    );
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        execution_run_id,
+        execution_unit_id,
+        source_plan_path,
+        source_plan_revision,
+        &branch,
+        reviewed_checkpoint_commit_sha,
+    );
+    let unsigned_source = format!(
+        "# Unit Review Result\n**Review Stage:** featureforge:unit-review\n**Reviewer Provenance:** dedicated-independent\n**Source Plan:** {source_plan_path}\n**Source Plan Revision:** {source_plan_revision}\n**Execution Run ID:** {execution_run_id}\n**Execution Unit ID:** {execution_unit_id}\n**Lease Fingerprint:** {lease_fingerprint}\n**Execution Context Key:** {execution_context_key}\n**Approved Task Packet Fingerprint:** {approved_task_packet_fingerprint}\n**Approved Unit Contract Fingerprint:** {approved_unit_contract_fingerprint}\n**Reconciled Result SHA:** {reconcile_result_commit_sha}\n**Reconcile Result Proof Fingerprint:** {reconcile_result_proof_fingerprint}\n**Reconcile Mode:** identity_preserving\n**Reviewed Worktree:** {reviewed_worktree}\n**Reviewed Checkpoint SHA:** {reviewed_checkpoint_commit_sha}\n**Result:** pass\n**Generated By:** featureforge:unit-review\n**Generated At:** 2026-03-27T12:00:00Z\n"
+    );
+    let receipt_fingerprint = canonical_unit_review_receipt_fingerprint(&unsigned_source);
+    let source = format!(
+        "# Unit Review Result\n**Receipt Fingerprint:** {receipt_fingerprint}\n**Review Stage:** featureforge:unit-review\n**Reviewer Provenance:** dedicated-independent\n**Source Plan:** {source_plan_path}\n**Source Plan Revision:** {source_plan_revision}\n**Execution Run ID:** {execution_run_id}\n**Execution Unit ID:** {execution_unit_id}\n**Lease Fingerprint:** {lease_fingerprint}\n**Execution Context Key:** {execution_context_key}\n**Approved Task Packet Fingerprint:** {approved_task_packet_fingerprint}\n**Approved Unit Contract Fingerprint:** {approved_unit_contract_fingerprint}\n**Reconciled Result SHA:** {reconcile_result_commit_sha}\n**Reconcile Result Proof Fingerprint:** {reconcile_result_proof_fingerprint}\n**Reconcile Mode:** identity_preserving\n**Reviewed Worktree:** {reviewed_worktree}\n**Reviewed Checkpoint SHA:** {reviewed_checkpoint_commit_sha}\n**Result:** pass\n**Generated By:** featureforge:unit-review\n**Generated At:** 2026-03-27T12:00:00Z\n"
+    );
+    write_file(&receipt_path, &source);
+    (receipt_path, receipt_fingerprint)
+}
+
+fn reviewed_checkpoint_from_unit_review_receipt(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("**Reviewed Checkpoint SHA:**")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn approved_task_packet_from_unit_review_receipt(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("**Approved Task Packet Fingerprint:**")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn approved_unit_contract_from_unit_review_receipt(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("**Approved Unit Contract Fingerprint:**")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn execution_context_key_from_unit_review_receipt(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("**Execution Context Key:**")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn reconcile_result_commit_sha_from_unit_review_receipt(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("**Reconciled Result SHA:**")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn execution_context_key_from_worktree_lease(source: &str) -> Option<String> {
+    let lease: Value = serde_json::from_str(source).ok()?;
+    lease
+        .get("execution_context_key")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
+}
+
+fn reconcile_result_commit_sha_from_worktree_lease(source: &str) -> Option<String> {
+    let lease: Value = serde_json::from_str(source).ok()?;
+    lease
+        .get("reconcile_result_commit_sha")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
+}
+
+fn reconcile_result_proof_fingerprint_from_unit_review_receipt(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("**Reconcile Result Proof Fingerprint:**")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn reconcile_result_proof_fingerprint_from_worktree_lease(source: &str) -> Option<String> {
+    let lease: Value = serde_json::from_str(source).ok()?;
+    lease
+        .get("reconcile_result_proof_fingerprint")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
+}
+
+fn commit_object_fingerprint(repo: &Path, commit_sha: &str) -> String {
+    let output = run_checked(
+        {
+            let mut command = Command::new("git");
+            command
+                .args(["cat-file", "commit", commit_sha])
+                .current_dir(repo);
+            command
+        },
+        "git cat-file commit",
+    );
+    let object = String::from_utf8(output.stdout)
+        .expect("commit object should be valid UTF-8 for test fingerprints");
+    sha256_hex(object.as_bytes())
+}
+
+fn reconcile_mode_from_unit_review_receipt(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("**Reconcile Mode:**")
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn canonical_unit_review_receipt_fingerprint(source: &str) -> String {
+    let filtered = source
+        .lines()
+        .filter(|line| !line.trim().starts_with("**Receipt Fingerprint:**"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    sha256_hex(filtered.as_bytes())
+}
+
+fn advance_repo_head(repo: &Path, file_name: &str, contents: &str, message: &str) {
+    write_file(&repo.join(file_name), contents);
+
+    let mut git_add = Command::new("git");
+    git_add.args(["add", file_name]).current_dir(repo);
+    run_checked(git_add, "git add advance head");
+
+    let mut git_commit = Command::new("git");
+    git_commit.args(["commit", "-m", message]).current_dir(repo);
+    run_checked(git_commit, "git commit advance head");
+}
+
+fn canonical_worktree_lease_fingerprint(lease: &Value) -> String {
+    let mut lease = lease.clone();
+    let lease_object = lease
+        .as_object_mut()
+        .expect("worktree lease artifact should be a JSON object");
+    lease_object.remove("lease_fingerprint");
+    sha256_hex(
+        &serde_json::to_vec(&lease).expect("lease artifact should be serializable for fingerprint"),
+    )
+}
+
 fn replace_in_file(path: &Path, from: &str, to: &str) {
     let source = fs::read_to_string(path).expect("fixture file should be readable for mutation");
     let updated = source.replace(from, to);
@@ -1370,6 +2265,32 @@ fn prepare_finished_single_step_finish_gate_fixture(
     };
     let review_path = write_code_review_artifact(repo, state, base_branch);
     let release_path = write_release_readiness_artifact(repo, state, base_branch);
+    let safe_branch = normalize_identifier(&branch_name(repo));
+    let current_head = current_head_sha(repo);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "run_identity": {
+                "execution_run_id": format!("run-{safe_branch}-finish"),
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": format!("chunk-{safe_branch}-finish"),
+            "latest_authoritative_sequence": 17,
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "repo_state_drift_state": "reconciled",
+            "dependency_index_state": "fresh",
+            "final_review_state": "fresh",
+            "browser_qa_state": if include_qa { "fresh" } else { "not_required" },
+            "release_docs_state": "fresh",
+            "active_worktree_lease_fingerprints": [],
+            "active_worktree_lease_bindings": [],
+        }),
+    );
     (test_plan, qa_path, review_path, release_path)
 }
 
@@ -1468,11 +2389,9 @@ fn canonical_status_matches_helper_for_clean_plan() {
     ] {
         assert_eq!(rust[field], helper[field], "field {field} should match");
     }
-    assert!(
-        rust["execution_fingerprint"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-    );
+    assert!(rust["execution_fingerprint"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
 }
 
 #[test]
@@ -1906,7 +2825,6 @@ fn canonical_gate_review_returns_blocking_result_for_newer_sibling_spec() {
     assert_eq!(gate_review["reason_codes"][0], "plan_not_execution_ready");
 }
 
-
 #[test]
 fn canonical_preflight_matches_helper_for_clean_plan() {
     let (repo_dir, state_dir) = init_repo("plan-execution-preflight");
@@ -2133,7 +3051,11 @@ fn preflight_replay_mints_new_run_identity_when_authoritative_baseline_changes()
     run_checked(git_add, "git add preflight baseline change");
     let mut git_commit = Command::new("git");
     git_commit
-        .args(["commit", "-m", "baseline change for preflight replay coverage"])
+        .args([
+            "commit",
+            "-m",
+            "baseline change for preflight replay coverage",
+        ])
         .current_dir(repo);
     run_checked(git_commit, "git commit preflight baseline change");
 
@@ -2289,6 +3211,99 @@ fn preflight_blocks_unresolved_authoritative_mutation_recovery_before_acceptance
     );
 }
 
+#[test]
+fn preflight_blocks_authoritative_mutation_recovery_for_json_worktree_lease_artifacts() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-preflight-json-lease-recovery");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "execution-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout execution-preflight-fixture");
+
+    let contract_rel = "docs/featureforge/execution-evidence/preflight-json-lease-contract.md";
+    let contract_fingerprint =
+        write_execution_contract_artifact_custom(repo, contract_rel, 18, "[]", 1, 1, None);
+    let authoritative_contract_file = format!("contract-{contract_fingerprint}.md");
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch_name(repo),
+            &authoritative_contract_file,
+        ),
+        &fs::read_to_string(repo.join(contract_rel)).expect("contract source should be readable"),
+    );
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 17,
+            "active_contract_path": authoritative_contract_file,
+            "active_contract_fingerprint": contract_fingerprint,
+            "required_evaluator_kinds": [],
+            "completed_evaluator_kinds": [],
+            "pending_evaluator_kinds": [],
+            "non_passing_evaluator_kinds": [],
+            "aggregate_evaluation_state": "pending",
+            "current_chunk_retry_count": 0,
+            "current_chunk_retry_budget": 1,
+            "current_chunk_pivot_threshold": 1,
+            "handoff_required": false,
+            "open_failed_criteria": []
+        }),
+    );
+
+    let lease_run_id = "run-preflight-json-lease";
+    let lease_chunk_id = "chunk-preflight-json-lease";
+    let current_head = current_head_sha(repo);
+    let _lease_path = write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+        repo,
+        state,
+        lease_run_id,
+        lease_chunk_id,
+        PLAN_REL,
+        1,
+        18,
+        WorktreeLeaseState::Cleaned,
+        "cleaned",
+        Some(&current_head),
+        "preflight-json-lease",
+        false,
+    );
+
+    let acceptance_path = preflight_acceptance_state_path(repo, state);
+    assert!(
+        !acceptance_path.exists(),
+        "preflight acceptance state should not exist before JSON lease recovery fixture"
+    );
+
+    let preflight = run_rust_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight with JSON worktree lease above persisted authoritative sequence",
+    );
+    assert_eq!(preflight["allowed"], false);
+    assert_eq!(preflight["failure_class"], "ExecutionStateNotReady");
+    assert!(
+        preflight["reason_codes"].as_array().is_some_and(|codes| codes
+            .iter()
+            .any(|code| code.as_str() == Some("authoritative_mutation_recovery_required"))),
+        "preflight should detect mutation recovery from higher-sequence JSON worktree lease artifacts, got {preflight}"
+    );
+    assert!(
+        !acceptance_path.exists(),
+        "preflight must not persist acceptance state while JSON lease recovery is unresolved"
+    );
+}
 
 #[test]
 fn preflight_acceptance_persists_without_overwriting_harness_state_file() {
@@ -2336,16 +3351,12 @@ fn preflight_acceptance_persists_without_overwriting_harness_state_file() {
     assert_eq!(acceptance_json["schema_version"], 1);
     assert_eq!(acceptance_json["plan_path"], PLAN_REL);
     assert_eq!(acceptance_json["plan_revision"], 1);
-    assert!(
-        acceptance_json["execution_run_id"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-    );
-    assert!(
-        acceptance_json["chunk_id"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-    );
+    assert!(acceptance_json["execution_run_id"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert!(acceptance_json["chunk_id"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
 }
 
 #[test]
@@ -2514,7 +3525,8 @@ fn canonical_preflight_rejects_resume_when_authoritative_handoff_is_required() {
         .current_dir(repo);
     run_checked(checkout, "git checkout execution-preflight-fixture");
 
-    let contract_rel = "docs/featureforge/execution-evidence/preflight-handoff-required-contract.md";
+    let contract_rel =
+        "docs/featureforge/execution-evidence/preflight-handoff-required-contract.md";
     let contract_fingerprint = write_execution_contract_artifact(repo, contract_rel, None);
     write_harness_state_fixture(
         repo,
@@ -2553,10 +3565,12 @@ fn canonical_preflight_rejects_resume_when_authoritative_handoff_is_required() {
     assert_eq!(preflight["allowed"], false);
     assert_eq!(preflight["failure_class"], "ExecutionStateNotReady");
     assert!(
-        preflight["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .filter_map(Value::as_str)
-            .any(|code| code.contains("handoff_required"))),
+        preflight["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|code| code.contains("handoff_required"))),
         "preflight should include a stable handoff_required reason code, got {preflight}"
     );
 
@@ -2575,7 +3589,6 @@ fn canonical_preflight_rejects_resume_when_authoritative_handoff_is_required() {
         "preflight rejection must not persist a new execution_run_id"
     );
 }
-
 
 #[test]
 fn canonical_preflight_blocks_workspace_hazards() {
@@ -2683,13 +3696,11 @@ fn canonical_preflight_reports_repo_safety_discovery_failures() {
 
     assert_eq!(preflight["allowed"], false);
     assert_eq!(preflight["failure_class"], "WorkspaceNotSafe");
-    assert!(
-        preflight["reason_codes"]
-            .as_array()
-            .expect("reason_codes should stay an array")
-            .iter()
-            .any(|value| value == &Value::String(String::from("repo_safety_unavailable")))
-    );
+    assert!(preflight["reason_codes"]
+        .as_array()
+        .expect("reason_codes should stay an array")
+        .iter()
+        .any(|value| value == &Value::String(String::from("repo_safety_unavailable"))));
 }
 
 #[test]
@@ -2908,12 +3919,10 @@ fn gate_review_rejects_checked_step_without_execution_evidence() {
         gate_review["reason_codes"][0],
         "checked_step_missing_evidence"
     );
-    assert!(
-        gate_review["diagnostics"][0]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("checked but missing execution evidence")
-    );
+    assert!(gate_review["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("checked but missing execution evidence"));
 }
 
 #[test]
@@ -2986,12 +3995,10 @@ fn gate_finish_requires_qa_result_when_browser_qa_is_required() {
     assert_eq!(gate_finish["allowed"], false);
     assert_eq!(gate_finish["failure_class"], "QaArtifactNotFresh");
     assert_eq!(gate_finish["reason_codes"][0], "qa_artifact_missing");
-    assert!(
-        gate_finish["diagnostics"][0]["remediation"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("Run qa-only")
-    );
+    assert!(gate_finish["diagnostics"][0]["remediation"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Run qa-only"));
 }
 
 #[test]
@@ -3016,12 +4023,10 @@ fn gate_finish_requires_fresh_code_review_result_before_qa_or_release() {
     assert_eq!(gate_finish["allowed"], false);
     assert_eq!(gate_finish["failure_class"], "ReviewArtifactNotFresh");
     assert_eq!(gate_finish["reason_codes"][0], "review_artifact_missing");
-    assert!(
-        gate_finish["diagnostics"][0]["remediation"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("requesting-code-review")
-    );
+    assert!(gate_finish["diagnostics"][0]["remediation"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("requesting-code-review"));
 }
 
 #[test]
@@ -3447,7 +4452,10 @@ fn gate_finish_prefers_recorded_authoritative_final_review_over_newer_branch_dec
             "schema_version": 1,
             "harness_phase": "executing",
             "latest_authoritative_sequence": 17,
+            "dependency_index_state": "fresh",
             "final_review_state": "fresh",
+            "browser_qa_state": "not_required",
+            "release_docs_state": "not_required",
             "last_final_review_artifact_fingerprint": authoritative_review_fingerprint,
         }),
     );
@@ -3488,6 +4496,8 @@ fn write_authoritative_downstream_fixture_state(
 ) {
     let branch = branch_name(repo);
     let repo_slug = repo_slug(repo);
+    let safe_branch = normalize_identifier(&branch);
+    let current_head = current_head_sha(repo);
 
     let authoritative_test_plan_source = fs::read_to_string(test_plan_path)
         .expect("source test-plan artifact should be readable for authoritative fixture");
@@ -3541,13 +4551,37 @@ fn write_authoritative_downstream_fixture_state(
         &authoritative_release_source,
     );
 
+    let active_contract_rel = "docs/featureforge/execution-evidence/active-execution-contract.md";
+    let active_contract_fingerprint =
+        write_execution_contract_artifact(repo, active_contract_rel, None);
+    let active_contract_source = fs::read_to_string(repo.join(active_contract_rel))
+        .expect("source active contract should be readable for authoritative fixture");
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug,
+            &branch,
+            &format!("contract-{active_contract_fingerprint}.md"),
+        ),
+        &active_contract_source,
+    );
+
     write_harness_state_payload(
         repo,
         state,
         &json!({
             "schema_version": 1,
             "harness_phase": "executing",
+            "run_identity": {
+                "execution_run_id": format!("run-{safe_branch}-finish"),
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": format!("chunk-{safe_branch}-finish"),
             "latest_authoritative_sequence": 17,
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "repo_state_drift_state": "reconciled",
             "dependency_index_state": "fresh",
             "final_review_state": "fresh",
             "browser_qa_state": "fresh",
@@ -3555,6 +4589,9 @@ fn write_authoritative_downstream_fixture_state(
             "last_final_review_artifact_fingerprint": authoritative_review_fingerprint,
             "last_browser_qa_artifact_fingerprint": authoritative_qa_fingerprint,
             "last_release_docs_artifact_fingerprint": authoritative_release_fingerprint,
+            "active_contract_path": format!("contract-{active_contract_fingerprint}.md"),
+            "active_contract_fingerprint": active_contract_fingerprint,
+            "active_worktree_lease_fingerprints": [],
         }),
     );
 }
@@ -3701,6 +4738,3419 @@ fn gate_finish_prefers_recorded_authoritative_release_docs_over_newer_branch_dec
 }
 
 #[test]
+fn gate_finish_blocks_worktree_lease_before_barrier_reconcile() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-lease-reconcile-pending");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::ReviewPassedPendingReconcile,
+            "pending",
+            Some(&current_head_sha(repo)),
+            "pending-reconcile",
+            true,
+        );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with pending worktree reconcile lease",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "ExecutionStateNotReady");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_reconcile_pending"
+    );
+}
+
+#[test]
+fn gate_review_blocks_cleaned_worktree_lease_without_receipt_truth() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-review-cleaned-lease-without-receipt");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (_test_plan_path, _qa_path, _review_path, _release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head_sha(repo)),
+            "lease-without-receipt",
+            true,
+        );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_review = run_rust_json(
+        repo,
+        state,
+        &["gate-review", "--plan", PLAN_REL],
+        "gate review with cleaned worktree lease but no authoritative receipt truth",
+    );
+
+    assert_eq!(gate_review["allowed"], false);
+    assert_eq!(gate_review["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_review["reason_codes"][0],
+        "worktree_lease_authoritative_contract_missing"
+    );
+}
+
+#[test]
+fn gate_review_blocks_worktree_lease_before_barrier_reconcile() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-review-lease-reconcile-pending");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::ReviewPassedPendingReconcile,
+            "pending",
+            Some(&current_head_sha(repo)),
+            "pending-reconcile",
+            true,
+        );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_review = run_rust_json(
+        repo,
+        state,
+        &["gate-review", "--plan", PLAN_REL],
+        "gate review with pending worktree reconcile lease",
+    );
+
+    assert_eq!(gate_review["allowed"], false);
+    assert_eq!(gate_review["failure_class"], "ExecutionStateNotReady");
+    assert_eq!(
+        gate_review["reason_codes"][0],
+        "worktree_lease_reconcile_pending"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_stale_dependency_release_even_with_cleaned_lease() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-stale-dependency-release");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (_test_plan_path, _qa_path, _review_path, _release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let checkpoint = current_head_sha(repo);
+    write_worktree_lease_artifact(
+        repo,
+        state,
+        WorktreeLeaseState::Cleaned,
+        "cleaned",
+        Some(&checkpoint),
+        "cleaned-release",
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 17,
+            "dependency_index_state": "stale",
+            "final_review_state": "fresh",
+            "browser_qa_state": "not_required",
+            "release_docs_state": "not_required",
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with stale dependency release state",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "DependencyIndexMismatch");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "dependency_index_state_stale"
+    );
+}
+
+#[test]
+fn gate_finish_ignores_stale_same_plan_context_lease_from_previous_run() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-stale-same-run-context-lease");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, _current_chunk_id) = current_authoritative_run_identity(repo, state);
+    let lease_chunk_id = "historical-chunk";
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            lease_chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::ReviewPassedPendingReconcile,
+            "pending",
+            Some(&current_head_sha(repo)),
+            "current-run",
+            true,
+        );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "latest_authoritative_sequence": 18,
+        }),
+    );
+
+    let gate_review = run_rust_json(
+        repo,
+        state,
+        &["gate-review", "--plan", PLAN_REL],
+        "gate review should still respect a current-run pending lease after later authoritative mutations",
+    );
+
+    assert_eq!(gate_review["allowed"], false);
+    assert_eq!(gate_review["failure_class"], "ExecutionStateNotReady");
+    assert_eq!(
+        gate_review["reason_codes"][0],
+        "worktree_lease_reconcile_pending"
+    );
+}
+
+#[test]
+fn gate_finish_allows_dependency_release_after_clean_reconcile() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-cleaned-lease-release-backed-by-receipt");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head_sha(repo)),
+            "cleaned-release",
+            true,
+        );
+    let lease_worktree = state.join("worktrees").join("cleaned-release");
+    let lease_worktree_string = lease_worktree.display().to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-cleaned-release",
+        PLAN_REL,
+        1,
+        &lease_worktree_string,
+        &current_head_sha(repo),
+        "cleaned-release",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+    eprintln!(
+        "tampered lease proof state={}",
+        fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable for debug")
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with cleaned worktree lease",
+    );
+
+    assert_eq!(gate_finish["allowed"], true);
+    assert_eq!(gate_finish["failure_class"], "");
+    assert!(gate_finish["reason_codes"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+}
+
+#[test]
+fn gate_finish_requires_receipts_for_every_active_worktree_lease() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-multi-lease-receipts");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+
+    let (lease_one_path, lease_one_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "lease-one",
+            true,
+        );
+    let lease_one_worktree = state.join("worktrees").join("lease-one");
+    let lease_one_worktree_string = lease_one_worktree.display().to_string();
+    let (receipt_one_path, receipt_one_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_one_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-lease-one",
+        PLAN_REL,
+        1,
+        &lease_one_worktree_string,
+        &current_head,
+        "lease-one",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id.clone(),
+            "lease_fingerprint": lease_one_fingerprint,
+            "lease_artifact_path": lease_one_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint.clone(),
+            "review_receipt_fingerprint": receipt_one_fingerprint,
+            "review_receipt_artifact_path": receipt_one_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let (lease_two_path, lease_two_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "lease-two",
+            true,
+        );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_two_fingerprint,
+            "lease_artifact_path": lease_two_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with two active leases where only one has a matching receipt",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "ExecutionStateNotReady");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_review_receipt_missing"
+    );
+}
+
+#[test]
+fn gate_finish_fails_closed_when_bound_worktree_lease_artifact_is_missing() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-missing-bound-lease");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "missing-bound-lease",
+            true,
+        );
+    let missing_path = state.join("lease-renamed.json");
+    fs::rename(&lease_path, &missing_path).expect("lease artifact should be renameable");
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with a missing bound worktree lease artifact",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_metadata_unreadable"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_stale_unit_review_receipt() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-stale-unit-review-receipt");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "stale-unit-review",
+            true,
+        );
+    let lease_worktree = state.join("worktrees").join("stale-unit-review");
+    let lease_worktree_string = lease_worktree.display().to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-stale-unit-review",
+        PLAN_REL,
+        1,
+        &lease_worktree_string,
+        &current_head,
+        "stale-unit-review",
+    );
+    replace_in_file(
+        &receipt_path,
+        &format!("**Reviewed Checkpoint SHA:** {}", current_head),
+        "**Reviewed Checkpoint SHA:** 0000000000000000000000000000000000000000",
+    );
+    let stale_receipt_source =
+        fs::read_to_string(&receipt_path).expect("stale receipt should be readable");
+    let stale_receipt_fingerprint =
+        canonical_unit_review_receipt_fingerprint(&stale_receipt_source);
+    replace_in_file(
+        &receipt_path,
+        &format!("**Receipt Fingerprint:** {receipt_fingerprint}"),
+        &format!("**Receipt Fingerprint:** {stale_receipt_fingerprint}"),
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": stale_receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with a stale unit-review receipt",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "StaleProvenance");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_review_receipt_checkpoint_mismatch"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_absolute_worktree_lease_binding_path() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-absolute-binding-path");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let active_contract_fingerprint = current_active_contract_fingerprint(repo, state);
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        &execution_run_id,
+        "unit-absolute-binding-path",
+        PLAN_REL,
+        1,
+        &base_branch,
+        &current_head,
+    );
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "absolute-binding-path",
+            true,
+        );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "execution_context_key": execution_context_key,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": state.join("absolute-binding-path.json").display().to_string(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "approved_unit_contract_fingerprint": approved_unit_contract_fingerprint_for_review(
+                &active_contract_fingerprint,
+                &approved_task_packet_fingerprint,
+                "unit-absolute-binding-path",
+            ),
+            "reviewed_checkpoint_commit_sha": current_head,
+            "reconcile_mode": "identity_preserving",
+            "reconcile_result_commit_sha": current_head,
+            "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject an absolute worktree lease binding path",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_binding_path_invalid"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_escaped_unit_review_receipt_binding_path() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-escaped-receipt-path");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let active_contract_fingerprint = current_active_contract_fingerprint(repo, state);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        &execution_run_id,
+        "unit-escaped-receipt-path",
+        PLAN_REL,
+        1,
+        &base_branch,
+        &current_head,
+    );
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "escaped-receipt-path",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("escaped-receipt-path")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-escaped-receipt-path",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "escaped-receipt-path",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "execution_context_key": execution_context_key,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "approved_unit_contract_fingerprint": approved_unit_contract_fingerprint_for_review(
+                &active_contract_fingerprint,
+                &approved_task_packet_fingerprint,
+                "unit-escaped-receipt-path",
+            ),
+            "reviewed_checkpoint_commit_sha": current_head,
+            "reconcile_mode": "identity_preserving",
+            "reconcile_result_commit_sha": current_head,
+            "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": "../escaped-receipt-path.md",
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject an escaped unit-review receipt binding path",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_binding_path_invalid"
+    );
+}
+
+#[test]
+fn gate_finish_fails_closed_when_index_cleared_and_renamed_current_run_lease_exists() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-cleared-index-renamed-current-run-lease");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let (lease_path, _lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "renamed-current-run-lease",
+            false,
+        );
+    let renamed_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch_name(repo),
+        "renamed-current-run-lease.json",
+    );
+    fs::copy(&lease_path, &renamed_path)
+        .expect("lease should be copyable to a renamed noncanonical filename");
+    fs::remove_file(&lease_path).expect("canonical lease artifact should be removable");
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "active_worktree_lease_fingerprints": [],
+            "active_worktree_lease_bindings": [],
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should fail closed when a renamed current-run lease exists without an active fingerprint index",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_authoritative_binding_missing"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_stale_rebound_worktree_lease_filename() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-stale-rebound-lease");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "stale-rebound-lease",
+            true,
+        );
+    let rebound_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch_name(repo),
+        "rebounded-stale-lease.json",
+    );
+    fs::copy(&lease_path, &rebound_path).expect("lease should be copyable to a rebound filename");
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": rebound_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject a stale rebound worktree lease filename",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_binding_path_invalid"
+    );
+}
+
+#[test]
+fn gate_finish_fails_closed_when_worktree_lease_fingerprint_index_is_cleared() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-cleared-lease-index");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "cleared-lease-index",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("cleared-lease-index")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-cleared-lease-index",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "cleared-lease-index",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "active_worktree_lease_fingerprints": [],
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should fail closed when the active lease fingerprint index is cleared",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_authoritative_binding_missing"
+    );
+}
+
+#[test]
+fn gate_finish_fails_closed_when_authoritative_worktree_lease_index_keys_are_missing() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-missing-lease-index-keys");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "missing-lease-index-keys",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("missing-lease-index-keys")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-missing-lease-index-keys",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "missing-lease-index-keys",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "run_identity": {
+                "execution_run_id": execution_run_id,
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": chunk_id,
+            "latest_authoritative_sequence": 17,
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "repo_state_drift_state": "reconciled",
+            "dependency_index_state": "fresh",
+            "final_review_state": "fresh",
+            "browser_qa_state": "fresh",
+            "release_docs_state": "fresh",
+        }),
+    );
+    let harness_state_path = harness_state_file_path(repo, state);
+    let mut harness_state_json: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("harness state should be readable to remove lease index keys"),
+    )
+    .expect("harness state should be valid json to remove lease index keys");
+    let harness_state_object = harness_state_json
+        .as_object_mut()
+        .expect("harness state should remain a JSON object");
+    harness_state_object.remove("active_worktree_lease_fingerprints");
+    harness_state_object.remove("active_worktree_lease_bindings");
+    write_file(
+        &harness_state_path,
+        &serde_json::to_string_pretty(&harness_state_json)
+            .expect("harness state should serialize after removing lease index keys"),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should fail closed when authoritative lease index keys are missing",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_authoritative_index_missing"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_malformed_authoritative_worktree_state() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-malformed-state");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "malformed-state",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("malformed-state")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-malformed-state",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "malformed-state",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "run_identity": {
+                "execution_run_id": execution_run_id,
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": chunk_id,
+            "latest_authoritative_sequence": 17,
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "repo_state_drift_state": "reconciled",
+            "dependency_index_state": "fresh",
+            "final_review_state": "fresh",
+            "browser_qa_state": "fresh",
+            "release_docs_state": "fresh",
+            "active_worktree_lease_fingerprints": [lease_fingerprint],
+            "active_worktree_lease_bindings": [{
+                "execution_run_id": execution_run_id,
+                "lease_fingerprint": lease_fingerprint,
+                "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+                "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+                "review_receipt_fingerprint": receipt_fingerprint,
+                "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            }],
+        }),
+    );
+    write_file(
+        &harness_state_file_path(repo, state),
+        "{ this is not valid json }",
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject malformed authoritative harness state",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "authoritative_state_unavailable"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_non_regular_authoritative_worktree_state() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-non-regular-state");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "non-regular-state",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("non-regular-state")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-non-regular-state",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "non-regular-state",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "run_identity": {
+                "execution_run_id": execution_run_id,
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": chunk_id,
+            "latest_authoritative_sequence": 17,
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "repo_state_drift_state": "reconciled",
+            "dependency_index_state": "fresh",
+            "final_review_state": "fresh",
+            "browser_qa_state": "fresh",
+            "release_docs_state": "fresh",
+            "active_worktree_lease_fingerprints": [lease_fingerprint],
+            "active_worktree_lease_bindings": [{
+                "execution_run_id": execution_run_id,
+                "lease_fingerprint": lease_fingerprint,
+                "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+                "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+                "review_receipt_fingerprint": receipt_fingerprint,
+                "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            }],
+        }),
+    );
+    let harness_state_path = harness_state_file_path(repo, state);
+    let _ = fs::remove_file(&harness_state_path);
+    fs::create_dir(&harness_state_path).expect("state path should be creatable as a directory");
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject non-regular authoritative harness state",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "authoritative_state_unavailable"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn gate_finish_rejects_symlinked_authoritative_worktree_state() {
+    use std::os::unix::fs::symlink;
+
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-symlinked-state");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "symlinked-state",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("symlinked-state")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-symlinked-state",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "symlinked-state",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "run_identity": {
+                "execution_run_id": execution_run_id,
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": chunk_id,
+            "latest_authoritative_sequence": 17,
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "repo_state_drift_state": "reconciled",
+            "dependency_index_state": "fresh",
+            "final_review_state": "fresh",
+            "browser_qa_state": "fresh",
+            "release_docs_state": "fresh",
+            "active_worktree_lease_fingerprints": [lease_fingerprint],
+            "active_worktree_lease_bindings": [{
+                "execution_run_id": execution_run_id,
+                "lease_fingerprint": lease_fingerprint,
+                "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+                "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+                "review_receipt_fingerprint": receipt_fingerprint,
+                "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            }],
+        }),
+    );
+    let harness_state_path = harness_state_file_path(repo, state);
+    let target_path = state.join("symlinked-harness-state.json");
+    write_file(&target_path, "{}");
+    fs::remove_file(&harness_state_path).expect("state file should be removable");
+    symlink(&target_path, &harness_state_path).expect("state file symlink should be creatable");
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject symlinked authoritative harness state",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "authoritative_state_unavailable"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_worktree_lease_body_with_stale_execution_run_id() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-stale-lease-run-id");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "stale-run-id-body",
+            true,
+        );
+    let lease_source = fs::read_to_string(&lease_path).expect("lease should be readable");
+    let mut lease_json: Value =
+        serde_json::from_str(&lease_source).expect("lease should parse as json");
+    let stale_run_id = "run-previous-execution".to_string();
+    lease_json
+        .as_object_mut()
+        .expect("lease should remain an object")
+        .insert(
+            "execution_run_id".to_string(),
+            Value::String(stale_run_id.clone()),
+        );
+    let stale_run_id_fingerprint = canonical_worktree_lease_fingerprint(&lease_json);
+    lease_json
+        .as_object_mut()
+        .expect("lease should remain an object")
+        .insert(
+            "lease_fingerprint".to_string(),
+            Value::String(stale_run_id_fingerprint.clone()),
+        );
+    let stale_lease_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch_name(repo),
+        &format!(
+            "worktree-lease-{}-{}-{}.json",
+            branch_storage_key(&branch_name(repo)),
+            stale_run_id,
+            current_worktree_lease_execution_context_key(
+                &execution_run_id,
+                "unit-stale-run-id-body",
+                PLAN_REL,
+                1,
+                &base_branch,
+                &current_head,
+            )
+        ),
+    );
+    write_file(
+        &stale_lease_path,
+        &serde_json::to_string_pretty(&lease_json).expect("lease should serialize"),
+    );
+    fs::remove_file(&lease_path).expect("original lease artifact should be removable");
+    let harness_state_path = harness_state_file_path(repo, state);
+    let mut harness_state_json: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("harness state should be readable to rewrite lease fingerprints"),
+    )
+    .expect("harness state should be valid json to rewrite lease fingerprints");
+    harness_state_json
+        .as_object_mut()
+        .expect("harness state should remain a JSON object")
+        .insert(
+            "active_worktree_lease_fingerprints".to_string(),
+            Value::Array(vec![Value::String(stale_run_id_fingerprint.clone())]),
+        );
+    write_file(
+        &harness_state_path,
+        &serde_json::to_string_pretty(&harness_state_json)
+            .expect("harness state should serialize after rewriting lease fingerprints"),
+    );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("stale-run-id-body")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &stale_run_id_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-stale-run-id-body",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "stale-run-id-body",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "execution_context_key": current_worktree_lease_execution_context_key(
+                &execution_run_id,
+                "unit-stale-run-id-body",
+                PLAN_REL,
+                1,
+                &base_branch,
+                &current_head,
+            ),
+            "lease_fingerprint": stale_run_id_fingerprint,
+            "lease_artifact_path": stale_lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject a lease body with a stale execution run id",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_run_id_mismatch"
+    );
+}
+
+#[test]
+fn gate_finish_fails_closed_when_cleared_index_current_run_lease_is_malformed() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-cleared-index-malformed-current-run-lease");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let active_contract_fingerprint = current_active_contract_fingerprint(repo, state);
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        &execution_run_id,
+        "unit-malformed-current-run-lease",
+        PLAN_REL,
+        1,
+        &base_branch,
+        &current_head,
+    );
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "malformed-current-run-lease",
+            false,
+        );
+    write_file(&lease_path, "{ not valid json }");
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "active_worktree_lease_fingerprints": [],
+        }),
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "execution_context_key": execution_context_key,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "approved_unit_contract_fingerprint": approved_unit_contract_fingerprint_for_review(
+                &active_contract_fingerprint,
+                &approved_task_packet_fingerprint,
+                "unit-malformed-current-run-lease",
+            ),
+            "reviewed_checkpoint_commit_sha": current_head,
+            "reconcile_mode": "identity_preserving",
+            "reconcile_result_commit_sha": current_head,
+            "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should fail closed when a malformed current-run lease exists behind an empty index",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_artifacts_unreadable"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn gate_finish_fails_closed_when_cleared_index_current_run_lease_is_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-cleared-index-unreadable-current-run-lease");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let active_contract_fingerprint = current_active_contract_fingerprint(repo, state);
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        &execution_run_id,
+        "unit-unreadable-current-run-lease",
+        PLAN_REL,
+        1,
+        &base_branch,
+        &current_head,
+    );
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "unreadable-current-run-lease",
+            false,
+        );
+    let mut permissions = fs::metadata(&lease_path)
+        .expect("lease artifact should be statable")
+        .permissions();
+    permissions.set_mode(0o000);
+    fs::set_permissions(&lease_path, permissions)
+        .expect("lease artifact permissions should be set unreadable");
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "active_worktree_lease_fingerprints": [],
+        }),
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "execution_context_key": execution_context_key,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "approved_unit_contract_fingerprint": approved_unit_contract_fingerprint_for_review(
+                &active_contract_fingerprint,
+                &approved_task_packet_fingerprint,
+                "unit-unreadable-current-run-lease",
+            ),
+            "reviewed_checkpoint_commit_sha": current_head,
+            "reconcile_mode": "identity_preserving",
+            "reconcile_result_commit_sha": current_head,
+            "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should fail closed when a current-run lease is unreadable behind an empty index",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_artifacts_unreadable"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_rewritten_reconcile_proof_without_matching_runtime_binding() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-rewritten-reconcile-proof");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let reviewed_checkpoint = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        &execution_run_id,
+        "unit-rewritten-reconcile-proof",
+        PLAN_REL,
+        1,
+        &branch_name(repo),
+        &reviewed_checkpoint,
+    );
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&reviewed_checkpoint),
+            "rewritten-reconcile-proof",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("rewritten-reconcile-proof")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-rewritten-reconcile-proof",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &reviewed_checkpoint,
+        "rewritten-reconcile-proof",
+    );
+    let receipt_source =
+        fs::read_to_string(&receipt_path).expect("unit-review receipt should be readable");
+    let rewritten_receipt_source = receipt_source.replace(
+        &format!("**Reconciled Result SHA:** {reviewed_checkpoint}"),
+        "**Reconciled Result SHA:** forged-rewrite-result-sha",
+    );
+    let rewritten_receipt_fingerprint =
+        canonical_unit_review_receipt_fingerprint(&rewritten_receipt_source);
+    let final_receipt_source = rewritten_receipt_source.replace(
+        &format!("**Receipt Fingerprint:** {receipt_fingerprint}"),
+        &format!("**Receipt Fingerprint:** {rewritten_receipt_fingerprint}"),
+    );
+    write_file(&receipt_path, &final_receipt_source);
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "reviewed_checkpoint_commit_sha": reviewed_checkpoint,
+            "review_receipt_fingerprint": rewritten_receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject a rewritten reconcile proof that does not match the runtime binding",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_identity_preserving_proof_mismatch"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_duplicate_worktree_lease_bindings() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-duplicate-bindings");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_one_path, lease_one_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "duplicate-binding-one",
+            true,
+        );
+    let lease_one_worktree_string = state
+        .join("worktrees")
+        .join("duplicate-binding-one")
+        .display()
+        .to_string();
+    let (receipt_one_path, receipt_one_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_one_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-duplicate-binding-one",
+        PLAN_REL,
+        1,
+        &lease_one_worktree_string,
+        &current_head,
+        "duplicate-binding-one",
+    );
+    let (lease_two_path, lease_two_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "duplicate-binding-two",
+            true,
+        );
+    let lease_two_worktree_string = state
+        .join("worktrees")
+        .join("duplicate-binding-two")
+        .display()
+        .to_string();
+    let (receipt_two_path, receipt_two_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_two_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-duplicate-binding-two",
+        PLAN_REL,
+        1,
+        &lease_two_worktree_string,
+        &current_head,
+        "duplicate-binding-two",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id.clone(),
+            "lease_fingerprint": lease_one_fingerprint,
+            "lease_artifact_path": lease_one_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint.clone(),
+            "review_receipt_fingerprint": receipt_one_fingerprint,
+            "review_receipt_artifact_path": receipt_one_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_one_fingerprint,
+            "lease_artifact_path": lease_one_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint.clone(),
+            "review_receipt_fingerprint": receipt_two_fingerprint,
+            "review_receipt_artifact_path": receipt_two_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+    append_active_worktree_lease_fingerprint(repo, state, &lease_one_fingerprint);
+    append_active_worktree_lease_fingerprint(repo, state, &lease_two_fingerprint);
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject duplicate worktree lease bindings",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_authoritative_binding_duplicate"
+    );
+}
+
+#[test]
+fn gate_finish_accepts_isolated_branch_backed_worktree_lease() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-isolated-branch-backed-lease");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint_and_branches(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "isolated-branch-backed",
+            true,
+            "feature/isolated-worktree",
+            &base_branch,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("isolated-branch-backed")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-isolated-branch-backed",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "isolated-branch-backed",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should accept an isolated branch-backed worktree lease",
+    );
+
+    assert_eq!(gate_finish["allowed"], true);
+    assert_eq!(gate_finish["failure_class"], "");
+    assert!(gate_finish["reason_codes"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+}
+
+#[test]
+fn gate_finish_rejects_unit_review_receipt_missing_unit_contract_binding() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-missing-task-packet-binding");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "missing-task-packet-binding",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("missing-task-packet-binding")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-missing-task-packet-binding",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "missing-task-packet-binding",
+    );
+    let receipt_source =
+        fs::read_to_string(&receipt_path).expect("unit-review receipt should be readable");
+    let without_unit_contract_line = receipt_source.replace(
+        &format!(
+            "**Approved Unit Contract Fingerprint:** {}\n",
+            approved_unit_contract_fingerprint_for_review(
+                &current_active_contract_fingerprint(repo, state),
+                &approved_task_packet_fingerprint,
+                "unit-missing-task-packet-binding",
+            )
+        ),
+        "",
+    );
+    let rewritten_fingerprint =
+        canonical_unit_review_receipt_fingerprint(&without_unit_contract_line);
+    let final_receipt_source = without_unit_contract_line.replace(
+        &format!("**Receipt Fingerprint:** {receipt_fingerprint}"),
+        &format!("**Receipt Fingerprint:** {rewritten_fingerprint}"),
+    );
+    write_file(&receipt_path, &final_receipt_source);
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": rewritten_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject a unit-review receipt missing the approved unit contract binding",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "ExecutionStateNotReady");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_review_receipt_unit_contract_missing"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_forged_task_packet_binding_without_authoritative_contract_truth() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-forged-task-packet-binding");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let forged_task_packet_fingerprint =
+        String::from("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "forged-task-packet-binding",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("forged-task-packet-binding")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &forged_task_packet_fingerprint,
+        "unit-forged-task-packet-binding",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "forged-task-packet-binding",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": forged_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject a self-consistent forged task packet binding that is not authoritative",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_review_receipt_task_packet_not_authoritative"
+    );
+}
+
+#[test]
+fn gate_finish_ignores_cleaned_lease_from_other_plan_revision() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-foreign-plan-lease-ignored");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let foreign_run_id = format!("run-{}-foreign", normalize_identifier(&branch_name(repo)));
+    let foreign_chunk_id = "chunk-foreign";
+    write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+        repo,
+        state,
+        &foreign_run_id,
+        foreign_chunk_id,
+        "docs/featureforge/plans/unrelated-plan.md",
+        2,
+        17,
+        WorktreeLeaseState::Cleaned,
+        "cleaned",
+        Some("0000000000000000000000000000000000000000"),
+        "foreign-plan",
+        false,
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should ignore a cleaned lease from another plan context",
+    );
+
+    assert_eq!(gate_finish["allowed"], true);
+    assert_eq!(gate_finish["failure_class"], "");
+    assert!(gate_finish["reason_codes"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+}
+
+#[test]
+fn gate_finish_rejects_forged_regular_worktree_lease_not_indexed_by_harness() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-forged-lease-not-indexed-by-harness");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let branch = branch_name(repo);
+    let safe_branch = normalize_identifier(&branch);
+    let lease_json = json!({
+        "lease_version": 1,
+        "authoritative_sequence": 17,
+        "execution_run_id": execution_run_id,
+        "execution_context_key": current_worktree_lease_execution_context_key(
+            &execution_run_id,
+            "unit-forged-unindexed",
+            PLAN_REL,
+            1,
+            &branch_name(repo),
+            &current_head,
+        ),
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_unit_id": "unit-forged-unindexed",
+        "source_branch": branch,
+        "authoritative_integration_branch": branch_name(repo),
+        "worktree_path": state.join("worktrees").join("forged-unindexed").display().to_string(),
+        "repo_state_baseline_head_sha": current_head,
+        "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+        "lease_state": WorktreeLeaseState::Cleaned,
+        "cleanup_state": "cleaned",
+        "reviewed_checkpoint_commit_sha": current_head,
+        "reconcile_result_commit_sha": current_head,
+        "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+        "reconcile_mode": "identity_preserving",
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T12:00:00Z",
+        "lease_fingerprint": "",
+    });
+    let lease_fingerprint = canonical_worktree_lease_fingerprint(&lease_json);
+    let lease_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch,
+        &format!(
+            "worktree-lease-{safe_branch}-{execution_run_id}-{chunk_id}-forged-unindexed.json"
+        ),
+    );
+    fs::write(
+        &lease_path,
+        serde_json::to_string_pretty(&json!({
+            "lease_version": 1,
+            "authoritative_sequence": 17,
+            "execution_run_id": execution_run_id,
+            "execution_context_key": current_worktree_lease_execution_context_key(
+                &execution_run_id,
+                "unit-forged-unindexed",
+                PLAN_REL,
+                1,
+                &branch_name(repo),
+                &current_head,
+            ),
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1,
+            "execution_unit_id": "unit-forged-unindexed",
+            "source_branch": branch,
+            "authoritative_integration_branch": branch_name(repo),
+            "worktree_path": state.join("worktrees").join("forged-unindexed").display().to_string(),
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+            "lease_state": WorktreeLeaseState::Cleaned,
+            "cleanup_state": "cleaned",
+            "reviewed_checkpoint_commit_sha": current_head,
+            "reconcile_result_commit_sha": current_head,
+            "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+            "reconcile_mode": "identity_preserving",
+            "generated_by": "featureforge:executing-plans",
+            "generated_at": "2026-03-27T12:00:00Z",
+            "lease_fingerprint": lease_fingerprint,
+        }))
+        .expect("forged lease should serialize"),
+    )
+    .expect("forged lease should be writable");
+    append_active_worktree_lease_fingerprint(repo, state, &lease_fingerprint);
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject a self-consistent lease that was not harness-bound",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_authoritative_binding_missing"
+    );
+}
+
+#[test]
+fn gate_finish_accepts_cleaned_lease_with_ancestor_checkpoint() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-ancestor-checkpoint-lease");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let reviewed_checkpoint = current_head_sha(repo);
+    advance_repo_head(
+        repo,
+        "docs/featureforge/execution-evidence/ancestor-checkpoint-marker.md",
+        "# ancestor checkpoint marker\n",
+        "advance head after lease checkpoint",
+    );
+    let current_head = current_head_sha(repo);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+        }),
+    );
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let (lease_path, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&reviewed_checkpoint),
+            "ancestor-checkpoint",
+            true,
+        );
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("ancestor-checkpoint")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-ancestor-checkpoint",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &reviewed_checkpoint,
+        "ancestor-checkpoint",
+    );
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should accept a cleaned lease whose checkpoint is an ancestor of HEAD",
+    );
+
+    assert_eq!(gate_finish["allowed"], true);
+    assert_eq!(gate_finish["failure_class"], "");
+    assert!(gate_finish["reason_codes"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+}
+
+#[test]
+fn gate_finish_ignores_malformed_foreign_worktree_lease_artifact() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-foreign-malformed-lease-ignored");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+
+    let branch = branch_name(repo);
+    let safe_branch = normalize_identifier(&branch);
+    let artifacts_dir = state
+        .join("projects")
+        .join(repo_slug(repo))
+        .join("branches")
+        .join(&safe_branch)
+        .join("execution-harness")
+        .join("authoritative-artifacts");
+    write_file(
+        &artifacts_dir.join(format!("worktree-lease-{safe_branch}-foreign-run.json")),
+        "{ this is not valid json }",
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should ignore malformed foreign worktree lease artifacts",
+    );
+
+    assert_eq!(gate_finish["allowed"], true);
+    assert_eq!(gate_finish["failure_class"], "");
+    assert!(gate_finish["reason_codes"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+}
+
+#[cfg(unix)]
+#[test]
+fn gate_finish_rejects_symlinked_worktree_lease_path() {
+    use std::os::unix::fs::symlink;
+
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-lease-symlink");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let (target_artifact, lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            &chunk_id,
+            PLAN_REL,
+            1,
+            17,
+            WorktreeLeaseState::Cleaned,
+            "cleaned",
+            Some(&current_head),
+            "lease-target",
+            true,
+        );
+    let target_path = state.join("lease-target.json");
+    fs::copy(&target_artifact, &target_path).expect("lease target should be copyable");
+    fs::remove_file(&target_artifact).expect("original lease artifact should be removable");
+    symlink(&target_path, &target_artifact).expect("lease symlink should be creatable");
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": target_artifact.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "review_receipt_fingerprint": Value::Null,
+            "review_receipt_artifact_path": Value::Null,
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should reject symlinked authoritative lease paths",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_path_not_regular_file"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_rewritten_checkpoint_integration() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-rewritten-checkpoint");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let branch = branch_name(repo);
+    let safe_branch = normalize_identifier(&branch);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        &execution_run_id,
+        "unit-rewritten-checkpoint",
+        PLAN_REL,
+        1,
+        &branch_name(repo),
+        &current_head,
+    );
+    let lease_json = json!({
+        "lease_version": 1,
+        "authoritative_sequence": 17,
+        "execution_run_id": execution_run_id,
+        "execution_context_key": current_worktree_lease_execution_context_key(
+            &execution_run_id,
+            "unit-rewritten-checkpoint",
+            PLAN_REL,
+            1,
+            &branch_name(repo),
+            &current_head,
+        ),
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_unit_id": "unit-rewritten-checkpoint",
+        "source_branch": branch,
+        "authoritative_integration_branch": branch_name(repo),
+        "worktree_path": state.join("worktrees").join("rewritten-checkpoint").display().to_string(),
+        "repo_state_baseline_head_sha": current_head,
+        "repo_state_baseline_worktree_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lease_state": WorktreeLeaseState::Reconciled,
+        "cleanup_state": "cleaned",
+        "reviewed_checkpoint_commit_sha": current_head,
+        "reconcile_result_commit_sha": current_head,
+        "reconcile_mode": "identity_preserving",
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T12:00:00Z",
+        "lease_fingerprint": "",
+    });
+    let lease_fingerprint = canonical_worktree_lease_fingerprint(&lease_json);
+    let lease_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch,
+        &format!(
+            "worktree-lease-{safe_branch}-{execution_run_id}-{chunk_id}-rewritten-checkpoint.json"
+        ),
+    );
+    write_file(
+        &lease_path,
+        &serde_json::to_string_pretty(&json!({
+            "lease_version": 1,
+            "authoritative_sequence": 17,
+            "execution_run_id": execution_run_id,
+            "execution_context_key": current_worktree_lease_execution_context_key(
+                &execution_run_id,
+                "unit-rewritten-checkpoint",
+                PLAN_REL,
+                1,
+                &branch_name(repo),
+                &current_head,
+            ),
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1,
+            "execution_unit_id": "unit-rewritten-checkpoint",
+            "source_branch": branch,
+            "authoritative_integration_branch": branch_name(repo),
+            "worktree_path": state.join("worktrees").join("rewritten-checkpoint").display().to_string(),
+            "repo_state_baseline_head_sha": current_head,
+            "repo_state_baseline_worktree_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "lease_state": WorktreeLeaseState::Reconciled,
+            "cleanup_state": "cleaned",
+            "reviewed_checkpoint_commit_sha": current_head,
+            "reconcile_result_commit_sha": current_head,
+            "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+            "reconcile_mode": "identity_preserving",
+            "generated_by": "featureforge:executing-plans",
+            "generated_at": "2026-03-27T12:00:00Z",
+            "lease_fingerprint": lease_fingerprint,
+        }))
+        .expect("rewritten lease should serialize"),
+    );
+    append_active_worktree_lease_fingerprint(repo, state, &lease_fingerprint);
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("rewritten-checkpoint")
+        .display()
+        .to_string();
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        "unit-rewritten-checkpoint",
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "rewritten-checkpoint",
+    );
+    let receipt_source =
+        fs::read_to_string(&receipt_path).expect("unit-review receipt should be readable");
+    let rewritten_receipt_source = receipt_source.replace(
+        &format!("**Reconciled Result SHA:** {current_head}"),
+        "**Reconciled Result SHA:** forged-rewrite-result-sha",
+    );
+    let rewritten_receipt_fingerprint =
+        canonical_unit_review_receipt_fingerprint(&rewritten_receipt_source);
+    let final_receipt_source = rewritten_receipt_source.replace(
+        &format!("**Receipt Fingerprint:** {receipt_fingerprint}"),
+        &format!("**Receipt Fingerprint:** {rewritten_receipt_fingerprint}"),
+    );
+    write_file(&receipt_path, &final_receipt_source);
+    append_active_worktree_lease_binding(
+        repo,
+        state,
+        json!({
+            "execution_run_id": execution_run_id,
+            "lease_fingerprint": lease_fingerprint,
+            "lease_artifact_path": lease_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+            "approved_task_packet_fingerprint": approved_task_packet_fingerprint,
+            "review_receipt_fingerprint": rewritten_receipt_fingerprint,
+            "review_receipt_artifact_path": receipt_path.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with rewritten checkpoint integration",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_binding_path_invalid"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_tampered_worktree_lease_body_proof() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-tampered-lease-proof");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let execution_unit_id = "unit-tampered-lease-proof";
+    let reviewed_worktree_string = state
+        .join("worktrees")
+        .join("tampered-lease-proof")
+        .display()
+        .to_string();
+    let (lease_path, _lease_fingerprint) =
+        write_worktree_lease_artifact_for_run_identity_with_fingerprint(
+            repo,
+            state,
+            &execution_run_id,
+            "chunk-lease-proof",
+            PLAN_REL,
+            1,
+            19,
+            WorktreeLeaseState::Reconciled,
+            "cleaned",
+            Some(&current_head),
+            "tampered-lease-proof",
+            true,
+        );
+    let mut lease_json: Value = serde_json::from_str(
+        &fs::read_to_string(&lease_path).expect("worktree lease should be readable for tamper"),
+    )
+    .expect("worktree lease should be valid json for tamper");
+    lease_json
+        .as_object_mut()
+        .expect("worktree lease should be an object")
+        .insert(
+            String::from("reconcile_result_proof_fingerprint"),
+            Value::String(sha256_hex(b"forged-lease-proof")),
+        );
+    lease_json
+        .as_object_mut()
+        .expect("worktree lease should remain an object")
+        .insert(
+            String::from("lease_fingerprint"),
+            Value::String(String::new()),
+        );
+    let tampered_lease_fingerprint = canonical_worktree_lease_fingerprint(&lease_json);
+    lease_json
+        .as_object_mut()
+        .expect("worktree lease should remain an object")
+        .insert(
+            String::from("lease_fingerprint"),
+            Value::String(tampered_lease_fingerprint.clone()),
+        );
+    write_file(
+        &lease_path,
+        &serde_json::to_string_pretty(&lease_json)
+            .expect("tampered lease should serialize for rewrite"),
+    );
+    let (receipt_path, receipt_fingerprint) = write_unit_review_receipt_artifact_for_lease(
+        repo,
+        state,
+        &execution_run_id,
+        &tampered_lease_fingerprint,
+        &approved_task_packet_fingerprint,
+        execution_unit_id,
+        PLAN_REL,
+        1,
+        &reviewed_worktree_string,
+        &current_head,
+        "tampered-lease-proof",
+    );
+    let receipt_source = fs::read_to_string(&receipt_path)
+        .expect("unit-review receipt should be readable for lease binding");
+    let git_dir = gix::discover(repo)
+        .expect("git repo should be discoverable")
+        .path()
+        .to_path_buf();
+    let branch = branch_name(repo);
+    let runtime = ExecutionRuntime {
+        repo_root: repo.to_path_buf(),
+        git_dir,
+        branch_name: branch.clone(),
+        repo_slug: repo_slug(repo),
+        safe_branch: normalize_identifier(&branch),
+        state_dir: state.to_path_buf(),
+    };
+    persist_active_worktree_lease_index(
+        &runtime,
+        RunIdentitySnapshot {
+            execution_run_id: ExecutionRunId::new(execution_run_id.clone()),
+            source_plan_path: PLAN_REL.to_owned(),
+            source_plan_revision: 1,
+        },
+        ChunkId::new(chunk_id.clone()),
+        vec![tampered_lease_fingerprint.clone()],
+        vec![WorktreeLeaseBindingSnapshot {
+            execution_run_id: execution_run_id.clone(),
+            lease_fingerprint: tampered_lease_fingerprint.clone(),
+            lease_artifact_path: lease_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_owned(),
+            lease_artifact_source: None,
+            execution_context_key: Some(
+                execution_context_key_from_unit_review_receipt(&receipt_source)
+                    .expect("unit-review receipt should carry an execution context key"),
+            ),
+            approved_task_packet_fingerprint: Some(approved_task_packet_fingerprint.clone()),
+            approved_unit_contract_fingerprint: Some(
+                approved_unit_contract_from_unit_review_receipt(&receipt_source)
+                    .expect("unit-review receipt should bind an approved unit contract"),
+            ),
+            reconcile_result_proof_fingerprint: Some(
+                reconcile_result_proof_fingerprint_from_unit_review_receipt(&receipt_source)
+                    .expect("unit-review receipt should carry a proof fingerprint"),
+            ),
+            reviewed_checkpoint_commit_sha: Some(
+                reviewed_checkpoint_from_unit_review_receipt(&receipt_source)
+                    .expect("unit-review receipt should carry a reviewed checkpoint"),
+            ),
+            reconcile_result_commit_sha: Some(
+                reconcile_result_commit_sha_from_unit_review_receipt(&receipt_source)
+                    .expect("unit-review receipt should carry a reconciled result sha"),
+            ),
+            reconcile_mode: Some(
+                reconcile_mode_from_unit_review_receipt(&receipt_source)
+                    .expect("unit-review receipt should carry a reconcile mode"),
+            ),
+            review_receipt_fingerprint: Some(receipt_fingerprint.clone()),
+            review_receipt_artifact_path: Some(
+                receipt_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            review_receipt_artifact_source: None,
+        }],
+    )
+    .expect("authoritative lease index should persist for tampered-lease fixture");
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with tampered lease body proof",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "StaleProvenance");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_identity_preserving_lease_proof_mismatch"
+    );
+}
+
+#[test]
+fn write_authoritative_worktree_lease_artifact_rejects_unsafe_execution_context_key() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-unsafe-worktree-lease-path");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "featureforge:executing-plans");
+    let safe_branch = normalize_identifier(&branch_name(repo));
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "run_identity": {
+                "execution_run_id": format!("run-{safe_branch}-unsafe"),
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": format!("chunk-{safe_branch}-unsafe"),
+            "latest_authoritative_sequence": 17,
+            "active_worktree_lease_fingerprints": [],
+        }),
+    );
+
+    let runtime = execution_runtime(repo, state);
+    let (execution_run_id, _chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let original_state =
+        fs::read_to_string(harness_state_file_path(repo, state)).expect("state should exist");
+    let lease_payload = json!({
+        "lease_version": 1,
+        "authoritative_sequence": 19,
+        "execution_run_id": execution_run_id,
+        "execution_context_key": "unsafe/../../state",
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_unit_id": "unit-unsafe-path",
+        "source_branch": branch_name(repo),
+        "authoritative_integration_branch": branch_name(repo),
+        "worktree_path": state.join("worktrees").join("unsafe-path").display().to_string(),
+        "repo_state_baseline_head_sha": current_head.clone(),
+        "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+        "lease_state": WorktreeLeaseState::Reconciled,
+        "cleanup_state": "cleaned",
+        "reviewed_checkpoint_commit_sha": current_head.clone(),
+        "reconcile_result_commit_sha": current_head.clone(),
+        "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head),
+        "reconcile_mode": "identity_preserving",
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T12:00:00Z",
+        "lease_fingerprint": "",
+    });
+    let mut lease: WorktreeLease =
+        serde_json::from_value(lease_payload.clone()).expect("lease payload should deserialize");
+    lease.lease_fingerprint = canonical_worktree_lease_fingerprint(&lease_payload);
+
+    let failure = write_authoritative_worktree_lease_artifact(&runtime, &lease)
+        .expect_err("unsafe execution context key should be rejected");
+
+    assert_eq!(failure.error_class, "MalformedExecutionState");
+    assert_eq!(
+        fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("state should remain readable after rejected lease write"),
+        original_state
+    );
+}
+
+#[test]
+fn write_authoritative_unit_review_receipt_artifact_rejects_unsafe_execution_unit_id() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-unsafe-unit-review-path");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "featureforge:executing-plans");
+    let safe_branch = normalize_identifier(&branch_name(repo));
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "run_identity": {
+                "execution_run_id": format!("run-{safe_branch}-unsafe"),
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": format!("chunk-{safe_branch}-unsafe"),
+            "latest_authoritative_sequence": 17,
+            "active_worktree_lease_fingerprints": [],
+        }),
+    );
+
+    let runtime = execution_runtime(repo, state);
+    let (execution_run_id, _chunk_id) = current_authoritative_run_identity(repo, state);
+    let original_state =
+        fs::read_to_string(harness_state_file_path(repo, state)).expect("state should exist");
+    let unsafe_execution_unit_id = "unit-unsafe/../../state";
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let approved_unit_contract_fingerprint = approved_unit_contract_fingerprint_for_review(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        &approved_task_packet_fingerprint,
+        unsafe_execution_unit_id,
+    );
+    let reconcile_result_commit_sha = current_head_sha(repo);
+    let reconcile_result_proof_fingerprint =
+        commit_object_fingerprint(repo, &reconcile_result_commit_sha);
+    let unsigned_receipt = format!(
+        "# Unit Review Result\n**Review Stage:** featureforge:unit-review\n**Reviewer Provenance:** dedicated-independent\n**Source Plan:** {PLAN_REL}\n**Source Plan Revision:** 1\n**Execution Run ID:** {execution_run_id}\n**Execution Unit ID:** {unsafe_execution_unit_id}\n**Lease Fingerprint:** bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n**Execution Context Key:** context-key\n**Approved Task Packet Fingerprint:** {approved_task_packet_fingerprint}\n**Approved Unit Contract Fingerprint:** {approved_unit_contract_fingerprint}\n**Reconciled Result SHA:** {reconcile_result_commit_sha}\n**Reconcile Result Proof Fingerprint:** {reconcile_result_proof_fingerprint}\n**Reconcile Mode:** identity_preserving\n**Reviewed Worktree:** /tmp/worktree\n**Reviewed Checkpoint SHA:** {reconcile_result_commit_sha}\n**Result:** pass\n**Generated By:** featureforge:unit-review\n**Generated At:** 2026-03-27T12:00:00Z\n"
+    );
+    let receipt_fingerprint = canonical_unit_review_receipt_fingerprint(&unsigned_receipt);
+    let receipt_source = format!(
+        "# Unit Review Result\n**Receipt Fingerprint:** {receipt_fingerprint}\n{}",
+        unsigned_receipt.trim_start_matches("# Unit Review Result\n")
+    );
+
+    let failure = write_authoritative_unit_review_receipt_artifact(
+        &runtime,
+        &execution_run_id,
+        unsafe_execution_unit_id,
+        &receipt_source,
+    )
+    .expect_err("unsafe execution unit id should be rejected");
+
+    assert_eq!(failure.error_class, "MalformedExecutionState");
+    assert_eq!(
+        fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("state should remain readable after rejected receipt write"),
+        original_state
+    );
+}
+
+#[test]
+fn persist_active_worktree_lease_index_respects_write_authority_lock() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-lease-index-lock");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "featureforge:executing-plans");
+    let safe_branch = normalize_identifier(&branch_name(repo));
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "run_identity": {
+                "execution_run_id": format!("run-{safe_branch}-lock"),
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1
+            },
+            "chunk_id": format!("chunk-{safe_branch}-lock"),
+            "latest_authoritative_sequence": 17,
+            "active_worktree_lease_fingerprints": [],
+        }),
+    );
+
+    let runtime = execution_runtime(repo, state);
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let lock_path = harness_state_file_path(repo, state)
+        .parent()
+        .expect("harness state should live under execution-harness")
+        .join("write-authority.lock");
+    write_file(&lock_path, "pid=99999\n");
+
+    let failure = persist_active_worktree_lease_index(
+        &runtime,
+        RunIdentitySnapshot {
+            execution_run_id: ExecutionRunId::new(execution_run_id),
+            source_plan_path: PLAN_REL.to_owned(),
+            source_plan_revision: 1,
+        },
+        ChunkId::new(chunk_id),
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect_err("index persistence should fail while write authority is held");
+
+    assert_eq!(failure.error_class, "ConcurrentWriterConflict");
+}
+
+#[test]
+fn gate_finish_accepts_worktree_binding_written_via_authoritative_helpers() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-authoritative-helper-binding");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+
+    let runtime = execution_runtime(repo, state);
+    let (execution_run_id, chunk_id) = current_authoritative_run_identity(repo, state);
+    let current_head = current_head_sha(repo);
+    let execution_unit_id = "unit-authoritative-helpers";
+    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
+    let reviewed_worktree = state
+        .join("worktrees")
+        .join("authoritative-helpers")
+        .display()
+        .to_string();
+    let execution_context_key = current_worktree_lease_execution_context_key(
+        &execution_run_id,
+        execution_unit_id,
+        PLAN_REL,
+        1,
+        &branch_name(repo),
+        &current_head,
+    );
+    let lease_payload = json!({
+        "lease_version": 1,
+        "authoritative_sequence": 19,
+        "execution_run_id": execution_run_id,
+        "execution_context_key": execution_context_key,
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_unit_id": execution_unit_id,
+        "source_branch": branch_name(repo),
+        "authoritative_integration_branch": branch_name(repo),
+        "worktree_path": reviewed_worktree,
+        "repo_state_baseline_head_sha": current_head,
+        "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+        "lease_state": WorktreeLeaseState::Reconciled,
+        "cleanup_state": "cleaned",
+        "reviewed_checkpoint_commit_sha": current_head,
+        "reconcile_result_commit_sha": current_head_sha(repo),
+        "reconcile_result_proof_fingerprint": commit_object_fingerprint(repo, &current_head_sha(repo)),
+        "reconcile_mode": "identity_preserving",
+        "generated_by": "featureforge:executing-plans",
+        "generated_at": "2026-03-27T12:00:00Z",
+        "lease_fingerprint": "",
+    });
+    let mut lease: WorktreeLease =
+        serde_json::from_value(lease_payload.clone()).expect("lease payload should deserialize");
+    lease.lease_fingerprint = canonical_worktree_lease_fingerprint(&lease_payload);
+    let lease_path = write_authoritative_worktree_lease_artifact(&runtime, &lease)
+        .expect("authoritative helper should write worktree lease");
+    let lease_source =
+        fs::read_to_string(&lease_path).expect("authoritative lease artifact should be readable");
+
+    let state_json: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable for receipt fixture"),
+    )
+    .expect("harness state should remain valid json");
+    let active_contract_fingerprint = state_json
+        .get("active_contract_fingerprint")
+        .and_then(Value::as_str)
+        .expect("authoritative downstream fixture should set active contract fingerprint");
+    let approved_unit_contract_fingerprint = approved_unit_contract_fingerprint_for_review(
+        active_contract_fingerprint,
+        &approved_task_packet_fingerprint,
+        execution_unit_id,
+    );
+    let reconcile_result_commit_sha = current_head_sha(repo);
+    let reconcile_result_proof_fingerprint =
+        commit_object_fingerprint(repo, &reconcile_result_commit_sha);
+    let unsigned_receipt = format!(
+        "# Unit Review Result\n**Review Stage:** featureforge:unit-review\n**Reviewer Provenance:** dedicated-independent\n**Source Plan:** {PLAN_REL}\n**Source Plan Revision:** 1\n**Execution Run ID:** {execution_run_id}\n**Execution Unit ID:** {execution_unit_id}\n**Lease Fingerprint:** {}\n**Execution Context Key:** {}\n**Approved Task Packet Fingerprint:** {approved_task_packet_fingerprint}\n**Approved Unit Contract Fingerprint:** {approved_unit_contract_fingerprint}\n**Reconciled Result SHA:** {reconcile_result_commit_sha}\n**Reconcile Result Proof Fingerprint:** {reconcile_result_proof_fingerprint}\n**Reconcile Mode:** identity_preserving\n**Reviewed Worktree:** {}\n**Reviewed Checkpoint SHA:** {reconcile_result_commit_sha}\n**Result:** pass\n**Generated By:** featureforge:unit-review\n**Generated At:** 2026-03-27T12:00:00Z\n",
+        lease.lease_fingerprint,
+        lease.execution_context_key,
+        lease.worktree_path
+    );
+    let receipt_fingerprint = canonical_unit_review_receipt_fingerprint(&unsigned_receipt);
+    let receipt_source = format!(
+        "# Unit Review Result\n**Receipt Fingerprint:** {receipt_fingerprint}\n{}",
+        unsigned_receipt.trim_start_matches("# Unit Review Result\n")
+    );
+    let receipt_path = write_authoritative_unit_review_receipt_artifact(
+        &runtime,
+        &execution_run_id,
+        execution_unit_id,
+        &receipt_source,
+    )
+    .expect("authoritative helper should write unit-review receipt");
+    let stored_receipt_source =
+        fs::read_to_string(&receipt_path).expect("authoritative receipt should be readable");
+
+    persist_active_worktree_lease_index(
+        &runtime,
+        RunIdentitySnapshot {
+            execution_run_id: ExecutionRunId::new(execution_run_id.clone()),
+            source_plan_path: PLAN_REL.to_owned(),
+            source_plan_revision: 1,
+        },
+        ChunkId::new(chunk_id),
+        vec![lease.lease_fingerprint.clone()],
+        vec![WorktreeLeaseBindingSnapshot {
+            execution_run_id: execution_run_id.clone(),
+            lease_fingerprint: lease.lease_fingerprint.clone(),
+            lease_artifact_path: lease_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_owned(),
+            lease_artifact_source: Some(lease_source),
+            execution_context_key: Some(lease.execution_context_key.clone()),
+            approved_task_packet_fingerprint: Some(approved_task_packet_fingerprint.clone()),
+            approved_unit_contract_fingerprint: Some(approved_unit_contract_fingerprint),
+            reconcile_result_proof_fingerprint: Some(reconcile_result_proof_fingerprint),
+            reviewed_checkpoint_commit_sha: Some(reconcile_result_commit_sha.clone()),
+            reconcile_result_commit_sha: Some(reconcile_result_commit_sha),
+            reconcile_mode: Some(String::from("identity_preserving")),
+            review_receipt_fingerprint: Some(receipt_fingerprint),
+            review_receipt_artifact_path: Some(
+                receipt_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
+            review_receipt_artifact_source: Some(stored_receipt_source),
+        }],
+    )
+    .expect("authoritative helper should persist active lease index");
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with authoritative helper binding",
+    );
+
+    assert_eq!(gate_finish["allowed"], true);
+    assert_eq!(gate_finish["failure_class"], "");
+}
+
+#[test]
+fn gate_finish_fails_closed_without_authoritative_state() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-missing-state");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (_test_plan_path, _qa_path, _review_path, _release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_worktree_lease_artifact(
+        repo,
+        state,
+        WorktreeLeaseState::Cleaned,
+        "cleaned",
+        Some(&current_head_sha(repo)),
+        "missing-state",
+    );
+    fs::remove_file(harness_state_file_path(repo, state))
+        .expect("harness state should be removable for missing-state fixture");
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish with missing authoritative state",
+    );
+
+    assert_eq!(gate_finish["allowed"], false);
+    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
+    assert_eq!(
+        gate_finish["reason_codes"][0],
+        "worktree_lease_authoritative_state_unavailable"
+    );
+}
+
+#[test]
 fn canonical_execution_runtime_uses_canonical_repo_slug() {
     let (repo_dir, state_dir) = init_repo("plan-execution-runtime-slug");
     let repo = repo_dir.path();
@@ -3750,12 +8200,10 @@ fn gate_finish_rejects_release_artifact_head_mismatch() {
         gate_finish["reason_codes"][0],
         "release_artifact_head_mismatch"
     );
-    assert!(
-        gate_finish["diagnostics"][0]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("does not match the current HEAD")
-    );
+    assert!(gate_finish["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("does not match the current HEAD"));
 }
 
 #[test]
@@ -3950,12 +8398,10 @@ fn gate_finish_rejects_dirty_tracked_worktree_after_artifact_generation() {
         gate_finish["reason_codes"][0],
         "review_artifact_worktree_dirty"
     );
-    assert!(
-        gate_finish["diagnostics"][0]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("tracked worktree changes")
-    );
+    assert!(gate_finish["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("tracked worktree changes"));
 }
 
 #[test]
@@ -4367,10 +8813,8 @@ fn canonical_complete_normalizes_evidence_and_rejects_stale_mutation() {
     let evidence = fs::read_to_string(repo.join(evidence_rel_path()))
         .expect("evidence file should exist after complete");
     assert!(evidence.contains("**Claim:** Prepared workspace thoroughly"));
-    assert!(
-        evidence
-            .contains("**Verification Summary:** Manual inspection only: Verified by inspection")
-    );
+    assert!(evidence
+        .contains("**Verification Summary:** Manual inspection only: Verified by inspection"));
     assert!(evidence.contains("**Files Proven:**\n- docs/alpha.md | sha256:"));
     assert!(evidence.contains("\n- src/zeta.txt | sha256:"));
     assert!(!evidence.contains('\t'));
@@ -5614,11 +10058,8 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
         .expect("evidence should exist after transfer");
     assert!(evidence.contains("### Task 2 Step 1"));
     assert!(evidence.contains("**Status:** Invalidated"));
-    assert!(
-        evidence.contains(
-            "**Invalidation Reason:** Current work invalidated an earlier completed step"
-        )
-    );
+    assert!(evidence
+        .contains("**Invalidation Reason:** Current work invalidated an earlier completed step"));
 }
 
 #[test]
@@ -8678,8 +13119,8 @@ fn task3_gate_and_record_evaluator_reject_stray_fingerprint_named_artifacts_for_
 }
 
 #[test]
-fn task3_gate_and_record_evaluator_reject_hand_authored_public_artifact_shaped_files_for_evidence_refs()
- {
+fn task3_gate_and_record_evaluator_reject_hand_authored_public_artifact_shaped_files_for_evidence_refs(
+) {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-task3-evidence-ref-hand-authored-public-shape");
     let repo = repo_dir.path();
@@ -8805,8 +13246,8 @@ This file is self-consistent but not a valid authoritative evaluation report art
 }
 
 #[test]
-fn task3_gate_and_record_evaluator_accept_verified_authoritative_contract_artifacts_for_evidence_refs()
- {
+fn task3_gate_and_record_evaluator_accept_verified_authoritative_contract_artifacts_for_evidence_refs(
+) {
     let (repo_dir, state_dir) = init_repo("plan-execution-task3-evidence-ref-verified-contract");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -8905,8 +13346,8 @@ fn task3_gate_and_record_evaluator_accept_verified_authoritative_contract_artifa
 }
 
 #[test]
-fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_mismatched_authoritative_evidence_kinds()
- {
+fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_mismatched_authoritative_evidence_kinds(
+) {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-task3-evidence-ref-kind-specific-evidence-kind-mismatch");
     let repo = repo_dir.path();
@@ -9033,8 +13474,8 @@ fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_mismatched_
 }
 
 #[test]
-fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_wrong_authoritative_artifact_family()
- {
+fn task3_gate_and_record_evaluator_reject_kind_specific_locators_for_wrong_authoritative_artifact_family(
+) {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-task3-evidence-ref-kind-specific-family-mismatch");
     let repo = repo_dir.path();

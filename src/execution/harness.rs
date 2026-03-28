@@ -244,6 +244,35 @@ pub struct AuthoritativeArtifactPointers {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorktreeLeaseBindingSnapshot {
+    pub execution_run_id: String,
+    pub lease_fingerprint: String,
+    pub lease_artifact_path: String,
+    #[serde(default)]
+    pub lease_artifact_source: Option<String>,
+    #[serde(default)]
+    pub execution_context_key: Option<String>,
+    #[serde(default)]
+    pub approved_task_packet_fingerprint: Option<String>,
+    #[serde(default)]
+    pub approved_unit_contract_fingerprint: Option<String>,
+    #[serde(default)]
+    pub reconcile_result_proof_fingerprint: Option<String>,
+    #[serde(default)]
+    pub reviewed_checkpoint_commit_sha: Option<String>,
+    #[serde(default)]
+    pub reconcile_result_commit_sha: Option<String>,
+    #[serde(default)]
+    pub reconcile_mode: Option<String>,
+    #[serde(default)]
+    pub review_receipt_fingerprint: Option<String>,
+    #[serde(default)]
+    pub review_receipt_artifact_path: Option<String>,
+    #[serde(default)]
+    pub review_receipt_artifact_source: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvaluatorSetSnapshot {
     pub required_evaluator_kinds: Vec<EvaluatorKind>,
     pub completed_evaluator_kinds: Vec<EvaluatorKind>,
@@ -305,6 +334,10 @@ pub struct AuthoritativeHarnessState {
     pub chunk_id: ChunkId,
     pub run_identity: Option<RunIdentitySnapshot>,
     pub ordering: AuthoritativeOrderingState,
+    #[serde(default)]
+    pub active_worktree_lease_fingerprints: Option<Vec<String>>,
+    #[serde(default)]
+    pub active_worktree_lease_bindings: Option<Vec<WorktreeLeaseBindingSnapshot>>,
     pub policy_snapshot: Option<FrozenPolicySnapshot>,
     pub artifact_pointers: AuthoritativeArtifactPointers,
     pub evaluators: EvaluatorSetSnapshot,

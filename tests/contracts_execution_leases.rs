@@ -646,6 +646,8 @@ fn worktree_lease_helper_requires_reviewed_checkpoint_when_pending_reconcile() {
     let lease = WorktreeLease {
         lease_version: 1,
         authoritative_sequence: 32,
+        execution_run_id: String::from("run-a"),
+        execution_context_key: String::from("context-a"),
         source_plan_path: PLAN_REL.to_owned(),
         source_plan_revision: 1,
         execution_unit_id: String::from("task-a"),
@@ -659,6 +661,9 @@ fn worktree_lease_helper_requires_reviewed_checkpoint_when_pending_reconcile() {
         lease_state: WorktreeLeaseState::ReviewPassedPendingReconcile,
         cleanup_state: String::from("pending"),
         reviewed_checkpoint_commit_sha: None,
+        reconcile_result_commit_sha: None,
+        reconcile_result_proof_fingerprint: None,
+        reconcile_mode: String::from("identity_preserving"),
         generated_by: String::from("featureforge:executing-plans"),
         generated_at: String::from("2026-03-27T21:15:21Z"),
         lease_fingerprint: String::from(
@@ -679,6 +684,8 @@ fn worktree_lease_helper_accepts_terminal_lease_state_with_reviewed_checkpoint()
     let lease = WorktreeLease {
         lease_version: 1,
         authoritative_sequence: 32,
+        execution_run_id: String::from("run-a"),
+        execution_context_key: String::from("context-a"),
         source_plan_path: PLAN_REL.to_owned(),
         source_plan_revision: 1,
         execution_unit_id: String::from("task-a"),
@@ -694,6 +701,11 @@ fn worktree_lease_helper_accepts_terminal_lease_state_with_reviewed_checkpoint()
         reviewed_checkpoint_commit_sha: Some(String::from(
             "dddddddddddddddddddddddddddddddddddddddd",
         )),
+        reconcile_result_commit_sha: Some(String::from("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")),
+        reconcile_result_proof_fingerprint: Some(String::from(
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        )),
+        reconcile_mode: String::from("identity_preserving"),
         generated_by: String::from("featureforge:executing-plans"),
         generated_at: String::from("2026-03-27T21:15:21Z"),
         lease_fingerprint: String::from(
@@ -710,6 +722,8 @@ fn worktree_lease_helper_rejects_terminal_lease_without_reviewed_checkpoint() {
         let lease = WorktreeLease {
             lease_version: 1,
             authoritative_sequence: 32,
+            execution_run_id: String::from("run-a"),
+            execution_context_key: String::from("context-a"),
             source_plan_path: PLAN_REL.to_owned(),
             source_plan_revision: 1,
             execution_unit_id: String::from("task-a"),
@@ -723,6 +737,13 @@ fn worktree_lease_helper_rejects_terminal_lease_without_reviewed_checkpoint() {
             lease_state,
             cleanup_state: String::from("cleaned"),
             reviewed_checkpoint_commit_sha: None,
+            reconcile_result_commit_sha: Some(String::from(
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            )),
+            reconcile_result_proof_fingerprint: Some(String::from(
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            )),
+            reconcile_mode: String::from("identity_preserving"),
             generated_by: String::from("featureforge:executing-plans"),
             generated_at: String::from("2026-03-27T21:15:21Z"),
             lease_fingerprint: String::from(
@@ -735,6 +756,49 @@ fn worktree_lease_helper_rejects_terminal_lease_without_reviewed_checkpoint() {
         assert!(
             error.message.contains("reviewed_checkpoint_commit_sha"),
             "terminal lease validation should reject missing reviewed checkpoint provenance"
+        );
+    }
+}
+
+#[test]
+fn worktree_lease_helper_rejects_terminal_lease_without_reconcile_provenance() {
+    for lease_state in [WorktreeLeaseState::Reconciled, WorktreeLeaseState::Cleaned] {
+        let lease = WorktreeLease {
+            lease_version: 1,
+            authoritative_sequence: 32,
+            execution_run_id: String::from("run-a"),
+            execution_context_key: String::from("context-a"),
+            source_plan_path: PLAN_REL.to_owned(),
+            source_plan_revision: 1,
+            execution_unit_id: String::from("task-a"),
+            source_branch: String::from("feature/task-a"),
+            authoritative_integration_branch: String::from("main"),
+            worktree_path: String::from("/tmp/task-a"),
+            repo_state_baseline_head_sha: String::from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            repo_state_baseline_worktree_fingerprint: String::from(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+            lease_state,
+            cleanup_state: String::from("cleaned"),
+            reviewed_checkpoint_commit_sha: Some(String::from(
+                "dddddddddddddddddddddddddddddddddddddddd",
+            )),
+            reconcile_result_commit_sha: None,
+            reconcile_result_proof_fingerprint: None,
+            reconcile_mode: String::from("identity_preserving"),
+            generated_by: String::from("featureforge:executing-plans"),
+            generated_at: String::from("2026-03-27T21:15:21Z"),
+            lease_fingerprint: String::from(
+                "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            ),
+        };
+
+        let error = validate_worktree_lease(&lease)
+            .expect_err("terminal leases require reconcile provenance");
+        assert!(
+            error.message.contains("reconcile_result_commit_sha")
+                || error.message.contains("reconcile_result_proof_fingerprint"),
+            "terminal lease validation should reject missing reconcile provenance"
         );
     }
 }

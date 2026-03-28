@@ -190,6 +190,8 @@ pub struct ExecutionTopologyDowngradeRecord {
 pub struct WorktreeLease {
     pub lease_version: u32,
     pub authoritative_sequence: u64,
+    pub execution_run_id: String,
+    pub execution_context_key: String,
     pub source_plan_path: String,
     pub source_plan_revision: u32,
     pub execution_unit_id: String,
@@ -201,6 +203,9 @@ pub struct WorktreeLease {
     pub lease_state: WorktreeLeaseState,
     pub cleanup_state: String,
     pub reviewed_checkpoint_commit_sha: Option<String>,
+    pub reconcile_result_commit_sha: Option<String>,
+    pub reconcile_result_proof_fingerprint: Option<String>,
+    pub reconcile_mode: String,
     pub generated_by: String,
     pub generated_at: String,
     pub lease_fingerprint: String,
@@ -210,6 +215,8 @@ pub struct WorktreeLease {
 struct WorktreeLeaseSerde {
     pub lease_version: u32,
     pub authoritative_sequence: u64,
+    pub execution_run_id: String,
+    pub execution_context_key: String,
     pub source_plan_path: String,
     pub source_plan_revision: u32,
     pub execution_unit_id: String,
@@ -221,6 +228,9 @@ struct WorktreeLeaseSerde {
     pub lease_state: WorktreeLeaseState,
     pub cleanup_state: String,
     pub reviewed_checkpoint_commit_sha: Option<String>,
+    pub reconcile_result_commit_sha: Option<String>,
+    pub reconcile_result_proof_fingerprint: Option<String>,
+    pub reconcile_mode: String,
     pub generated_by: String,
     pub generated_at: String,
     pub lease_fingerprint: String,
@@ -234,10 +244,20 @@ impl TryFrom<WorktreeLeaseSerde> for WorktreeLease {
             raw.lease_state,
             raw.reviewed_checkpoint_commit_sha.as_deref(),
         )?;
+        validate_worktree_lease_reconcile_result(
+            raw.lease_state,
+            raw.reconcile_result_commit_sha.as_deref(),
+        )?;
+        validate_worktree_lease_reconcile_result_proof(
+            raw.lease_state,
+            raw.reconcile_result_proof_fingerprint.as_deref(),
+        )?;
 
         Ok(Self {
             lease_version: raw.lease_version,
             authoritative_sequence: raw.authoritative_sequence,
+            execution_run_id: raw.execution_run_id,
+            execution_context_key: raw.execution_context_key,
             source_plan_path: raw.source_plan_path,
             source_plan_revision: raw.source_plan_revision,
             execution_unit_id: raw.execution_unit_id,
@@ -249,6 +269,9 @@ impl TryFrom<WorktreeLeaseSerde> for WorktreeLease {
             lease_state: raw.lease_state,
             cleanup_state: raw.cleanup_state,
             reviewed_checkpoint_commit_sha: raw.reviewed_checkpoint_commit_sha,
+            reconcile_result_commit_sha: raw.reconcile_result_commit_sha,
+            reconcile_result_proof_fingerprint: raw.reconcile_result_proof_fingerprint,
+            reconcile_mode: raw.reconcile_mode,
             generated_by: raw.generated_by,
             generated_at: raw.generated_at,
             lease_fingerprint: raw.lease_fingerprint,
@@ -261,6 +284,8 @@ impl From<WorktreeLease> for WorktreeLeaseSerde {
         Self {
             lease_version: lease.lease_version,
             authoritative_sequence: lease.authoritative_sequence,
+            execution_run_id: lease.execution_run_id,
+            execution_context_key: lease.execution_context_key,
             source_plan_path: lease.source_plan_path,
             source_plan_revision: lease.source_plan_revision,
             execution_unit_id: lease.execution_unit_id,
@@ -273,6 +298,9 @@ impl From<WorktreeLease> for WorktreeLeaseSerde {
             lease_state: lease.lease_state,
             cleanup_state: lease.cleanup_state,
             reviewed_checkpoint_commit_sha: lease.reviewed_checkpoint_commit_sha,
+            reconcile_result_commit_sha: lease.reconcile_result_commit_sha,
+            reconcile_result_proof_fingerprint: lease.reconcile_result_proof_fingerprint,
+            reconcile_mode: lease.reconcile_mode,
             generated_by: lease.generated_by,
             generated_at: lease.generated_at,
             lease_fingerprint: lease.lease_fingerprint,
@@ -299,6 +327,56 @@ fn validate_worktree_lease_reviewed_checkpoint(
 
     Err(String::from(
         "WorktreeLease must include reviewed_checkpoint_commit_sha while lease_state is not open.",
+    ))
+}
+
+fn validate_worktree_lease_reconcile_result(
+    lease_state: WorktreeLeaseState,
+    reconcile_result_commit_sha: Option<&str>,
+) -> Result<(), String> {
+    if let Some(reconcile_result_commit_sha) = reconcile_result_commit_sha {
+        if reconcile_result_commit_sha.trim().is_empty() {
+            return Err(String::from(
+                "WorktreeLease is missing non-empty reconcile_result_commit_sha.",
+            ));
+        }
+        return Ok(());
+    }
+
+    if matches!(
+        lease_state,
+        WorktreeLeaseState::Open | WorktreeLeaseState::ReviewPassedPendingReconcile
+    ) {
+        return Ok(());
+    }
+
+    Err(String::from(
+        "WorktreeLease must include reconcile_result_commit_sha while lease_state is not open.",
+    ))
+}
+
+fn validate_worktree_lease_reconcile_result_proof(
+    lease_state: WorktreeLeaseState,
+    reconcile_result_proof_fingerprint: Option<&str>,
+) -> Result<(), String> {
+    if let Some(reconcile_result_proof_fingerprint) = reconcile_result_proof_fingerprint {
+        if reconcile_result_proof_fingerprint.trim().is_empty() {
+            return Err(String::from(
+                "WorktreeLease is missing non-empty reconcile_result_proof_fingerprint.",
+            ));
+        }
+        return Ok(());
+    }
+
+    if matches!(
+        lease_state,
+        WorktreeLeaseState::Open | WorktreeLeaseState::ReviewPassedPendingReconcile
+    ) {
+        return Ok(());
+    }
+
+    Err(String::from(
+        "WorktreeLease must include reconcile_result_proof_fingerprint while lease_state is not open.",
     ))
 }
 

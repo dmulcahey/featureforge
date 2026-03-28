@@ -581,6 +581,72 @@ fn complete_workflow_fixture_execution(repo: &Path, state: &Path, plan_rel: &str
     );
 }
 
+fn update_authoritative_harness_state(
+    repo: &Path,
+    state: &Path,
+    branch: &str,
+    plan_rel: &str,
+    plan_revision: u32,
+    updates: &[(&str, Value)],
+) {
+    let authoritative_state_path = harness_state_path(state, &repo_slug(repo), branch);
+    let mut payload: Value = match fs::read_to_string(&authoritative_state_path) {
+        Ok(source) => serde_json::from_str(&source)
+            .expect("authoritative harness state should stay valid json"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let status_json = run_plan_execution_json(
+                repo,
+                state,
+                &["status", "--plan", plan_rel],
+                "status for synthesized authoritative harness state",
+            );
+            let execution_run_id = status_json["execution_run_id"]
+                .as_str()
+                .expect("status should expose execution_run_id for synthesized authoritative state")
+                .to_string();
+            let chunk_id = status_json["chunk_id"].as_str().map(str::to_owned);
+            let mut object = serde_json::Map::new();
+            object.insert("schema_version".to_string(), Value::from(1));
+            object.insert(
+                "run_identity".to_string(),
+                Value::Object(serde_json::Map::from_iter([
+                    ("execution_run_id".to_string(), Value::from(execution_run_id)),
+                    ("source_plan_path".to_string(), Value::from(plan_rel)),
+                    (
+                        "source_plan_revision".to_string(),
+                        Value::from(plan_revision),
+                    ),
+                ])),
+            );
+            if let Some(chunk_id) = chunk_id {
+                object.insert("chunk_id".to_string(), Value::from(chunk_id));
+            }
+            object.insert(
+                "active_worktree_lease_fingerprints".to_string(),
+                Value::Array(Vec::new()),
+            );
+            object.insert(
+                "active_worktree_lease_bindings".to_string(),
+                Value::Array(Vec::new()),
+            );
+            Value::Object(object)
+        }
+        Err(error) => panic!(
+            "authoritative harness state should be readable for fixture mutation: {error}"
+        ),
+    };
+    let object = payload
+        .as_object_mut()
+        .expect("authoritative harness state should remain a json object");
+    for (key, value) in updates {
+        object.insert((*key).to_string(), value.clone());
+    }
+    write_file(
+        &authoritative_state_path,
+        &serde_json::to_string(&payload).expect("authoritative harness state should serialize"),
+    );
+}
+
 fn enable_session_decision(state: &Path, session_key: &str) {
     let decision_path = state
         .join("session-entry")
@@ -4374,12 +4440,25 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
         &authoritative_review_source,
     );
 
-    let authoritative_state_path = harness_state_path(state, &repo_slug(repo), &branch);
-    write_file(
-        &authoritative_state_path,
-        &format!(
-            "{{\"schema_version\":1,\"harness_phase\":\"executing\",\"latest_authoritative_sequence\":17,\"dependency_index_state\":\"fresh\",\"final_review_state\":\"fresh\",\"browser_qa_state\":\"not_required\",\"release_docs_state\":\"not_required\",\"last_final_review_artifact_fingerprint\":\"{authoritative_review_fingerprint}\"}}"
-        ),
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("schema_version", Value::from(1)),
+            ("harness_phase", Value::from("executing")),
+            ("latest_authoritative_sequence", Value::from(17)),
+            ("dependency_index_state", Value::from("fresh")),
+            ("final_review_state", Value::from("fresh")),
+            ("browser_qa_state", Value::from("not_required")),
+            ("release_docs_state", Value::from("not_required")),
+            (
+                "last_final_review_artifact_fingerprint",
+                Value::from(authoritative_review_fingerprint),
+            ),
+        ],
     );
 
     write_file(
@@ -4484,12 +4563,33 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_relea
         &authoritative_release_source,
     );
 
-    let authoritative_state_path = harness_state_path(state, &repo_slug(repo), &branch);
-    write_file(
-        &authoritative_state_path,
-        &format!(
-            "{{\"schema_version\":1,\"harness_phase\":\"executing\",\"latest_authoritative_sequence\":17,\"dependency_index_state\":\"fresh\",\"final_review_state\":\"fresh\",\"browser_qa_state\":\"fresh\",\"release_docs_state\":\"fresh\",\"last_final_review_artifact_fingerprint\":\"{authoritative_review_fingerprint}\",\"last_browser_qa_artifact_fingerprint\":\"{authoritative_qa_fingerprint}\",\"last_release_docs_artifact_fingerprint\":\"{authoritative_release_fingerprint}\"}}"
-        ),
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("schema_version", Value::from(1)),
+            ("harness_phase", Value::from("executing")),
+            ("latest_authoritative_sequence", Value::from(17)),
+            ("dependency_index_state", Value::from("fresh")),
+            ("final_review_state", Value::from("fresh")),
+            ("browser_qa_state", Value::from("fresh")),
+            ("release_docs_state", Value::from("fresh")),
+            (
+                "last_final_review_artifact_fingerprint",
+                Value::from(authoritative_review_fingerprint),
+            ),
+            (
+                "last_browser_qa_artifact_fingerprint",
+                Value::from(authoritative_qa_fingerprint),
+            ),
+            (
+                "last_release_docs_artifact_fingerprint",
+                Value::from(authoritative_release_fingerprint),
+            ),
+        ],
     );
 
     write_file(

@@ -1,10 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io::ErrorKind;
+use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 use schemars::{schema_for, JsonSchema};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::{
     BeginArgs, CompleteArgs, GateContractArgs, GateEvaluatorArgs, GateHandoffArgs,
@@ -12,6 +14,7 @@ use crate::cli::plan_execution::{
     RecordEvaluationArgs, RecordHandoffArgs, ReopenArgs, StatusArgs, TransferArgs,
 };
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
+use crate::contracts::harness::{read_execution_contract, WorktreeLease, WorktreeLeaseState};
 use crate::contracts::plan::{parse_plan_file, PlanDocument, PlanTask};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::final_review::{
@@ -25,22 +28,22 @@ use crate::execution::harness::{
     ResetPolicy, INITIAL_AUTHORITATIVE_SEQUENCE,
 };
 use crate::execution::leases::{
-    PreflightWriteAuthorityState, authoritative_state_path,
-    load_status_authoritative_overlay_checked, preflight_requires_authoritative_handoff,
-    preflight_requires_authoritative_mutation_recovery, preflight_write_authority_state,
+    authoritative_state_path, load_status_authoritative_overlay_checked,
+    preflight_requires_authoritative_handoff, preflight_requires_authoritative_mutation_recovery,
+    preflight_write_authority_state, validate_worktree_lease, PreflightWriteAuthorityState,
 };
 use crate::execution::topology::{
-    RecommendDecisionFlags, RecommendOutput, default_preflight_chunking_strategy,
-    default_preflight_evaluator_policy, default_preflight_reset_policy,
-    default_preflight_review_stack, pending_chunk_id, persist_preflight_acceptance,
-    preflight_acceptance_for_context, tasks_are_independent,
+    default_preflight_chunking_strategy, default_preflight_evaluator_policy,
+    default_preflight_reset_policy, default_preflight_review_stack, pending_chunk_id,
+    persist_preflight_acceptance, preflight_acceptance_for_context, tasks_are_independent,
+    RecommendDecisionFlags, RecommendOutput,
 };
 use crate::git::{
     derive_repo_slug, discover_repo_identity, sha256_hex, stored_repo_root_matches_current,
 };
 use crate::paths::{
-    branch_storage_key, featureforge_state_dir, normalize_repo_relative_path,
-    normalize_whitespace, RepoPath,
+    branch_storage_key, featureforge_state_dir, normalize_repo_relative_path, normalize_whitespace,
+    RepoPath,
 };
 use crate::repo_safety::RepoSafetyRuntime;
 use crate::workflow::manifest::{load_manifest_read_only, ManifestLoadResult, WorkflowManifest};
@@ -114,6 +117,56 @@ pub struct GateDiagnostic {
     pub severity: String,
     pub message: String,
     pub remediation: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorktreeLeaseRunIdentityProbe {
+    execution_run_id: String,
+    source_plan_path: String,
+    source_plan_revision: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorktreeLeaseBindingProbe {
+    execution_run_id: String,
+    lease_fingerprint: String,
+    lease_artifact_path: String,
+    #[serde(default)]
+    lease_artifact_source: Option<String>,
+    #[serde(default)]
+    execution_context_key: Option<String>,
+    #[serde(default)]
+    approved_task_packet_fingerprint: Option<String>,
+    #[serde(default)]
+    approved_unit_contract_fingerprint: Option<String>,
+    #[serde(default)]
+    reconcile_result_proof_fingerprint: Option<String>,
+    #[serde(default)]
+    reviewed_checkpoint_commit_sha: Option<String>,
+    #[serde(default)]
+    reconcile_result_commit_sha: Option<String>,
+    #[serde(default)]
+    reconcile_mode: Option<String>,
+    #[serde(default)]
+    review_receipt_fingerprint: Option<String>,
+    #[serde(default)]
+    review_receipt_artifact_path: Option<String>,
+    #[serde(default)]
+    review_receipt_artifact_source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorktreeLeaseAuthoritativeContextProbe {
+    #[serde(default)]
+    run_identity: Option<WorktreeLeaseRunIdentityProbe>,
+    #[serde(default)]
+    chunk_id: Option<String>,
+    #[serde(default)]
+    repo_state_baseline_head_sha: Option<String>,
+    #[serde(default)]
+    repo_state_baseline_worktree_fingerprint: Option<String>,
+    active_worktree_lease_fingerprints: Option<Vec<String>>,
+    active_worktree_lease_bindings: Option<Vec<WorktreeLeaseBindingProbe>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -864,7 +917,8 @@ fn apply_authoritative_status_overlay(
     if !overlay.open_failed_criteria.is_empty() {
         status.open_failed_criteria = overlay.open_failed_criteria;
     }
-    if let Some(value) = normalize_optional_overlay_value(overlay.write_authority_state.as_deref()) {
+    if let Some(value) = normalize_optional_overlay_value(overlay.write_authority_state.as_deref())
+    {
         status.write_authority_state = value.to_owned();
     }
     status.write_authority_holder = overlay
@@ -918,7 +972,8 @@ fn apply_authoritative_status_overlay(
         .last_release_docs_artifact_fingerprint
         .filter(|value| !value.trim().is_empty());
     if !overlay.reason_codes.is_empty() {
-        status.reason_codes = parse_reason_codes(&overlay.reason_codes, "reason_codes", &state_path)?;
+        status.reason_codes =
+            parse_reason_codes(&overlay.reason_codes, "reason_codes", &state_path)?;
     }
 
     Ok(())
@@ -1432,6 +1487,7 @@ fn gate_review_from_context_internal(
     if enforce_authoritative_late_gate_truth {
         enforce_review_authoritative_late_gate_truth(context, &mut gate);
     }
+    enforce_worktree_lease_binding_truth(context, &mut gate);
 
     if context.evidence.format == EvidenceFormat::Legacy && !context.evidence.attempts.is_empty() {
         gate.warn("legacy_evidence_format");
@@ -1443,8 +1499,1664 @@ fn gate_review_from_context_internal(
     gate.finish()
 }
 
+// Barrier reconcile and receipt release:
+//   open / review_passed_pending_reconcile
+//                    |
+//                    v
+//       reconcile reviewed checkpoint commit
+//                    |
+//                    v
+//          cleanup_state == cleaned
+//                    |
+//                    v
+//      dependent work may be released at finish
+fn enforce_worktree_lease_binding_truth(context: &ExecutionContext, gate: &mut GateState) {
+    let authoritative_context = match load_worktree_lease_authoritative_context_checked(context) {
+        Ok(Some(context)) => context,
+        Ok(None) => {
+            let artifacts_dir = crate::paths::harness_authoritative_artifacts_dir(
+                &context.runtime.state_dir,
+                &context.runtime.repo_slug,
+                &context.runtime.branch_name,
+            );
+            let has_any_binding_artifacts = match fs::read_dir(&artifacts_dir) {
+                Ok(entries) => entries.flatten().any(|entry| {
+                    entry
+                        .path()
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .is_some_and(|value| {
+                            (value.starts_with("worktree-lease-") && value.ends_with(".json"))
+                                || (value.starts_with("unit-review-") && value.ends_with(".md"))
+                        })
+                }),
+                Err(error) if error.kind() == ErrorKind::NotFound => false,
+                Err(error) => {
+                    gate.fail(
+                        FailureClass::MalformedExecutionState,
+                        "worktree_lease_artifacts_unreadable",
+                        format!(
+                            "Could not inspect authoritative worktree leases in {}: {error}",
+                            artifacts_dir.display()
+                        ),
+                        "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+            };
+            if has_any_binding_artifacts {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "worktree_lease_authoritative_state_unavailable",
+                    "Authoritative harness state is unavailable for worktree lease gating.",
+                    "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+                );
+            }
+            return;
+        }
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_state_unavailable",
+                error.message,
+                "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+    };
+    let run_identity = match authoritative_context.run_identity.as_ref() {
+        Some(run_identity) => run_identity,
+        None => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_run_identity_missing",
+                "Authoritative harness state is missing its current run identity.",
+                "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+    };
+    if run_identity.source_plan_path != context.plan_rel
+        || run_identity.source_plan_revision != context.plan_document.plan_revision
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_run_context_mismatch",
+            "Authoritative run identity does not match the current plan context.",
+            "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+        );
+        return;
+    }
+
+    let Some(active_worktree_lease_fingerprints) =
+        authoritative_context.active_worktree_lease_fingerprints
+    else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_index_missing",
+            "Authoritative harness state is missing the active worktree lease fingerprint index for the current run.",
+            "Restore the authoritative worktree lease fingerprints and retry gate-review or gate-finish.",
+        );
+        return;
+    };
+    let Some(active_worktree_lease_bindings) = authoritative_context.active_worktree_lease_bindings
+    else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_index_missing",
+            "Authoritative harness state is missing the active worktree lease binding index for the current run.",
+            "Restore the authoritative worktree lease bindings and retry gate-review or gate-finish.",
+        );
+        return;
+    };
+    let current_run_fingerprint_count = active_worktree_lease_fingerprints.len();
+    let current_run_fingerprints: BTreeSet<String> =
+        active_worktree_lease_fingerprints.into_iter().collect();
+    if current_run_fingerprints.len() != current_run_fingerprint_count {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_binding_duplicate",
+            "Authoritative harness state contains duplicate active worktree lease fingerprints for the current run.",
+            "Restore the authoritative worktree lease fingerprints and retry gate-review or gate-finish.",
+        );
+        return;
+    }
+
+    let current_run_bindings = active_worktree_lease_bindings
+        .iter()
+        .filter(|binding| binding.execution_run_id == run_identity.execution_run_id)
+        .collect::<Vec<_>>();
+    if current_run_fingerprints.is_empty() {
+        let current_run_artifacts_exist = match current_run_worktree_lease_artifacts_exist(
+            context,
+            &run_identity.execution_run_id,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "worktree_lease_artifacts_unreadable",
+                    error,
+                    "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                );
+                return;
+            }
+        };
+        if !current_run_bindings.is_empty() || current_run_artifacts_exist {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_binding_missing",
+                "Authoritative harness state is missing the active worktree lease fingerprint index for the current run.",
+                "Restore the authoritative worktree lease fingerprints and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+        return;
+    }
+    if current_run_bindings.is_empty() {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_binding_missing",
+            "Authoritative harness state is missing one or more active worktree lease bindings for the current run.",
+            "Restore the authoritative worktree lease bindings and retry gate-review or gate-finish.",
+        );
+        return;
+    }
+
+    let overlay = match load_status_authoritative_overlay_checked(context) {
+        Ok(Some(overlay)) => overlay,
+        Ok(None) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_state_unavailable",
+                "Authoritative harness state is unavailable for worktree lease gating.",
+                "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_state_unavailable",
+                error.message,
+                "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+    };
+    let Some(active_contract_path) = overlay
+        .active_contract_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_contract_missing",
+            "Authoritative harness state is missing the active contract path required to validate worktree-lease task packet provenance.",
+            "Restore the authoritative active contract and retry gate-review or gate-finish.",
+        );
+        return;
+    };
+    let Some(active_contract_fingerprint) = overlay
+        .active_contract_fingerprint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_contract_missing",
+            "Authoritative harness state is missing the active contract fingerprint required to validate worktree-lease task packet provenance.",
+            "Restore the authoritative active contract and retry gate-review or gate-finish.",
+        );
+        return;
+    };
+    if active_contract_path.contains('/') || active_contract_path.contains('\\') {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_contract_path_invalid",
+            "Authoritative active contract path must be a normalized relative filename.",
+            "Restore the authoritative active contract path and retry gate-review or gate-finish.",
+        );
+        return;
+    }
+    let expected_contract_filename = format!("contract-{active_contract_fingerprint}.md");
+    if active_contract_path != expected_contract_filename {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_contract_path_invalid",
+            "Authoritative active contract path does not match the active contract fingerprint-derived filename.",
+            "Restore the authoritative active contract path and retry gate-review or gate-finish.",
+        );
+        return;
+    }
+    let active_contract_path = crate::paths::harness_authoritative_artifact_path(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+        active_contract_path,
+    );
+    let active_contract_metadata = match fs::symlink_metadata(&active_contract_path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_contract_unreadable",
+                format!(
+                    "Could not inspect authoritative active contract {}: {error}",
+                    active_contract_path.display()
+                ),
+                "Restore the authoritative active contract and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+    };
+    if active_contract_metadata.file_type().is_symlink() || !active_contract_metadata.is_file() {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_contract_unreadable",
+            format!(
+                "Authoritative active contract must be a regular file in {}.",
+                active_contract_path.display()
+            ),
+            "Restore the authoritative active contract and retry gate-review or gate-finish.",
+        );
+        return;
+    }
+    let active_contract = match read_execution_contract(&active_contract_path) {
+        Ok(contract) => contract,
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_contract_unreadable",
+                format!(
+                    "Authoritative active contract {} is malformed: {error}",
+                    active_contract_path.display()
+                ),
+                "Restore the authoritative active contract and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+    };
+    if active_contract.contract_fingerprint != active_contract_fingerprint {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_contract_unreadable",
+            "Authoritative active contract fingerprint does not match its canonical content.",
+            "Restore the authoritative active contract and retry gate-review or gate-finish.",
+        );
+        return;
+    }
+
+    let current_head = match current_head_sha(&context.runtime.repo_root) {
+        Ok(head) => head,
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_head_unavailable",
+                error.message,
+                "Restore repository HEAD inspection and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+    };
+
+    let mut binding_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut binding_by_fingerprint: BTreeMap<String, &WorktreeLeaseBindingProbe> = BTreeMap::new();
+    for binding in current_run_bindings.iter().copied() {
+        let fingerprint = binding.lease_fingerprint.trim().to_owned();
+        if fingerprint.is_empty() || !current_run_fingerprints.contains(&fingerprint) {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_binding_missing",
+                "Authoritative harness state contains a worktree lease binding that is not indexed by the current runtime state.",
+                "Restore the authoritative worktree lease bindings and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+        *binding_counts.entry(fingerprint.clone()).or_insert(0) += 1;
+        binding_by_fingerprint.insert(fingerprint, binding);
+    }
+    if binding_counts.values().any(|count| *count > 1)
+        || binding_by_fingerprint.len() != current_run_bindings.len()
+        || binding_by_fingerprint.len() != current_run_fingerprints.len()
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_authoritative_binding_duplicate",
+            "Authoritative harness state contains duplicate or missing active worktree lease bindings for the current run.",
+            "Restore the authoritative worktree lease bindings and retry gate-review or gate-finish.",
+        );
+        return;
+    }
+
+    for fingerprint in current_run_fingerprints {
+        let binding = binding_by_fingerprint
+            .get(&fingerprint)
+            .expect("binding should exist for each current lease fingerprint");
+        let lease_artifact_path = match normalize_authoritative_artifact_binding_path(
+            &binding.lease_artifact_path,
+            "worktree lease",
+            gate,
+        ) {
+            Some(path) => path,
+            None => return,
+        };
+        let lease_path = crate::paths::harness_authoritative_artifact_path(
+            &context.runtime.state_dir,
+            &context.runtime.repo_slug,
+            &context.runtime.branch_name,
+            lease_artifact_path.to_string_lossy().as_ref(),
+        );
+        let lease_metadata = match fs::symlink_metadata(&lease_path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "worktree_lease_metadata_unreadable",
+                    format!(
+                        "Could not inspect authoritative worktree lease {}: {error}",
+                        lease_path.display()
+                    ),
+                    "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                );
+                return;
+            }
+        };
+        if lease_metadata.file_type().is_symlink() || !lease_metadata.is_file() {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_path_not_regular_file",
+                format!(
+                    "Authoritative worktree lease must be a regular file in {}.",
+                    lease_path.display()
+                ),
+                "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+
+        let source = match fs::read_to_string(&lease_path) {
+            Ok(source) => source,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "worktree_lease_unreadable",
+                    format!(
+                        "Could not read authoritative worktree lease {}: {error}",
+                        lease_path.display()
+                    ),
+                    "Restore authoritative worktree lease readability and retry gate-review or gate-finish.",
+                );
+                return;
+            }
+        };
+
+        let lease: WorktreeLease = match serde_json::from_str(&source) {
+            Ok(lease) => lease,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "worktree_lease_malformed",
+                    format!(
+                        "Authoritative worktree lease is malformed in {}: {error}",
+                        lease_path.display()
+                    ),
+                    "Repair the authoritative worktree lease artifact and retry gate-review or gate-finish.",
+                );
+                return;
+            }
+        };
+
+        let expected_lease_file_name = format!(
+            "worktree-lease-{}-{}-{}.json",
+            branch_storage_key(&context.runtime.branch_name),
+            lease.execution_run_id,
+            lease.execution_context_key
+        );
+        if lease_path.file_name().and_then(|value| value.to_str())
+            != Some(expected_lease_file_name.as_str())
+        {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_binding_path_invalid",
+                "Authoritative worktree lease binding path does not match the canonical runtime-owned filename.",
+                "Restore the authoritative worktree lease binding path and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+
+        if lease.lease_fingerprint != fingerprint {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_provenance_unindexed",
+                "Authoritative worktree lease fingerprint is not indexed by the current runtime state.",
+                "Regenerate the authoritative worktree lease from the current runtime and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+
+        if lease.execution_run_id != run_identity.execution_run_id {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_run_id_mismatch",
+                "Authoritative worktree lease body does not match the current execution run.",
+                "Regenerate the authoritative worktree lease from the current runtime and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+        if !lease_applies_to_current_plan_context(context, &lease) {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_plan_context_mismatch",
+                "Authoritative worktree lease does not match the current plan and execution context.",
+                "Regenerate the authoritative worktree lease from the current runtime and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+        if let Err(error) = validate_worktree_lease(&lease) {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_validation_failed",
+                error.message,
+                "Repair the authoritative worktree lease artifact and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+        let Some(repo_state_baseline_head_sha) = authoritative_context
+            .repo_state_baseline_head_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_state_missing",
+                "Authoritative harness state is missing the baseline head provenance required for worktree lease gating.",
+                "Restore the authoritative worktree lease baseline provenance and retry gate-review or gate-finish.",
+            );
+            return;
+        };
+        let Some(repo_state_baseline_worktree_fingerprint) = authoritative_context
+            .repo_state_baseline_worktree_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_authoritative_state_missing",
+                "Authoritative harness state is missing the baseline worktree provenance required for worktree lease gating.",
+                "Restore the authoritative worktree lease baseline provenance and retry gate-review or gate-finish.",
+            );
+            return;
+        };
+        let expected_execution_context_key = worktree_lease_execution_context_key(
+            &run_identity.execution_run_id,
+            &lease.execution_unit_id,
+            context.plan_rel.as_str(),
+            context.plan_document.plan_revision,
+            &lease.authoritative_integration_branch,
+            lease
+                .reviewed_checkpoint_commit_sha
+                .as_deref()
+                .unwrap_or("open"),
+        );
+        if lease.execution_context_key.trim() != expected_execution_context_key {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_execution_context_key_mismatch",
+                "Authoritative worktree lease body does not match the current execution context.",
+                "Regenerate the authoritative worktree lease from the current runtime context and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+        if !validate_authoritative_worktree_lease_fingerprint(
+            &source,
+            &lease,
+            lease_path.display().to_string(),
+            gate,
+        ) {
+            return;
+        }
+
+        match lease.lease_state {
+            WorktreeLeaseState::Open => {
+                gate.fail(
+                    FailureClass::ExecutionStateNotReady,
+                    "worktree_lease_open",
+                    "An authoritative worktree lease remains open.",
+                    "Reconcile and clean the worktree lease before rerunning gate-review or gate-finish.",
+                );
+                return;
+            }
+            WorktreeLeaseState::ReviewPassedPendingReconcile => {
+                gate.fail(
+                    FailureClass::ExecutionStateNotReady,
+                    "worktree_lease_reconcile_pending",
+                    "An authoritative worktree lease has passed review but not yet been reconciled.",
+                    "Reconcile the reviewed checkpoint back onto the active branch before rerunning gate-review or gate-finish.",
+                );
+                return;
+            }
+            WorktreeLeaseState::Reconciled | WorktreeLeaseState::Cleaned => {
+                let Some(review_receipt_fingerprint) = binding
+                    .review_receipt_fingerprint
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_review_receipt_missing",
+                        "An authoritative unit-review receipt is required before a cleaned worktree lease can release dependent work.",
+                        "Record the authoritative unit-review receipt for the current reviewed checkpoint and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let Some(approved_task_packet_fingerprint) = binding
+                    .approved_task_packet_fingerprint
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_review_receipt_task_packet_missing",
+                        "An authoritative unit-review receipt is required to bind the approved task packet before a cleaned worktree lease can release dependent work.",
+                        "Record the authoritative unit-review receipt for the current approved task packet and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                if !active_contract
+                    .source_task_packet_fingerprints
+                    .iter()
+                    .any(|candidate| candidate == approved_task_packet_fingerprint)
+                {
+                    gate.fail(
+                        FailureClass::MalformedExecutionState,
+                        "worktree_lease_review_receipt_task_packet_not_authoritative",
+                        "The authoritative unit-review receipt does not bind a task packet from the current authoritative contract.",
+                        "Record the authoritative unit-review receipt for the current approved task packet and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                let Some(approved_unit_contract_fingerprint) = binding
+                    .approved_unit_contract_fingerprint
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_review_receipt_unit_contract_missing",
+                        "An authoritative unit-review receipt is required to bind the approved unit contract before a cleaned worktree lease can release dependent work.",
+                        "Record the authoritative unit-review receipt for the current approved unit contract and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let expected_approved_unit_contract_fingerprint =
+                    approved_unit_contract_fingerprint_for_review(
+                        active_contract_fingerprint,
+                        approved_task_packet_fingerprint,
+                        lease.execution_unit_id.as_str(),
+                    );
+                if approved_unit_contract_fingerprint != expected_approved_unit_contract_fingerprint
+                {
+                    gate.fail(
+                        FailureClass::MalformedExecutionState,
+                        "worktree_lease_review_receipt_unit_contract_mismatch",
+                        "The authoritative unit-review receipt does not bind the canonical approved unit contract fingerprint.",
+                        "Record the authoritative unit-review receipt for the current approved unit contract and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                let Some(reviewed_checkpoint_commit_sha) = binding
+                    .reviewed_checkpoint_commit_sha
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_review_receipt_missing",
+                        "An authoritative unit-review receipt is required to bind the reviewed checkpoint before a cleaned worktree lease can release dependent work.",
+                        "Record the authoritative unit-review receipt for the current reviewed checkpoint and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let Some(reconcile_mode) = binding
+                    .reconcile_mode
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_reconcile_mode_missing",
+                        "An authoritative unit-review receipt is required to bind the identity-preserving reconcile mode before a cleaned worktree lease can release dependent work.",
+                        "Record the authoritative unit-review receipt for the current identity-preserving reconcile and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let Some(reconcile_result_commit_sha) = binding
+                    .reconcile_result_commit_sha
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_identity_preserving_proof_missing",
+                        "An authoritative unit-review receipt is required to bind the exact reconciled commit before a cleaned worktree lease can release dependent work.",
+                        "Record the authoritative unit-review receipt for the current exact reconciled commit and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let Some(reconcile_result_proof_fingerprint) = binding
+                    .reconcile_result_proof_fingerprint
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_identity_preserving_proof_missing",
+                        "An authoritative unit-review receipt is required to bind the exact reconciled commit object before a cleaned worktree lease can release dependent work.",
+                        "Record the authoritative unit-review receipt for the current exact reconciled commit object and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let Some(expected_reconcile_result_commit_sha) = lease
+                    .reconcile_result_commit_sha
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_identity_preserving_proof_missing",
+                        "An authoritative worktree lease is missing the exact reconciled commit proof required to release dependent work.",
+                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let Some(expected_reconcile_result_proof_fingerprint) = lease
+                    .reconcile_result_proof_fingerprint
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_identity_preserving_proof_missing",
+                        "An authoritative worktree lease is missing the exact reconciled commit object proof required to release dependent work.",
+                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let Some(computed_reconcile_result_proof_fingerprint) =
+                    reconcile_result_proof_fingerprint_for_review(
+                        &context.runtime.repo_root,
+                        expected_reconcile_result_commit_sha,
+                    )
+                else {
+                    gate.fail(
+                        FailureClass::MalformedExecutionState,
+                        "worktree_lease_identity_preserving_proof_unverifiable",
+                        "The authoritative worktree lease exact reconcile proof could not be verified against repository history.",
+                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                if expected_reconcile_result_proof_fingerprint
+                    != computed_reconcile_result_proof_fingerprint
+                {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_identity_preserving_lease_proof_mismatch",
+                        "The authoritative worktree lease exact reconciled commit object proof does not match the reviewed reconcile proof.",
+                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                if reconcile_result_proof_fingerprint != computed_reconcile_result_proof_fingerprint
+                {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_identity_preserving_proof_mismatch",
+                        "The authoritative worktree lease exact reconciled commit object does not match the authoritative unit-review receipt.",
+                        "Regenerate the authoritative worktree lease from the recorded unit-review receipt and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                let Some(review_receipt_path_name) = binding
+                    .review_receipt_artifact_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_review_receipt_missing",
+                        "An authoritative unit-review receipt is required before a cleaned worktree lease can release dependent work.",
+                        "Record the authoritative unit-review receipt for the current reviewed checkpoint and retry gate-review or gate-finish.",
+                    );
+                    return;
+                };
+                let review_receipt_path_name = match normalize_authoritative_artifact_binding_path(
+                    review_receipt_path_name,
+                    "unit-review receipt",
+                    gate,
+                ) {
+                    Some(path) => path,
+                    None => return,
+                };
+                let review_receipt_path = crate::paths::harness_authoritative_artifact_path(
+                    &context.runtime.state_dir,
+                    &context.runtime.repo_slug,
+                    &context.runtime.branch_name,
+                    review_receipt_path_name.to_string_lossy().as_ref(),
+                );
+                let review_metadata = match fs::symlink_metadata(&review_receipt_path) {
+                    Ok(metadata) => metadata,
+                    Err(error) => {
+                        gate.fail(
+                            FailureClass::ExecutionStateNotReady,
+                            "worktree_lease_review_receipt_missing",
+                            format!(
+                                "Could not inspect authoritative unit-review receipt {}: {error}",
+                                review_receipt_path.display()
+                            ),
+                            "Record the authoritative unit-review receipt for the current reviewed checkpoint and retry gate-review or gate-finish.",
+                        );
+                        return;
+                    }
+                };
+                if review_metadata.file_type().is_symlink() || !review_metadata.is_file() {
+                    gate.fail(
+                        FailureClass::MalformedExecutionState,
+                        "worktree_lease_review_receipt_path_not_regular_file",
+                        format!(
+                            "Authoritative unit-review receipt must be a regular file in {}.",
+                            review_receipt_path.display()
+                        ),
+                        "Restore the authoritative unit-review receipt and retry gate-review or gate-finish.",
+                        );
+                    return;
+                }
+                let expected_review_receipt_filename = format!(
+                    "unit-review-{}-{}.md",
+                    run_identity.execution_run_id,
+                    lease.execution_unit_id.trim_start_matches("unit-")
+                );
+                if review_receipt_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    != Some(expected_review_receipt_filename.as_str())
+                {
+                    gate.fail(
+                        FailureClass::MalformedExecutionState,
+                        "worktree_lease_binding_path_invalid",
+                        "Authoritative unit-review receipt binding path does not match the reviewed execution unit provenance.",
+                        "Restore the authoritative unit-review receipt binding path and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                let review_source = match fs::read_to_string(&review_receipt_path) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        gate.fail(
+                            FailureClass::ExecutionStateNotReady,
+                            "worktree_lease_review_receipt_unreadable",
+                            format!(
+                                "Could not read authoritative unit-review receipt {}: {error}",
+                                review_receipt_path.display()
+                            ),
+                            "Restore the authoritative unit-review receipt and retry gate-review or gate-finish.",
+                        );
+                        return;
+                    }
+                };
+                let (receipt_checkpoint_commit_sha, receipt_reconciled_result_commit_sha) =
+                    match validate_authoritative_unit_review_receipt(
+                        context,
+                        &run_identity.execution_run_id,
+                        &lease,
+                        &expected_execution_context_key,
+                        &review_source,
+                        &review_receipt_path,
+                        review_receipt_fingerprint,
+                        approved_task_packet_fingerprint,
+                        approved_unit_contract_fingerprint,
+                        expected_reconcile_result_commit_sha,
+                        gate,
+                    ) {
+                        Some(values) => values,
+                        None => return,
+                    };
+
+                if reviewed_checkpoint_commit_sha != receipt_checkpoint_commit_sha {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_identity_preserving_provenance_mismatch",
+                        "Authoritative worktree lease reviewed checkpoint does not match the runtime-owned unit-review binding.",
+                        "Regenerate the authoritative worktree lease from the recorded unit-review receipt and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                if reconcile_result_commit_sha != receipt_reconciled_result_commit_sha {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_identity_preserving_proof_mismatch",
+                        "Authoritative worktree lease reconciled result does not match the runtime-owned unit-review binding.",
+                        "Regenerate the authoritative worktree lease from the recorded unit-review receipt and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                if binding
+                    .execution_context_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    != Some(expected_execution_context_key.as_str())
+                {
+                    gate.fail(
+                        FailureClass::MalformedExecutionState,
+                        "worktree_lease_execution_context_key_mismatch",
+                        "Authoritative worktree lease binding does not match the current execution context.",
+                        "Regenerate the authoritative worktree lease binding from the current runtime context and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                if reconcile_mode != "identity_preserving"
+                    || lease.reconcile_mode.trim() != "identity_preserving"
+                {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_identity_preserving_reconcile_mode_mismatch",
+                        "Authoritative worktree lease does not prove an identity-preserving reconcile.",
+                        "Regenerate the authoritative worktree lease from the recorded identity-preserving reconcile and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+
+                if lease.reviewed_checkpoint_commit_sha.as_deref()
+                    != Some(receipt_checkpoint_commit_sha.as_str())
+                {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_review_receipt_checkpoint_mismatch",
+                        "Authoritative worktree lease reviewed checkpoint does not match the authoritative unit-review receipt.",
+                        "Regenerate the authoritative worktree lease from the recorded unit-review receipt and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                if Some(lease.repo_state_baseline_head_sha.as_str())
+                    != authoritative_context
+                        .repo_state_baseline_head_sha
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_identity_preserving_provenance_mismatch",
+                        "Authoritative worktree lease baseline head provenance does not match the current authoritative baseline.",
+                        "Regenerate the authoritative worktree lease from the identity-preserving reviewed checkpoint and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                if Some(lease.repo_state_baseline_worktree_fingerprint.as_str())
+                    != authoritative_context
+                        .repo_state_baseline_worktree_fingerprint
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_identity_preserving_provenance_mismatch",
+                        "Authoritative worktree lease baseline worktree provenance does not match the current authoritative baseline.",
+                        "Regenerate the authoritative worktree lease from the identity-preserving reviewed checkpoint and retry gate-review or gate-finish.",
+                    );
+                    return;
+                }
+                if !is_ancestor_commit(
+                    &context.runtime.repo_root,
+                    &receipt_checkpoint_commit_sha,
+                    &reconcile_result_commit_sha,
+                ) {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_checkpoint_mismatch",
+                        "Authoritative worktree lease reconciled result is not descended from the reviewed checkpoint.",
+                        "Reconcile the reviewed checkpoint back onto the active branch history and rerun gate-review or gate-finish with a fresh lease.",
+                    );
+                    return;
+                }
+                if !is_ancestor_commit(
+                    &context.runtime.repo_root,
+                    &reconcile_result_commit_sha,
+                    &current_head,
+                ) {
+                    gate.fail(
+                        FailureClass::StaleProvenance,
+                        "worktree_lease_checkpoint_mismatch",
+                        "Authoritative worktree lease reconciled result is not contained in the current branch history.",
+                        "Reconcile the reviewed checkpoint back onto the active branch history and rerun gate-review or gate-finish with a fresh lease.",
+                    );
+                    return;
+                }
+                if lease.cleanup_state.trim() != "cleaned" {
+                    gate.fail(
+                        FailureClass::ExecutionStateNotReady,
+                        "worktree_lease_cleanup_pending",
+                        "Authoritative worktree lease has not been cleaned up yet.",
+                        "Clean the temporary worktree before rerunning gate-review or gate-finish.",
+                    );
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn load_worktree_lease_authoritative_context_checked(
+    context: &ExecutionContext,
+) -> Result<Option<WorktreeLeaseAuthoritativeContextProbe>, JsonFailure> {
+    let state_path = authoritative_state_path(context);
+    let metadata = match fs::symlink_metadata(&state_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not inspect authoritative harness state {}: {error}",
+                    state_path.display()
+                ),
+            ));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state path must not be a symlink in {}.",
+                state_path.display()
+            ),
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state must be a regular file in {}.",
+                state_path.display()
+            ),
+        ));
+    }
+
+    let source = fs::read_to_string(&state_path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Could not read authoritative harness state {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    let context: WorktreeLeaseAuthoritativeContextProbe =
+        serde_json::from_str(&source).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Authoritative harness state is malformed in {}: {error}",
+                    state_path.display()
+                ),
+            )
+        })?;
+    Ok(Some(context))
+}
+
+fn lease_applies_to_current_plan_context(
+    context: &ExecutionContext,
+    lease: &WorktreeLease,
+) -> bool {
+    lease.source_plan_path == context.plan_rel
+        && lease.source_plan_revision == context.plan_document.plan_revision
+        && lease.authoritative_integration_branch == context.runtime.branch_name
+        && !lease.source_branch.trim().is_empty()
+}
+
+fn normalize_authoritative_artifact_binding_path(
+    raw_path: &str,
+    artifact_kind: &str,
+    gate: &mut GateState,
+) -> Option<PathBuf> {
+    let trimmed = raw_path.trim();
+    let mut components = Path::new(trimmed).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(component)), None) => {
+            let filename = component.to_string_lossy();
+            if filename.is_empty() {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "worktree_lease_binding_path_invalid",
+                    format!(
+                        "Authoritative {artifact_kind} binding path must be a normalized relative filename."
+                    ),
+                    format!(
+                        "Restore the authoritative {artifact_kind} binding path and retry gate-review or gate-finish."
+                    ),
+                );
+                None
+            } else {
+                Some(PathBuf::from(filename.as_ref()))
+            }
+        }
+        _ => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "worktree_lease_binding_path_invalid",
+                format!(
+                    "Authoritative {artifact_kind} binding path must be a normalized relative filename."
+                ),
+                format!(
+                    "Restore the authoritative {artifact_kind} binding path and retry gate-review or gate-finish."
+                ),
+            );
+            None
+        }
+    }
+}
+
+fn current_run_worktree_lease_artifacts_exist(
+    context: &ExecutionContext,
+    execution_run_id: &str,
+) -> Result<bool, String> {
+    let artifacts_dir = crate::paths::harness_authoritative_artifacts_dir(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    );
+    let entries = match fs::read_dir(&artifacts_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect authoritative worktree leases in {}: {error}",
+                artifacts_dir.display()
+            ));
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Could not inspect authoritative worktree leases in {}: {error}",
+                artifacts_dir.display()
+            )
+        })?;
+        let file_path = entry.path();
+        let Some(file_name) = file_path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !file_name.ends_with(".json") {
+            continue;
+        }
+        let canonical_prefix = format!(
+            "worktree-lease-{}-{}-",
+            branch_storage_key(&context.runtime.branch_name),
+            execution_run_id
+        );
+        let canonical_candidate = file_name.starts_with(&canonical_prefix);
+        let metadata = match fs::symlink_metadata(&file_path) {
+            Ok(metadata) => metadata,
+            Err(error) if canonical_candidate => {
+                return Err(format!(
+                    "Could not inspect authoritative worktree lease {}: {error}",
+                    file_path.display()
+                ));
+            }
+            Err(_) => continue,
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            if canonical_candidate {
+                return Err(format!(
+                    "Authoritative worktree lease must be a regular file in {}.",
+                    file_path.display()
+                ));
+            }
+            continue;
+        }
+        let Ok(source) = fs::read_to_string(&file_path) else {
+            if canonical_candidate {
+                return Err(format!(
+                    "Could not read authoritative worktree lease {}.",
+                    file_path.display()
+                ));
+            }
+            continue;
+        };
+        let lease = match serde_json::from_str::<WorktreeLease>(&source) {
+            Ok(lease) => lease,
+            Err(error) if canonical_candidate => {
+                return Err(format!(
+                    "Authoritative worktree lease is malformed in {}: {error}",
+                    file_path.display()
+                ));
+            }
+            Err(_) => continue,
+        };
+        let matches_current_run = lease.execution_run_id == execution_run_id
+            && lease.source_plan_path == context.plan_rel
+            && lease.source_plan_revision == context.plan_document.plan_revision
+            && lease.authoritative_integration_branch == context.runtime.branch_name;
+        if !matches_current_run {
+            if canonical_candidate {
+                return Err(format!(
+                    "Authoritative worktree lease {} does not match the current run context.",
+                    file_path.display()
+                ));
+            }
+            continue;
+        }
+        let reviewed_checkpoint_commit_sha = lease
+            .reviewed_checkpoint_commit_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("open");
+        let expected_execution_context_key = worktree_lease_execution_context_key(
+            execution_run_id,
+            lease.execution_unit_id.as_str(),
+            context.plan_rel.as_str(),
+            context.plan_document.plan_revision,
+            lease.authoritative_integration_branch.as_str(),
+            reviewed_checkpoint_commit_sha,
+        );
+        if lease.execution_context_key != expected_execution_context_key {
+            if canonical_candidate {
+                return Err(format!(
+                    "Authoritative worktree lease {} does not match the current execution context.",
+                    file_path.display()
+                ));
+            }
+            continue;
+        }
+        if let Err(error) = validate_worktree_lease(&lease) {
+            if canonical_candidate || matches_current_run {
+                return Err(error.message);
+            }
+            continue;
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn validate_authoritative_worktree_lease_fingerprint(
+    source: &str,
+    lease: &WorktreeLease,
+    lease_path: String,
+    gate: &mut GateState,
+) -> bool {
+    let Some(canonical_fingerprint) = canonical_worktree_lease_fingerprint(source) else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_fingerprint_unverifiable",
+            format!(
+                "Authoritative worktree lease fingerprint is unverifiable in {}.",
+                lease_path
+            ),
+            "Repair the authoritative worktree lease artifact and retry gate-review or gate-finish.",
+        );
+        return false;
+    };
+
+    if canonical_fingerprint != lease.lease_fingerprint {
+        gate.fail(
+            FailureClass::ArtifactIntegrityMismatch,
+            "worktree_lease_fingerprint_mismatch",
+            format!(
+                "Authoritative worktree lease fingerprint does not match canonical content in {}.",
+                lease_path
+            ),
+            "Regenerate the authoritative worktree lease artifact from canonical content and retry gate-review or gate-finish.",
+        );
+        return false;
+    }
+
+    true
+}
+
+fn canonical_worktree_lease_fingerprint(source: &str) -> Option<String> {
+    let mut value: serde_json::Value = serde_json::from_str(source).ok()?;
+    let object = value.as_object_mut()?;
+    object.remove("lease_fingerprint");
+    serde_json::to_vec(&value)
+        .ok()
+        .map(|bytes| sha256_hex(&bytes))
+}
+
+fn worktree_lease_execution_context_key(
+    execution_run_id: &str,
+    execution_unit_id: &str,
+    source_plan_path: &str,
+    source_plan_revision: u32,
+    authoritative_integration_branch: &str,
+    reviewed_checkpoint_commit_sha: &str,
+) -> String {
+    sha256_hex(
+        format!(
+            "run={execution_run_id}\nunit={execution_unit_id}\nplan={source_plan_path}\nplan_revision={source_plan_revision}\nbranch={authoritative_integration_branch}\nreviewed_checkpoint={reviewed_checkpoint_commit_sha}\n"
+        )
+        .as_bytes(),
+    )
+}
+
+fn approved_unit_contract_fingerprint_for_review(
+    active_contract_fingerprint: &str,
+    approved_task_packet_fingerprint: &str,
+    execution_unit_id: &str,
+) -> String {
+    sha256_hex(
+        format!(
+            "approved-unit-contract:{active_contract_fingerprint}:{approved_task_packet_fingerprint}:{execution_unit_id}"
+        )
+            .as_bytes(),
+    )
+}
+
+fn reconcile_result_proof_fingerprint_for_review(
+    repo_root: &Path,
+    reconcile_result_commit_sha: &str,
+) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["cat-file", "commit", reconcile_result_commit_sha])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let object = String::from_utf8(output.stdout).ok()?;
+    Some(sha256_hex(object.as_bytes()))
+}
+
+fn validate_authoritative_unit_review_receipt(
+    context: &ExecutionContext,
+    execution_run_id: &str,
+    lease: &WorktreeLease,
+    expected_execution_context_key: &str,
+    source: &str,
+    receipt_path: &Path,
+    expected_fingerprint: &str,
+    expected_task_packet_fingerprint: &str,
+    expected_approved_unit_contract_fingerprint: &str,
+    expected_reconcile_result_commit_sha: &str,
+    gate: &mut GateState,
+) -> Option<(String, String)> {
+    let review_document = parse_artifact_document(receipt_path);
+    if review_document.title.as_deref() != Some("# Unit Review Result") {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_malformed",
+            "The authoritative unit-review receipt is malformed.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Review Stage")
+        .map(String::as_str)
+        != Some("featureforge:unit-review")
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_stage_mismatch",
+            "The authoritative unit-review receipt has the wrong review stage.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Reviewer Provenance")
+        .map(String::as_str)
+        != Some("dedicated-independent")
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_not_dedicated",
+            "The authoritative unit-review receipt is not dedicated-independent.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Source Plan")
+        .map(String::as_str)
+        != Some(context.plan_rel.as_str())
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_plan_mismatch",
+            "The authoritative unit-review receipt does not match the current plan.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Source Plan Revision")
+        .and_then(|value| value.parse::<u32>().ok())
+        != Some(context.plan_document.plan_revision)
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_plan_revision_mismatch",
+            "The authoritative unit-review receipt does not match the current plan revision.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Execution Run ID")
+        .map(String::as_str)
+        != Some(execution_run_id)
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_run_mismatch",
+            "The authoritative unit-review receipt does not match the current execution run.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Execution Unit ID")
+        .map(String::as_str)
+        != Some(lease.execution_unit_id.as_str())
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_unit_mismatch",
+            "The authoritative unit-review receipt does not match the reviewed execution unit.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Lease Fingerprint")
+        .map(String::as_str)
+        != Some(lease.lease_fingerprint.as_str())
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_lease_fingerprint_mismatch",
+            "The authoritative unit-review receipt does not match the reviewed lease fingerprint.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Execution Context Key")
+        .map(String::as_str)
+        != Some(expected_execution_context_key)
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_context_key_mismatch",
+            "The authoritative unit-review receipt does not match the current execution context.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Approved Task Packet Fingerprint")
+        .map(String::as_str)
+        != Some(expected_task_packet_fingerprint)
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_task_packet_mismatch",
+            "The authoritative unit-review receipt does not match the approved task packet.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Approved Unit Contract Fingerprint")
+        .map(String::as_str)
+        != Some(expected_approved_unit_contract_fingerprint)
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_unit_contract_mismatch",
+            "The authoritative unit-review receipt does not bind the approved unit contract.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if expected_approved_unit_contract_fingerprint == expected_task_packet_fingerprint {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_unit_contract_mismatch",
+            "The authoritative unit-review receipt must bind a distinct approved unit contract fingerprint.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Reconcile Mode")
+        .map(String::as_str)
+        != Some("identity_preserving")
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_reconcile_mode_mismatch",
+            "The authoritative unit-review receipt does not prove an identity-preserving reconcile.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Reconciled Result SHA")
+        .map(String::as_str)
+        != Some(expected_reconcile_result_commit_sha)
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_identity_preserving_proof_mismatch",
+            "The authoritative unit-review receipt does not bind the exact reconciled commit.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    let Some(expected_reconcile_result_proof_fingerprint) =
+        reconcile_result_proof_fingerprint_for_review(
+            &context.runtime.repo_root,
+            expected_reconcile_result_commit_sha,
+        )
+    else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_identity_preserving_proof_unverifiable",
+            "The authoritative unit-review receipt exact reconcile proof could not be verified against repository history.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    };
+    if review_document
+        .headers
+        .get("Reconcile Result Proof Fingerprint")
+        .map(String::as_str)
+        != Some(expected_reconcile_result_proof_fingerprint.as_str())
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_identity_preserving_proof_mismatch",
+            "The authoritative unit-review receipt does not bind the exact reconciled commit object.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Reviewed Worktree")
+        .map(String::as_str)
+        != Some(lease.worktree_path.as_str())
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_worktree_mismatch",
+            "The authoritative unit-review receipt does not match the reviewed worktree.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document.headers.get("Result").map(String::as_str) != Some("pass") {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_not_pass",
+            "The authoritative unit-review receipt is not marked pass.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Generated By")
+        .map(String::as_str)
+        != Some("featureforge:unit-review")
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_generator_mismatch",
+            "The authoritative unit-review receipt does not come from the unit-review generator.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    let expected_receipt_filename = format!(
+        "unit-review-{}-{}.md",
+        execution_run_id,
+        lease.execution_unit_id.trim_start_matches("unit-")
+    );
+    if receipt_path.file_name().and_then(|value| value.to_str())
+        != Some(expected_receipt_filename.as_str())
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_binding_path_invalid",
+            "The authoritative unit-review receipt path does not match the reviewed execution unit provenance.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    let Some(receipt_checkpoint_commit_sha) = review_document
+        .headers
+        .get("Reviewed Checkpoint SHA")
+        .cloned()
+    else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_head_missing",
+            "The authoritative unit-review receipt is missing its reviewed checkpoint.",
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    };
+
+    let Some(canonical_fingerprint) = canonical_unit_review_receipt_fingerprint(source) else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "worktree_lease_review_receipt_fingerprint_unverifiable",
+            format!(
+                "Authoritative unit-review receipt fingerprint is unverifiable in {}.",
+                receipt_path.display()
+            ),
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return None;
+    };
+    if canonical_fingerprint != expected_fingerprint {
+        gate.fail(
+            FailureClass::ArtifactIntegrityMismatch,
+            "worktree_lease_review_receipt_fingerprint_mismatch",
+            format!(
+                "Authoritative unit-review receipt fingerprint does not match canonical content in {}.",
+                receipt_path.display()
+            ),
+            "Regenerate the authoritative unit-review receipt from canonical content and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+    if review_document
+        .headers
+        .get("Receipt Fingerprint")
+        .map(String::as_str)
+        != Some(expected_fingerprint)
+    {
+        gate.fail(
+            FailureClass::ArtifactIntegrityMismatch,
+            "worktree_lease_review_receipt_fingerprint_mismatch",
+            format!(
+                "Authoritative unit-review receipt fingerprint header does not match canonical content in {}.",
+                receipt_path.display()
+            ),
+            "Regenerate the authoritative unit-review receipt from canonical content and retry gate-review or gate-finish.",
+        );
+        return None;
+    }
+
+    Some((
+        receipt_checkpoint_commit_sha,
+        expected_reconcile_result_commit_sha.to_owned(),
+    ))
+}
+
+fn canonical_unit_review_receipt_fingerprint(source: &str) -> Option<String> {
+    let filtered = source
+        .lines()
+        .filter(|line| !line.trim().starts_with("**Receipt Fingerprint:**"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(sha256_hex(filtered.as_bytes()))
+}
+
+fn is_ancestor_commit(repo_root: &Path, ancestor: &str, descendant: &str) -> bool {
+    let status = match Command::new("git")
+        .current_dir(repo_root)
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .status()
+    {
+        Ok(status) => status,
+        Err(_) => return false,
+    };
+
+    match status.code() {
+        Some(0) => true,
+        Some(1) => false,
+        _ => false,
+    }
+}
+
 pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
-    let mut gate = GateState::from_result(gate_review_from_context_internal(context, false));
+    let mut gate = GateState::from_result(gate_review_from_context_internal(context, true));
     if !gate.allowed {
         return gate.finish();
     }
@@ -1668,8 +3380,8 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         .is_some_and(|value| value == "yes")
     {
         let qa_uses_authoritative_provenance = authoritative_qa_path.is_some();
-        let qa_path =
-            authoritative_qa_path.or_else(|| latest_branch_artifact_path(&artifact_dir, branch, "test-outcome"));
+        let qa_path = authoritative_qa_path
+            .or_else(|| latest_branch_artifact_path(&artifact_dir, branch, "test-outcome"));
         let Some(qa_path) = qa_path else {
             gate.fail(
                 FailureClass::QaArtifactNotFresh,
@@ -1958,9 +3670,7 @@ fn validate_review_downstream_truth(
     gate.fail(
         FailureClass::StaleProvenance,
         &format!("{field_name}_{code_suffix}"),
-        format!(
-            "Authoritative {field_label} truth {message_suffix} for review readiness."
-        ),
+        format!("Authoritative {field_label} truth {message_suffix} for review readiness."),
         "Refresh authoritative late-gate truth before running gate-review.",
     );
 }
