@@ -270,8 +270,7 @@ Task 10  fixture/doc parity and full regression gate
 - [x] **Step 3: Tighten `src/cli/session_entry.rs` and `src/cli/workflow.rs` so downstream routing cannot outrun `featureforge session-entry resolve --message-file <path>`**
 - [x] **Step 4: Update `skills/using-featureforge/SKILL.md.tmpl`, regenerate `skills/using-featureforge/SKILL.md`, and regenerate `schemas/session-entry-resolve.schema.json` from the current helper contract**
 - [x] **Step 5: Run `cargo nextest run --test using_featureforge_skill --test runtime_instruction_contracts --test workflow_entry_shell_smoke` and `node scripts/gen-skill-docs.mjs --check`, then fix failures until the slice is green**
-- [ ] **Step 6: Commit the slice with `git commit -m "feat: harden first-entry session gate"`**
-
+- [x] **Step 6: Commit the slice with `git commit -m "feat: harden first-entry session gate"`**
 ## Task 2: Add the Independent Plan-Fidelity Gate
 
 **Spec Coverage:** REQ-006, REQ-007, DEC-002, VERIFY-001
@@ -309,7 +308,6 @@ Task 10  fixture/doc parity and full regression gate
 - [x] **Step 4: Update `skills/using-featureforge/*` so draft-plan routing points to the dedicated independent subagent plan-fidelity review instead of directly to `plan-eng-review`; update `skills/writing-plans/*` so the workflow explicitly dispatches or resumes that reviewer and requires a substantive spec-to-plan fidelity check; update `skills/plan-eng-review/*` so engineering review refuses to start without that receipt; then regenerate the checked-in skill docs**
 - [x] **Step 5: Regenerate `schemas/workflow-status.schema.json`, then run `cargo nextest run --test contracts_spec_plan --test workflow_runtime --test runtime_instruction_plan_review_contracts` plus `node scripts/gen-skill-docs.mjs --check`**
 - [x] **Step 6: Commit the slice with `git commit -m "feat: gate plan review on fidelity receipts"`**
-
 ## Task 3: Make the Approved Plan Contract Parallel-First
 
 **Spec Coverage:** REQ-004, REQ-005, REQ-008, REQ-033, REQ-034, DEC-003, DEC-018, VERIFY-001
@@ -342,13 +340,12 @@ Task 10  fixture/doc parity and full regression gate
 - Test: `tests/runtime_instruction_parallel_plan_contracts.rs`
 - Test: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Add red contract tests and fixture cases for missing dependency truth, missing write scope, missing workspace expectations, unjustified serial work, and plans that claim parallel lanes without either disjoint ownership or an explicit serial seam around hotspot files**
-- [ ] **Step 2: Extend `src/contracts/plan.rs`, `src/contracts/runtime.rs`, `src/cli/plan_contract.rs`, and `schemas/plan-contract-analyze.schema.json` to parse and lint the parallel-first fields plus the concrete lane-ownership and serial-seam requirements needed for review pressure tests**
-- [ ] **Step 3: Update `skills/writing-plans/*` so planners must describe clean lane decomposition, hotspot-file handling, and explicit reintegration seams; update `skills/plan-eng-review/*` so reviewers pressure-test claimed parallelism against the concrete task/file ownership model and fail plans that are only parallel on paper; then regenerate the checked-in skill docs**
-- [ ] **Step 4: Refresh the plan-contract fixtures in `tests/codex-runtime/fixtures/plan-contract/`, including one invalid fake-parallel hotspot example and the skill-doc contract test expectations**
-- [ ] **Step 5: Run `cargo nextest run --test contracts_spec_plan --test runtime_instruction_parallel_plan_contracts` and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`, then fix failures until the slice is green**
-- [ ] **Step 6: Commit the slice with `git commit -m "feat: require parallel-first approved plans"`**
-
+- [x] **Step 1: Add red contract tests and fixture cases for missing dependency truth, missing write scope, missing workspace expectations, unjustified serial work, and plans that claim parallel lanes without either disjoint ownership or an explicit serial seam around hotspot files**
+- [x] **Step 2: Extend `src/contracts/plan.rs`, `src/contracts/runtime.rs`, `src/cli/plan_contract.rs`, and `schemas/plan-contract-analyze.schema.json` to parse and lint the parallel-first fields plus the concrete lane-ownership and serial-seam requirements needed for review pressure tests**
+- [x] **Step 3: Update `skills/writing-plans/*` so planners must describe clean lane decomposition, hotspot-file handling, and explicit reintegration seams; update `skills/plan-eng-review/*` so reviewers pressure-test claimed parallelism against the concrete task/file ownership model and fail plans that are only parallel on paper; then regenerate the checked-in skill docs**
+- [x] **Step 4: Refresh the plan-contract fixtures in `tests/codex-runtime/fixtures/plan-contract/`, including one invalid fake-parallel hotspot example and the skill-doc contract test expectations**
+- [x] **Step 5: Run `cargo nextest run --test contracts_spec_plan --test runtime_instruction_parallel_plan_contracts` and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`, then fix failures until the slice is green**
+- [x] **Step 6: Commit the slice with `git commit -m "feat: require parallel-first approved plans"`**
 ## Task 4: Prepare Parallel Lane Ownership
 
 **Spec Coverage:** REQ-027, REQ-028, DEC-001, VERIFY-001
@@ -385,13 +382,12 @@ Task 10  fixture/doc parity and full regression gate
 - Test: `tests/plan_execution_final_review.rs`
 - Test: `tests/workflow_runtime_final_review.rs`
 
-- [ ] **Step 1: Extract shared helpers and placeholder state structures out of `src/execution/state.rs`, `src/workflow/status.rs`, and `src/workflow/operator.rs` into the new focused execution modules without changing approval behavior yet**
-- [ ] **Step 2: Shard the shared regression suites by moving topology, lease-contract, and final-review-specific cases into the new focused test files while keeping the old shared suites compiling**
-- [ ] **Step 3: Wire `src/execution/mod.rs` to expose the new module boundaries and prove the repo still builds with the shared glue reserved for a later integration task**
-- [ ] **Step 4: Run `cargo nextest run --test plan_execution --test workflow_runtime --test workflow_shell_smoke --test plan_execution_topology --test contracts_execution_leases --test plan_execution_final_review --test workflow_runtime_final_review`, then fix parity regressions until the extraction slice is green**
-- [ ] **Step 5: Confirm Tasks 5, 6, and 7 now have disjoint write sets and create separate worktrees for those lanes**
-- [ ] **Step 6: Commit the slice with `git commit -m "refactor: prepare parallel ownership seams"`**
-
+- [x] **Step 1: Extract shared helpers and placeholder state structures out of `src/execution/state.rs`, `src/workflow/status.rs`, and `src/workflow/operator.rs` into the new focused execution modules without changing approval behavior yet**
+- [x] **Step 2: Shard the shared regression suites by moving topology, lease-contract, and final-review-specific cases into the new focused test files while keeping the old shared suites compiling**
+- [x] **Step 3: Wire `src/execution/mod.rs` to expose the new module boundaries and prove the repo still builds with the shared glue reserved for a later integration task**
+- [x] **Step 4: Run `cargo nextest run --test plan_execution --test workflow_runtime --test workflow_shell_smoke --test plan_execution_topology --test contracts_execution_leases --test plan_execution_final_review --test workflow_runtime_final_review`, then fix parity regressions until the extraction slice is green**
+- [x] **Step 5: Confirm Tasks 5, 6, and 7 now have disjoint write sets and create separate worktrees for those lanes**
+- [x] **Step 6: Commit the slice with `git commit -m "refactor: prepare parallel ownership seams"`**
 ## Task 5: Lane A - Implement Worktree Lease and Downgrade Artifact Modules
 
 **Spec Coverage:** REQ-012, REQ-013, REQ-014, REQ-027, REQ-028, REQ-029, REQ-030, REQ-031, REQ-032, DEC-008, DEC-013, DEC-014, DEC-015, DEC-016, DEC-017, VERIFY-001, NONGOAL-003
@@ -412,12 +408,11 @@ Task 10  fixture/doc parity and full regression gate
 - Test: `tests/contracts_execution_harness.rs`
 - Test: `tests/contracts_execution_leases.rs`
 
-- [ ] **Step 1: Add red contract tests in `tests/contracts_execution_harness.rs` and `tests/contracts_execution_leases.rs` for lease lifecycle states, downgrade reason classes, structured detail validation, and rerun-guidance persistence**
-- [ ] **Step 2: Extend `src/contracts/harness.rs` and `src/contracts/mod.rs` with `WorktreeLease`, downgrade-record, reason-class, and structured-detail contracts**
-- [ ] **Step 3: Implement focused lease and downgrade helpers in `src/execution/leases.rs` and `src/execution/observability.rs` without reopening shared runtime glue**
-- [ ] **Step 4: Run `cargo nextest run --test contracts_execution_harness --test contracts_execution_leases`, then fix failures until the lane is green**
-- [ ] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "feat: add lease and downgrade artifact modules"`**
-
+- [x] **Step 1: Add red contract tests in `tests/contracts_execution_harness.rs` and `tests/contracts_execution_leases.rs` for lease lifecycle states, downgrade reason classes, structured detail validation, and rerun-guidance persistence**
+- [x] **Step 2: Extend `src/contracts/harness.rs` and `src/contracts/mod.rs` with `WorktreeLease`, downgrade-record, reason-class, and structured-detail contracts**
+- [x] **Step 3: Implement focused lease and downgrade helpers in `src/execution/leases.rs` and `src/execution/observability.rs` without reopening shared runtime glue**
+- [x] **Step 4: Run `cargo nextest run --test contracts_execution_harness --test contracts_execution_leases`, then fix failures until the lane is green**
+- [x] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "feat: add lease and downgrade artifact modules"`**
 ## Task 6: Lane B - Implement Topology Recommendation and Execution Skill Orchestration
 
 **Spec Coverage:** REQ-009, REQ-010, REQ-011, REQ-027, REQ-028, REQ-029, REQ-030, DEC-004, DEC-011, DEC-013, DEC-014, VERIFY-001
@@ -445,12 +440,11 @@ Task 10  fixture/doc parity and full regression gate
 - Test: `tests/plan_execution_topology.rs`
 - Test: `tests/runtime_instruction_execution_contracts.rs`
 
-- [ ] **Step 1: Add red topology and execution-doc tests in `tests/plan_execution_topology.rs` and `tests/runtime_instruction_execution_contracts.rs` for worktree-backed parallel recommendation, conservative fallback, and downgrade-history reuse**
-- [ ] **Step 2: Implement topology selection and recommendation helpers in `src/execution/topology.rs`, `src/execution/harness.rs`, and `src/cli/plan_execution.rs`**
-- [ ] **Step 3: Update the execution-facing skill templates so they follow the runtime-selected topology and worktree-first orchestration model, then regenerate the checked-in skill docs**
-- [ ] **Step 4: Run `cargo nextest run --test plan_execution_topology --test runtime_instruction_execution_contracts` and `node scripts/gen-skill-docs.mjs --check`, then fix failures until the lane is green**
-- [ ] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "feat: add topology recommendation lane"`**
-
+- [x] **Step 1: Add red topology and execution-doc tests in `tests/plan_execution_topology.rs` and `tests/runtime_instruction_execution_contracts.rs` for worktree-backed parallel recommendation, conservative fallback, and downgrade-history reuse**
+- [x] **Step 2: Implement topology selection and recommendation helpers in `src/execution/topology.rs`, `src/execution/harness.rs`, and `src/cli/plan_execution.rs`**
+- [x] **Step 3: Update the execution-facing skill templates so they follow the runtime-selected topology and worktree-first orchestration model, then regenerate the checked-in skill docs**
+- [x] **Step 4: Run `cargo nextest run --test plan_execution_topology --test runtime_instruction_execution_contracts` and `node scripts/gen-skill-docs.mjs --check`, then fix failures until the lane is green**
+- [x] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "feat: add topology recommendation lane"`**
 ## Task 7: Lane C - Implement Dedicated Final-Review Modules and Reviewer Docs
 
 **Spec Coverage:** REQ-024, REQ-025, REQ-026, REQ-027, REQ-028, DEC-002, DEC-006, DEC-012, VERIFY-001, NONGOAL-002
@@ -475,12 +469,11 @@ Task 10  fixture/doc parity and full regression gate
 - Test: `tests/runtime_instruction_review_contracts.rs`
 - Test: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Add red runtime and doc-contract tests for dedicated final-review receipts, stale-review rejection, and deviation-aware final pass requirements**
-- [ ] **Step 2: Implement dedicated-review receipt helpers and deviation-binding logic in `src/execution/final_review.rs`**
-- [ ] **Step 3: Update `skills/requesting-code-review/*` so the reviewer path is always dedicated and deviation-aware when runtime recorded topology downgrades, then regenerate the checked-in skill docs**
-- [ ] **Step 4: Run `cargo nextest run --test plan_execution_final_review --test workflow_runtime_final_review --test runtime_instruction_review_contracts`, `node scripts/gen-skill-docs.mjs --check`, and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`, then fix failures until the lane is green**
-- [ ] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "feat: add dedicated final-review lane"`**
-
+- [x] **Step 1: Add red runtime and doc-contract tests for dedicated final-review receipts, stale-review rejection, and deviation-aware final pass requirements**
+- [x] **Step 2: Implement dedicated-review receipt helpers and deviation-binding logic in `src/execution/final_review.rs`**
+- [x] **Step 3: Update `skills/requesting-code-review/*` so the reviewer path is always dedicated and deviation-aware when runtime recorded topology downgrades, then regenerate the checked-in skill docs**
+- [x] **Step 4: Run `cargo nextest run --test plan_execution_final_review --test workflow_runtime_final_review --test runtime_instruction_review_contracts`, `node scripts/gen-skill-docs.mjs --check`, and `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`, then fix failures until the lane is green**
+- [x] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "feat: add dedicated final-review lane"`**
 ## Task 8: Integrate Shared Runtime Execution-State and Reconcile Glue
 
 **Spec Coverage:** REQ-009, REQ-010, REQ-011, REQ-014, REQ-015, REQ-016, REQ-017, REQ-018, REQ-019, REQ-020, REQ-021, REQ-022, REQ-023, REQ-027, REQ-028, REQ-029, REQ-030, DEC-002, DEC-004, DEC-005, DEC-007, DEC-009, DEC-010, DEC-011, VERIFY-001
@@ -502,11 +495,10 @@ Task 10  fixture/doc parity and full regression gate
 - Modify: `tests/plan_execution.rs`
 - Test: `tests/plan_execution.rs`
 
-- [ ] **Step 1: Merge the Task 5 and Task 6 lane branches back into the active branch and add red execution-state tests in `tests/plan_execution.rs` for barrier reconcile, stale receipt invalidation, dependency release, and identity-preserving checkpoint integration**
-- [ ] **Step 2: Wire `src/execution/authority.rs`, `src/execution/dependency_index.rs`, `src/execution/gates.rs`, `src/execution/mutate.rs`, `src/execution/state.rs`, and `src/execution/transitions.rs` to the lane-owned modules instead of re-embedding their logic, and add the promised inline ASCII diagram comment in `src/execution/state.rs` or `src/execution/gates.rs` for the barrier reconcile and receipt-gating flow**
-- [ ] **Step 3: Run `cargo nextest run --test plan_execution`, then fix execution-state integration failures until the slice is green**
-- [ ] **Step 4: Commit the slice with `git commit -m "feat: integrate execution-state hardening lanes"`**
-
+- [x] **Step 1: Merge the Task 5 and Task 6 lane branches back into the active branch and add red execution-state tests in `tests/plan_execution.rs` for barrier reconcile, stale receipt invalidation, dependency release, and identity-preserving checkpoint integration**
+- [x] **Step 2: Wire `src/execution/authority.rs`, `src/execution/dependency_index.rs`, `src/execution/gates.rs`, `src/execution/mutate.rs`, `src/execution/state.rs`, and `src/execution/transitions.rs` to the lane-owned modules instead of re-embedding their logic, and add the promised inline ASCII diagram comment in `src/execution/state.rs` or `src/execution/gates.rs` for the barrier reconcile and receipt-gating flow**
+- [x] **Step 3: Run `cargo nextest run --test plan_execution`, then fix execution-state integration failures until the slice is green**
+- [x] **Step 4: Commit the slice with `git commit -m "feat: integrate execution-state hardening lanes"`**
 ## Task 9: Integrate Status, Final-Review Freshness, and Finish Gating
 
 **Spec Coverage:** REQ-014, REQ-023, REQ-025, REQ-027, REQ-028, DEC-002, DEC-006, DEC-007, VERIFY-001
@@ -531,12 +523,11 @@ Task 10  fixture/doc parity and full regression gate
 - Test: `tests/workflow_runtime_final_review.rs`
 - Test: `tests/workflow_shell_smoke.rs`
 
-- [ ] **Step 1: Merge the Task 7 lane branch after Task 8 is green and add red workflow/status tests in `tests/workflow_runtime.rs`, `tests/workflow_runtime_final_review.rs`, and `tests/workflow_shell_smoke.rs` for dedicated final-review routing, freshness rejection, finish gating, and authoritative status/operator exposure**
-- [ ] **Step 2: Update `src/workflow/status.rs`, `src/workflow/operator.rs`, `schemas/plan-execution-status.schema.json`, and `skills/finishing-a-development-branch/*` so status, handoff, and finish gating trust the new runtime truth, and add the promised inline ASCII diagram comment in `src/workflow/status.rs` or `src/workflow/operator.rs` for final-review freshness and finish-gate routing**
-- [ ] **Step 3: Regenerate `schemas/plan-execution-status.schema.json` from the updated runtime contract instead of hand-editing the generated schema**
-- [ ] **Step 4: Run `cargo nextest run --test workflow_runtime --test workflow_runtime_final_review --test workflow_shell_smoke` and `node scripts/gen-skill-docs.mjs --check`, then fix finish-routing integration failures until the slice is green**
-- [ ] **Step 5: Commit the slice with `git commit -m "feat: integrate finish-gate hardening lane"`**
-
+- [x] **Step 1: Merge the Task 7 lane branch after Task 8 is green and add red workflow/status tests in `tests/workflow_runtime.rs`, `tests/workflow_runtime_final_review.rs`, and `tests/workflow_shell_smoke.rs` for dedicated final-review routing, freshness rejection, finish gating, and authoritative status/operator exposure**
+- [x] **Step 2: Update `src/workflow/status.rs`, `src/workflow/operator.rs`, `schemas/plan-execution-status.schema.json`, and `skills/finishing-a-development-branch/*` so status, handoff, and finish gating trust the new runtime truth, and add the promised inline ASCII diagram comment in `src/workflow/status.rs` or `src/workflow/operator.rs` for final-review freshness and finish-gate routing**
+- [x] **Step 3: Regenerate `schemas/plan-execution-status.schema.json` from the updated runtime contract instead of hand-editing the generated schema**
+- [x] **Step 4: Run `cargo nextest run --test workflow_runtime --test workflow_runtime_final_review --test workflow_shell_smoke` and `node scripts/gen-skill-docs.mjs --check`, then fix finish-routing integration failures until the slice is green**
+- [x] **Step 5: Commit the slice with `git commit -m "feat: integrate finish-gate hardening lane"`**
 ## Task 10: Ratify Fixtures, Docs, and the Full Regression Gate
 
 **Spec Coverage:** VERIFY-001, VERIFY-002, DEC-001, DEC-017, NONGOAL-001, NONGOAL-003
@@ -557,11 +548,10 @@ Task 10  fixture/doc parity and full regression gate
 - Test: `tests/codex-runtime/skill-doc-generation.test.mjs`
 - Test: `tests/codex-runtime/workflow-fixtures.test.mjs`
 
-- [ ] **Step 1: Refresh any remaining codex-runtime fixtures and doc-generation expectations that still reflect pre-hardening workflow behavior**
-- [ ] **Step 2: Run `node scripts/gen-skill-docs.mjs --check` and `node --test tests/codex-runtime/*.test.mjs`, then fix remaining fixture or doc-contract failures**
-- [ ] **Step 3: Run `cargo nextest run --test contracts_spec_plan --test contracts_execution_harness --test using_featureforge_skill --test workflow_entry_shell_smoke --test runtime_instruction_plan_review_contracts --test runtime_instruction_parallel_plan_contracts --test runtime_instruction_execution_contracts --test runtime_instruction_review_contracts --test plan_execution_topology --test contracts_execution_leases --test plan_execution_final_review --test workflow_runtime_final_review --test plan_execution --test workflow_runtime --test workflow_shell_smoke` and fix any remaining Rust regressions**
-- [ ] **Step 4: Commit the slice with `git commit -m "test: ratify workflow boundary hardening regression gate"`**
-
+- [x] **Step 1: Refresh any remaining codex-runtime fixtures and doc-generation expectations that still reflect pre-hardening workflow behavior**
+- [x] **Step 2: Run `node scripts/gen-skill-docs.mjs --check` and `node --test tests/codex-runtime/*.test.mjs`, then fix remaining fixture or doc-contract failures**
+- [x] **Step 3: Run `cargo nextest run --test contracts_spec_plan --test contracts_execution_harness --test using_featureforge_skill --test workflow_entry_shell_smoke --test runtime_instruction_plan_review_contracts --test runtime_instruction_parallel_plan_contracts --test runtime_instruction_execution_contracts --test runtime_instruction_review_contracts --test plan_execution_topology --test contracts_execution_leases --test plan_execution_final_review --test workflow_runtime_final_review --test plan_execution --test workflow_runtime --test workflow_shell_smoke` and fix any remaining Rust regressions**
+- [x] **Step 4: Commit the slice with `git commit -m "test: ratify workflow boundary hardening regression gate"`**
 ## NOT in Scope
 
 - Migration or grandfathering logic for in-flight plans, stale task packets, or older execution runs is excluded because this slice keeps the approved fresh-start boundary.
