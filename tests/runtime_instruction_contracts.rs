@@ -929,6 +929,22 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         "`docs/project_notes/` is supportive memory only; approved specs, plans, execution evidence, review artifacts, runtime state, and active repo instructions remain authoritative.",
     );
     assert_file_contains(
+        root.join("AGENTS.md"),
+        "Before inventing a new cross-cutting approach, check `docs/project_notes/decisions.md` for prior decisions and follow the authoritative source it links.",
+    );
+    assert_file_contains(
+        root.join("AGENTS.md"),
+        "When debugging recurring failures, check `docs/project_notes/bugs.md` for previously recorded root causes, fixes, and prevention notes.",
+    );
+    assert_file_contains(
+        root.join("AGENTS.md"),
+        "Never store credentials, secrets, or secret-shaped values in `docs/project_notes/`.",
+    );
+    assert_file_contains(
+        root.join("AGENTS.md"),
+        "Use `featureforge:project-memory` when setting up or making structured updates to repo-visible project memory.",
+    );
+    assert_file_contains(
         root.join("README.md"),
         "`featureforge:project-memory` is an optional support skill for maintaining `docs/project_notes/*`.",
     );

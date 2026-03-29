@@ -893,6 +893,29 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   );
 });
 
+test('project-memory skill contract stays narrow, deterministic, and repo-safety-bound', () => {
+  const projectMemory = readUtf8(getSkillPath('project-memory'));
+
+  assert.match(projectMemory, /Treat `docs\/project_notes\/\*` as supportive context only;/);
+  assert.match(projectMemory, /Default write set is limited to `docs\/project_notes\/\*` and the narrow project-memory section this repo owns in `AGENTS\.md`\./);
+  assert.match(projectMemory, /If existing memory content is partially valid, preserve the valid content and create or normalize only the missing boundary pieces unless the user explicitly asks for a rewrite\./);
+  assert.match(projectMemory, /Read `authority-boundaries\.md` before broad setup or repair work\./);
+  assert.match(projectMemory, /Read `examples\.md` before writing new entries\./);
+  assert.match(projectMemory, /Reuse the seed layouts in `references\/` when creating missing files\./);
+  assert.match(projectMemory, /repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write/);
+  assert.match(projectMemory, /repo-safety approve --stage featureforge:project-memory --task-id <current-memory-update> --reason "<explicit user approval>" --path <repo-relative-path> --write-target repo-file-write/);
+  for (const rejectClass of [
+    'SecretLikeContent',
+    'AuthorityConflict',
+    'TrackerDrift',
+    'MissingProvenance',
+    'OversizedDuplication',
+    'InstructionAuthorityDrift',
+  ]) {
+    assert.match(projectMemory, new RegExp(String.raw`- \`${rejectClass}\``), `project-memory should list ${rejectClass} in the update flow`);
+  }
+});
+
 test('generated skills use canonical runtime commands instead of helper executables', () => {
   for (const skill of listGeneratedSkills()) {
     const content = readUtf8(getSkillPath(skill));

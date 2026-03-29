@@ -5,6 +5,7 @@ import path from 'node:path';
 import { REPO_ROOT, readUtf8 } from './helpers/markdown-test-helpers.mjs';
 
 const MEMORY_DIR = path.join(REPO_ROOT, 'docs/project_notes');
+const PROJECT_MEMORY_SKILL_DIR = path.join(REPO_ROOT, 'skills/project-memory');
 const REQUIRED_FILES = [
   'README.md',
   'bugs.md',
@@ -19,6 +20,10 @@ function memoryPath(name) {
 
 function readMemory(name) {
   return readUtf8(memoryPath(name));
+}
+
+function readProjectMemorySkillFile(name) {
+  return readUtf8(path.join(PROJECT_MEMORY_SKILL_DIR, name));
 }
 
 function bulletEntries(name) {
@@ -85,4 +90,27 @@ test('project memory avoids tracker drift, authority drift, and obvious secret-l
   assert.doesNotMatch(issues, /\bIn Progress\b|\bBlocked\b|\bCompleted\b|\bStatus:\b|^\s*-\s*\[[ xX]\]/m, 'issues.md should stay breadcrumb-only');
   assert.doesNotMatch(combined, /ignore the approved plan|this file is authoritative|route through this file instead|follow the notes in this file instead|always do .* first/i, 'project memory should not contain instruction-authority drift');
   assert.doesNotMatch(combined, /\btoken\b|api key|private key|password/i, 'project memory should not contain obvious secret-like content');
+});
+
+test('project-memory examples cover the positive and negative matrix for all memory files', () => {
+  const examples = readProjectMemorySkillFile('examples.md');
+
+  assert.match(examples, /## `bugs\.md`/, 'examples.md should cover bugs.md');
+  assert.match(examples, /### Bad: `OversizedDuplication`/, 'examples.md should show an oversized-duplication bugs example');
+  assert.match(examples, /### Bad: `MissingProvenance`/, 'examples.md should show a missing-provenance bugs example');
+
+  assert.match(examples, /## `decisions\.md`/, 'examples.md should cover decisions.md');
+  assert.match(examples, /### Bad: `AuthorityConflict`/, 'examples.md should show an authority-conflict decision example');
+  assert.match(examples, /### Bad: `InstructionAuthorityDrift`/, 'examples.md should show an instruction-authority-drift decision example');
+
+  assert.match(examples, /## `key_facts\.md`/, 'examples.md should cover key_facts.md');
+  assert.match(examples, /### Bad: `SecretLikeContent`/, 'examples.md should show a secret-like key-fact example');
+  assert.match(examples, /### Bad: `MissingProvenance`/, 'examples.md should show a missing-provenance key-fact example');
+
+  assert.match(examples, /## `issues\.md`/, 'examples.md should cover issues.md');
+  assert.match(examples, /### Bad: `TrackerDrift`/, 'examples.md should show a tracker-drift issues example');
+  assert.match(examples, /### Bad: `InstructionAuthorityDrift`/, 'examples.md should show an instruction-authority-drift issues example');
+
+  assert.match(examples, /## Worked Distillation Example/, 'examples.md should include the distillation example');
+  assert.match(examples, /### Good Memory Entry/, 'examples.md should include a worked good memory entry');
 });

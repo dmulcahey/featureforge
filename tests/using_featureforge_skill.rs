@@ -2,8 +2,6 @@
 mod files_support;
 #[path = "support/install.rs"]
 mod install_support;
-#[path = "support/json.rs"]
-mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
 
@@ -15,7 +13,6 @@ use tempfile::TempDir;
 
 use files_support::write_file;
 use install_support::install_compiled_featureforge;
-use json_support::parse_json;
 use process_support::{repo_root, run, run_checked};
 
 fn skill_doc_path() -> PathBuf {
@@ -196,12 +193,14 @@ PY
         session_key,
     );
 
-    parse_json(&output, session_key)
+    serde_json::from_str(&extract_last_nonempty_line(&output.stdout, session_key))
+        .unwrap_or_else(|error| panic!("{session_key} should emit valid json on the last line: {error}"))
 }
 
 #[test]
 fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
     let content = read_skill_doc();
+    let normal_stack = extract_bash_block(&content, "## Normal FeatureForge Stack");
     let required_patterns = [
         "~/.featureforge/session-entry/using-featureforge/$PPID",
         "featureforge session-entry resolve --message-file <path>",
@@ -256,6 +255,10 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
     assert!(
         explicit_memory_route_index < implementation_ready_index,
         "explicit project-memory routing should be documented before the implementation-ready handoff rule"
+    );
+    assert!(
+        !normal_stack.contains("featureforge:project-memory"),
+        "normal featureforge stack should not route through project-memory by default"
     );
 
     let preamble = extract_bash_block(&content, "## Preamble (run first)");

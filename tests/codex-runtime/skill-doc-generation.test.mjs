@@ -105,6 +105,17 @@ test('project-memory foundation preserves the approved authority and safety boun
   assert.doesNotMatch(examples, /ghp_[A-Za-z0-9]+/, 'examples.md should not contain token-shaped literals');
 });
 
+test('project-memory generated skill doc stays discoverable with checked-in companion refs and repo-safety guidance', () => {
+  const skillDir = path.join(SKILLS_DIR, 'project-memory');
+  const generatedSkill = readUtf8(path.join(skillDir, 'SKILL.md'));
+
+  assert.match(generatedSkill, /Read `authority-boundaries\.md` before broad setup or repair work\./);
+  assert.match(generatedSkill, /Read `examples\.md` before writing new entries\./);
+  assert.match(generatedSkill, /Reuse the seed layouts in `references\/` when creating missing files\./);
+  assert.match(generatedSkill, /repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write/);
+  assert.match(generatedSkill, /repo-safety approve --stage featureforge:project-memory --task-id <current-memory-update> --reason "<explicit user approval>" --path <repo-relative-path> --write-target repo-file-write/);
+});
+
 test('every generated SKILL.md has exactly one generated header and regenerate command', () => {
   for (const skill of listGeneratedSkills()) {
     const content = readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md'));
