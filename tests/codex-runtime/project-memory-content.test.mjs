@@ -21,6 +21,14 @@ function readMemory(name) {
   return readUtf8(memoryPath(name));
 }
 
+function bulletEntries(name) {
+  return readMemory(name)
+    .replace(/^# .*\n+/, '')
+    .split(/\n(?=- )/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 test('project memory corpus includes the required repo-visible files', () => {
   assert.equal(fs.existsSync(MEMORY_DIR), true, 'docs/project_notes should exist');
 
@@ -47,17 +55,34 @@ test('project memory README teaches the boundary and maintenance rubric', () => 
 });
 
 test('seeded project memory entries carry inspectable provenance', () => {
-  assert.match(readMemory('bugs.md'), /Source:/, 'bugs.md should include Source markers');
-  assert.match(readMemory('decisions.md'), /Source:/, 'decisions.md should include Source markers');
-  assert.match(readMemory('issues.md'), /Source:/, 'issues.md should include Source markers');
-  assert.match(readMemory('key_facts.md'), /Source:|Last Verified:/, 'key_facts.md should include Source or Last Verified markers');
+  for (const entry of bulletEntries('bugs.md')) {
+    assert.match(entry, /\n\s*Source:/, 'each bugs.md entry should include a Source marker');
+  }
+
+  for (const entry of bulletEntries('decisions.md')) {
+    assert.match(entry, /\n\s*Context:/, 'each decisions.md entry should include Context');
+    assert.match(entry, /\n\s*Decision:/, 'each decisions.md entry should include Decision');
+    assert.match(entry, /\n\s*Alternatives considered:/, 'each decisions.md entry should include Alternatives considered');
+    assert.match(entry, /\n\s*Consequence:/, 'each decisions.md entry should include Consequence');
+    assert.match(entry, /\n\s*Source:/, 'each decisions.md entry should include Source');
+  }
+
+  for (const entry of bulletEntries('issues.md')) {
+    assert.match(entry, /\n\s*Source:/, 'each issues.md entry should include a Source marker');
+  }
+
+  for (const entry of bulletEntries('key_facts.md')) {
+    assert.match(entry, /\n\s*Last Verified:/, 'each key_facts.md entry should include Last Verified');
+    assert.match(entry, /\n\s*Source:/, 'each key_facts.md entry should include Source');
+    assert.doesNotMatch(entry, /Source:\s*`(?:src|scripts)\//, 'key_facts.md should cite stable repo docs or approved artifacts, not implementation paths');
+  }
 });
 
 test('project memory avoids tracker drift, authority drift, and obvious secret-like content', () => {
   const combined = REQUIRED_FILES.map(readMemory).join('\n');
   const issues = readMemory('issues.md');
 
-  assert.doesNotMatch(issues, /\bIn Progress\b|\bBlocked\b|\bCompleted\b/, 'issues.md should stay breadcrumb-only');
-  assert.doesNotMatch(combined, /ignore the approved plan|this file is authoritative|route through this file instead/i, 'project memory should not contain instruction-authority drift');
+  assert.doesNotMatch(issues, /\bIn Progress\b|\bBlocked\b|\bCompleted\b|\bStatus:\b|^\s*-\s*\[[ xX]\]/m, 'issues.md should stay breadcrumb-only');
+  assert.doesNotMatch(combined, /ignore the approved plan|this file is authoritative|route through this file instead|follow the notes in this file instead|always do .* first/i, 'project memory should not contain instruction-authority drift');
   assert.doesNotMatch(combined, /\btoken\b|api key|private key|password/i, 'project memory should not contain obvious secret-like content');
 });

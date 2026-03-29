@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** cfe744d2d7230c32c603350c6e07a533f6bd43a359f586015ffa04f715e22a4f
+**Plan Fingerprint:** 95546ec75dae2d0fda563e824e49c5934e1dbe481162cb3fa5bfc4f5642b1150
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -328,8 +328,8 @@
 
 ### Task 2 Step 5
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-29T19:15:38.133327Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T19:23:21.360329Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 2
 **Step Number:** 5
@@ -345,4 +345,41 @@
 - docs/project_notes/key_facts.md | sha256:092ff90b606b45e04dc420fa0d72091386f8377ca32f2ec8d8a364b6a4a3c220
 - tests/codex-runtime/project-memory-content.test.mjs | sha256:8c1c0ec3c0778f03e8aeccc15193a16575215ce667f415ae20942f3905e0249f
 **Verification Summary:** `node --test tests/codex-runtime/project-memory-content.test.mjs && rg -n "In Progress|Blocked|Completed|token|api key|private key|password" docs/project_notes` -> Passed: project-memory content test is green and the drift/secret grep returned no matches.
+**Invalidation Reason:** Task 2 follow-up review remediation tightened the corpus test and corrected seed entries, so verification must be rerun on the current snapshot.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:23:35.966598Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 5
+**Packet Fingerprint:** ca48655c4fc907f5f174f5ac7bf7db11a56fab6f480a8c37bd11d7f6889950a6
+**Head SHA:** 257d67aedc4dd63735cd579033752660f80f6914
+**Base SHA:** 257d67aedc4dd63735cd579033752660f80f6914
+**Claim:** Re-verified the seeded project-memory corpus after the Task 2 review remediation and confirmed the stricter provenance and drift checks pass cleanly.
+**Files Proven:**
+- docs/project_notes/README.md | sha256:8c3a462c01ee28e0bd252761db7a253b311ff6308b8901c3b0e0e3cfd5920c99
+- docs/project_notes/bugs.md | sha256:d085d2b9188763a6e05011eb444397c427a24511d7fe706e2783a761bd6465c4
+- docs/project_notes/decisions.md | sha256:f82c9164514a4b34123fef551be3dfebc961f6ca134bf976b4d13467dc7397f6
+- docs/project_notes/issues.md | sha256:9053c2cf01b36dbaec46d598d175648a56e76d1232d72333f492f1001d7636ca
+- docs/project_notes/key_facts.md | sha256:246db83e2bb1d5d0633be2036f79a8de90d4f7b95223cdf558bb7c27bed1bc81
+- tests/codex-runtime/project-memory-content.test.mjs | sha256:133f8c2b9d66bb417394acb9aac4b6a2d6e86696d2ec9976c510ca738b811154
+**Verification Summary:** `node --test tests/codex-runtime/project-memory-content.test.mjs && rg -n "In Progress|Blocked|Completed|token|api key|private key|password" docs/project_notes` -> Passed: the tightened project-memory corpus test is green and the drift/secret grep returned no matches.
 **Invalidation Reason:** N/A
+
+### Task 2 Step 6
+#### Attempt 1
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T19:23:42.73919Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 6
+**Packet Fingerprint:** 8453d856eb425321387b21d3a5e4bfaf378cfa0c6645a48b29bf8ed301f6e6e0
+**Head SHA:** 257d67aedc4dd63735cd579033752660f80f6914
+**Base SHA:** 257d67aedc4dd63735cd579033752660f80f6914
+**Claim:** Committed the seeded project-memory corpus lane as 257d67aedc4dd63735cd579033752660f80f6914 with the message docs: seed project memory corpus.
+**Files Proven:**
+- docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md | sha256:3b84dd2b8b0963ec5a17d4b40c142cd8a27cd4fc147f0bc552d21cae84cfdad0
+- docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:801ae67b75681aa816d6dc587a06ba8f22986ac57aa382c59fd62656012859a5
+**Verification Summary:** Manual inspection only: Manual inspection only: Git commit 257d67aedc4dd63735cd579033752660f80f6914 succeeded on branch dm/project-memory and the working tree was clean before the runtime refreshed the Task 2 plan/evidence bookkeeping.
+**Invalidation Reason:** Task 2 follow-up review remediation corrected seed schema and hardened the corpus contract test, so the recorded Task 2 completion commit must be refreshed.
