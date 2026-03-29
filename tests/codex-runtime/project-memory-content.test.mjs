@@ -51,8 +51,6 @@ const APPROVED_ARTIFACT_SOURCE_REFERENCE =
   /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md)$/;
 const STABLE_REPO_DOC_SOURCE_REFERENCE =
   /^(?:(?:README|AGENTS|TODOS)\.md|docs\/(?!featureforge\/).+\.md|review\/.+\.md|skills\/.+\.md)$/;
-const STABLE_CODE_PATH_SOURCE_REFERENCE =
-  /^(?:src|tests|scripts)\/.+\.(?:rs|mjs|js|cjs|ts|tsx|json|toml)$/;
 
 function sourceReferences(entry, name) {
   const sourceLine = entry.match(/\n\s*Source:\s*([^\n]+)/);
@@ -66,7 +64,6 @@ function isAllowedSeedSourceReference(name, reference) {
   return (
     APPROVED_ARTIFACT_SOURCE_REFERENCE.test(reference)
     || STABLE_REPO_DOC_SOURCE_REFERENCE.test(reference)
-    || (name === 'key_facts.md' && STABLE_CODE_PATH_SOURCE_REFERENCE.test(reference))
   );
 }
 
@@ -84,7 +81,7 @@ function assertApprovedSeedSources(name, entry) {
     assert.equal(
       isAllowedSeedSourceReference(name, reference),
       true,
-      `${name} should cite approved artifacts, stable repo docs, or documented stable code paths: ${reference}`,
+      `${name} should cite approved artifacts or stable repo docs: ${reference}`,
     );
     assert.doesNotMatch(
       reference,
@@ -102,7 +99,7 @@ function assertApprovedSeedSources(name, entry) {
 test('seed provenance contract allows documented stable-source variants without widening to junk paths', () => {
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'README.md'), true);
   assert.throws(() => resolveRepoSourceReference('./README.md'), /repo-relative/);
-  assert.equal(isAllowedSeedSourceReference('key_facts.md', 'src/main.rs'), true);
+  assert.equal(isAllowedSeedSourceReference('key_facts.md', 'src/main.rs'), false);
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'src/main.rs'), false);
   assert.equal(isAllowedSeedSourceReference('key_facts.md', 'node_modules/pkg/index.js'), false);
   assert.equal(fs.existsSync(resolveRepoSourceReference('README.md')), true);

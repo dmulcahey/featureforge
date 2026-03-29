@@ -23,6 +23,15 @@ fn read_skill_doc() -> String {
     fs::read_to_string(skill_doc_path()).expect("using-featureforge skill doc should be readable")
 }
 
+fn route_contract_fixture_path() -> PathBuf {
+    repo_root().join("tests/fixtures/using-featureforge-project-memory-route-contract.sh")
+}
+
+fn read_route_contract_fixture() -> String {
+    fs::read_to_string(route_contract_fixture_path())
+        .expect("using-featureforge route contract fixture should be readable")
+}
+
 fn extract_bash_block(content: &str, heading: &str) -> String {
     let mut in_heading = false;
     let mut in_block = false;
@@ -366,6 +375,14 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
         !content.contains("continue to normal FeatureForge behavior"),
         "using-featureforge skill should not use the stale normal-behavior phrase"
     );
+    assert!(
+        !content.contains("SP_TEST_MESSAGE_FILE"),
+        "using-featureforge skill should not expose the test message env var"
+    );
+    assert!(
+        !content.contains("SP_TEST_WORKFLOW_NEXT_SKILL"),
+        "using-featureforge skill should not expose the test route env var"
+    );
     let explicit_memory_route_index = content
         .find("If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix, record a decision, update key facts, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and route to `featureforge:project-memory`.")
         .expect("using-featureforge skill should document explicit-memory routing precedence");
@@ -632,8 +649,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
     let content = read_skill_doc();
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
     let normal_stack = extract_bash_block(&content, "## Normal FeatureForge Stack");
-    let route_block =
-        extract_bash_block(&content, "#### Canonical Helper-Backed Emitted Route Contract");
+    let route_block = read_route_contract_fixture();
     let temp_home = TempDir::new().expect("home tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let state = state_dir.path();
@@ -652,6 +668,8 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "Please record this decision in project memory before continuing plan review.\n",
         "Please record a decision in project memory before continuing plan review.\n",
         "Please update our key facts in project memory before continuing plan review.\n",
+        "Please record durable issue breadcrumbs in project memory before continuing plan review.\n",
+        "Please record issue breadcrumbs in docs/project_notes/issues.md before continuing plan review.\n",
         "Please repair docs/project_notes/README.md before continuing plan review.\n",
         "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.\n",
     ];

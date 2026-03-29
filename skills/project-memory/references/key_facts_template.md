@@ -7,7 +7,7 @@ Use for stable non-sensitive facts that are expensive to rediscover.
 
 - <fact>
   Last Verified: YYYY-MM-DD
-  Source: `<stable repo doc, code path, or approved artifact>`
+  Source: `<stable repo doc or approved artifact>`
 ```
 
 Maintenance:

@@ -292,22 +292,16 @@ Only after the bypass gate resolves to `enabled` for the current session key, if
 
 When the helper succeeds, route using its JSON result plus the explicit project-memory carveout above, and do not re-derive state manually.
 
-#### Canonical Helper-Backed Emitted Route Contract
+#### Explicit Project-Memory Route Signals
 
-Use this emitted-route contract when a supported entry has already resolved to `enabled` and normal-stack setup has completed:
+Treat the request as explicit project-memory intent when it clearly asks to:
 
-```bash
-_MESSAGE_LC=$(tr '[:upper:]' '[:lower:]' < "$SP_TEST_MESSAGE_FILE")
-_EXPLICIT_PROJECT_MEMORY_ROUTE=""
-if printf '%s' "$_MESSAGE_LC" | grep -Eq 'featureforge:project-memory|project memory itself|(?:set up|repair) project memory|(?:log|record) (?:this |a )?bug fix|record (?:this |a )?decision|update (?:our )?key facts|record durable bugs|record durable decisions|record durable key facts|record key facts|record durable issue breadcrumbs|record issue breadcrumbs|(?:set up|repair) docs/project_notes/|docs/project_notes/(readme|bugs|decisions|key_facts|issues)\.md'; then
-  _EXPLICIT_PROJECT_MEMORY_ROUTE="featureforge:project-memory"
-fi
-if [ -n "$_EXPLICIT_PROJECT_MEMORY_ROUTE" ]; then
-  printf '%s\n' "$_EXPLICIT_PROJECT_MEMORY_ROUTE"
-elif [ -n "${SP_TEST_WORKFLOW_NEXT_SKILL:-}" ]; then
-  printf '%s\n' "$SP_TEST_WORKFLOW_NEXT_SKILL"
-fi
-```
+- set up or repair project memory under `docs/project_notes/`
+- log a bug fix, record a decision, update key facts, or record durable issue breadcrumbs in project memory
+- invoke `featureforge:project-memory` or work on project memory itself
+- edit a concrete `docs/project_notes/README.md`, `bugs.md`, `decisions.md`, `key_facts.md`, or `issues.md` path
+
+If those signals are absent, keep the helper-derived workflow route.
 
 ### Manual fallback routing
 
