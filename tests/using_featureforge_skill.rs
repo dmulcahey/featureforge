@@ -119,6 +119,29 @@ fn parse_supported_entry_stdout(output: &[u8], context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid json on the last line: {error}"))
 }
 
+fn explicit_project_memory_request(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    [
+        "docs/project_notes/",
+        "record durable bugs",
+        "record durable decisions",
+        "record durable key facts",
+        "record durable issue breadcrumbs",
+        "record issue breadcrumbs",
+        "project memory",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn documented_project_memory_route(message: &str, helper_next_skill: &str) -> String {
+    if explicit_project_memory_request(message) {
+        String::from("featureforge:project-memory")
+    } else {
+        helper_next_skill.to_owned()
+    }
+}
+
 fn simulate_supported_entry(
     state_dir: &Path,
     home_dir: &Path,
@@ -518,5 +541,33 @@ fn using_featureforge_skill_supported_entry_routing_matches_runtime_contract() {
     assert_eq!(
         fs::read_to_string(&reentry_path).expect("reentry path should be readable"),
         "enabled\n"
+    );
+}
+
+#[test]
+fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound() {
+    assert_eq!(
+        documented_project_memory_route(
+            "Please add some notes to the docs after plan review.",
+            "featureforge:plan-eng-review",
+        ),
+        "featureforge:plan-eng-review",
+        "vague notes or docs requests should keep the active workflow owner",
+    );
+    assert_eq!(
+        documented_project_memory_route(
+            "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.",
+            "featureforge:plan-eng-review",
+        ),
+        "featureforge:project-memory",
+        "explicit project-memory requests should override an active workflow owner",
+    );
+    assert_eq!(
+        documented_project_memory_route(
+            "Set up docs/project_notes/ and record issue breadcrumbs for this repo.",
+            "featureforge:executing-plans",
+        ),
+        "featureforge:project-memory",
+        "explicit repo-visible project-memory work should route to project-memory",
     );
 }

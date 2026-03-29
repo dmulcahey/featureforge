@@ -48,7 +48,7 @@ function bulletEntries(name) {
 }
 
 const APPROVED_OR_STABLE_SOURCE_REFERENCE =
-  /^(?:docs\/featureforge\/specs\/|docs\/featureforge\/plans\/|docs\/featureforge\/execution-evidence\/|\.featureforge\/reviews\/|README\.md|AGENTS\.md|TODOS\.md|docs\/.+\.md)$/;
+  /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md|README\.md|AGENTS\.md|TODOS\.md)$/;
 
 function sourceReferences(entry, name) {
   const sourceLine = entry.match(/\n\s*Source:\s*([^\n]+)/);
@@ -162,4 +162,6 @@ test('project-memory examples cover the positive and negative matrix for all mem
   const examples = readExamples();
   assert.match(examples, /## Worked Distillation Example/, 'examples.md should include the distillation example');
   assert.match(examples, /### Good Memory Entry/, 'examples.md should include a worked good memory entry');
+  assert.match(examples, /Sources:\s*\n\s*-\s*`docs\/featureforge\/plans\/2026-03-29-featureforge-project-memory-integration\.md`/, 'worked distillation example should backlink the approved plan');
+  assert.match(examples, /`docs\/featureforge\/execution-evidence\/2026-03-29-featureforge-project-memory-integration-r4-evidence\.md`/, 'worked distillation example should backlink execution evidence');
 });
