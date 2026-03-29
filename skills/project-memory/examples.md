@@ -55,7 +55,7 @@ Use these examples to keep `docs/project_notes/*` short, source-backed, and non-
 ```markdown
 - Runtime state directory: `~/.featureforge`
   Last Verified: 2026-03-29
-  Source: `src/paths/mod.rs`
+  Source: `README.md`
 ```
 
 ### Bad: `SecretLikeContent`

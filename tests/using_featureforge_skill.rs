@@ -122,19 +122,27 @@ fn parse_supported_entry_stdout(output: &[u8], context: &str) -> Value {
 fn explicit_project_memory_request(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
     [
-        "docs/project_notes/",
         "record durable bugs",
         "record durable decisions",
-        "record durable key facts",
-        "record durable issue breadcrumbs",
+        "record key facts",
         "record issue breadcrumbs",
-        "project memory",
+        "set up docs/project_notes/",
+        "docs/project_notes/bugs.md",
+        "docs/project_notes/decisions.md",
+        "docs/project_notes/key_facts.md",
+        "docs/project_notes/issues.md",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
 }
 
-fn documented_project_memory_route(message: &str, helper_next_skill: &str) -> String {
+fn route_after_supported_entry(entry_output: &Value, message: &str, helper_next_skill: &str) -> String {
+    if entry_output["helper_outcome"] != Value::String(String::from("enabled")) {
+        return entry_output["first_response_kind"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+    }
     if explicit_project_memory_request(message) {
         String::from("featureforge:project-memory")
     } else {
@@ -546,28 +554,68 @@ fn using_featureforge_skill_supported_entry_routing_matches_runtime_contract() {
 
 #[test]
 fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound() {
+    let content = read_skill_doc();
+    let preamble = extract_bash_block(&content, "## Preamble (run first)");
+    let normal_stack = extract_bash_block(&content, "## Normal FeatureForge Stack");
+    let temp_home = TempDir::new().expect("home tempdir should exist");
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let state = state_dir.path();
+    let home = temp_home.path();
+
+    let enabled_path = canonical_decision_path(state, "project-memory-route-enabled");
+    write_file(&enabled_path, "enabled\n");
+
+    let vague_message = "Please add some notes to the docs after plan review.\n";
+    let vague_entry = simulate_supported_entry(
+        state,
+        home,
+        &preamble,
+        &normal_stack,
+        "project-memory-route-enabled",
+        vague_message,
+    );
     assert_eq!(
-        documented_project_memory_route(
-            "Please add some notes to the docs after plan review.",
+        vague_entry["helper_outcome"],
+        Value::String(String::from("enabled")),
+        "active-workflow precedence coverage should run through the real enabled entry path",
+    );
+    assert_eq!(
+        vague_entry["first_response_kind"],
+        Value::String(String::from("normal_stack")),
+        "enabled entry should continue through the normal stack before route selection",
+    );
+    assert_eq!(
+        route_after_supported_entry(
+            &vague_entry,
+            vague_message,
             "featureforge:plan-eng-review",
         ),
         "featureforge:plan-eng-review",
         "vague notes or docs requests should keep the active workflow owner",
     );
+
+    let explicit_message =
+        "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.\n";
+    let explicit_entry = simulate_supported_entry(
+        state,
+        home,
+        &preamble,
+        &normal_stack,
+        "project-memory-route-enabled",
+        explicit_message,
+    );
     assert_eq!(
-        documented_project_memory_route(
-            "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.",
+        explicit_entry["helper_outcome"],
+        Value::String(String::from("enabled")),
+        "explicit project-memory routing should still use the real enabled entry path",
+    );
+    assert_eq!(
+        route_after_supported_entry(
+            &explicit_entry,
+            explicit_message,
             "featureforge:plan-eng-review",
         ),
         "featureforge:project-memory",
         "explicit project-memory requests should override an active workflow owner",
-    );
-    assert_eq!(
-        documented_project_memory_route(
-            "Set up docs/project_notes/ and record issue breadcrumbs for this repo.",
-            "featureforge:executing-plans",
-        ),
-        "featureforge:project-memory",
-        "explicit repo-visible project-memory work should route to project-memory",
     );
 }
