@@ -100,8 +100,9 @@ test('project memory avoids tracker drift, authority drift, and obvious secret-l
   const combined = REQUIRED_FILES.map(readMemory).join('\n');
   const issues = readMemory('issues.md');
 
-  assert.doesNotMatch(issues, /\bIn Progress\b|\bBlocked\b|\bCompleted\b|\bStatus:\b|^\s*-\s*\[[ xX]\]/m, 'issues.md should stay breadcrumb-only');
+  assert.doesNotMatch(issues, /(?:^|\n)\s*(?:[-*]\s*)?(?:In Progress|Blocked|Completed|Status:)\b|^\s*-\s*\[[ xX]\]/im, 'issues.md should stay breadcrumb-only');
   assert.doesNotMatch(issues, /(?:^|\n)\s*(?:[-*]\s*)?(?:started|resumed|finished|completed)\s+step(?:\s+\d+)?\b/im, 'issues.md should not become a second execution log');
+  assert.doesNotMatch(issues, /\bAttempt\s+\d+\b|\bRecorded At:\b|\bTask Number:\b|\bStep Number:\b/i, 'issues.md should not include execution-log metadata markers');
   assert.doesNotMatch(issues, /\bexecution log\b|\bday-by-day\b|\bdaily progress\b/i, 'issues.md should not become a day-by-day progress log');
   assert.doesNotMatch(combined, /ignore the approved plan|this file is authoritative|route through this file instead|follow the notes in this file instead|always do .* first/i, 'project memory should not contain instruction-authority drift');
   assert.doesNotMatch(combined, /\btoken\b|api key|private key|password/i, 'project memory should not contain obvious secret-like content');
