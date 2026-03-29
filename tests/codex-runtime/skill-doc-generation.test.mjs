@@ -48,6 +48,21 @@ test('every generated SKILL.md preserves expected frontmatter semantics', () => 
   }
 });
 
+test('project-memory skill foundation is discoverable with generated output and companion refs', () => {
+  const skillDir = path.join(SKILLS_DIR, 'project-memory');
+
+  assert.equal(fs.existsSync(skillDir), true, 'project-memory skill directory should exist');
+  assert.equal(fs.existsSync(path.join(skillDir, 'SKILL.md.tmpl')), true, 'project-memory should define a skill template');
+  assert.equal(fs.existsSync(path.join(skillDir, 'SKILL.md')), true, 'project-memory should ship a generated SKILL.md');
+  assert.equal(fs.existsSync(path.join(skillDir, 'authority-boundaries.md')), true, 'project-memory should ship authority-boundaries.md');
+  assert.equal(fs.existsSync(path.join(skillDir, 'examples.md')), true, 'project-memory should ship examples.md');
+  assert.equal(fs.existsSync(path.join(skillDir, 'references/bugs_template.md')), true, 'project-memory should ship bugs_template.md');
+  assert.equal(fs.existsSync(path.join(skillDir, 'references/decisions_template.md')), true, 'project-memory should ship decisions_template.md');
+  assert.equal(fs.existsSync(path.join(skillDir, 'references/key_facts_template.md')), true, 'project-memory should ship key_facts_template.md');
+  assert.equal(fs.existsSync(path.join(skillDir, 'references/issues_template.md')), true, 'project-memory should ship issues_template.md');
+  assert.ok(listGeneratedSkills().includes('project-memory'), 'project-memory should be discoverable as a generated skill');
+});
+
 test('every generated SKILL.md has exactly one generated header and regenerate command', () => {
   for (const skill of listGeneratedSkills()) {
     const content = readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md'));
