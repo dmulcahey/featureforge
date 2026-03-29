@@ -118,7 +118,7 @@ function assertDownstreamMaterialStaysGateAndHarnessAware(content, label) {
 
 function buildTimedHookPatterns(timings, targetPattern, gapPattern = '[^.\\n]{0,160}') {
   const obligationPattern = '(?:must|always|required|requires|should|need(?:s)? to|have(?:s)? to|ought to)';
-  const imperativeActionPattern = '(?:consult|update|use)';
+  const imperativeActionPattern = '(?:consult|search|update|use|record)';
   const timingPattern = `(?:${timings.join('|')})`;
 
   return [
@@ -134,6 +134,7 @@ function buildTimedHookPatterns(timings, targetPattern, gapPattern = '[^.\\n]{0,
     new RegExp(`${imperativeActionPattern}${gapPattern}featureforge:project-memory${gapPattern}${timingPattern}`, 'i'),
     new RegExp(`featureforge:project-memory${gapPattern}${imperativeActionPattern}${gapPattern}${timingPattern}`, 'i'),
     new RegExp(`featureforge:project-memory${gapPattern}${timingPattern}${gapPattern}${imperativeActionPattern}`, 'i'),
+    new RegExp(`featureforge:project-memory${gapPattern}${timingPattern}`, 'i'),
     new RegExp(`${timingPattern}${gapPattern}featureforge:project-memory`, 'i'),
     new RegExp(`featureforge:project-memory${gapPattern}${obligationPattern}${gapPattern}${targetPattern}${gapPattern}${timingPattern}`, 'i'),
     new RegExp(`featureforge:project-memory${gapPattern}${timingPattern}${gapPattern}${obligationPattern}${gapPattern}${targetPattern}`, 'i'),
@@ -782,6 +783,7 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
       'You should update `docs/project_notes/bugs.md` after debugging.',
       'Update `docs/project_notes/bugs.md` during debugging.',
       'Update `docs/project_notes/bugs.md` while debugging.',
+      'Search `docs/project_notes/bugs.md` during debugging.',
       'featureforge:project-memory during debugging should be used.',
       'Update featureforge:project-memory during debugging.',
       'Update featureforge:project-memory after the fix lands with the new `docs/project_notes/bugs.md` entry.',
@@ -858,8 +860,10 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
       'Use featureforge:project-memory to update `docs/project_notes/decisions.md` to finish the release pass.',
       'Use featureforge:project-memory before branch completion to update `docs/project_notes/issues.md`.',
       'Use featureforge:project-memory before branch completion.',
+      'featureforge:project-memory before branch completion.',
       'featureforge:project-memory before branch completion should be used.',
       'featureforge:project-memory should update `docs/project_notes/issues.md` before branch completion.',
+      'Record durable bugs in `docs/project_notes/bugs.md` before branch completion.',
       'Agents need to update `docs/project_notes/issues.md` to complete the branch.',
       'Update `docs/project_notes/issues.md` during the release-readiness pass.',
     ],
