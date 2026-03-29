@@ -50,7 +50,7 @@ function bulletEntries(name) {
 const APPROVED_ARTIFACT_SOURCE_REFERENCE =
   /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md)$/;
 const STABLE_REPO_DOC_SOURCE_REFERENCE =
-  /^(?:(?:\.\/)?(?:README|AGENTS|TODOS)\.md|docs\/(?!featureforge\/).+\.md|review\/.+\.md|skills\/.+\.md)$/;
+  /^(?:(?:README|AGENTS|TODOS)\.md|docs\/(?!featureforge\/).+\.md|review\/.+\.md|skills\/.+\.md)$/;
 const STABLE_CODE_PATH_SOURCE_REFERENCE =
   /^(?:src|tests|scripts)\/.+\.(?:rs|mjs|js|cjs|ts|tsx|json|toml)$/;
 
@@ -70,6 +70,15 @@ function isAllowedSeedSourceReference(name, reference) {
   );
 }
 
+function resolveRepoSourceReference(reference) {
+  assert.doesNotMatch(
+    reference,
+    /^(?:\.\/|\.\.\/)/,
+    `source references should be repo-relative, not file-relative: ${reference}`,
+  );
+  return path.join(REPO_ROOT, reference);
+}
+
 function assertApprovedSeedSources(name, entry) {
   for (const reference of sourceReferences(entry, name)) {
     assert.equal(
@@ -82,15 +91,21 @@ function assertApprovedSeedSources(name, entry) {
       /^(?:target|node_modules)\//,
       `${name} should not cite generated or vendored paths: ${reference}`,
     );
+    assert.equal(
+      fs.existsSync(resolveRepoSourceReference(reference)),
+      true,
+      `${name} should cite an existing repo path: ${reference}`,
+    );
   }
 }
 
 test('seed provenance contract allows documented stable-source variants without widening to junk paths', () => {
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'README.md'), true);
-  assert.equal(isAllowedSeedSourceReference('bugs.md', './README.md'), true);
+  assert.throws(() => resolveRepoSourceReference('./README.md'), /repo-relative/);
   assert.equal(isAllowedSeedSourceReference('key_facts.md', 'src/main.rs'), true);
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'src/main.rs'), false);
   assert.equal(isAllowedSeedSourceReference('key_facts.md', 'node_modules/pkg/index.js'), false);
+  assert.equal(fs.existsSync(resolveRepoSourceReference('README.md')), true);
 });
 
 test('project memory corpus includes the required repo-visible files', () => {
