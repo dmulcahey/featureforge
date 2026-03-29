@@ -119,37 +119,6 @@ fn parse_supported_entry_stdout(output: &[u8], context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid json on the last line: {error}"))
 }
 
-fn explicit_project_memory_request(message: &str) -> bool {
-    let normalized = message.to_ascii_lowercase();
-    [
-        "record durable bugs",
-        "record durable decisions",
-        "record key facts",
-        "record issue breadcrumbs",
-        "set up docs/project_notes/",
-        "docs/project_notes/bugs.md",
-        "docs/project_notes/decisions.md",
-        "docs/project_notes/key_facts.md",
-        "docs/project_notes/issues.md",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
-}
-
-fn route_after_supported_entry(entry_output: &Value, message: &str, helper_next_skill: &str) -> String {
-    if entry_output["helper_outcome"] != Value::String(String::from("enabled")) {
-        return entry_output["first_response_kind"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
-    }
-    if explicit_project_memory_request(message) {
-        String::from("featureforge:project-memory")
-    } else {
-        helper_next_skill.to_owned()
-    }
-}
-
 fn simulate_supported_entry(
     state_dir: &Path,
     home_dir: &Path,
@@ -239,6 +208,114 @@ PY
                 .env("HOME", home_dir)
                 .env("SP_TEST_MESSAGE_FILE", &message_file)
                 .env("SP_TEST_SESSION_KEY", session_key);
+            command
+        },
+        session_key,
+    );
+
+    parse_supported_entry_stdout(&output.stdout, session_key)
+}
+
+fn simulate_supported_route_selection(
+    state_dir: &Path,
+    home_dir: &Path,
+    preamble: &str,
+    normal_stack: &str,
+    session_key: &str,
+    message: &str,
+    workflow_next_skill: &str,
+) -> Value {
+    let message_file = state_dir.join(format!("{session_key}.txt"));
+    write_file(&message_file, message);
+
+    let script = format!(
+        r#"
+set -euo pipefail
+{preamble}
+_resolve_json="$("$_FEATUREFORGE_BIN" session-entry resolve --message-file "$SP_TEST_MESSAGE_FILE" --session-key "$SP_TEST_SESSION_KEY")"
+eval "$(
+  RESOLVE_JSON="$_resolve_json" python3 - <<'PY'
+import json
+import os
+import shlex
+
+data = json.loads(os.environ["RESOLVE_JSON"])
+prompt = data.get("prompt") or {{}}
+fields = {{
+    "SP_TEST_OUTCOME": data.get("outcome", ""),
+    "SP_TEST_DECISION_SOURCE": data.get("decision_source", ""),
+    "SP_TEST_DECISION_PATH": data.get("decision_path", ""),
+    "SP_TEST_PROMPT_QUESTION": prompt.get("question", ""),
+}}
+for key, value in fields.items():
+    print(f"{{key}}={{shlex.quote(str(value))}}")
+PY
+)"
+_first_response_kind=""
+_normal_stack_session_path=""
+_selected_route=""
+case "$SP_TEST_OUTCOME" in
+  needs_user_choice)
+    _first_response_kind="bypass_prompt"
+    ;;
+  enabled)
+{normal_stack}
+    _first_response_kind="normal_stack"
+    _normal_stack_session_path="$_SP_STATE_DIR/sessions/$PPID"
+    _message_lc=$(tr '[:upper:]' '[:lower:]' < "$SP_TEST_MESSAGE_FILE")
+    if printf '%s' "$_message_lc" | grep -Eq 'record durable bugs|record durable decisions|record key facts|record issue breadcrumbs|set up docs/project_notes/|docs/project_notes/(bugs|decisions|key_facts|issues)\.md'; then
+      _selected_route="featureforge:project-memory"
+    elif [ -n "${{SP_TEST_WORKFLOW_NEXT_SKILL:-}}" ]; then
+      _selected_route="$SP_TEST_WORKFLOW_NEXT_SKILL"
+    fi
+    ;;
+  bypassed)
+    _first_response_kind="featureforge_bypassed"
+    ;;
+  *)
+    _first_response_kind="runtime_failure"
+    ;;
+esac
+SP_TEST_OUTCOME="$SP_TEST_OUTCOME" \
+SP_TEST_DECISION_SOURCE="$SP_TEST_DECISION_SOURCE" \
+SP_TEST_DECISION_PATH="$SP_TEST_DECISION_PATH" \
+SP_TEST_PROMPT_QUESTION="$SP_TEST_PROMPT_QUESTION" \
+SP_TEST_FIRST_RESPONSE_KIND="$_first_response_kind" \
+SP_TEST_NORMAL_STACK_SESSION_PATH="$_normal_stack_session_path" \
+SP_TEST_SELECTED_ROUTE="$_selected_route" \
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+normal_stack_session_path = os.environ["SP_TEST_NORMAL_STACK_SESSION_PATH"]
+print(json.dumps({{
+    "first_response_kind": os.environ["SP_TEST_FIRST_RESPONSE_KIND"],
+    "normal_stack_started": bool(normal_stack_session_path) and Path(normal_stack_session_path).is_file(),
+    "helper_outcome": os.environ["SP_TEST_OUTCOME"],
+    "decision_source": os.environ["SP_TEST_DECISION_SOURCE"],
+    "decision_path": os.environ["SP_TEST_DECISION_PATH"],
+    "normal_stack_session_path": normal_stack_session_path,
+    "prompt_question": os.environ["SP_TEST_PROMPT_QUESTION"],
+    "selected_route": os.environ["SP_TEST_SELECTED_ROUTE"],
+}}))
+PY
+"#
+    );
+
+    install_compiled_featureforge(home_dir);
+    let output = run_checked(
+        {
+            let mut command = Command::new("bash");
+            command
+                .arg("-lc")
+                .arg(script)
+                .current_dir(repo_root())
+                .env("FEATUREFORGE_STATE_DIR", state_dir)
+                .env("HOME", home_dir)
+                .env("SP_TEST_MESSAGE_FILE", &message_file)
+                .env("SP_TEST_SESSION_KEY", session_key)
+                .env("SP_TEST_WORKFLOW_NEXT_SKILL", workflow_next_skill);
             command
         },
         session_key,
@@ -566,13 +643,14 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
     write_file(&enabled_path, "enabled\n");
 
     let vague_message = "Please add some notes to the docs after plan review.\n";
-    let vague_entry = simulate_supported_entry(
+    let vague_entry = simulate_supported_route_selection(
         state,
         home,
         &preamble,
         &normal_stack,
         "project-memory-route-enabled",
         vague_message,
+        "featureforge:plan-eng-review",
     );
     assert_eq!(
         vague_entry["helper_outcome"],
@@ -585,24 +663,21 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "enabled entry should continue through the normal stack before route selection",
     );
     assert_eq!(
-        route_after_supported_entry(
-            &vague_entry,
-            vague_message,
-            "featureforge:plan-eng-review",
-        ),
-        "featureforge:plan-eng-review",
+        vague_entry["selected_route"],
+        Value::String(String::from("featureforge:plan-eng-review")),
         "vague notes or docs requests should keep the active workflow owner",
     );
 
     let explicit_message =
         "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.\n";
-    let explicit_entry = simulate_supported_entry(
+    let explicit_entry = simulate_supported_route_selection(
         state,
         home,
         &preamble,
         &normal_stack,
         "project-memory-route-enabled",
         explicit_message,
+        "featureforge:plan-eng-review",
     );
     assert_eq!(
         explicit_entry["helper_outcome"],
@@ -610,12 +685,8 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "explicit project-memory routing should still use the real enabled entry path",
     );
     assert_eq!(
-        route_after_supported_entry(
-            &explicit_entry,
-            explicit_message,
-            "featureforge:plan-eng-review",
-        ),
-        "featureforge:project-memory",
+        explicit_entry["selected_route"],
+        Value::String(String::from("featureforge:project-memory")),
         "explicit project-memory requests should override an active workflow owner",
     );
 }
