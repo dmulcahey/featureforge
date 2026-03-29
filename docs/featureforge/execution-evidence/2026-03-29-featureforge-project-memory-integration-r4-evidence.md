@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** d2b979a6e254a0473c8439801044c2837615373b4ce2debd4fa08e609b5f3ae5
+**Plan Fingerprint:** edfe23dc271d10081cc2f98f96543c415ff9f5151e7b091f4a86ce693742efa0
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -699,3 +699,18 @@
 - tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:1cf07a1526c0eec0073253b684b558143f8f1611fd424e0e60584e2de718458d
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after replacing phrase-specific negatives with semantic obligation+timestep guard helpers.
 **Invalidation Reason:** Review found the Task 4 semantic guard still misses imperative timed instructions like before-plan consult, after-fix update, or before-completion use.
+
+#### Attempt 5
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T20:37:05.801319Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 5
+**Packet Fingerprint:** d6f8d1fcfbcfbaa48d5a32541096a25ca002b1e8fe29501a11872b38fb6c8bd9
+**Head SHA:** 16245c0ec819f3347be739a1c943bf1cf8719f3e
+**Base SHA:** 16245c0ec819f3347be739a1c943bf1cf8719f3e
+**Claim:** Committed the final imperative-regression Task 4 remediation as 16245c0ec819f3347be739a1c943bf1cf8719f3e with the message test: catch imperative task4 hook regressions.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:256b5475e700332dabee5a4efa92c5098c4ebde017eefe23fd3e6bc27f0193ae
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after extending the semantic hook guard to catch timed imperative instructions.
+**Invalidation Reason:** Review found the Task 4 guard still missing action-first imperative regression fixtures for consult/update/use before the timed phase boundary.

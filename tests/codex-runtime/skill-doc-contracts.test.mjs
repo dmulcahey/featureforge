@@ -132,6 +132,22 @@ function assertForbidsTimedObligationHook(content, label, description, timings, 
   }
 }
 
+function assertDetectsActionFirstTimedHook(samples, label, description, timings, targetPattern) {
+  const imperativeActionPattern = '(?:consult|update|use)';
+  const timingPattern = `(?:${timings.join('|')})`;
+  const patterns = [
+    new RegExp(`${imperativeActionPattern}[^\\n]{0,160}${targetPattern}[^\\n]{0,160}${timingPattern}`, 'i'),
+    new RegExp(`${imperativeActionPattern}[^\\n]{0,160}featureforge:project-memory[^\\n]{0,160}${targetPattern}[^\\n]{0,160}${timingPattern}`, 'i'),
+    new RegExp(`featureforge:project-memory[^\\n]{0,160}${targetPattern}[^\\n]{0,160}${timingPattern}`, 'i'),
+  ];
+  for (const sample of samples) {
+    assert.ok(
+      patterns.some((pattern) => pattern.test(sample)),
+      `${label} should detect action-first timed regressions for ${description}: ${sample}`,
+    );
+  }
+}
+
 test('templates declare exactly one base or review preamble placeholder', () => {
   for (const skill of listGeneratedSkills()) {
     const template = readUtf8(getTemplatePath(skill));
@@ -638,6 +654,25 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
     ],
     'docs\\/project_notes\\/(?:decisions|key_facts)\\.md',
   );
+  assertDetectsActionFirstTimedHook(
+    [
+      'Consult `docs/project_notes/decisions.md` before defining tasks.',
+      'Consult `docs/project_notes/key_facts.md` during task breakdown.',
+    ],
+    'writing-plans',
+    'mandatory-before-planning consult regressions',
+    [
+      'before planning',
+      'before defining tasks',
+      'before decomposing tasks',
+      'to plan',
+      'to start planning',
+      'to continue planning',
+      'task breakdown',
+      'planning start',
+    ],
+    'docs\\/project_notes\\/(?:decisions|key_facts)\\.md',
+  );
 
   const systematicDebugging = readUtf8(getSkillPath('systematic-debugging'));
   assert.match(systematicDebugging, /Check Recurring Bug Memory When It Exists/);
@@ -650,6 +685,25 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
     systematicDebugging,
     'systematic-debugging',
     'the bugs.md update into an always-after-fix requirement',
+    [
+      'after (?:every|each) fix',
+      'after fixes',
+      'after resolving the bug',
+      'once the fix lands',
+      'after the fix lands',
+      'after debugging',
+      'before fixing',
+      'after the repair',
+    ],
+    'docs\\/project_notes\\/bugs\\.md',
+  );
+  assertDetectsActionFirstTimedHook(
+    [
+      'Update `docs/project_notes/bugs.md` after the fix lands.',
+      'Update `docs/project_notes/bugs.md` after resolving the bug.',
+    ],
+    'systematic-debugging',
+    'always-update-after-fix regressions',
     [
       'after (?:every|each) fix',
       'after fixes',
@@ -680,6 +734,24 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
     documentRelease,
     'document-release',
     'the project-memory follow-up into a required release-pass gate',
+    [
+      'before branch completion',
+      'before presenting completion options',
+      'to complete the branch',
+      'required document-release handoff',
+      'finish the release pass',
+      'complete the release pass',
+      'release-readiness pass',
+    ],
+    'docs\\/project_notes\\/',
+  );
+  assertDetectsActionFirstTimedHook(
+    [
+      'Use featureforge:project-memory to update `docs/project_notes/issues.md` before branch completion.',
+      'Use featureforge:project-memory to update `docs/project_notes/decisions.md` to finish the release pass.',
+    ],
+    'document-release',
+    'release-pass gate regressions',
     [
       'before branch completion',
       'before presenting completion options',
