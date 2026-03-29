@@ -32,6 +32,14 @@ fn read_route_contract_fixture() -> String {
         .expect("using-featureforge route contract fixture should be readable")
 }
 
+struct RouteSelectionHarness<'a> {
+    preamble: &'a str,
+    normal_stack: &'a str,
+    route_block: &'a str,
+    session_key: &'a str,
+    workflow_next_skill: &'a str,
+}
+
 fn extract_bash_block(content: &str, heading: &str) -> String {
     let mut in_heading = false;
     let mut in_block = false;
@@ -228,14 +236,10 @@ PY
 fn simulate_supported_route_selection(
     state_dir: &Path,
     home_dir: &Path,
-    preamble: &str,
-    normal_stack: &str,
-    route_block: &str,
-    session_key: &str,
+    harness: &RouteSelectionHarness<'_>,
     message: &str,
-    workflow_next_skill: &str,
 ) -> Value {
-    let message_file = state_dir.join(format!("{session_key}.txt"));
+    let message_file = state_dir.join(format!("{}.txt", harness.session_key));
     write_file(&message_file, message);
 
     let script = format!(
@@ -307,7 +311,10 @@ print(json.dumps({{
     "selected_route": os.environ["SP_TEST_SELECTED_ROUTE"],
 }}))
 PY
-"#
+"#,
+        preamble = harness.preamble,
+        normal_stack = harness.normal_stack,
+        route_block = harness.route_block,
     );
 
     install_compiled_featureforge(home_dir);
@@ -321,14 +328,14 @@ PY
                 .env("FEATUREFORGE_STATE_DIR", state_dir)
                 .env("HOME", home_dir)
                 .env("SP_TEST_MESSAGE_FILE", &message_file)
-                .env("SP_TEST_SESSION_KEY", session_key)
-                .env("SP_TEST_WORKFLOW_NEXT_SKILL", workflow_next_skill);
+                .env("SP_TEST_SESSION_KEY", harness.session_key)
+                .env("SP_TEST_WORKFLOW_NEXT_SKILL", harness.workflow_next_skill);
             command
         },
-        session_key,
+        harness.session_key,
     );
 
-    parse_supported_entry_stdout(&output.stdout, session_key)
+    parse_supported_entry_stdout(&output.stdout, harness.session_key)
 }
 
 #[test]
@@ -353,7 +360,7 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
         "If the bypass gate resolves to `enabled` for this turn, run the normal shared FeatureForge stack before any further FeatureForge behavior:",
         "If helpers are unavailable, fallback stays minimal and conservative:",
         "Manual fallback must not infer readiness from the legacy thin header subset.",
-        "If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix, record a decision, update key facts, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and route to `featureforge:project-memory`.",
+        "If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and route to `featureforge:project-memory`.",
         "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
         "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
         "When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself, in which case the explicit project-memory route above takes precedence over helper-derived workflow routes.",
@@ -384,7 +391,7 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
         "using-featureforge skill should not expose the test route env var"
     );
     let explicit_memory_route_index = content
-        .find("If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix, record a decision, update key facts, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and route to `featureforge:project-memory`.")
+        .find("If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and route to `featureforge:project-memory`.")
         .expect("using-featureforge skill should document explicit-memory routing precedence");
     let generic_next_skill_index = content
         .find("If the JSON result contains a non-empty `next_skill`, use that route.")
@@ -677,6 +684,9 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "What does docs/project_notes/bugs.md say right now?\n",
         "Please read docs/project_notes/issues.md before continuing plan review.\n",
         "Do not use featureforge:project-memory for this follow-up.\n",
+        "Please record a decision in the approved plan before continuing.\n",
+        "Please log a bug fix in the execution evidence before continuing.\n",
+        "Please update our key facts in the approved spec before continuing.\n",
     ];
 
     for active_owner in [
@@ -685,16 +695,14 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "featureforge:executing-plans",
         "featureforge:subagent-driven-development",
     ] {
-        let vague_entry = simulate_supported_route_selection(
-            state,
-            home,
-            &preamble,
-            &normal_stack,
-            &route_block,
-            "project-memory-route-enabled",
-            vague_message,
-            active_owner,
-        );
+        let harness = RouteSelectionHarness {
+            preamble: &preamble,
+            normal_stack: &normal_stack,
+            route_block: &route_block,
+            session_key: "project-memory-route-enabled",
+            workflow_next_skill: active_owner,
+        };
+        let vague_entry = simulate_supported_route_selection(state, home, &harness, vague_message);
         assert_eq!(
             vague_entry["helper_outcome"],
             Value::String(String::from("enabled")),
@@ -712,16 +720,8 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         );
 
         for explicit_message in explicit_messages {
-            let explicit_entry = simulate_supported_route_selection(
-                state,
-                home,
-                &preamble,
-                &normal_stack,
-                &route_block,
-                "project-memory-route-enabled",
-                explicit_message,
-                active_owner,
-            );
+            let explicit_entry =
+                simulate_supported_route_selection(state, home, &harness, explicit_message);
             assert_eq!(
                 explicit_entry["helper_outcome"],
                 Value::String(String::from("enabled")),
@@ -735,16 +735,8 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         }
 
         for negative_message in negative_messages {
-            let negative_entry = simulate_supported_route_selection(
-                state,
-                home,
-                &preamble,
-                &normal_stack,
-                &route_block,
-                "project-memory-route-enabled",
-                negative_message,
-                active_owner,
-            );
+            let negative_entry =
+                simulate_supported_route_selection(state, home, &harness, negative_message);
             assert_eq!(
                 negative_entry["helper_outcome"],
                 Value::String(String::from("enabled")),
@@ -757,16 +749,8 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
             );
         }
 
-        let direct_skill_entry = simulate_supported_route_selection(
-            state,
-            home,
-            &preamble,
-            &normal_stack,
-            &route_block,
-            "project-memory-route-enabled",
-            direct_skill_message,
-            active_owner,
-        );
+        let direct_skill_entry =
+            simulate_supported_route_selection(state, home, &harness, direct_skill_message);
         assert_eq!(
             direct_skill_entry["helper_outcome"],
             Value::String(String::from("enabled")),
