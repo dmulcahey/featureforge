@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** bbe72670fb9f2a74b9b190a0165eeb558ee2b6433f9dff24b6ae4ed8742fdd81
+**Plan Fingerprint:** 6035a522e60c565a9413c5c64e93ac28d670c198a7fea12dc956c8d081ca4622
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -524,3 +524,20 @@
 - tests/using_featureforge_skill.rs | sha256:9be32a310f428207ea3da8a73c7d9392ef84fb67a9817f522e2e7f21fedc6ee1
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and cargo test --test using_featureforge_skill after fixing the stale AGENTS.md branding and explicit project-memory routing precedence.
 **Invalidation Reason:** Review found explicit-memory routing still underspecified for implementation-ready and helper-derived handoff paths.
+
+#### Attempt 3
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T19:56:38.096186Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 6
+**Packet Fingerprint:** b98b2f2b14f16f9bbb2705e0ad916895d263128e4541b0051868c82a086c050c
+**Head SHA:** eef5e6f2548ab0311cf5bb8c0c079d7e7c32d65d
+**Base SHA:** eef5e6f2548ab0311cf5bb8c0c079d7e7c32d65d
+**Claim:** Committed the Task 3 routing-precedence remediation as eef5e6f2548ab0311cf5bb8c0c079d7e7c32d65d with the message docs: tighten task3 memory routing precedence.
+**Files Proven:**
+- skills/using-featureforge/SKILL.md | sha256:05daf81d5930f46446fffbb2f76b1ee57c867005a1cedf57bd106f1b2782530b
+- skills/using-featureforge/SKILL.md.tmpl | sha256:b755bfab281f385501a098928c112b20a13a6a16f82cb6efaf416a1b592212b3
+- tests/using_featureforge_skill.rs | sha256:88ffe22eaa983878accdcc89825719a6fe0b74e62e243f99a0f15f18dcba4d82
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check, cargo test --test using_featureforge_skill, and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after broadening the explicit project-memory helper-first carveout.
+**Invalidation Reason:** Review requested doc-surface regression coverage for the new supportive/optional project-memory wording.
