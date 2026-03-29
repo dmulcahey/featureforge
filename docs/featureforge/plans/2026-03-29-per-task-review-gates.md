@@ -2,12 +2,12 @@
 
 > **For Codex and GitHub Copilot workers:** REQUIRED: Use the execution skill recommended by `featureforge plan execution recommend --plan <approved-plan-path>` after engineering approval; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Workflow State:** Draft
+**Workflow State:** Engineering Approved
 **Plan Revision:** 1
 **Execution Mode:** none
 **Source Spec:** `docs/featureforge/specs/2026-03-29-per-task-review-gates-design.md`
 **Source Spec Revision:** 1
-**Last Reviewed By:** writing-plans
+**Last Reviewed By:** plan-eng-review
 
 **Goal:** Enforce per-task review + verification gates before cross-task advancement while preserving final whole-diff review and finish gating.
 
@@ -77,6 +77,52 @@ Task 3 -> Task 4
 Task 3 -> Task 5
 Task 4 -> Task 6
 Task 5 -> Task 6
+```
+
+## Task-Boundary Gate State Machine
+```text
+                        +-------------------+
+                        |    executing      |
+                        | (task N in flight)|
+                        +---------+---------+
+                                  |
+                    task N steps complete
+                                  v
+                      +-----------+------------+
+                      | task_n_review_pending  |
+                      | dedicated-independent  |
+                      +-----------+------------+
+                                  |
+                 +----------------+----------------+
+                 |                                 |
+            review pass                       review fail
+                 |                                 |
+                 v                                 v
+     +-----------+------------+       +-----------+------------+
+     |task_n_verification_    |       | remediation_reopen     |
+     |pending                 |       | (cycle count + 1)      |
+     +-----------+------------+       +-----------+------------+
+                 |                                |
+     +-----------+-----------+                    |
+     |                       |                    |
+ verification pass      verification fail         |
+     |                       |                    |
+     v                       v                    |
+ +---+-------------------+   +----------------+   |
+ |task_n_closed          |<--| fix and re-run |<--+
+ +---+-------------------+   +----------------+
+     |
+     | begin task N+1 allowed
+     v
+ +---+-------------------+
+ | executing (task N+1)  |
+ +-----------------------+
+
+Cycle branch:
+- if cycle count reaches 3 on task N, runtime records cycle_break and routes to cycle-break remediation strategy before retry.
+
+Terminal downstream (unchanged after all tasks closed):
+task_all_closed -> final_review_pending -> qa_pending/document_release_pending -> ready_for_branch_completion
 ```
 
 ## Task 1: Define Authoritative Task-Closure Evaluation
@@ -198,6 +244,7 @@ Keep existing `final_review_pending`, `qa_pending`, `document_release_pending`, 
 - [ ] **Step 5: Run targeted workflow/operator regression tests**
 
 Run: `cargo test --test workflow_runtime -- workflow_phase_ --nocapture`
+Run: `cargo test --test workflow_shell_smoke -- workflow_phase_ --nocapture`
 Expected: PASS including new task-boundary route tests.
 
 ## Task 4: Runtime Regression and Contract Coverage (Parallel Lane A)
@@ -235,6 +282,7 @@ Ensure task-level gating does not short-circuit final review requirements.
 
 Run: `cargo test --test plan_execution -- task_boundary_ --nocapture`
 Run: `cargo test --test workflow_runtime -- task_boundary_ --nocapture`
+Run: `cargo test --test workflow_runtime_final_review -- task_boundary_ --nocapture`
 Expected: PASS.
 
 ## Task 5: Skill Contract and Subagent-Consent Updates (Parallel Lane B)
@@ -284,16 +332,16 @@ Expected: PASS.
 **Plan Constraints:**
 - Resolve lane merge conflicts without changing approved behavior intent.
 - Do not skip `plan contract lint` or workflow sync after plan updates.
+- Do not introduce new feature behavior in Task 6; limit edits to merge-reconciliation and verification fixes required to integrate Tasks 4 and 5 on top of Tasks 1-3.
 **Open Questions:** none
 
 **Files:**
-- Modify: `src/execution/state.rs`
-- Modify: `src/execution/mutate.rs`
-- Modify: `src/workflow/operator.rs`
-- Modify: `src/workflow/status.rs`
 - Modify: `tests/plan_execution.rs`
 - Modify: `tests/workflow_runtime.rs`
+- Modify: `tests/workflow_runtime_final_review.rs`
 - Modify: `tests/runtime_instruction_contracts.rs`
+- Modify: `skills/executing-plans/SKILL.md`
+- Modify: `skills/subagent-driven-development/SKILL.md`
 
 - [ ] **Step 1: Merge Task 4 and Task 5 outputs into integration branch**
 
@@ -311,6 +359,7 @@ Expected: PASS with zero warnings.
 Run: `cargo test --test plan_execution -- --nocapture`
 Run: `cargo test --test workflow_runtime -- --nocapture`
 Run: `cargo test --test workflow_runtime_final_review -- --nocapture`
+Run: `cargo test --test workflow_shell_smoke -- --nocapture`
 Expected: PASS.
 
 - [ ] **Step 4: Run skill-contract verification**
@@ -339,6 +388,17 @@ Expected: runtime-owned pass receipt recorded.
 - Preserve downstream late-stage gates with explicit regression assertions.
 - Run full strict lint and targeted suites before completion claims.
 
+## Coverage Graph
+- Cross-task `begin` allows `Task N+1` only when `Task N` review is green and verification evidence is valid -> automated (covered by `tests/plan_execution.rs` begin/task-boundary gate assertions).
+- Cross-task `begin` blocks when prior-task review is missing, non-green, stale, or malformed -> automated (covered by `tests/plan_execution.rs` negative review-provenance and reason-code assertions).
+- Cross-task `begin` blocks when prior-task verification receipt is missing or malformed (including legacy in-flight runs) -> automated (covered by `tests/plan_execution.rs` verification receipt and migration-path assertions).
+- Task-boundary remediation loops increment cycle tracking and route to cycle-break handling at threshold (`>=3`) before further advancement -> automated (covered by `tests/plan_execution.rs` cycle-break regressions).
+- Workflow/operator surfaces expose deterministic task-boundary blocked phase guidance before downstream final-review routing -> automated (covered by `tests/workflow_runtime.rs` and `tests/workflow_shell_smoke.rs` route/status parity assertions).
+- Final whole-diff review and finish-gate behavior remain required after all task-boundary gates pass -> automated (covered by `tests/workflow_runtime_final_review.rs` regression assertions).
+- Execution-skill guidance requires per-task review -> verification -> advance sequencing -> automated (covered by `tests/runtime_instruction_contracts.rs` and regenerated-skill contract assertions).
+- Execution-phase subagent dispatch does not require per-dispatch user-consent prompts -> automated (covered by `tests/runtime_instruction_contracts.rs` policy/wording assertions).
+- Browser-visible interaction paths -> not required (change surface is runtime/workflow/skill-contract only; no UI routes or browser interactions are introduced).
+
 ## Documentation Update Expectations
 - Keep this plan current if task/file ownership changes during execution.
 - If runtime surface names change during implementation, update related skill text and contract tests in same change.
@@ -358,3 +418,14 @@ Expected: runtime-owned pass receipt recorded.
   - Mitigation: template-first edits, regenerated docs, instruction contract tests.
 - Risk: Unexpected phase-route regressions in downstream gates.
   - Mitigation: dedicated workflow phase regression tests plus final-review/finish preservation tests.
+
+## Engineering Review Summary
+
+**Review Status:** clear
+**Reviewed At:** 2026-03-29T20:25:53Z
+**Review Mode:** big_change
+**Reviewed Plan Revision:** 1
+**Critical Gaps:** 0
+**Browser QA Required:** no
+**Test Plan Artifact:** `/Users/davidmulcahey/.featureforge/projects/dmulcahey-featureforge/davidmulcahey-codex-enforce-pertask-review-gate--test-plan-20260329-202507.md`
+**Outside Voice:** skipped
