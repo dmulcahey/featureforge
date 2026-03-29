@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** 5637dbcd071695471908d02ce677b2c19b2ca03891bbefd56e3e772e1569479b
+**Plan Fingerprint:** c476dc54f38e2301669bf60405520b1efc85777a43eebf461e76a2fada12c9d7
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -48,8 +48,8 @@
 **Invalidation Reason:** Review remediation updated the project-memory examples and stale Task 1 Step 2 evidence must be rebuilt.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-29T18:44:23.717876Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T18:54:37.960805Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 2
@@ -66,6 +66,27 @@
 - skills/project-memory/references/issues_template.md | sha256:56c23790ad6226eb50abdac1e34faa711b4d2079e38385adc086265d501ecee7
 - skills/project-memory/references/key_facts_template.md | sha256:87f8c9d431eaa7120d95bdddef0886ef19f292efba3d615035293d080822a723
 **Verification Summary:** Manual inspection only: Manual inspection only: Re-read the updated examples and companion refs to confirm the positive bugs example now models a recurring/high-cost failure with explicit root-cause, fix, prevention, and inspectable sources while the narrow authority and no-secrets guidance stayed intact.
+**Invalidation Reason:** Follow-up review remediation aligned the authority-boundary companion doc with the approved spec ordering.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-29T18:54:49.00809Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 2
+**Packet Fingerprint:** ebefe730a7b9f5e09c2d60ec909d29fa7e39963d339ffe337938f63d6c96d5d5
+**Head SHA:** d17611535762ef87f84a0f6105370aafbb773456
+**Base SHA:** d17611535762ef87f84a0f6105370aafbb773456
+**Claim:** Refreshed the project-memory foundation content so the examples, companion refs, and template now match the approved authority ordering, narrow write set, no-secrets rule, and review-safe recurring bug model.
+**Files Proven:**
+- skills/project-memory/SKILL.md.tmpl | sha256:12be4dc986dd6af986b3b1d7cb21f86452f7d6051241349bdef934f97d1c53f1
+- skills/project-memory/authority-boundaries.md | sha256:dafc3d2ac9be7234dc2c3cd5b795bee7816446f66955ceae2e8157e8d948aa38
+- skills/project-memory/examples.md | sha256:8c95c90ad7736d7b810be0182cbcb8b6f43c15533313ef26da6b52c78d734ee5
+- skills/project-memory/references/bugs_template.md | sha256:30a9a49d39461d86abeffe710c00c935e5163168d9ce4d3c9caacd8b274bd675
+- skills/project-memory/references/decisions_template.md | sha256:4b7e1126197a3cd7054b2ee1aaace0b4cac126f356b355b48e1276e1cf8b5af1
+- skills/project-memory/references/issues_template.md | sha256:56c23790ad6226eb50abdac1e34faa711b4d2079e38385adc086265d501ecee7
+- skills/project-memory/references/key_facts_template.md | sha256:87f8c9d431eaa7120d95bdddef0886ef19f292efba3d615035293d080822a723
+**Verification Summary:** Manual inspection only: Manual inspection only: Re-read the updated authority-boundary companion doc and examples to confirm the numbered conflict chain now matches the approved spec ordering while the reject vocabulary, narrow authority posture, and recurring bug example remain intact.
 **Invalidation Reason:** N/A
 
 ### Task 1 Step 3
@@ -119,8 +140,8 @@
 **Invalidation Reason:** Review remediation updated Task 1 content, so the recorded verification must be rerun on the current snapshot.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-03-29T18:44:58.879555Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T18:54:53.630993Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 5
@@ -134,6 +155,24 @@
 - skills/project-memory/examples.md | sha256:8c95c90ad7736d7b810be0182cbcb8b6f43c15533313ef26da6b52c78d734ee5
 - tests/codex-runtime/skill-doc-generation.test.mjs | sha256:fc447bc687cb2dbf29b22bcd6691f745df1e754e3aeb1946f90e784a79ca1853
 **Verification Summary:** Manual inspection only: Verified with current outputs: ✔ every generated skill has a template and SKILL.md artifact (2.549792ms) ✔ every generated SKILL.md preserves expected frontmatter semantics (1.969208ms) ✔ project-memory skill foundation is discoverable with generated output and companion refs (0.261375ms) ✔ every generated SKILL.md has exactly one generated header and regenerate command (0.959333ms) ✔ no generated SKILL.md contains unresolved placeholders (2.080333ms) ✔ gen-skill-docs --check exits successfully (66.192667ms) ✔ gen-skill-docs --check fails on stale generated artifacts (79.329917ms) ✔ upgrade instructions use the runtime-root helper instead of embedded root-search order (0.6185ms) ✔ active public and generated surfaces do not advertise retired legacy install roots (1.689458ms) ✔ checked-in downstream review and QA references stay harness-aware (0.338208ms) ✔ workflow-status ambiguity snapshot stays checked in and is covered by workflow_runtime (0.394833ms) ℹ tests 11 ℹ suites 0 ℹ pass 11 ℹ fail 0 ℹ cancelled 0 ℹ skipped 0 ℹ todo 0 ℹ duration_ms 227.9565 passed with 11 tests green, and Generated skill docs are up to date. reported generated skill docs are up to date.
+**Invalidation Reason:** Follow-up review remediation strengthened Task 1 contract coverage and requires command-backed verification wording.
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-03-29T18:55:11.337306Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 5
+**Packet Fingerprint:** 9150089c3ab7b3fee291d9d11198958db2de5beacfce5ad659bf255c648afb59
+**Head SHA:** d17611535762ef87f84a0f6105370aafbb773456
+**Base SHA:** d17611535762ef87f84a0f6105370aafbb773456
+**Claim:** Re-ran the project-memory foundation verification on the follow-up review-remediated snapshot and confirmed the strengthened contract checks and generated-doc freshness checks pass.
+**Files Proven:**
+- skills/project-memory/SKILL.md | sha256:fb812f9c71526761b34e0dbc432983a8708edebeae1ed5b999acd36b096fbc52
+- skills/project-memory/authority-boundaries.md | sha256:dafc3d2ac9be7234dc2c3cd5b795bee7816446f66955ceae2e8157e8d948aa38
+- skills/project-memory/examples.md | sha256:8c95c90ad7736d7b810be0182cbcb8b6f43c15533313ef26da6b52c78d734ee5
+- tests/codex-runtime/skill-doc-generation.test.mjs | sha256:a433f4f191b299c8ed57acaed6967a0f3c777e6839d39b940ea447887b0c2f07
+**Verification Summary:** `node --test tests/codex-runtime/skill-doc-generation.test.mjs && node scripts/gen-skill-docs.mjs --check` -> Passed: 12 tests green and generated skill docs are up to date.
 **Invalidation Reason:** N/A
 
 ### Task 1 Step 6
@@ -152,3 +191,19 @@
 - docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:ed046b6de6c8588bc0093b9e6fe5626afeeeaba7b770ceebaf94c21ba0da074b
 **Verification Summary:** Manual inspection only: Git commit succeeded on branch dm/project-memory and left the working tree clean.
 **Invalidation Reason:** Review remediation produced a new Task 1 snapshot, so the recorded Task 1 commit evidence must be refreshed.
+
+#### Attempt 2
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T18:55:21.647793Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 6
+**Packet Fingerprint:** 3ae5e84d4b4130d65f8c41c182f355d358251d44e10c801dfc665b7ea2860527
+**Head SHA:** d17611535762ef87f84a0f6105370aafbb773456
+**Base SHA:** d17611535762ef87f84a0f6105370aafbb773456
+**Claim:** Committed the refreshed Task 1 review-remediation slice as d17611535762ef87f84a0f6105370aafbb773456 with the message docs: refresh task1 review remediation.
+**Files Proven:**
+- docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md | sha256:bfd3ad96fead28c1d2efb0a8d566d1097e3eef317ca88fba377567c9e8abf5dc
+- docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:ed046b6de6c8588bc0093b9e6fe5626afeeeaba7b770ceebaf94c21ba0da074b
+**Verification Summary:** Manual inspection only: Manual inspection only: Git commit d17611535762ef87f84a0f6105370aafbb773456 succeeded on branch dm/project-memory, and the only remaining unstaged repo item is the untracked Task 2 red test file that stays outside the Task 1 remediation commit.
+**Invalidation Reason:** Follow-up review remediation changed the Task 1 boundary doc and contract tests, so the recorded Task 1 completion commit must be refreshed again.

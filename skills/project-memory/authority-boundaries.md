@@ -6,12 +6,13 @@ Project memory in FeatureForge is a supportive repo-visible layer under `docs/pr
 
 When two sources disagree, use this order:
 
-1. Active repo instructions such as `AGENTS.md`
-2. Approved specs and approved plans
-3. Runtime-owned execution state and execution evidence
-4. Review artifacts and release artifacts
-5. Stable repo docs and code
-6. `docs/project_notes/*`
+1. Approved specs under `docs/featureforge/specs/`
+2. Approved plans under `docs/featureforge/plans/`
+3. Execution evidence and review artifacts tied to approved work
+4. Runtime-owned local state under `~/.featureforge/projects/`
+5. `docs/project_notes/*`
+
+Active repo instructions such as `AGENTS.md`, plus stable repo docs and code, remain useful source inputs, but they do not outrank the workflow-authoritative chain above when project memory is in conflict.
 
 If project memory conflicts with any higher-authority surface, update project memory to match the higher-authority source. Do not "split the difference."
 
