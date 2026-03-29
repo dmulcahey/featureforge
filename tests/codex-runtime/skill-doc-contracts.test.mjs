@@ -118,12 +118,14 @@ function assertDownstreamMaterialStaysGateAndHarnessAware(content, label) {
 
 function assertForbidsTimedObligationHook(content, label, description, timings, targetPattern) {
   const obligationPattern = '(?:must|always|required|requires)';
+  const imperativeActionPattern = '(?:consult|update|use)';
   const timingPattern = `(?:${timings.join('|')})`;
   const patterns = [
     new RegExp(`${timingPattern}[^.\\n]{0,160}${obligationPattern}[^.\\n]{0,160}${targetPattern}`, 'i'),
     new RegExp(`${obligationPattern}[^.\\n]{0,160}${targetPattern}[^.\\n]{0,160}${timingPattern}`, 'i'),
     new RegExp(`${targetPattern}[^.\\n]{0,160}${obligationPattern}[^.\\n]{0,160}${timingPattern}`, 'i'),
     new RegExp(`${timingPattern}[^.\\n]{0,160}${targetPattern}[^.\\n]{0,160}${obligationPattern}`, 'i'),
+    new RegExp(`${timingPattern}[^.\\n]{0,160}${imperativeActionPattern}[^.\\n]{0,160}${targetPattern}`, 'i'),
   ];
   for (const pattern of patterns) {
     assert.doesNotMatch(content, pattern, `${label} should not turn ${description} into a timed obligation`);

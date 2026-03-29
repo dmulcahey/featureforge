@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** 9e55e6225ca9844689dc7804d686c31982935146bb1a328389b04f6e5a0a5b14
+**Plan Fingerprint:** d2b979a6e254a0473c8439801044c2837615373b4ce2debd4fa08e609b5f3ae5
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -684,3 +684,18 @@
 - tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:e0726349c9c0db2437fb4addbc84b9d9fa6c1a8736437b928606d3a05942aeb3
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after broadening the non-gating regression checks and adding an order-sensitive numbering assertion.
 **Invalidation Reason:** Review found the Task 4 negative assertions still too phrase-specific to fail closed on planning-start, after-fix, and release-pass gate semantics.
+
+#### Attempt 4
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T20:30:51.230757Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 5
+**Packet Fingerprint:** d6f8d1fcfbcfbaa48d5a32541096a25ca002b1e8fe29501a11872b38fb6c8bd9
+**Head SHA:** d2f61c54ab724bbaa80c912d76e35423a3deaff4
+**Base SHA:** d2f61c54ab724bbaa80c912d76e35423a3deaff4
+**Claim:** Committed the semantic Task 4 review remediation as d2f61c54ab724bbaa80c912d76e35423a3deaff4 with the message test: generalize task4 hook gate checks.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:1cf07a1526c0eec0073253b684b558143f8f1611fd424e0e60584e2de718458d
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after replacing phrase-specific negatives with semantic obligation+timestep guard helpers.
+**Invalidation Reason:** Review found the Task 4 semantic guard still misses imperative timed instructions like before-plan consult, after-fix update, or before-completion use.
