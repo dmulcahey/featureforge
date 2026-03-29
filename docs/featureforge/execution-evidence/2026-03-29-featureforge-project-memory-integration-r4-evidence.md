@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** 787529475618339911121b7ba09cc439056757702e90f2c939e4c93b7c4acb39
+**Plan Fingerprint:** bbe72670fb9f2a74b9b190a0165eeb558ee2b6433f9dff24b6ae4ed8742fdd81
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -506,3 +506,21 @@
 - tests/using_featureforge_skill.rs | sha256:54c7af39648d750b9c777eca75bc43927a5459e23631b040310979348001aa16
 **Verification Summary:** Manual inspection only: Manual inspection only: Git commit 01aec99f2b070ae059717163d33fc88e63ab59f3 succeeded on branch dm/project-memory and the working tree was clean before the runtime refreshed the Task 3 plan/evidence bookkeeping.
 **Invalidation Reason:** Review found stale FeatureForge branding in AGENTS.md and weak explicit-memory routing precedence in using-featureforge guidance/tests.
+
+#### Attempt 2
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T19:48:01.0355Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 6
+**Packet Fingerprint:** b98b2f2b14f16f9bbb2705e0ad916895d263128e4541b0051868c82a086c050c
+**Head SHA:** 02fe4200e23156b4895889d282c8908ea64e70ca
+**Base SHA:** 02fe4200e23156b4895889d282c8908ea64e70ca
+**Claim:** Committed the Task 3 review remediation as 02fe4200e23156b4895889d282c8908ea64e70ca with the message docs: fix task3 review findings.
+**Files Proven:**
+- AGENTS.md | sha256:ce2c1bd704d11beaf3092581a0aaa62ffe99f40d66b1def7ed945e08cfbe6501
+- skills/using-featureforge/SKILL.md | sha256:5d977f1a76274e900e968afa3f7d2893daba33a9822ed14f1b5ce520b377c998
+- skills/using-featureforge/SKILL.md.tmpl | sha256:ecdea0253024d42249b11ef3e6e2a306e93c8a2e519c60d10925006f24af7637
+- tests/using_featureforge_skill.rs | sha256:9be32a310f428207ea3da8a73c7d9392ef84fb67a9817f522e2e7f21fedc6ee1
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and cargo test --test using_featureforge_skill after fixing the stale AGENTS.md branding and explicit project-memory routing precedence.
+**Invalidation Reason:** Review found explicit-memory routing still underspecified for implementation-ready and helper-derived handoff paths.
