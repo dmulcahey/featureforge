@@ -283,7 +283,7 @@ Do NOT jump from brainstorming straight to implementation. For workflow-routed w
 
 Only after the bypass gate resolves to `enabled` for the current session key, if `$_FEATUREFORGE_BIN` is available call `$_FEATUREFORGE_BIN workflow status --refresh`.
 
-- If the user is explicitly asking to set up `docs/project_notes/` or to record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.
+- If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix, record a decision, update key facts, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.
 - If the JSON result contains a non-empty `next_skill`, use that route.
 - If the JSON result reports `status` `implementation_ready`, proceed to the normal execution preflight and handoff flow using the exact approved plan path. Treat the public handoff recommendation as a conservative default. When you know isolated-agent availability, session intent, and workspace readiness, call `featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>` before choosing between `featureforge:subagent-driven-development` and `featureforge:executing-plans`.
 - In that helper-backed handoff flow, treat `execution_started` as an executor-resume signal only when the reported `phase` is `executing`.
@@ -299,7 +299,7 @@ Use this emitted-route contract when a supported entry has already resolved to `
 ```bash
 _MESSAGE_LC=$(tr '[:upper:]' '[:lower:]' < "$SP_TEST_MESSAGE_FILE")
 _EXPLICIT_PROJECT_MEMORY_ROUTE=""
-if printf '%s' "$_MESSAGE_LC" | grep -Eq 'featureforge:project-memory|project memory itself|record durable bugs|record durable decisions|record durable key facts|record key facts|record durable issue breadcrumbs|record issue breadcrumbs|set up docs/project_notes/|docs/project_notes/(bugs|decisions|key_facts|issues)\.md'; then
+if printf '%s' "$_MESSAGE_LC" | grep -Eq 'featureforge:project-memory|project memory itself|(?:set up|repair) project memory|(?:log|record) this bug fix|record this decision|update (?:our )?key facts|record durable bugs|record durable decisions|record durable key facts|record key facts|record durable issue breadcrumbs|record issue breadcrumbs|(?:set up|repair) docs/project_notes/|docs/project_notes/(readme|bugs|decisions|key_facts|issues)\.md'; then
   _EXPLICIT_PROJECT_MEMORY_ROUTE="featureforge:project-memory"
 fi
 if [ -n "$_EXPLICIT_PROJECT_MEMORY_ROUTE" ]; then

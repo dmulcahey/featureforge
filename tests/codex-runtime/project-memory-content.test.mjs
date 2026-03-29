@@ -47,8 +47,12 @@ function bulletEntries(name) {
     .filter(Boolean);
 }
 
-const APPROVED_OR_STABLE_SOURCE_REFERENCE =
-  /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md|\.\/(?:README|AGENTS|TODOS)\.md)$/;
+const APPROVED_ARTIFACT_SOURCE_REFERENCE =
+  /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md)$/;
+const STABLE_REPO_DOC_SOURCE_REFERENCE =
+  /^(?:(?:\.\/)?(?:README|AGENTS|TODOS)\.md|docs\/(?!featureforge\/).+\.md|review\/.+\.md|skills\/.+\.md)$/;
+const STABLE_CODE_PATH_SOURCE_REFERENCE =
+  /^(?:src|tests|scripts)\/.+\.(?:rs|mjs|js|cjs|ts|tsx|json|toml)$/;
 
 function sourceReferences(entry, name) {
   const sourceLine = entry.match(/\n\s*Source:\s*([^\n]+)/);
@@ -58,20 +62,36 @@ function sourceReferences(entry, name) {
   return references;
 }
 
+function isAllowedSeedSourceReference(name, reference) {
+  return (
+    APPROVED_ARTIFACT_SOURCE_REFERENCE.test(reference)
+    || STABLE_REPO_DOC_SOURCE_REFERENCE.test(reference)
+    || (name === 'key_facts.md' && STABLE_CODE_PATH_SOURCE_REFERENCE.test(reference))
+  );
+}
+
 function assertApprovedSeedSources(name, entry) {
   for (const reference of sourceReferences(entry, name)) {
-    assert.match(
-      reference,
-      APPROVED_OR_STABLE_SOURCE_REFERENCE,
-      `${name} should cite approved artifacts or stable repo docs: ${reference}`,
+    assert.equal(
+      isAllowedSeedSourceReference(name, reference),
+      true,
+      `${name} should cite approved artifacts, stable repo docs, or documented stable code paths: ${reference}`,
     );
     assert.doesNotMatch(
       reference,
-      /^(?:src|scripts)\//,
-      `${name} should not cite implementation paths directly: ${reference}`,
+      /^(?:target|node_modules)\//,
+      `${name} should not cite generated or vendored paths: ${reference}`,
     );
   }
 }
+
+test('seed provenance contract allows documented stable-source variants without widening to junk paths', () => {
+  assert.equal(isAllowedSeedSourceReference('bugs.md', 'README.md'), true);
+  assert.equal(isAllowedSeedSourceReference('bugs.md', './README.md'), true);
+  assert.equal(isAllowedSeedSourceReference('key_facts.md', 'src/main.rs'), true);
+  assert.equal(isAllowedSeedSourceReference('bugs.md', 'src/main.rs'), false);
+  assert.equal(isAllowedSeedSourceReference('key_facts.md', 'node_modules/pkg/index.js'), false);
+});
 
 test('project memory corpus includes the required repo-visible files', () => {
   assert.equal(fs.existsSync(MEMORY_DIR), true, 'docs/project_notes should exist');
