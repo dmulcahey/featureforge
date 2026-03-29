@@ -38,6 +38,7 @@ struct RouteSelectionHarness<'a> {
     route_block: &'a str,
     session_key: &'a str,
     workflow_next_skill: &'a str,
+    implementation_ready_route: &'a str,
 }
 
 fn extract_bash_block(content: &str, heading: &str) -> String {
@@ -279,6 +280,9 @@ case "$SP_TEST_OUTCOME" in
     _selected_route="$(
 {route_block}
 )"
+    if [ -z "$_selected_route" ] && [ -n "${{SP_TEST_IMPLEMENTATION_READY_ROUTE:-}}" ]; then
+      _selected_route="$SP_TEST_IMPLEMENTATION_READY_ROUTE"
+    fi
     ;;
   bypassed)
     _first_response_kind="featureforge_bypassed"
@@ -329,7 +333,11 @@ PY
                 .env("HOME", home_dir)
                 .env("SP_TEST_MESSAGE_FILE", &message_file)
                 .env("SP_TEST_SESSION_KEY", harness.session_key)
-                .env("SP_TEST_WORKFLOW_NEXT_SKILL", harness.workflow_next_skill);
+                .env("SP_TEST_WORKFLOW_NEXT_SKILL", harness.workflow_next_skill)
+                .env(
+                    "SP_TEST_IMPLEMENTATION_READY_ROUTE",
+                    harness.implementation_ready_route,
+                );
             command
         },
         harness.session_key,
@@ -360,10 +368,10 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
         "If the bypass gate resolves to `enabled` for this turn, run the normal shared FeatureForge stack before any further FeatureForge behavior:",
         "If helpers are unavailable, fallback stays minimal and conservative:",
         "Manual fallback must not infer readiness from the legacy thin header subset.",
-        "If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and route to `featureforge:project-memory`.",
+        "If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.",
         "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
         "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
-        "When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself, in which case the explicit project-memory route above takes precedence over helper-derived workflow routes.",
+        "When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself, in which case the explicit project-memory route above takes precedence over helper-derived workflow routes and execution handoff paths.",
         "In manual fallback, choose this route only for explicit memory-oriented requests; vague mentions of notes or docs are not enough.",
         "_UPD=\"\"",
         "export FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY=1",
@@ -391,7 +399,7 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
         "using-featureforge skill should not expose the test route env var"
     );
     let explicit_memory_route_index = content
-        .find("If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and route to `featureforge:project-memory`.")
+        .find("If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.")
         .expect("using-featureforge skill should document explicit-memory routing precedence");
     let generic_next_skill_index = content
         .find("If the JSON result contains a non-empty `next_skill`, use that route.")
@@ -672,12 +680,14 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "Please set up project memory for this repo before planning.\n",
         "Please log this bug fix in project memory before continuing plan review.\n",
         "Please log a bug fix in project memory before continuing plan review.\n",
+        "Please log a bug fix in docs/project_notes/bugs.md before continuing plan review.\n",
         "Please record this decision in project memory before continuing plan review.\n",
         "Please record a decision in project memory before continuing plan review.\n",
         "Please update our key facts in project memory before continuing plan review.\n",
         "Please record durable issue breadcrumbs in project memory before continuing plan review.\n",
         "Please record issue breadcrumbs in docs/project_notes/issues.md before continuing plan review.\n",
         "Please repair docs/project_notes/README.md before continuing plan review.\n",
+        "Please rewrite docs/project_notes/issues.md before continuing plan review.\n",
         "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.\n",
     ];
     let negative_messages = [
@@ -701,6 +711,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
             route_block: &route_block,
             session_key: "project-memory-route-enabled",
             workflow_next_skill: active_owner,
+            implementation_ready_route: "",
         };
         let vague_entry = simulate_supported_route_selection(state, home, &harness, vague_message);
         assert_eq!(
@@ -762,4 +773,35 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
             "direct project-memory requests should route to project-memory even when another workflow owner exists",
         );
     }
+
+    let handoff_harness = RouteSelectionHarness {
+        preamble: &preamble,
+        normal_stack: &normal_stack,
+        route_block: &route_block,
+        session_key: "project-memory-route-enabled",
+        workflow_next_skill: "",
+        implementation_ready_route: "featureforge:executing-plans",
+    };
+    let handoff_explicit_entry = simulate_supported_route_selection(
+        state,
+        home,
+        &handoff_harness,
+        "Please record a decision in project memory before execution preflight continues.\n",
+    );
+    assert_eq!(
+        handoff_explicit_entry["selected_route"],
+        Value::String(String::from("featureforge:project-memory")),
+        "explicit project-memory requests should override implementation-ready handoff routes",
+    );
+    let handoff_vague_entry = simulate_supported_route_selection(
+        state,
+        home,
+        &handoff_harness,
+        vague_message,
+    );
+    assert_eq!(
+        handoff_vague_entry["selected_route"],
+        Value::String(String::from("featureforge:executing-plans")),
+        "non-explicit requests should preserve the implementation-ready handoff route",
+    );
 }
