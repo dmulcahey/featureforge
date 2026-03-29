@@ -211,8 +211,8 @@ You MUST complete each phase before proceeding to the next.
    **This reveals:** Which layer fails (secrets → workflow ✓, workflow → build ✗)
 
 5. **Check Recurring Bug Memory When It Exists**
-   - If the failure looks recurring or historically familiar, search `docs/project_notes/bugs.md` for prior root causes, fixes, and prevention notes before inventing a new theory.
-   - If your investigation confirms a durable recurring bug pattern, update `docs/project_notes/bugs.md` through `featureforge:project-memory` with the root cause, fix, and prevention backlink after the debugging work is complete.
+   - If the failure looks recurring or historically familiar, search `docs/project_notes/bugs.md` for prior root causes, fixes, and prevention notes that can ground the investigation.
+   - If your investigation confirms a durable recurring bug pattern, update `docs/project_notes/bugs.md` through `featureforge:project-memory` with the root cause, fix, and prevention backlink.
 
 6. **Trace Data Flow**
 
