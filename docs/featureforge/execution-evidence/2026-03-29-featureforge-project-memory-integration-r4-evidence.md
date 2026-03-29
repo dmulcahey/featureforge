@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** 16f8f5da64d293b3b37c1e689da665e1913104d7c5a33833da656af8e147d0c1
+**Plan Fingerprint:** 8a4032c6de674489dcc3e857efd7634753f432b8330ef88d14a7c149ab8b90c4
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -652,3 +652,20 @@
 - tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:fee91c8dca807e6201617358438407db1c4e3b8e8f5064ea2fba1cc7b12fc362
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs before committing the lane.
 **Invalidation Reason:** Review found the Task 4 hook contract too permissive and the systematic-debugging checklist numbering out of sequence.
+
+#### Attempt 2
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T20:18:40.693845Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 5
+**Packet Fingerprint:** d6f8d1fcfbcfbaa48d5a32541096a25ca002b1e8fe29501a11872b38fb6c8bd9
+**Head SHA:** 4902a2235df5aaca4677634f6a85d3711d14bdbd
+**Base SHA:** 4902a2235df5aaca4677634f6a85d3711d14bdbd
+**Claim:** Committed the Task 4 review remediation as 4902a2235df5aaca4677634f6a85d3711d14bdbd with the message test: tighten task4 workflow-hook contracts.
+**Files Proven:**
+- skills/systematic-debugging/SKILL.md | sha256:5f038a4bd02228b0f13c6b1a25c1d7ccd80dd913ca6cad1a6c60f4571891221c
+- skills/systematic-debugging/SKILL.md.tmpl | sha256:9663201ad34684dd437a98c95d88a457047e509cf45524579d48d8c8e19d3ba0
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:f0a470342354d4fa838a89b29a91c0ad8c7eddabc3a8ca04e119d27b47dd75c6
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after tightening the non-gating hook assertions and fixing the systematic-debugging numbering.
+**Invalidation Reason:** Review found the Task 4 negative assertions too phrase-specific and the numbering fix still unprotected by the contract test.

@@ -606,8 +606,9 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(writingPlans, /supportive context only/i);
   assert.match(writingPlans, /Missing or stale notes do not block planning\./);
   assert.doesNotMatch(writingPlans, /project memory[^.\n]*(prerequisite|required|gate)/i);
-  assert.doesNotMatch(writingPlans, /before (?:starting|decomposing) tasks[^.\n]*(?:must|always) consult `docs\/project_notes\/(?:decisions|key_facts)\.md`/i);
-  assert.doesNotMatch(writingPlans, /do not (?:start|continue) planning until `docs\/project_notes\/(?:decisions|key_facts)\.md`/i);
+  assert.doesNotMatch(writingPlans, /(?:before (?:planning|decomposing tasks)|to plan)[^.\n]*(?:must|always|required|requires)[^.\n]*consult `docs\/project_notes\/(?:decisions|key_facts)\.md`/i);
+  assert.doesNotMatch(writingPlans, /(?:must|always|required|requires)[^.\n]*consult `docs\/project_notes\/(?:decisions|key_facts)\.md`[^.\n]*(?:before (?:planning|decomposing tasks)|to plan)/i);
+  assert.doesNotMatch(writingPlans, /(?:planning|decomposing tasks)[^.\n]*(?:requires|required)[^.\n]*`docs\/project_notes\/(?:decisions|key_facts)\.md`/i);
 
   const systematicDebugging = readUtf8(getSkillPath('systematic-debugging'));
   assert.match(systematicDebugging, /Check Recurring Bug Memory When It Exists/);
@@ -616,8 +617,15 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(systematicDebugging, /recurring or historically familiar/i);
   assert.match(systematicDebugging, /durable recurring bug pattern/i);
   assert.doesNotMatch(systematicDebugging, /project memory[^.\n]*(prerequisite|required|gate)/i);
-  assert.doesNotMatch(systematicDebugging, /always update `docs\/project_notes\/bugs\.md` after fixes/i);
-  assert.doesNotMatch(systematicDebugging, /before (?:attempting|making) fixes[^.\n]*update `docs\/project_notes\/bugs\.md`/i);
+  assert.doesNotMatch(systematicDebugging, /(?:after (?:every|each) fix|after fixes|before fixing)[^.\n]*(?:must|always|required|requires)[^.\n]*update `docs\/project_notes\/bugs\.md`/i);
+  assert.doesNotMatch(systematicDebugging, /(?:must|always|required|requires)[^.\n]*update `docs\/project_notes\/bugs\.md`[^.\n]*(?:after (?:every|each) fix|after fixes|before fixing)/i);
+  assert.doesNotMatch(systematicDebugging, /(?:fix(?:es)?|repair)[^.\n]*(?:requires|required)[^.\n]*`docs\/project_notes\/bugs\.md`/i);
+  const recurringBugMemoryIndex = systematicDebugging.indexOf('5. **Check Recurring Bug Memory When It Exists**');
+  const traceDataFlowIndex = systematicDebugging.indexOf('6. **Trace Data Flow**');
+  assert.ok(
+    recurringBugMemoryIndex !== -1 && traceDataFlowIndex !== -1 && recurringBugMemoryIndex < traceDataFlowIndex,
+    'systematic-debugging should keep the recurring-bug memory step before Trace Data Flow as ordered steps 5 then 6',
+  );
 
   const documentRelease = readUtf8(getSkillPath('document-release'));
   assert.match(documentRelease, /## Optional Project Memory Follow-Up/);
@@ -626,8 +634,9 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(documentRelease, /docs\/project_notes\//);
   assert.match(documentRelease, /follow-up release-readiness action/i);
   assert.doesNotMatch(documentRelease, /project memory[^.\n]*(prerequisite|required|gate)/i);
-  assert.doesNotMatch(documentRelease, /before branch completion[^.\n]*docs\/project_notes\//i);
-  assert.doesNotMatch(documentRelease, /must update `docs\/project_notes\/[^`]+` before (?:presenting completion options|branch completion)/i);
+  assert.doesNotMatch(documentRelease, /(?:before branch completion|before presenting completion options|to complete the branch)[^.\n]*(?:must|always|required|requires)[^.\n]*`docs\/project_notes\//i);
+  assert.doesNotMatch(documentRelease, /(?:branch completion|presenting completion options)[^.\n]*(?:requires|required)[^.\n]*`docs\/project_notes\//i);
+  assert.doesNotMatch(documentRelease, /(?:must|always|required|requires)[^.\n]*`docs\/project_notes\/[^`]+`[^.\n]*(?:before branch completion|before presenting completion options)/i);
 });
 
 test('generated skills use canonical runtime commands instead of helper executables', () => {
