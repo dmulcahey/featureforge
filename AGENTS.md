@@ -4,7 +4,7 @@ This file is project-local guidance for agents working in `featureforge`. It app
 
 ## Purpose
 
-- `superpowers` is the FeatureForge runtime and workflow toolkit.
+- `featureforge` is the FeatureForge runtime and workflow toolkit.
 - The repo mixes Rust runtime code, workflow contracts, generated skill docs, and verification tests.
 - Treat workflow truth, review artifacts, and execution-state artifacts as authoritative surfaces. Do not make casual compatibility changes around them.
 

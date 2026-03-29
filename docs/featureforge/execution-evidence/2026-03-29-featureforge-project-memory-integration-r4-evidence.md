@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** e687d3be46423bb83168fdb01eaa06e687f99990fb271ae1e04805852f720e47
+**Plan Fingerprint:** 787529475618339911121b7ba09cc439056757702e90f2c939e4c93b7c4acb39
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -484,3 +484,25 @@
 - tests/using_featureforge_skill.rs | sha256:54c7af39648d750b9c777eca75bc43927a5459e23631b040310979348001aa16
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and cargo test --test using_featureforge_skill (fallback because cargo nextest is unavailable in this checkout).
 **Invalidation Reason:** N/A
+
+### Task 3 Step 6
+#### Attempt 1
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T19:41:04.369397Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 6
+**Packet Fingerprint:** b98b2f2b14f16f9bbb2705e0ad916895d263128e4541b0051868c82a086c050c
+**Head SHA:** 01aec99f2b070ae059717163d33fc88e63ab59f3
+**Base SHA:** 01aec99f2b070ae059717163d33fc88e63ab59f3
+**Claim:** Committed the Task 3 routing and repo-doc lane as 01aec99f2b070ae059717163d33fc88e63ab59f3 with the message docs: route explicit memory requests.
+**Files Proven:**
+- AGENTS.md | sha256:fa2a0515ba1baf330c3b7b3141ff93f469b981e61d9d6d0d662fd64f77a90d1c
+- README.md | sha256:11f328d8e46d0750bab059c5be4899a2615d32fe35f7566d62dc4111d41b2d4f
+- docs/README.codex.md | sha256:174a79ae60a027ae5a50d39611a88fcf22947f84f6b333f489f34091782653f6
+- docs/README.copilot.md | sha256:758a6bd2243e308d9b7fbe4bc7dc7d37d22e857ba10f2309d1b1549e9e2be59d
+- skills/using-featureforge/SKILL.md | sha256:c9e3501a21e468056633c29a50d5959de1a54009e27cc1ebd790690e0ca55182
+- skills/using-featureforge/SKILL.md.tmpl | sha256:03bc9d560cf02035d4b509f03e0d263d59ab79d17176a25ff8899e601f0064f3
+- tests/using_featureforge_skill.rs | sha256:54c7af39648d750b9c777eca75bc43927a5459e23631b040310979348001aa16
+**Verification Summary:** Manual inspection only: Manual inspection only: Git commit 01aec99f2b070ae059717163d33fc88e63ab59f3 succeeded on branch dm/project-memory and the working tree was clean before the runtime refreshed the Task 3 plan/evidence bookkeeping.
+**Invalidation Reason:** Review found stale FeatureForge branding in AGENTS.md and weak explicit-memory routing precedence in using-featureforge guidance/tests.

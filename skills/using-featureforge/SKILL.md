@@ -283,13 +283,14 @@ Do NOT jump from brainstorming straight to implementation. For workflow-routed w
 
 Only after the bypass gate resolves to `enabled` for the current session key, if `$_FEATUREFORGE_BIN` is available call `$_FEATUREFORGE_BIN workflow status --refresh`.
 
+- If the user is explicitly asking to create, inspect, or update repo-visible project memory itself, route to `featureforge:project-memory` before obeying a generic non-empty `next_skill` from product-work artifact state.
 - If the JSON result contains a non-empty `next_skill`, use that route.
 - If the JSON result reports `status` `implementation_ready`, proceed to the normal execution preflight and handoff flow using the exact approved plan path. Treat the public handoff recommendation as a conservative default. When you know isolated-agent availability, session intent, and workspace readiness, call `featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>` before choosing between `featureforge:subagent-driven-development` and `featureforge:executing-plans`.
 - In that helper-backed handoff flow, treat `execution_started` as an executor-resume signal only when the reported `phase` is `executing`.
 - If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.
 - Only fall back to manual artifact inspection if the helper itself is unavailable or fails.
 
-When the helper succeeds, route using its JSON result and do not re-derive state manually.
+When the helper succeeds, route using its JSON result plus the explicit project-memory carveout above, and do not re-derive state manually.
 
 ### Manual fallback routing
 

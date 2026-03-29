@@ -220,6 +220,7 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
         "If the bypass gate resolves to `enabled` for this turn, run the normal shared FeatureForge stack before any further FeatureForge behavior:",
         "If helpers are unavailable, fallback stays minimal and conservative:",
         "Manual fallback must not infer readiness from the legacy thin header subset.",
+        "If the user is explicitly asking to create, inspect, or update repo-visible project memory itself, route to `featureforge:project-memory` before obeying a generic non-empty `next_skill` from product-work artifact state.",
         "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
         "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
         "_UPD=\"\"",
@@ -238,6 +239,16 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
     assert!(
         !content.contains("continue to normal FeatureForge behavior"),
         "using-featureforge skill should not use the stale normal-behavior phrase"
+    );
+    let explicit_memory_route_index = content
+        .find("If the user is explicitly asking to create, inspect, or update repo-visible project memory itself, route to `featureforge:project-memory` before obeying a generic non-empty `next_skill` from product-work artifact state.")
+        .expect("using-featureforge skill should document explicit-memory routing precedence");
+    let generic_next_skill_index = content
+        .find("If the JSON result contains a non-empty `next_skill`, use that route.")
+        .expect("using-featureforge skill should still document generic next_skill routing");
+    assert!(
+        explicit_memory_route_index < generic_next_skill_index,
+        "explicit project-memory routing should be documented before the generic next_skill rule"
     );
 
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
