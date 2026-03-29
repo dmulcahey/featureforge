@@ -99,6 +99,26 @@ fn extract_last_nonempty_line(output: &[u8], context: &str) -> String {
         .to_owned()
 }
 
+fn parse_supported_entry_stdout(output: &[u8], context: &str) -> Value {
+    let stdout = String::from_utf8(output.to_vec())
+        .unwrap_or_else(|error| panic!("{context} should emit utf8: {error}"));
+    let lines = stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    let Some(json_line) = lines.last() else {
+        panic!("{context} should emit a final json line");
+    };
+    for line in &lines[..lines.len().saturating_sub(1)] {
+        assert!(
+            line.starts_with("UPGRADE_AVAILABLE ") || line.starts_with("JUST_UPGRADED "),
+            "{context} should not emit unexpected stdout before the final json line: {line:?}"
+        );
+    }
+    serde_json::from_str(json_line)
+        .unwrap_or_else(|error| panic!("{context} should emit valid json on the last line: {error}"))
+}
+
 fn simulate_supported_entry(
     state_dir: &Path,
     home_dir: &Path,
@@ -193,8 +213,7 @@ PY
         session_key,
     );
 
-    serde_json::from_str(&extract_last_nonempty_line(&output.stdout, session_key))
-        .unwrap_or_else(|error| panic!("{session_key} should emit valid json on the last line: {error}"))
+    parse_supported_entry_stdout(&output.stdout, session_key)
 }
 
 #[test]
