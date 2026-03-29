@@ -13,6 +13,7 @@ When sources disagree, follow this order:
 5. `docs/project_notes/*`
 
 Approved specs, approved plans, execution evidence, review artifacts, and runtime state all outrank this directory. If project memory conflicts with a higher-authority source, update project memory to match the higher-authority source instead of splitting the difference.
+Active repo instructions such as `AGENTS.md` also remain authoritative over `docs/project_notes/*`.
 
 Never store credentials, secrets, or secret-shaped values in this directory.
 
@@ -28,4 +29,3 @@ Never store credentials, secrets, or secret-shaped values in this directory.
 - `decisions.md`: compact decision summaries with backlinks. Supersede or annotate old entries conservatively instead of erasing useful history.
 - `key_facts.md`: stable non-sensitive facts. Refresh `Last Verified` markers when facts can drift.
 - `issues.md`: breadcrumb-only references to tickets, plans, reviews, evidence, or TODO follow-ups. Do not turn it into an active checklist or status board.
-

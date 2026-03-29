@@ -691,4 +691,27 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         Value::String(String::from("featureforge:project-memory")),
         "explicit project-memory requests should override an active workflow owner",
     );
+
+    let direct_skill_message =
+        "Please use featureforge:project-memory and work on project memory itself for this follow-up.\n";
+    let direct_skill_entry = simulate_supported_route_selection(
+        state,
+        home,
+        &preamble,
+        &normal_stack,
+        &route_block,
+        "project-memory-route-enabled",
+        direct_skill_message,
+        "featureforge:plan-eng-review",
+    );
+    assert_eq!(
+        direct_skill_entry["helper_outcome"],
+        Value::String(String::from("enabled")),
+        "direct project-memory skill requests should still use the real enabled entry path",
+    );
+    assert_eq!(
+        direct_skill_entry["selected_route"],
+        Value::String(String::from("featureforge:project-memory")),
+        "direct project-memory requests should route to project-memory even when another workflow owner exists",
+    );
 }

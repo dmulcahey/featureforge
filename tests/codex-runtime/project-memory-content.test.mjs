@@ -96,6 +96,7 @@ test('project memory README teaches the boundary and maintenance rubric', () => 
   assert.match(content, /breadcrumb/i, 'README should describe breadcrumb-only issue retention');
   assert.match(content, /Last Verified/i, 'README should describe Last Verified refresh guidance');
   assert.match(content, /supersede|annotate/i, 'README should describe conservative decision retention');
+  assert.match(content, /AGENTS\.md.*remain authoritative|repo instructions.*remain authoritative/i, 'README should keep repo instructions above project memory');
   assert.match(content, /never store credentials, secrets, or secret-shaped values/i, 'README should state the no-secrets rule');
 });
 
@@ -130,11 +131,11 @@ test('project memory avoids tracker drift, authority drift, and obvious secret-l
   const combined = REQUIRED_FILES.map(readMemory).join('\n');
   const issues = readMemory('issues.md');
 
-  assert.doesNotMatch(issues, /(?:^|\n)\s*(?:[-*]\s*)?(?:In Progress|Blocked|Completed|Open|Todo|Done|Pending)\b|(?:^|\n)\s*(?:[-*]\s*)?Status:\s*\w+|^\s*-\s*\[[ xX]\]/im, 'issues.md should stay breadcrumb-only');
+  assert.doesNotMatch(issues, /(?:^|\n)\s*(?:[-*]\s*)?(?:In Progress|Blocked|Completed|Open|Todo|Done|Pending|Waiting|Review|Doing|Backlog|Paused|WIP)\b|(?:^|\n)\s*(?:[-*]\s*)?Status:\s*\w+|^\s*-\s*\[[ xX]\]/im, 'issues.md should stay breadcrumb-only');
   assert.doesNotMatch(issues, /(?:^|\n)\s*(?:[-*]\s*)?(?:started|resumed|finished|completed)\s+step(?:\s+\d+)?\b/im, 'issues.md should not become a second execution log');
   assert.doesNotMatch(issues, /\bAttempt\s+\d+\b|\bRecorded At:\b|\bTask Number:\b|\bStep Number:\b/i, 'issues.md should not include execution-log metadata markers');
   assert.doesNotMatch(issues, /\bexecution log\b|\bday-by-day\b|\bdaily progress\b/i, 'issues.md should not become a day-by-day progress log');
-  assert.doesNotMatch(combined, /ignore the approved plan|this file is authoritative|route through this file instead|follow the notes in this file instead|always do .* first/i, 'project memory should not contain instruction-authority drift');
+  assert.doesNotMatch(combined, /ignore the approved plan|this file is authoritative|route through this file instead|follow the notes in this file instead|always do .* first|(?:check|consult|read) this file .* first|use this file to decide/i, 'project memory should not contain instruction-authority drift');
   assert.doesNotMatch(combined, /\btoken\b|api key|private key|password|\bgh[pousr]_[A-Za-z0-9]{10,}\b|\bbearer\s+[A-Za-z0-9._-]+\b|client[_ -]?secret/i, 'project memory should not contain obvious secret-like content');
 });
 
