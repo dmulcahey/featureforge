@@ -48,7 +48,7 @@ function bulletEntries(name) {
 }
 
 const APPROVED_OR_STABLE_SOURCE_REFERENCE =
-  /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md|README\.md|AGENTS\.md|TODOS\.md)$/;
+  /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md|\.\/(?:README|AGENTS|TODOS)\.md)$/;
 
 function sourceReferences(entry, name) {
   const sourceLine = entry.match(/\n\s*Source:\s*([^\n]+)/);
