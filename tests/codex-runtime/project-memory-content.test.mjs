@@ -147,6 +147,10 @@ test('project-memory examples cover the positive and negative matrix for all mem
 
   const decisions = examplesSection('decisions.md');
   assert.match(decisions, /### Good/, 'decisions.md examples should include a good example');
+  assert.match(decisions, /\n\s*Context:/, 'decisions.md good example should include Context');
+  assert.match(decisions, /\n\s*Decision:/, 'decisions.md good example should include Decision');
+  assert.match(decisions, /\n\s*Alternatives considered:/, 'decisions.md good example should include Alternatives considered');
+  assert.match(decisions, /\n\s*Consequence:/, 'decisions.md good example should include Consequence');
   assert.match(decisions, /### Bad: `AuthorityConflict`/, 'decisions.md examples should include AuthorityConflict');
   assert.match(decisions, /### Bad: `InstructionAuthorityDrift`/, 'decisions.md examples should include InstructionAuthorityDrift');
 

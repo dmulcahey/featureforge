@@ -32,7 +32,10 @@ Use these examples to keep `docs/project_notes/*` short, source-backed, and non-
 
 ```markdown
 - PM-001 | 2026-03-29 | Keep project memory under `docs/project_notes/` as supportive context only.
-  Why: separate durable memory from approved workflow truth.
+  Context: approved workflow artifacts already own planning and execution truth.
+  Decision: keep repo-visible project memory supportive and non-authoritative.
+  Alternatives considered: making project memory a required gate or pushing durable memory into repo instructions.
+  Consequence: rediscovery gets cheaper without letting memory outrank approved workflow artifacts.
   Source: `docs/featureforge/specs/featureforge-project-memory-integration-spec.md`
 ```
 

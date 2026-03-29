@@ -643,75 +643,83 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
     write_file(&enabled_path, "enabled\n");
 
     let vague_message = "Please add some notes to the docs after plan review.\n";
-    let vague_entry = simulate_supported_route_selection(
-        state,
-        home,
-        &preamble,
-        &normal_stack,
-        &route_block,
-        "project-memory-route-enabled",
-        vague_message,
-        "featureforge:plan-eng-review",
-    );
-    assert_eq!(
-        vague_entry["helper_outcome"],
-        Value::String(String::from("enabled")),
-        "active-workflow precedence coverage should run through the real enabled entry path",
-    );
-    assert_eq!(
-        vague_entry["first_response_kind"],
-        Value::String(String::from("normal_stack")),
-        "enabled entry should continue through the normal stack before route selection",
-    );
-    assert_eq!(
-        vague_entry["selected_route"],
-        Value::String(String::from("featureforge:plan-eng-review")),
-        "vague notes or docs requests should keep the active workflow owner",
-    );
-
     let explicit_message =
         "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.\n";
-    let explicit_entry = simulate_supported_route_selection(
-        state,
-        home,
-        &preamble,
-        &normal_stack,
-        &route_block,
-        "project-memory-route-enabled",
-        explicit_message,
-        "featureforge:plan-eng-review",
-    );
-    assert_eq!(
-        explicit_entry["helper_outcome"],
-        Value::String(String::from("enabled")),
-        "explicit project-memory routing should still use the real enabled entry path",
-    );
-    assert_eq!(
-        explicit_entry["selected_route"],
-        Value::String(String::from("featureforge:project-memory")),
-        "explicit project-memory requests should override an active workflow owner",
-    );
-
     let direct_skill_message =
         "Please use featureforge:project-memory and work on project memory itself for this follow-up.\n";
-    let direct_skill_entry = simulate_supported_route_selection(
-        state,
-        home,
-        &preamble,
-        &normal_stack,
-        &route_block,
-        "project-memory-route-enabled",
-        direct_skill_message,
+
+    for active_owner in [
         "featureforge:plan-eng-review",
-    );
-    assert_eq!(
-        direct_skill_entry["helper_outcome"],
-        Value::String(String::from("enabled")),
-        "direct project-memory skill requests should still use the real enabled entry path",
-    );
-    assert_eq!(
-        direct_skill_entry["selected_route"],
-        Value::String(String::from("featureforge:project-memory")),
-        "direct project-memory requests should route to project-memory even when another workflow owner exists",
-    );
+        "featureforge:writing-plans",
+        "featureforge:executing-plans",
+        "featureforge:subagent-driven-development",
+    ] {
+        let vague_entry = simulate_supported_route_selection(
+            state,
+            home,
+            &preamble,
+            &normal_stack,
+            &route_block,
+            "project-memory-route-enabled",
+            vague_message,
+            active_owner,
+        );
+        assert_eq!(
+            vague_entry["helper_outcome"],
+            Value::String(String::from("enabled")),
+            "active-workflow precedence coverage should run through the real enabled entry path",
+        );
+        assert_eq!(
+            vague_entry["first_response_kind"],
+            Value::String(String::from("normal_stack")),
+            "enabled entry should continue through the normal stack before route selection",
+        );
+        assert_eq!(
+            vague_entry["selected_route"],
+            Value::String(String::from(active_owner)),
+            "vague notes or docs requests should keep the active workflow owner",
+        );
+
+        let explicit_entry = simulate_supported_route_selection(
+            state,
+            home,
+            &preamble,
+            &normal_stack,
+            &route_block,
+            "project-memory-route-enabled",
+            explicit_message,
+            active_owner,
+        );
+        assert_eq!(
+            explicit_entry["helper_outcome"],
+            Value::String(String::from("enabled")),
+            "explicit project-memory routing should still use the real enabled entry path",
+        );
+        assert_eq!(
+            explicit_entry["selected_route"],
+            Value::String(String::from("featureforge:project-memory")),
+            "explicit project-memory requests should override whichever workflow owner is active",
+        );
+
+        let direct_skill_entry = simulate_supported_route_selection(
+            state,
+            home,
+            &preamble,
+            &normal_stack,
+            &route_block,
+            "project-memory-route-enabled",
+            direct_skill_message,
+            active_owner,
+        );
+        assert_eq!(
+            direct_skill_entry["helper_outcome"],
+            Value::String(String::from("enabled")),
+            "direct project-memory skill requests should still use the real enabled entry path",
+        );
+        assert_eq!(
+            direct_skill_entry["selected_route"],
+            Value::String(String::from("featureforge:project-memory")),
+            "direct project-memory requests should route to project-memory even when another workflow owner exists",
+        );
+    }
 }
