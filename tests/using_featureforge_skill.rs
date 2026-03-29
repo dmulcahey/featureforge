@@ -694,6 +694,8 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "What does docs/project_notes/bugs.md say right now?\n",
         "Please read docs/project_notes/issues.md before continuing plan review.\n",
         "Do not use featureforge:project-memory for this follow-up.\n",
+        "Please do not set up project memory before planning.\n",
+        "Please do not rewrite docs/project_notes/issues.md before continuing plan review.\n",
         "Please record a decision in the approved plan before continuing.\n",
         "Please log a bug fix in the execution evidence before continuing.\n",
         "Please update our key facts in the approved spec before continuing.\n",

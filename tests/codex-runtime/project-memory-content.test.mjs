@@ -50,7 +50,7 @@ function bulletEntries(name) {
 const APPROVED_ARTIFACT_SOURCE_REFERENCE =
   /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md)$/;
 const STABLE_REPO_DOC_SOURCE_REFERENCE =
-  /^(?:(?:README|AGENTS|TODOS)\.md|docs\/(?!featureforge\/).+\.md|review\/.+\.md|skills\/.+\.md)$/;
+  /^(?:(?:README|AGENTS|TODOS)\.md|docs\/(?!featureforge\/|project_notes\/|archive\/).+\.md|review\/.+\.md|skills\/.+\.md)$/;
 
 function sourceReferences(entry, name) {
   const sourceLine = entry.match(/\n\s*Source:\s*([^\n]+)/);
@@ -97,7 +97,7 @@ function assertApprovedSeedSources(name, entry) {
 }
 
 test('seed provenance contract allows documented stable-source variants without widening to junk paths', () => {
-  const reviewArtifact = '.featureforge/reviews/2026-03-29-featureforge-project-memory-integration-plan-fidelity.md';
+  const reviewArtifact = '.featureforge/reviews/example-review.md';
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'README.md'), true);
   assert.equal(isAllowedSeedSourceReference('bugs.md', reviewArtifact), true);
   assert.throws(() => resolveRepoSourceReference('./README.md'), /repo-relative/);
@@ -105,7 +105,8 @@ test('seed provenance contract allows documented stable-source variants without 
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'src/main.rs'), false);
   assert.equal(isAllowedSeedSourceReference('key_facts.md', 'node_modules/pkg/index.js'), false);
   assert.equal(fs.existsSync(resolveRepoSourceReference('README.md')), true);
-  assert.equal(fs.existsSync(resolveRepoSourceReference(reviewArtifact)), true);
+  assert.equal(isAllowedSeedSourceReference('bugs.md', 'docs/project_notes/issues.md'), false);
+  assert.equal(isAllowedSeedSourceReference('bugs.md', 'docs/archive/old-note.md'), false);
 });
 
 test('project memory corpus includes the required repo-visible files', () => {
