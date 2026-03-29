@@ -162,6 +162,33 @@ function assertDetectsTimedHookSamples(samples, label, description, timings, tar
   }
 }
 
+function buildGateLikeHookPatterns(targetPattern, gapPattern = '[^.\\n]{0,160}') {
+  const subjectPattern = `(?:featureforge:project-memory|${targetPattern})`;
+  const gatePattern = '(?:prerequisite|required|required for|gate|gates?|blocks?|blocked|blocking|mandatory|depends on|blocked on)';
+
+  return [
+    new RegExp(`${subjectPattern}${gapPattern}(?:is|are|be|being|to be)?${gapPattern}${gatePattern}`, 'i'),
+    new RegExp(`${gatePattern}${gapPattern}${subjectPattern}`, 'i'),
+  ];
+}
+
+function assertForbidsGateLikeHookLanguage(content, label, description, targetPattern) {
+  const patterns = buildGateLikeHookPatterns(targetPattern);
+  for (const pattern of patterns) {
+    assert.doesNotMatch(content, pattern, `${label} should not turn ${description} into gate-like language`);
+  }
+}
+
+function assertDetectsGateLikeHookSamples(samples, label, description, targetPattern) {
+  const patterns = buildGateLikeHookPatterns(targetPattern, '[^\\n]{0,160}');
+  for (const sample of samples) {
+    assert.ok(
+      patterns.some((pattern) => pattern.test(sample)),
+      `${label} should detect gate-like regressions for ${description}: ${sample}`,
+    );
+  }
+}
+
 test('templates declare exactly one base or review preamble placeholder', () => {
   for (const skill of listGeneratedSkills()) {
     const template = readUtf8(getTemplatePath(skill));
@@ -651,7 +678,12 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(writingPlans, /consult `docs\/project_notes\/key_facts\.md`/);
   assert.match(writingPlans, /supportive context only/i);
   assert.match(writingPlans, /Missing or stale notes do not block planning\./);
-  assert.doesNotMatch(writingPlans, /project memory[^.\n]*(prerequisite|required|gate)/i);
+  assertForbidsGateLikeHookLanguage(
+    writingPlans,
+    'writing-plans',
+    'the project-memory consult into a planning prerequisite or gate',
+    'docs\\/project_notes\\/(?:decisions|key_facts)\\.md',
+  );
   assertForbidsTimedObligationHook(
     writingPlans,
     'writing-plans',
@@ -702,6 +734,15 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
     ],
     'docs\\/project_notes\\/(?:decisions|key_facts)\\.md',
   );
+  assertDetectsGateLikeHookSamples(
+    [
+      'featureforge:project-memory is a prerequisite for planning.',
+      '`docs/project_notes/decisions.md` is required for planning.',
+    ],
+    'writing-plans',
+    'planning gate regressions',
+    'docs\\/project_notes\\/(?:decisions|key_facts)\\.md',
+  );
 
   const systematicDebugging = readUtf8(getSkillPath('systematic-debugging'));
   assert.match(systematicDebugging, /Check Recurring Bug Memory When It Exists/);
@@ -709,7 +750,12 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(systematicDebugging, /update `docs\/project_notes\/bugs\.md`/);
   assert.match(systematicDebugging, /recurring or historically familiar/i);
   assert.match(systematicDebugging, /durable recurring bug pattern/i);
-  assert.doesNotMatch(systematicDebugging, /project memory[^.\n]*(prerequisite|required|gate)/i);
+  assertForbidsGateLikeHookLanguage(
+    systematicDebugging,
+    'systematic-debugging',
+    'the bug-memory hook into a debugging prerequisite or gate',
+    'docs\\/project_notes\\/bugs\\.md',
+  );
   assertForbidsTimedObligationHook(
     systematicDebugging,
     'systematic-debugging',
@@ -723,6 +769,7 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
       'after debugging',
       'during debugging',
       'during the debugging work',
+      'while debugging',
       'before fixing',
       'after the repair',
     ],
@@ -734,6 +781,7 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
       'Update `docs/project_notes/bugs.md` after resolving the bug.',
       'You should update `docs/project_notes/bugs.md` after debugging.',
       'Update `docs/project_notes/bugs.md` during debugging.',
+      'Update `docs/project_notes/bugs.md` while debugging.',
       'featureforge:project-memory during debugging should be used.',
       'Update featureforge:project-memory during debugging.',
       'Update featureforge:project-memory after the fix lands with the new `docs/project_notes/bugs.md` entry.',
@@ -749,9 +797,19 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
       'after debugging',
       'during debugging',
       'during the debugging work',
+      'while debugging',
       'before fixing',
       'after the repair',
     ],
+    'docs\\/project_notes\\/bugs\\.md',
+  );
+  assertDetectsGateLikeHookSamples(
+    [
+      'featureforge:project-memory is required during debugging.',
+      'Updating `docs/project_notes/bugs.md` blocks debugging progress.',
+    ],
+    'systematic-debugging',
+    'debugging gate regressions',
     'docs\\/project_notes\\/bugs\\.md',
   );
   const recurringBugMemoryIndex = systematicDebugging.indexOf('5. **Check Recurring Bug Memory When It Exists**');
@@ -771,7 +829,12 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(documentRelease, /docs\/project_notes\/key_facts\.md/);
   assert.match(documentRelease, /docs\/project_notes\/issues\.md/);
   assert.match(documentRelease, /release pass surfaces durable knowledge worth preserving/i);
-  assert.doesNotMatch(documentRelease, /project memory[^.\n]*(prerequisite|required|gate)/i);
+  assertForbidsGateLikeHookLanguage(
+    documentRelease,
+    'document-release',
+    'the project-memory follow-up into a release prerequisite or blocker',
+    'docs\\/project_notes\\/',
+  );
   assertForbidsTimedObligationHook(
     documentRelease,
     'document-release',
@@ -813,6 +876,15 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
       'during the release-readiness pass',
       'during release-readiness',
     ],
+    'docs\\/project_notes\\/',
+  );
+  assertDetectsGateLikeHookSamples(
+    [
+      'featureforge:project-memory is a prerequisite for branch completion.',
+      'Updating `docs/project_notes/issues.md` blocks branch completion.',
+    ],
+    'document-release',
+    'release gate regressions',
     'docs\\/project_notes\\/',
   );
 });
