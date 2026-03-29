@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** fbe49a3d55c62d9e30040dc8b55896cd44c97597e2da60232172916f9e039f81
+**Plan Fingerprint:** cfe744d2d7230c32c603350c6e07a533f6bd43a359f586015ffa04f715e22a4f
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -243,3 +243,106 @@
 - docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:ed046b6de6c8588bc0093b9e6fe5626afeeeaba7b770ceebaf94c21ba0da074b
 **Verification Summary:** Manual inspection only: Manual inspection only: Git commit 1fac5c228db3096e4b1dfd37d9fc2d20ae6479d0 succeeded on branch dm/project-memory, and the only remaining unstaged repo item is the untracked Task 2 red test file that stays outside the Task 1 checkpoint.
 **Invalidation Reason:** Follow-up review remediation updated the public skill repo-safety flow and expanded Task 1 contract coverage, so the recorded Task 1 completion commit must be refreshed again.
+
+#### Attempt 4
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:06:35.644609Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 6
+**Packet Fingerprint:** 3ae5e84d4b4130d65f8c41c182f355d358251d44e10c801dfc665b7ea2860527
+**Head SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Base SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Claim:** Committed the refreshed Task 1 protected-branch remediation slice as 5221f208fe2e4f7f7ca6d4b7509083483739c8a7 with the message docs: add project-memory repo-safety flow.
+**Files Proven:**
+- docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md | sha256:66667ca5310bda18ed6430cff2b5ccd0a5ad79da5454cb081c451cc710bdadf5
+- docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:ed046b6de6c8588bc0093b9e6fe5626afeeeaba7b770ceebaf94c21ba0da074b
+**Verification Summary:** Manual inspection only: Manual inspection only: Git commit 5221f208fe2e4f7f7ca6d4b7509083483739c8a7 succeeded on branch dm/project-memory, and the only remaining unstaged repo item is the untracked Task 2 red test file that stays outside the Task 1 checkpoint.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:13:00.917758Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 1
+**Packet Fingerprint:** ef2a5b5ec8c215b0b2511e8b7d6bc0a1dffeb14c725d298433d4e21d10c03384
+**Head SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Base SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Claim:** Added a red Task 2 contract test that requires the project-memory boundary README, seeded files, provenance markers, breadcrumb-only issues content, and no secret-like or authority-drift language; it fails because docs/project_notes does not exist yet.
+**Files Proven:**
+- tests/codex-runtime/project-memory-content.test.mjs | sha256:8c1c0ec3c0778f03e8aeccc15193a16575215ce667f415ae20942f3905e0249f
+**Verification Summary:** `node --test tests/codex-runtime/project-memory-content.test.mjs` -> Failed as expected: docs/project_notes and the seeded memory files do not exist yet, so all four project-memory corpus assertions fail closed.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:14:55.049687Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 2
+**Packet Fingerprint:** 219674e68263e8c6819409e503d7b183226d4bcda4feaa096deb951a4a80de96
+**Head SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Base SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Claim:** Created docs/project_notes/README.md with the supportive-memory boundary, authority ordering, conflict-resolution rule, update guidance, no-secrets rule, and file-specific maintenance rubric required for the seed corpus.
+**Files Proven:**
+- docs/project_notes/README.md | sha256:8c3a462c01ee28e0bd252761db7a253b311ff6308b8901c3b0e0e3cfd5920c99
+**Verification Summary:** Manual inspection only: Manual inspection only: Re-read the new README to confirm it names the higher-authority workflow surfaces, states the conflict rule, bans secret material, and spells out recurring-only, breadcrumb-only, Last Verified, and supersede-or-annotate maintenance guidance.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:15:05.305799Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 3
+**Packet Fingerprint:** c57d670ad5a3802d3947048f077eeff23950f66c7b920c419b1f058b21c9b378
+**Head SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Base SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Claim:** Seeded docs/project_notes/key_facts.md and docs/project_notes/decisions.md with concise, provenance-backed entries distilled from stable repo docs and the approved project-memory spec.
+**Files Proven:**
+- docs/project_notes/decisions.md | sha256:d4c19bfd6af9e80ca42c8547835ea908e12e9e39c42c99db246d31f0250e1d78
+- docs/project_notes/key_facts.md | sha256:092ff90b606b45e04dc420fa0d72091386f8377ca32f2ec8d8a364b6a4a3c220
+**Verification Summary:** Manual inspection only: Manual inspection only: Re-read the seeded facts and decisions to confirm each entry is concise, non-sensitive, and carries a Last Verified or Source marker back to a stable repo doc or approved artifact.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:15:16.866085Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 4
+**Packet Fingerprint:** 96dba1609e4d71bb76c4451b6146895a85ac9285af6ec91614fb983e71d60b00
+**Head SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Base SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Claim:** Seeded docs/project_notes/bugs.md and docs/project_notes/issues.md with recurring bugs and durable workflow breadcrumbs that stay source-backed and avoid tracker drift.
+**Files Proven:**
+- docs/project_notes/bugs.md | sha256:d085d2b9188763a6e05011eb444397c427a24511d7fe706e2783a761bd6465c4
+- docs/project_notes/issues.md | sha256:9053c2cf01b36dbaec46d598d175648a56e76d1232d72333f492f1001d7636ca
+**Verification Summary:** Manual inspection only: Manual inspection only: Re-read the seeded bug and issue entries to confirm they stay short, source-backed, non-secret, and free of live-tracker language or instruction-authority drift.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:15:38.133327Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 5
+**Packet Fingerprint:** ca48655c4fc907f5f174f5ac7bf7db11a56fab6f480a8c37bd11d7f6889950a6
+**Head SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Base SHA:** 5221f208fe2e4f7f7ca6d4b7509083483739c8a7
+**Claim:** Verified the seeded project-memory corpus by passing the content contract test and confirming the seeded files avoid tracker drift and obvious secret-like strings.
+**Files Proven:**
+- docs/project_notes/README.md | sha256:8c3a462c01ee28e0bd252761db7a253b311ff6308b8901c3b0e0e3cfd5920c99
+- docs/project_notes/bugs.md | sha256:d085d2b9188763a6e05011eb444397c427a24511d7fe706e2783a761bd6465c4
+- docs/project_notes/decisions.md | sha256:d4c19bfd6af9e80ca42c8547835ea908e12e9e39c42c99db246d31f0250e1d78
+- docs/project_notes/issues.md | sha256:9053c2cf01b36dbaec46d598d175648a56e76d1232d72333f492f1001d7636ca
+- docs/project_notes/key_facts.md | sha256:092ff90b606b45e04dc420fa0d72091386f8377ca32f2ec8d8a364b6a4a3c220
+- tests/codex-runtime/project-memory-content.test.mjs | sha256:8c1c0ec3c0778f03e8aeccc15193a16575215ce667f415ae20942f3905e0249f
+**Verification Summary:** `node --test tests/codex-runtime/project-memory-content.test.mjs && rg -n "In Progress|Blocked|Completed|token|api key|private key|password" docs/project_notes` -> Passed: project-memory content test is green and the drift/secret grep returned no matches.
+**Invalidation Reason:** N/A
