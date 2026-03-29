@@ -7,10 +7,11 @@ Use these examples to keep `docs/project_notes/*` short, source-backed, and non-
 ### Good
 
 ```markdown
-- 2026-03-29: Initial project-memory foundation work failed because the `project-memory` skill directory and companion refs were still missing.
-  Fix: add the new skill files and generate `skills/project-memory/SKILL.md`.
-  Prevention: keep the discoverability assertion in `tests/codex-runtime/skill-doc-generation.test.mjs`.
-  Source: `docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`
+- 2026-03-29: Review-driven Task 1 remediation got stranded because a later parked step blocked reopening the earlier completed work.
+  Root cause: `reopen` refuses a second interrupted step while `begin` refuses to bypass a different interrupted step.
+  Fix: clear the parked downstream note, then reopen and rebuild the stale Task 1 evidence.
+  Prevention / verification: keep the per-step review-gate TODO active and add contract coverage for review-before-advance execution.
+  Source: `src/execution/mutate.rs`, `TODOS.md`
 ```
 
 ### Bad: `OversizedDuplication`
