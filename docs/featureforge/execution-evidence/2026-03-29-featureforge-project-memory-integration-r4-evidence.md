@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** 670e24d25a575a3943f0fc5386c7df62f6f9d02197e9475fb3d5de06067588ea
+**Plan Fingerprint:** 16f8f5da64d293b3b37c1e689da665e1913104d7c5a33833da656af8e147d0c1
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -630,3 +630,25 @@
 - tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:fee91c8dca807e6201617358438407db1c4e3b8e8f5064ea2fba1cc7b12fc362
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs.
 **Invalidation Reason:** N/A
+
+### Task 4 Step 5
+#### Attempt 1
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T20:11:28.186745Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 5
+**Packet Fingerprint:** d6f8d1fcfbcfbaa48d5a32541096a25ca002b1e8fe29501a11872b38fb6c8bd9
+**Head SHA:** b5ac623b13a0531846c96a53190d5796739047b5
+**Base SHA:** b5ac623b13a0531846c96a53190d5796739047b5
+**Claim:** Committed the Task 4 workflow-hook lane as b5ac623b13a0531846c96a53190d5796739047b5 with the message docs: add project-memory workflow hooks.
+**Files Proven:**
+- skills/document-release/SKILL.md | sha256:9878c047fb6c641b5246185dd2053d439d8b1fdebe4b3122d2629cd8d9909130
+- skills/document-release/SKILL.md.tmpl | sha256:b1b08b2c2095a57ea3860a9433e6d74728c44f080543b886073ac0af455263ff
+- skills/systematic-debugging/SKILL.md | sha256:509d99d76f7ac467bb97392870b3cd711204f121bb5d8d536a0bdfe61a38fb24
+- skills/systematic-debugging/SKILL.md.tmpl | sha256:9133393956d3711a6ce5fd23bab2e10e6c24b1bde6e581d52e7854d200091b12
+- skills/writing-plans/SKILL.md | sha256:d74d684729d273bca04716ab148c1e3628725e2c8037e716d25ec4bd59a4eb4d
+- skills/writing-plans/SKILL.md.tmpl | sha256:9665cf2db08ce38bfec80919c707fa5f9759021052cdb018062c013a6ccec9f7
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:fee91c8dca807e6201617358438407db1c4e3b8e8f5064ea2fba1cc7b12fc362
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs before committing the lane.
+**Invalidation Reason:** Review found the Task 4 hook contract too permissive and the systematic-debugging checklist numbering out of sequence.

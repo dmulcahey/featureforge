@@ -600,20 +600,34 @@ test('repo-writing workflow skills document the protected-branch repo-safety gat
 
 test('project-memory workflow hooks stay consult-only and non-gating', () => {
   const writingPlans = readUtf8(getSkillPath('writing-plans'));
+  assert.match(writingPlans, /## Optional Project Memory Consult/);
   assert.match(writingPlans, /consult `docs\/project_notes\/decisions\.md`/);
   assert.match(writingPlans, /consult `docs\/project_notes\/key_facts\.md`/);
+  assert.match(writingPlans, /supportive context only/i);
+  assert.match(writingPlans, /Missing or stale notes do not block planning\./);
   assert.doesNotMatch(writingPlans, /project memory[^.\n]*(prerequisite|required|gate)/i);
+  assert.doesNotMatch(writingPlans, /before (?:starting|decomposing) tasks[^.\n]*(?:must|always) consult `docs\/project_notes\/(?:decisions|key_facts)\.md`/i);
+  assert.doesNotMatch(writingPlans, /do not (?:start|continue) planning until `docs\/project_notes\/(?:decisions|key_facts)\.md`/i);
 
   const systematicDebugging = readUtf8(getSkillPath('systematic-debugging'));
+  assert.match(systematicDebugging, /Check Recurring Bug Memory When It Exists/);
   assert.match(systematicDebugging, /search `docs\/project_notes\/bugs\.md`/);
   assert.match(systematicDebugging, /update `docs\/project_notes\/bugs\.md`/);
+  assert.match(systematicDebugging, /recurring or historically familiar/i);
+  assert.match(systematicDebugging, /durable recurring bug pattern/i);
   assert.doesNotMatch(systematicDebugging, /project memory[^.\n]*(prerequisite|required|gate)/i);
+  assert.doesNotMatch(systematicDebugging, /always update `docs\/project_notes\/bugs\.md` after fixes/i);
+  assert.doesNotMatch(systematicDebugging, /before (?:attempting|making) fixes[^.\n]*update `docs\/project_notes\/bugs\.md`/i);
 
   const documentRelease = readUtf8(getSkillPath('document-release'));
+  assert.match(documentRelease, /## Optional Project Memory Follow-Up/);
   assert.match(documentRelease, /completed work creates durable knowledge/i);
   assert.match(documentRelease, /featureforge:project-memory/);
   assert.match(documentRelease, /docs\/project_notes\//);
+  assert.match(documentRelease, /follow-up release-readiness action/i);
   assert.doesNotMatch(documentRelease, /project memory[^.\n]*(prerequisite|required|gate)/i);
+  assert.doesNotMatch(documentRelease, /before branch completion[^.\n]*docs\/project_notes\//i);
+  assert.doesNotMatch(documentRelease, /must update `docs\/project_notes\/[^`]+` before (?:presenting completion options|branch completion)/i);
 });
 
 test('generated skills use canonical runtime commands instead of helper executables', () => {
