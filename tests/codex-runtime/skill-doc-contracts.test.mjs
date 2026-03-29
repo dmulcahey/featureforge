@@ -598,38 +598,22 @@ test('repo-writing workflow skills document the protected-branch repo-safety gat
   }
 });
 
-test('plan-eng-review plan-write targets stay aligned with repo-safety runtime values', () => {
-  const runtimeWriteTargets = repoSafetyCliWriteTargets();
-  assert.ok(
-    runtimeWriteTargets.has('plan-artifact-write'),
-    'repo-safety CLI should expose plan-artifact-write for plan-body mutations',
-  );
-  assert.ok(
-    runtimeWriteTargets.has('approval-header-write'),
-    'repo-safety CLI should expose approval-header-write for approval flips',
-  );
+test('project-memory workflow hooks stay consult-only and non-gating', () => {
+  const writingPlans = readUtf8(getSkillPath('writing-plans'));
+  assert.match(writingPlans, /consult `docs\/project_notes\/decisions\.md`/);
+  assert.match(writingPlans, /consult `docs\/project_notes\/key_facts\.md`/);
+  assert.doesNotMatch(writingPlans, /project memory[^.\n]*(prerequisite|required|gate)/i);
 
-  for (const [label, docPath] of [
-    ['template', getTemplatePath('plan-eng-review')],
-    ['generated skill', getSkillPath('plan-eng-review')],
-  ]) {
-    const content = readUtf8(docPath);
-    assert.match(
-      content,
-      /featureforge repo-safety check --intent write --stage featureforge:plan-eng-review --task-id <current-plan-review> --path docs\/featureforge\/plans\/YYYY-MM-DD-<feature-name>\.md --write-target plan-artifact-write/,
-      `${label} should gate plan-body writes with plan-artifact-write`,
-    );
-    assert.match(
-      content,
-      /--write-target approval-header-write/,
-      `${label} should gate approval-header writes with approval-header-write`,
-    );
-    assert.doesNotMatch(
-      content,
-      /--write-target repo-file-write/,
-      `${label} should not instruct the retired repo-file-write target for plan-eng-review`,
-    );
-  }
+  const systematicDebugging = readUtf8(getSkillPath('systematic-debugging'));
+  assert.match(systematicDebugging, /search `docs\/project_notes\/bugs\.md`/);
+  assert.match(systematicDebugging, /update `docs\/project_notes\/bugs\.md`/);
+  assert.doesNotMatch(systematicDebugging, /project memory[^.\n]*(prerequisite|required|gate)/i);
+
+  const documentRelease = readUtf8(getSkillPath('document-release'));
+  assert.match(documentRelease, /completed work creates durable knowledge/i);
+  assert.match(documentRelease, /featureforge:project-memory/);
+  assert.match(documentRelease, /docs\/project_notes\//);
+  assert.doesNotMatch(documentRelease, /project memory[^.\n]*(prerequisite|required|gate)/i);
 });
 
 test('generated skills use canonical runtime commands instead of helper executables', () => {

@@ -261,9 +261,7 @@ Task 4 -> Task 5
 - [x] **Step 3: Rewrite the stale top matter in `AGENTS.md` from `Superpowers` to `FeatureForge` while adding one concise project-memory section that explicitly says `docs/project_notes/` is supportive memory only, points planners to `decisions.md`, points debuggers to `bugs.md`, forbids secrets in repo-visible memory, and names `featureforge:project-memory` as the setup and structured-update entry point**
 - [x] **Step 4: Update `README.md`, `docs/README.codex.md`, and `docs/README.copilot.md` so project memory is documented as an optional support layer, not a new workflow stage or gate**
 - [x] **Step 5: Run `node scripts/gen-skill-docs.mjs --check` and `cargo nextest run --test using_featureforge_skill`, then fix failures until the lane is green**
-- [ ] **Step 6: Commit the lane in its dedicated worktree with `git commit -m "docs: route explicit memory requests"`**
-
-  **Execution Note:** Active - Commit the lane in its dedicated worktree with `git commit -m "docs: route explicit memory requests"`
+- [x] **Step 6: Commit the lane in its dedicated worktree with `git commit -m "docs: route explicit memory requests"`**
 ## Task 4: Add Non-Gating Workflow Hooks
 
 **Spec Coverage:** REQ-010, REQ-013, DEC-004, VERIFY-001, NONGOAL-002
@@ -285,11 +283,13 @@ Task 4 -> Task 5
 - Modify: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 - Test: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Add red hook assertions in `tests/codex-runtime/skill-doc-contracts.test.mjs` that require `writing-plans` to consult `decisions.md` and `key_facts.md`, require `systematic-debugging` to search and update `bugs.md` in the recurring-failure path, require `document-release` to update project memory when completed work creates durable knowledge, and forbid gate-like language**
-- [ ] **Step 2: Update `skills/writing-plans/SKILL.md.tmpl`, `skills/systematic-debugging/SKILL.md.tmpl`, and `skills/document-release/SKILL.md.tmpl` with those exact file-specific consult and update hooks, then regenerate their checked-in `SKILL.md` outputs**
-- [ ] **Step 3: Re-read the generated docs and trim any wording that turns the hook into a protocol block instead of a narrow reminder**
-- [ ] **Step 4: Run `node --test tests/codex-runtime/skill-doc-contracts.test.mjs` and `node scripts/gen-skill-docs.mjs --check`, then fix failures until the lane is green**
+- [x] **Step 1: Add red hook assertions in `tests/codex-runtime/skill-doc-contracts.test.mjs` that require `writing-plans` to consult `decisions.md` and `key_facts.md`, require `systematic-debugging` to search and update `bugs.md` in the recurring-failure path, require `document-release` to update project memory when completed work creates durable knowledge, and forbid gate-like language**
+- [x] **Step 2: Update `skills/writing-plans/SKILL.md.tmpl`, `skills/systematic-debugging/SKILL.md.tmpl`, and `skills/document-release/SKILL.md.tmpl` with those exact file-specific consult and update hooks, then regenerate their checked-in `SKILL.md` outputs**
+- [x] **Step 3: Re-read the generated docs and trim any wording that turns the hook into a protocol block instead of a narrow reminder**
+- [x] **Step 4: Run `node --test tests/codex-runtime/skill-doc-contracts.test.mjs` and `node scripts/gen-skill-docs.mjs --check`, then fix failures until the lane is green**
 - [ ] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "docs: add project-memory workflow hooks"`**
+
+  **Execution Note:** Active - Commit the lane in its dedicated worktree with `git commit -m "docs: add project-memory workflow hooks"`
 ## Task 5: Harden Validation and Final Regression
 
 **Spec Coverage:** REQ-001, REQ-003, REQ-006, REQ-007, REQ-008, REQ-009, REQ-010, REQ-015, REQ-018, REQ-020, REQ-021, DEC-010, DEC-012, VERIFY-001, VERIFY-002, VERIFY-003, NONGOAL-001, NONGOAL-002

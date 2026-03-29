@@ -203,6 +203,12 @@ When Layer 2 materially affects reuse or warnings, capture it in plan-body secti
 ## Known Footguns / Constraints
 ```
 
+## Optional Project Memory Consult
+
+- When repo-visible project memory exists, consult `docs/project_notes/decisions.md` for relevant prior decisions before decomposing tasks.
+- When repo-visible project memory exists, consult `docs/project_notes/key_facts.md` for durable repo facts worth carrying into the plan.
+- Treat these files as supportive context only. Missing or stale notes do not block planning.
+
 ## File Structure
 
 Before defining tasks, map out which files will be created or modified and what each one is responsible for. This is where decomposition decisions get locked in.

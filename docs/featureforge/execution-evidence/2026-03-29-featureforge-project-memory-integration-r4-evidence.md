@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** 6035a522e60c565a9413c5c64e93ac28d670c198a7fea12dc956c8d081ca4622
+**Plan Fingerprint:** 670e24d25a575a3943f0fc5386c7df62f6f9d02197e9475fb3d5de06067588ea
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -541,3 +541,92 @@
 - tests/using_featureforge_skill.rs | sha256:88ffe22eaa983878accdcc89825719a6fe0b74e62e243f99a0f15f18dcba4d82
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check, cargo test --test using_featureforge_skill, and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after broadening the explicit project-memory helper-first carveout.
 **Invalidation Reason:** Review requested doc-surface regression coverage for the new supportive/optional project-memory wording.
+
+#### Attempt 4
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:57:15.901673Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 6
+**Packet Fingerprint:** b98b2f2b14f16f9bbb2705e0ad916895d263128e4541b0051868c82a086c050c
+**Head SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Base SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Claim:** Committed the Task 3 doc-boundary coverage remediation as 2ec508ba7ca4e98c12107eff56af4314d78fc8db with the message test: cover task3 project-memory doc boundaries.
+**Files Proven:**
+- tests/runtime_instruction_contracts.rs | sha256:f629101ab04101c1b4d0b2025bd70acf812083c71eab5e43ea1542cef4d33d50
+**Verification Summary:** Manual inspection only: Verified with cargo test --test runtime_instruction_contracts after adding cross-file regression coverage for the supportive/optional project-memory wording.
+**Invalidation Reason:** N/A
+
+### Task 4 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T20:03:25.85378Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 1
+**Packet Fingerprint:** 9494789b22695aba1d489dbf44f9f603ab708e63e54fd7fe60925d1e3a1f9a74
+**Head SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Base SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Claim:** Added red project-memory hook assertions to tests/codex-runtime/skill-doc-contracts.test.mjs for writing-plans, systematic-debugging, and document-release while forbidding project-memory gate language.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:fee91c8dca807e6201617358438407db1c4e3b8e8f5064ea2fba1cc7b12fc362
+**Verification Summary:** Manual inspection only: Verified red with node --test tests/codex-runtime/skill-doc-contracts.test.mjs, which now fails on the missing writing-plans consult hook for docs/project_notes/decisions.md and key_facts.md.
+**Invalidation Reason:** N/A
+
+### Task 4 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T20:05:47.771173Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 2
+**Packet Fingerprint:** 22098186a6a7bc04db0f8633b6e2c5d6d58a16762cbbc3acae21c617f176eeae
+**Head SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Base SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Claim:** Updated the writing-plans, systematic-debugging, and document-release templates with narrow project-memory consult/update hooks and regenerated their checked-in SKILL.md outputs.
+**Files Proven:**
+- skills/document-release/SKILL.md | sha256:9878c047fb6c641b5246185dd2053d439d8b1fdebe4b3122d2629cd8d9909130
+- skills/document-release/SKILL.md.tmpl | sha256:b1b08b2c2095a57ea3860a9433e6d74728c44f080543b886073ac0af455263ff
+- skills/systematic-debugging/SKILL.md | sha256:509d99d76f7ac467bb97392870b3cd711204f121bb5d8d536a0bdfe61a38fb24
+- skills/systematic-debugging/SKILL.md.tmpl | sha256:9133393956d3711a6ce5fd23bab2e10e6c24b1bde6e581d52e7854d200091b12
+- skills/writing-plans/SKILL.md | sha256:d74d684729d273bca04716ab148c1e3628725e2c8037e716d25ec4bd59a4eb4d
+- skills/writing-plans/SKILL.md.tmpl | sha256:9665cf2db08ce38bfec80919c707fa5f9759021052cdb018062c013a6ccec9f7
+**Verification Summary:** Manual inspection only: Regenerated the affected skill docs with node scripts/gen-skill-docs.mjs and confirmed the new project-memory sections stayed file-specific and narrow in the generated output.
+**Invalidation Reason:** N/A
+
+### Task 4 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T20:06:04.147037Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 3
+**Packet Fingerprint:** 7b0cf3f7f5eef573d1445e687a2a7f2a64d4aa363ec3cdda31cd51a12d3336a7
+**Head SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Base SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Claim:** Re-read the generated writing-plans, systematic-debugging, and document-release docs and kept the new project-memory hooks as narrow reminders instead of expanding them into protocol blocks.
+**Files Proven:**
+- skills/document-release/SKILL.md | sha256:9878c047fb6c641b5246185dd2053d439d8b1fdebe4b3122d2629cd8d9909130
+- skills/systematic-debugging/SKILL.md | sha256:509d99d76f7ac467bb97392870b3cd711204f121bb5d8d536a0bdfe61a38fb24
+- skills/writing-plans/SKILL.md | sha256:d74d684729d273bca04716ab148c1e3628725e2c8037e716d25ec4bd59a4eb4d
+**Verification Summary:** Manual inspection only: Manual inspection only: reviewed the generated project-memory sections in the three skill docs and confirmed no further trim was needed to keep them consult-only and non-gating.
+**Invalidation Reason:** N/A
+
+### Task 4 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T20:06:20.737985Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 4
+**Packet Fingerprint:** eede1b2df6bdf7c3758655b151a316bb3e7828cb318d6d44e444189d3e04efff
+**Head SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Base SHA:** 2ec508ba7ca4e98c12107eff56af4314d78fc8db
+**Claim:** Ran the non-gating workflow-hook validation and confirmed the new writing-plans, systematic-debugging, and document-release project-memory hooks stay consult-only and generated-doc clean.
+**Files Proven:**
+- skills/document-release/SKILL.md | sha256:9878c047fb6c641b5246185dd2053d439d8b1fdebe4b3122d2629cd8d9909130
+- skills/systematic-debugging/SKILL.md | sha256:509d99d76f7ac467bb97392870b3cd711204f121bb5d8d536a0bdfe61a38fb24
+- skills/writing-plans/SKILL.md | sha256:d74d684729d273bca04716ab148c1e3628725e2c8037e716d25ec4bd59a4eb4d
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:fee91c8dca807e6201617358438407db1c4e3b8e8f5064ea2fba1cc7b12fc362
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs.
+**Invalidation Reason:** N/A
