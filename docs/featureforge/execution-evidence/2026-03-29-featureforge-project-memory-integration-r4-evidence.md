@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** edfe23dc271d10081cc2f98f96543c415ff9f5151e7b091f4a86ce693742efa0
+**Plan Fingerprint:** 1cb5ebe4372eca1af14c689516086be4ad247098f3257bcc735e9cab66a1337d
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -714,3 +714,18 @@
 - tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:256b5475e700332dabee5a4efa92c5098c4ebde017eefe23fd3e6bc27f0193ae
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after extending the semantic hook guard to catch timed imperative instructions.
 **Invalidation Reason:** Review found the Task 4 guard still missing action-first imperative regression fixtures for consult/update/use before the timed phase boundary.
+
+#### Attempt 6
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T20:47:12.363166Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 5
+**Packet Fingerprint:** d6f8d1fcfbcfbaa48d5a32541096a25ca002b1e8fe29501a11872b38fb6c8bd9
+**Head SHA:** d309712c83770ece0905ad9302db2a9db19ecaab
+**Base SHA:** d309712c83770ece0905ad9302db2a9db19ecaab
+**Claim:** Committed the final action-first Task 4 review remediation as d309712c83770ece0905ad9302db2a9db19ecaab with the message test: add task4 action-first regression fixtures.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:18534f3ab704c8ec2ffc8233ed7aecce9397cfa1e3a6d906b98c499544163287
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after adding explicit action-first regression fixtures for consult/update/use timed hooks.
+**Invalidation Reason:** Review found the Task 4 release hook still too subtree-generic and the semantic guard still missing featureforge:project-memory-led timing orderings.

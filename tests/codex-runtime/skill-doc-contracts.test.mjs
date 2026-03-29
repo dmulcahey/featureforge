@@ -126,6 +126,8 @@ function assertForbidsTimedObligationHook(content, label, description, timings, 
     new RegExp(`${targetPattern}[^.\\n]{0,160}${obligationPattern}[^.\\n]{0,160}${timingPattern}`, 'i'),
     new RegExp(`${timingPattern}[^.\\n]{0,160}${targetPattern}[^.\\n]{0,160}${obligationPattern}`, 'i'),
     new RegExp(`${timingPattern}[^.\\n]{0,160}${imperativeActionPattern}[^.\\n]{0,160}${targetPattern}`, 'i'),
+    new RegExp(`${imperativeActionPattern}[^.\\n]{0,160}featureforge:project-memory[^.\\n]{0,160}${timingPattern}[^.\\n]{0,160}${targetPattern}`, 'i'),
+    new RegExp(`featureforge:project-memory[^.\\n]{0,160}${timingPattern}[^.\\n]{0,160}${targetPattern}`, 'i'),
   ];
   for (const pattern of patterns) {
     assert.doesNotMatch(content, pattern, `${label} should not turn ${description} into a timed obligation`);
@@ -139,6 +141,7 @@ function assertDetectsActionFirstTimedHook(samples, label, description, timings,
     new RegExp(`${imperativeActionPattern}[^\\n]{0,160}${targetPattern}[^\\n]{0,160}${timingPattern}`, 'i'),
     new RegExp(`${imperativeActionPattern}[^\\n]{0,160}featureforge:project-memory[^\\n]{0,160}${targetPattern}[^\\n]{0,160}${timingPattern}`, 'i'),
     new RegExp(`featureforge:project-memory[^\\n]{0,160}${targetPattern}[^\\n]{0,160}${timingPattern}`, 'i'),
+    new RegExp(`featureforge:project-memory[^\\n]{0,160}${timingPattern}[^\\n]{0,160}${targetPattern}`, 'i'),
   ];
   for (const sample of samples) {
     assert.ok(
@@ -658,6 +661,7 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
     [
       'Consult `docs/project_notes/decisions.md` before defining tasks.',
       'Consult `docs/project_notes/key_facts.md` during task breakdown.',
+      'Consult featureforge:project-memory before planning by reviewing `docs/project_notes/decisions.md`.',
     ],
     'writing-plans',
     'mandatory-before-planning consult regressions',
@@ -701,6 +705,7 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
     [
       'Update `docs/project_notes/bugs.md` after the fix lands.',
       'Update `docs/project_notes/bugs.md` after resolving the bug.',
+      'Update featureforge:project-memory after the fix lands with the new `docs/project_notes/bugs.md` entry.',
     ],
     'systematic-debugging',
     'always-update-after-fix regressions',
@@ -728,6 +733,10 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(documentRelease, /completed work creates durable knowledge/i);
   assert.match(documentRelease, /featureforge:project-memory/);
   assert.match(documentRelease, /docs\/project_notes\//);
+  assert.match(documentRelease, /docs\/project_notes\/bugs\.md/);
+  assert.match(documentRelease, /docs\/project_notes\/decisions\.md/);
+  assert.match(documentRelease, /docs\/project_notes\/key_facts\.md/);
+  assert.match(documentRelease, /docs\/project_notes\/issues\.md/);
   assert.match(documentRelease, /follow-up release-readiness action/i);
   assert.doesNotMatch(documentRelease, /project memory[^.\n]*(prerequisite|required|gate)/i);
   assertForbidsTimedObligationHook(
@@ -749,6 +758,7 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
     [
       'Use featureforge:project-memory to update `docs/project_notes/issues.md` before branch completion.',
       'Use featureforge:project-memory to update `docs/project_notes/decisions.md` to finish the release pass.',
+      'Use featureforge:project-memory before branch completion to update `docs/project_notes/issues.md`.',
     ],
     'document-release',
     'release-pass gate regressions',
