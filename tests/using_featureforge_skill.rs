@@ -241,6 +241,8 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
         "If the user is explicitly asking to set up `docs/project_notes/` or to record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.",
         "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
         "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
+        "When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself, in which case the explicit project-memory route above takes precedence over helper-derived workflow routes and execution handoff paths.",
+        "In manual fallback, choose this route only for explicit memory-oriented requests; vague mentions of notes or docs are not enough.",
         "_UPD=\"\"",
         "export FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY=1",
         "_SESSIONS=$(find \"$_SP_STATE_DIR/sessions\" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')",

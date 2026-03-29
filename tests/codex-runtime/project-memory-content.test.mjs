@@ -47,6 +47,32 @@ function bulletEntries(name) {
     .filter(Boolean);
 }
 
+const APPROVED_OR_STABLE_SOURCE_REFERENCE =
+  /^(?:docs\/featureforge\/specs\/|docs\/featureforge\/plans\/|docs\/featureforge\/execution-evidence\/|\.featureforge\/reviews\/|README\.md|AGENTS\.md|TODOS\.md|docs\/.+\.md)$/;
+
+function sourceReferences(entry, name) {
+  const sourceLine = entry.match(/\n\s*Source:\s*([^\n]+)/);
+  assert.ok(sourceLine, `${name} entries should include a Source line`);
+  const references = [...sourceLine[1].matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+  assert.notEqual(references.length, 0, `${name} entries should include at least one backticked source reference`);
+  return references;
+}
+
+function assertApprovedSeedSources(name, entry) {
+  for (const reference of sourceReferences(entry, name)) {
+    assert.match(
+      reference,
+      APPROVED_OR_STABLE_SOURCE_REFERENCE,
+      `${name} should cite approved artifacts or stable repo docs: ${reference}`,
+    );
+    assert.doesNotMatch(
+      reference,
+      /^(?:src|scripts)\//,
+      `${name} should not cite implementation paths directly: ${reference}`,
+    );
+  }
+}
+
 test('project memory corpus includes the required repo-visible files', () => {
   assert.equal(fs.existsSync(MEMORY_DIR), true, 'docs/project_notes should exist');
 
@@ -70,11 +96,13 @@ test('project memory README teaches the boundary and maintenance rubric', () => 
   assert.match(content, /breadcrumb/i, 'README should describe breadcrumb-only issue retention');
   assert.match(content, /Last Verified/i, 'README should describe Last Verified refresh guidance');
   assert.match(content, /supersede|annotate/i, 'README should describe conservative decision retention');
+  assert.match(content, /never store credentials, secrets, or secret-shaped values/i, 'README should state the no-secrets rule');
 });
 
 test('seeded project memory entries carry inspectable provenance', () => {
   for (const entry of bulletEntries('bugs.md')) {
     assert.match(entry, /\n\s*Source:/, 'each bugs.md entry should include a Source marker');
+    assertApprovedSeedSources('bugs.md', entry);
   }
 
   for (const entry of bulletEntries('decisions.md')) {
@@ -83,16 +111,18 @@ test('seeded project memory entries carry inspectable provenance', () => {
     assert.match(entry, /\n\s*Alternatives considered:/, 'each decisions.md entry should include Alternatives considered');
     assert.match(entry, /\n\s*Consequence:/, 'each decisions.md entry should include Consequence');
     assert.match(entry, /\n\s*Source:/, 'each decisions.md entry should include Source');
+    assertApprovedSeedSources('decisions.md', entry);
   }
 
   for (const entry of bulletEntries('issues.md')) {
     assert.match(entry, /\n\s*Source:/, 'each issues.md entry should include a Source marker');
+    assertApprovedSeedSources('issues.md', entry);
   }
 
   for (const entry of bulletEntries('key_facts.md')) {
     assert.match(entry, /\n\s*Last Verified:/, 'each key_facts.md entry should include Last Verified');
     assert.match(entry, /\n\s*Source:/, 'each key_facts.md entry should include Source');
-    assert.doesNotMatch(entry, /Source:\s*`(?:src|scripts)\//, 'key_facts.md should cite stable repo docs or approved artifacts, not implementation paths');
+    assertApprovedSeedSources('key_facts.md', entry);
   }
 });
 

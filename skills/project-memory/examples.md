@@ -11,7 +11,7 @@ Use these examples to keep `docs/project_notes/*` short, source-backed, and non-
   Root cause: `reopen` refuses a second interrupted step while `begin` refuses to bypass a different interrupted step.
   Fix: clear the parked downstream note, then reopen and rebuild the stale Task 1 evidence.
   Prevention / verification: keep the per-step review-gate TODO active and add contract coverage for review-before-advance execution.
-  Source: `src/execution/mutate.rs`, `TODOS.md`
+  Source: `docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`, `TODOS.md`
 ```
 
 ### Bad: `OversizedDuplication`
