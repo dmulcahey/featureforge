@@ -221,6 +221,7 @@ fn simulate_supported_route_selection(
     home_dir: &Path,
     preamble: &str,
     normal_stack: &str,
+    route_block: &str,
     session_key: &str,
     message: &str,
     workflow_next_skill: &str,
@@ -262,12 +263,9 @@ case "$SP_TEST_OUTCOME" in
 {normal_stack}
     _first_response_kind="normal_stack"
     _normal_stack_session_path="$_SP_STATE_DIR/sessions/$PPID"
-    _message_lc=$(tr '[:upper:]' '[:lower:]' < "$SP_TEST_MESSAGE_FILE")
-    if printf '%s' "$_message_lc" | grep -Eq 'record durable bugs|record durable decisions|record key facts|record issue breadcrumbs|set up docs/project_notes/|docs/project_notes/(bugs|decisions|key_facts|issues)\.md'; then
-      _selected_route="featureforge:project-memory"
-    elif [ -n "${{SP_TEST_WORKFLOW_NEXT_SKILL:-}}" ]; then
-      _selected_route="$SP_TEST_WORKFLOW_NEXT_SKILL"
-    fi
+    _selected_route="$(
+{route_block}
+)"
     ;;
   bypassed)
     _first_response_kind="featureforge_bypassed"
@@ -634,6 +632,8 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
     let content = read_skill_doc();
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
     let normal_stack = extract_bash_block(&content, "## Normal FeatureForge Stack");
+    let route_block =
+        extract_bash_block(&content, "#### Canonical Helper-Backed Emitted Route Contract");
     let temp_home = TempDir::new().expect("home tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let state = state_dir.path();
@@ -648,6 +648,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         home,
         &preamble,
         &normal_stack,
+        &route_block,
         "project-memory-route-enabled",
         vague_message,
         "featureforge:plan-eng-review",
@@ -675,6 +676,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         home,
         &preamble,
         &normal_stack,
+        &route_block,
         "project-memory-route-enabled",
         explicit_message,
         "featureforge:plan-eng-review",

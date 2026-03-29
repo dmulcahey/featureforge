@@ -141,6 +141,23 @@ Only after the bypass gate resolves to `enabled` for the current session key, if
 
 When the helper succeeds, route using its JSON result plus the explicit project-memory carveout above, and do not re-derive state manually.
 
+#### Canonical Helper-Backed Emitted Route Contract
+
+Use this emitted-route contract when a supported entry has already resolved to `enabled` and normal-stack setup has completed:
+
+```bash
+_MESSAGE_LC=$(tr '[:upper:]' '[:lower:]' < "$SP_TEST_MESSAGE_FILE")
+_EXPLICIT_PROJECT_MEMORY_ROUTE=""
+if printf '%s' "$_MESSAGE_LC" | grep -Eq 'record durable bugs|record durable decisions|record key facts|record issue breadcrumbs|set up docs/project_notes/|docs/project_notes/(bugs|decisions|key_facts|issues)\.md'; then
+  _EXPLICIT_PROJECT_MEMORY_ROUTE="featureforge:project-memory"
+fi
+if [ -n "$_EXPLICIT_PROJECT_MEMORY_ROUTE" ]; then
+  printf '%s\n' "$_EXPLICIT_PROJECT_MEMORY_ROUTE"
+elif [ -n "${SP_TEST_WORKFLOW_NEXT_SKILL:-}" ]; then
+  printf '%s\n' "$SP_TEST_WORKFLOW_NEXT_SKILL"
+fi
+```
+
 ### Manual fallback routing
 
 If the helper is unavailable or fails, inspect artifacts manually using the rules below.
