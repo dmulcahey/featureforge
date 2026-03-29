@@ -1,6 +1,6 @@
-# Superpowers Agent Guide
+# FeatureForge Agent Guide
 
-This file is project-local guidance for agents working in `superpowers`. It applies to this repository only.
+This file is project-local guidance for agents working in `featureforge`. It applies to this repository only.
 
 ## Purpose
 
@@ -23,6 +23,14 @@ This file is project-local guidance for agents working in `superpowers`. It appl
 - Do not silently weaken runtime trust boundaries, workflow gates, or artifact validation.
 - Do not update historical plans or specs unless the user explicitly asks for that exact artifact change.
 - When a change touches generated skill docs, edit the `.tmpl` source and regenerate the checked-in `SKILL.md` output.
+
+## Project Memory
+
+- `docs/project_notes/` is supportive memory only; approved specs, plans, execution evidence, review artifacts, runtime state, and active repo instructions remain authoritative.
+- Before inventing a new cross-cutting approach, check `docs/project_notes/decisions.md` for prior decisions and follow the authoritative source it links.
+- When debugging recurring failures, check `docs/project_notes/bugs.md` for previously recorded root causes, fixes, and prevention notes.
+- Never store credentials, secrets, or secret-shaped values in `docs/project_notes/`.
+- Use `featureforge:project-memory` when setting up or making structured updates to repo-visible project memory.
 
 ## Subagent Coordination
 

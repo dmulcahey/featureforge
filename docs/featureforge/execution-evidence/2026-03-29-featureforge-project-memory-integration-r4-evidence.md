@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** 95546ec75dae2d0fda563e824e49c5934e1dbe481162cb3fa5bfc4f5642b1150
+**Plan Fingerprint:** e687d3be46423bb83168fdb01eaa06e687f99990fb271ae1e04805852f720e47
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -383,3 +383,104 @@
 - docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:801ae67b75681aa816d6dc587a06ba8f22986ac57aa382c59fd62656012859a5
 **Verification Summary:** Manual inspection only: Manual inspection only: Git commit 257d67aedc4dd63735cd579033752660f80f6914 succeeded on branch dm/project-memory and the working tree was clean before the runtime refreshed the Task 2 plan/evidence bookkeeping.
 **Invalidation Reason:** Task 2 follow-up review remediation corrected seed schema and hardened the corpus contract test, so the recorded Task 2 completion commit must be refreshed.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:24:18.360648Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 6
+**Packet Fingerprint:** 8453d856eb425321387b21d3a5e4bfaf378cfa0c6645a48b29bf8ed301f6e6e0
+**Head SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Base SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Claim:** Committed the refreshed Task 2 review-remediation slice as 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03 with the message test: tighten project memory corpus checks.
+**Files Proven:**
+- docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md | sha256:3fb7e08bd86899620c275de83b5ceb683b41da2510da48dcfcf813008f3be02c
+- docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:801ae67b75681aa816d6dc587a06ba8f22986ac57aa382c59fd62656012859a5
+**Verification Summary:** Manual inspection only: Manual inspection only: Git commit 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03 succeeded on branch dm/project-memory and the working tree was clean before the runtime refreshed the Task 2 evidence bookkeeping.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:31:12.869559Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 1
+**Packet Fingerprint:** 64b0d9ed32f7ea41f7de872a2c7fdce298285bf7b2961e4c62d84ea9675f2431
+**Head SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Base SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Claim:** Added red routing assertions in tests/using_featureforge_skill.rs that require explicit memory-oriented requests to route to featureforge:project-memory without making project memory part of the default mandatory stack.
+**Files Proven:**
+- tests/using_featureforge_skill.rs | sha256:54c7af39648d750b9c777eca75bc43927a5459e23631b040310979348001aa16
+**Verification Summary:** Manual inspection only: Manual inspection only: Re-read the new using_featureforge_skill assertions to confirm they require both the explicit project-memory route and the non-default-stack rule before the using-featureforge doc changes are applied.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:31:25.731014Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 2
+**Packet Fingerprint:** 383f58628f6c559954948aa760eb6e20d988abc3e35c0522cdeb2be1fe4870f4
+**Head SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Base SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Claim:** Updated the using-featureforge template with explicit project-memory routing language, regenerated skills/using-featureforge/SKILL.md, and kept the route opt-in instead of adding project memory to the default mandatory stack.
+**Files Proven:**
+- skills/using-featureforge/SKILL.md | sha256:c9e3501a21e468056633c29a50d5959de1a54009e27cc1ebd790690e0ca55182
+- skills/using-featureforge/SKILL.md.tmpl | sha256:03bc9d560cf02035d4b509f03e0d263d59ab79d17176a25ff8899e601f0064f3
+**Verification Summary:** Manual inspection only: Manual inspection only: Re-read the regenerated using-featureforge skill to confirm the new project-memory route is explicit, opt-in, and still subordinate to the active workflow owner when artifact-state routing already points somewhere else.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:31:39.435738Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 3
+**Packet Fingerprint:** 2947288c1834c02df3cb509f26250b2e377f03bbdd6494442cbf865544c1aed9
+**Head SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Base SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Claim:** Rewrote the stale Superpowers top matter in AGENTS.md to FeatureForge and added one concise project-memory section that marks docs/project_notes as supportive memory only, points planners to decisions.md, points debuggers to bugs.md, forbids secrets in repo-visible memory, and names featureforge:project-memory as the structured-update entry point.
+**Files Proven:**
+- AGENTS.md | sha256:fa2a0515ba1baf330c3b7b3141ff93f469b981e61d9d6d0d662fd64f77a90d1c
+**Verification Summary:** Manual inspection only: Manual inspection only: Re-read AGENTS.md to confirm the header/top matter now names FeatureForge, the new project-memory section stays concise, and it preserves the exact supportive-memory, consult-before-rediscovery, no-secrets, and featureforge:project-memory guidance required by the approved plan.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:31:53.543151Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 4
+**Packet Fingerprint:** 4349c9eca9a83e1c79cb38f7c5d2d1de819c9b5fcce26dabb81456de3e7f206f
+**Head SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Base SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Claim:** Updated README.md, docs/README.codex.md, and docs/README.copilot.md so project memory is documented as an optional support layer rather than a workflow stage or gate.
+**Files Proven:**
+- README.md | sha256:11f328d8e46d0750bab059c5be4899a2615d32fe35f7566d62dc4111d41b2d4f
+- docs/README.codex.md | sha256:174a79ae60a027ae5a50d39611a88fcf22947f84f6b333f489f34091782653f6
+- docs/README.copilot.md | sha256:758a6bd2243e308d9b7fbe4bc7dc7d37d22e857ba10f2309d1b1549e9e2be59d
+**Verification Summary:** Manual inspection only: Manual inspection only: Re-read the repo and platform overviews to confirm each one describes featureforge:project-memory as opt-in supportive memory and not as a mandatory stage, approval surface, or workflow gate.
+**Invalidation Reason:** N/A
+
+### Task 3 Step 5
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:34:41.818224Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 3
+**Step Number:** 5
+**Packet Fingerprint:** fecc67d34987bd5462ffab197789faab00e8a209723161099f6f62ed78232b87
+**Head SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Base SHA:** 3d516ec37147ce696c8ad7cfd4b48fcfdf239c03
+**Claim:** Ran the using-featureforge routing lane verification and confirmed the explicit project-memory route remains opt-in while the generated skill docs stay up to date.
+**Files Proven:**
+- skills/using-featureforge/SKILL.md | sha256:c9e3501a21e468056633c29a50d5959de1a54009e27cc1ebd790690e0ca55182
+- skills/using-featureforge/SKILL.md.tmpl | sha256:03bc9d560cf02035d4b509f03e0d263d59ab79d17176a25ff8899e601f0064f3
+- tests/using_featureforge_skill.rs | sha256:54c7af39648d750b9c777eca75bc43927a5459e23631b040310979348001aa16
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and cargo test --test using_featureforge_skill (fallback because cargo nextest is unavailable in this checkout).
+**Invalidation Reason:** N/A

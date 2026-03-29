@@ -234,9 +234,7 @@ Task 4 -> Task 5
 - [x] **Step 3: Seed `docs/project_notes/key_facts.md` and `docs/project_notes/decisions.md` from stable repo docs and approved workflow artifacts, using concise bullets with `Source:` or `Last Verified:` markers**
 - [x] **Step 4: Seed `docs/project_notes/bugs.md` and `docs/project_notes/issues.md` with only recurring or durable breadcrumbs, and collapse any source artifact down to summary-plus-backlink form**
 - [x] **Step 5: Run `node --test tests/codex-runtime/project-memory-content.test.mjs` plus `rg -n \"In Progress|Blocked|Completed|token|api key|private key|password\" docs/project_notes`, then fix any failing content or drift before merging the lane**
-- [ ] **Step 6: Commit the lane in its dedicated worktree with `git commit -m "docs: seed project memory corpus"`**
-
-  **Execution Note:** Active - Commit the lane in its dedicated worktree with `git commit -m "docs: seed project memory corpus"`
+- [x] **Step 6: Commit the lane in its dedicated worktree with `git commit -m "docs: seed project memory corpus"`**
 ## Task 3: Wire Explicit Routing and Repo Docs
 
 **Spec Coverage:** REQ-008, REQ-009, DEC-003, VERIFY-001
@@ -258,12 +256,14 @@ Task 4 -> Task 5
 - Modify: `tests/using_featureforge_skill.rs`
 - Test: `tests/using_featureforge_skill.rs`
 
-- [ ] **Step 1: Add red routing assertions in `tests/using_featureforge_skill.rs` for memory-oriented requests that must route to `featureforge:project-memory` without turning memory into part of the default stack**
-- [ ] **Step 2: Update `skills/using-featureforge/SKILL.md.tmpl` with explicit memory-routing language, regenerate `skills/using-featureforge/SKILL.md`, and keep manual fallback routing conservative**
-- [ ] **Step 3: Rewrite the stale top matter in `AGENTS.md` from `Superpowers` to `FeatureForge` while adding one concise project-memory section that explicitly says `docs/project_notes/` is supportive memory only, points planners to `decisions.md`, points debuggers to `bugs.md`, forbids secrets in repo-visible memory, and names `featureforge:project-memory` as the setup and structured-update entry point**
-- [ ] **Step 4: Update `README.md`, `docs/README.codex.md`, and `docs/README.copilot.md` so project memory is documented as an optional support layer, not a new workflow stage or gate**
-- [ ] **Step 5: Run `node scripts/gen-skill-docs.mjs --check` and `cargo nextest run --test using_featureforge_skill`, then fix failures until the lane is green**
+- [x] **Step 1: Add red routing assertions in `tests/using_featureforge_skill.rs` for memory-oriented requests that must route to `featureforge:project-memory` without turning memory into part of the default stack**
+- [x] **Step 2: Update `skills/using-featureforge/SKILL.md.tmpl` with explicit memory-routing language, regenerate `skills/using-featureforge/SKILL.md`, and keep manual fallback routing conservative**
+- [x] **Step 3: Rewrite the stale top matter in `AGENTS.md` from `Superpowers` to `FeatureForge` while adding one concise project-memory section that explicitly says `docs/project_notes/` is supportive memory only, points planners to `decisions.md`, points debuggers to `bugs.md`, forbids secrets in repo-visible memory, and names `featureforge:project-memory` as the setup and structured-update entry point**
+- [x] **Step 4: Update `README.md`, `docs/README.codex.md`, and `docs/README.copilot.md` so project memory is documented as an optional support layer, not a new workflow stage or gate**
+- [x] **Step 5: Run `node scripts/gen-skill-docs.mjs --check` and `cargo nextest run --test using_featureforge_skill`, then fix failures until the lane is green**
 - [ ] **Step 6: Commit the lane in its dedicated worktree with `git commit -m "docs: route explicit memory requests"`**
+
+  **Execution Note:** Active - Commit the lane in its dedicated worktree with `git commit -m "docs: route explicit memory requests"`
 ## Task 4: Add Non-Gating Workflow Hooks
 
 **Spec Coverage:** REQ-010, REQ-013, DEC-004, VERIFY-001, NONGOAL-002

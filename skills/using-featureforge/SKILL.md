@@ -327,6 +327,13 @@ Routing rules:
 8. If artifacts are ambiguous or incomplete, route to the earlier safe stage instead of skipping ahead.
 9. If the helper-backed execution preflight or handoff flow is unavailable, do not route directly from manual fallback into implementation. Stop at the approved plan path and return to the earlier safe stage or the current execution flow instead.
 
+### Explicit Project-Memory Routing
+
+- Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.
+- Do not add `featureforge:project-memory` to the default mandatory workflow stack.
+- When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself.
+- In manual fallback, choose this route only for explicit memory-oriented requests; vague mentions of notes or docs are not enough.
+
 ## User Instructions
 
 Instructions say WHAT, not HOW. "Add X" or "Fix Y" doesn't mean skip workflows.

@@ -220,6 +220,8 @@ fn using_featureforge_skill_documents_and_derives_the_canonical_bypass_gate() {
         "If the bypass gate resolves to `enabled` for this turn, run the normal shared FeatureForge stack before any further FeatureForge behavior:",
         "If helpers are unavailable, fallback stays minimal and conservative:",
         "Manual fallback must not infer readiness from the legacy thin header subset.",
+        "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
+        "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
         "_UPD=\"\"",
         "export FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY=1",
         "_SESSIONS=$(find \"$_SP_STATE_DIR/sessions\" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')",

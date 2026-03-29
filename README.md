@@ -95,6 +95,14 @@ Completion then flows through:
 - optional `featureforge:qa-only` when browser-facing work or a test plan requires it
 - `featureforge:finishing-a-development-branch`
 
+## Project Memory
+
+`featureforge:project-memory` is an optional support skill for maintaining `docs/project_notes/*`.
+
+- It records supportive memory only and never outranks approved specs, approved plans, execution evidence, review artifacts, or runtime state.
+- It is not a workflow stage, approval gate, or mandatory part of the default planning/execution stack.
+- Use it for explicit memory-oriented requests or later follow-up memory updates, not as a substitute for the active workflow owner.
+
 ### Runtime Strategy Checkpoints
 
 Execution strategy checkpoints are runtime-owned execution state, not planning-stage transitions.
