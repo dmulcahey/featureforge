@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** c476dc54f38e2301669bf60405520b1efc85777a43eebf461e76a2fada12c9d7
+**Plan Fingerprint:** fbe49a3d55c62d9e30040dc8b55896cd44c97597e2da60232172916f9e039f81
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -158,8 +158,8 @@
 **Invalidation Reason:** Follow-up review remediation strengthened Task 1 contract coverage and requires command-backed verification wording.
 
 #### Attempt 3
-**Status:** Completed
-**Recorded At:** 2026-03-29T18:55:11.337306Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T19:05:46.609903Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 5
@@ -173,6 +173,26 @@
 - skills/project-memory/examples.md | sha256:8c95c90ad7736d7b810be0182cbcb8b6f43c15533313ef26da6b52c78d734ee5
 - tests/codex-runtime/skill-doc-generation.test.mjs | sha256:a433f4f191b299c8ed57acaed6967a0f3c777e6839d39b940ea447887b0c2f07
 **Verification Summary:** `node --test tests/codex-runtime/skill-doc-generation.test.mjs && node scripts/gen-skill-docs.mjs --check` -> Passed: 12 tests green and generated skill docs are up to date.
+**Invalidation Reason:** Follow-up review remediation updated the public skill template and added the protected-branch contract test, so Task 1 verification must be rerun on the current snapshot.
+
+#### Attempt 4
+**Status:** Completed
+**Recorded At:** 2026-03-29T19:05:59.143118Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 5
+**Packet Fingerprint:** 9150089c3ab7b3fee291d9d11198958db2de5beacfce5ad659bf255c648afb59
+**Head SHA:** 1fac5c228db3096e4b1dfd37d9fc2d20ae6479d0
+**Base SHA:** 1fac5c228db3096e4b1dfd37d9fc2d20ae6479d0
+**Claim:** Re-ran the project-memory foundation verification on the latest follow-up remediation snapshot and confirmed the strengthened discoverability, contract, and generated-doc freshness checks all pass.
+**Files Proven:**
+- skills/project-memory/SKILL.md | sha256:8066b845565204aae87124f488b1a64d2d8785538bd7e5519728d9f2ceab8556
+- skills/project-memory/SKILL.md.tmpl | sha256:61f6d17953cb1e949c17b15c7a168624892dc46c5cd78a7b9b1d3e72159a919f
+- skills/project-memory/authority-boundaries.md | sha256:dafc3d2ac9be7234dc2c3cd5b795bee7816446f66955ceae2e8157e8d948aa38
+- skills/project-memory/examples.md | sha256:8c95c90ad7736d7b810be0182cbcb8b6f43c15533313ef26da6b52c78d734ee5
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:7290eaf42558ffd78f8099075dedda1668ebf53dca877baaa332cd9288c49d00
+- tests/codex-runtime/skill-doc-generation.test.mjs | sha256:a433f4f191b299c8ed57acaed6967a0f3c777e6839d39b940ea447887b0c2f07
+**Verification Summary:** `node --test tests/codex-runtime/skill-doc-generation.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && node scripts/gen-skill-docs.mjs --check` -> Passed: project-memory generation assertions (12 tests), protected-branch contract assertions (31 tests), and generated skill-doc freshness all green.
 **Invalidation Reason:** N/A
 
 ### Task 1 Step 6
@@ -207,3 +227,19 @@
 - docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:ed046b6de6c8588bc0093b9e6fe5626afeeeaba7b770ceebaf94c21ba0da074b
 **Verification Summary:** Manual inspection only: Manual inspection only: Git commit d17611535762ef87f84a0f6105370aafbb773456 succeeded on branch dm/project-memory, and the only remaining unstaged repo item is the untracked Task 2 red test file that stays outside the Task 1 remediation commit.
 **Invalidation Reason:** Follow-up review remediation changed the Task 1 boundary doc and contract tests, so the recorded Task 1 completion commit must be refreshed again.
+
+#### Attempt 3
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T19:06:05.825309Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 6
+**Packet Fingerprint:** 3ae5e84d4b4130d65f8c41c182f355d358251d44e10c801dfc665b7ea2860527
+**Head SHA:** 1fac5c228db3096e4b1dfd37d9fc2d20ae6479d0
+**Base SHA:** 1fac5c228db3096e4b1dfd37d9fc2d20ae6479d0
+**Claim:** Committed the refreshed Task 1 follow-up remediation slice as 1fac5c228db3096e4b1dfd37d9fc2d20ae6479d0 with the message test: harden project-memory task1 coverage.
+**Files Proven:**
+- docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md | sha256:228b1156a50a4ce943bf5d07146288e11e0193cb8171676bffe92b08536b2d04
+- docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md | sha256:ed046b6de6c8588bc0093b9e6fe5626afeeeaba7b770ceebaf94c21ba0da074b
+**Verification Summary:** Manual inspection only: Manual inspection only: Git commit 1fac5c228db3096e4b1dfd37d9fc2d20ae6479d0 succeeded on branch dm/project-memory, and the only remaining unstaged repo item is the untracked Task 2 red test file that stays outside the Task 1 checkpoint.
+**Invalidation Reason:** Follow-up review remediation updated the public skill repo-safety flow and expanded Task 1 contract coverage, so the recorded Task 1 completion commit must be refreshed again.

@@ -30,7 +30,7 @@ Read `authority-boundaries.md` before broad setup or repair work.
 Read `examples.md` before writing new entries.
 Reuse the seed layouts in `references/` when creating missing files.
 
-## Write Safety
+## Protected-Branch Repo-Write Gate
 
 Before editing repo-visible memory files, run the shared repo-safety preflight for the exact paths you will touch:
 
@@ -38,7 +38,17 @@ Before editing repo-visible memory files, run the shared repo-safety preflight f
 featureforge repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write
 ```
 
-If the helper blocks the write, stop and resolve that branch-safety decision before editing files.
+- If the helper returns `allowed`, continue with the memory write.
+- If it returns `blocked`, name the branch, the stage, and the blocking `failure_class`, then route to either a feature branch / `featureforge:using-git-worktrees` or explicit user approval for this exact memory-update scope.
+- If the user explicitly approves the protected-branch memory write, approve the full memory scope you intend to use on that branch, including each repo-relative path you will edit:
+
+```bash
+featureforge repo-safety approve --stage featureforge:project-memory --task-id <current-memory-update> --reason "<explicit user approval>" --path <repo-relative-path> --write-target repo-file-write
+featureforge repo-safety check --intent write --stage featureforge:project-memory --task-id <current-memory-update> --path <repo-relative-path> --write-target repo-file-write
+```
+
+- Continue only if the re-check returns `allowed`.
+- If the protected-branch task scope changes, run a new `approve` plus full-scope `check` before continuing.
 
 ## Update Flow
 

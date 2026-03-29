@@ -577,6 +577,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
 test('repo-writing workflow skills document the protected-branch repo-safety gate consistently', () => {
   const expectedTargets = {
     brainstorming: /spec-artifact-write/,
+    'project-memory': /repo-file-write/,
     'plan-ceo-review': /approval-header-write/,
     'writing-plans': /plan-artifact-write/,
     'plan-eng-review': /approval-header-write/,
