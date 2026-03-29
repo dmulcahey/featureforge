@@ -207,9 +207,7 @@ Task 4 -> Task 5
 - [x] **Step 3: Inspect `scripts/gen-skill-docs.mjs` and patch it only if the new skill needs explicit generator support, then run `node scripts/gen-skill-docs.mjs` to produce `skills/project-memory/SKILL.md`**
 - [x] **Step 4: Re-read the generated `skills/project-memory/SKILL.md` and trim any wording that bloats the top-level prompt surface or implies project-memory authority**
 - [x] **Step 5: Run `node --test tests/codex-runtime/skill-doc-generation.test.mjs` and `node scripts/gen-skill-docs.mjs --check`, then fix failures until the slice is green**
-- [ ] **Step 6: Commit the slice with `git commit -m "feat: add project-memory skill foundation"`**
-
-  **Execution Note:** Active - Commit the slice with `git commit -m "feat: add project-memory skill foundation"`
+- [x] **Step 6: Commit the slice with `git commit -m "feat: add project-memory skill foundation"`**
 ## Task 2: Seed and Boundary the Repo-Visible Memory Corpus
 
 **Spec Coverage:** REQ-002, REQ-003, REQ-004, REQ-005, REQ-006, REQ-011, REQ-012, REQ-014, REQ-015, REQ-016, REQ-020, DEC-001, DEC-002, DEC-005, DEC-006, DEC-007, DEC-008, DEC-012, VERIFY-003, NONGOAL-001, NONGOAL-003
@@ -232,6 +230,8 @@ Task 4 -> Task 5
 - Test: `tests/codex-runtime/project-memory-content.test.mjs`
 
 - [ ] **Step 1: Create `tests/codex-runtime/project-memory-content.test.mjs` with red assertions that require the boundary README, seeded files, inspectable provenance markers, non-tracker `issues.md`, and the absence of imperative instruction language or obvious secret-like content**
+
+  **Execution Note:** Interrupted - Paused for required fresh independent Task 1 review before any Task 2 work continues.
 - [ ] **Step 2: Create `docs/project_notes/README.md` with authority ordering, no-secrets rule, conflict-resolution rule, update guidance, and an explicit file-type maintenance rubric covering recurring-only retention for `bugs.md`, breadcrumb-only retention for `issues.md`, `Last Verified` refresh rules for volatile `key_facts.md` entries, and conservative supersede-or-annotate retention for `decisions.md`**
 - [ ] **Step 3: Seed `docs/project_notes/key_facts.md` and `docs/project_notes/decisions.md` from stable repo docs and approved workflow artifacts, using concise bullets with `Source:` or `Last Verified:` markers**
 - [ ] **Step 4: Seed `docs/project_notes/bugs.md` and `docs/project_notes/issues.md` with only recurring or durable breadcrumbs, and collapse any source artifact down to summary-plus-backlink form**

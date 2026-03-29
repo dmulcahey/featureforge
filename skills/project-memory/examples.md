@@ -7,9 +7,9 @@ Use these examples to keep `docs/project_notes/*` short, source-backed, and non-
 ### Good
 
 ```markdown
-- 2026-03-29: Repeated plan-handoff failures were caused by missing session-entry state on fresh sessions.
-  Fix: resolve or record the session gate before relying on workflow handoff.
-  Prevention: check `featureforge workflow handoff` only after session-entry is enabled.
+- 2026-03-29: Initial project-memory foundation work failed because the `project-memory` skill directory and companion refs were still missing.
+  Fix: add the new skill files and generate `skills/project-memory/SKILL.md`.
+  Prevention: keep the discoverability assertion in `tests/codex-runtime/skill-doc-generation.test.mjs`.
   Source: `docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`
 ```
 
@@ -60,7 +60,7 @@ Use these examples to keep `docs/project_notes/*` short, source-backed, and non-
 ### Bad: `SecretLikeContent`
 
 ```markdown
-- GitHub token for local testing: `ghp_1234567890abcdef`
+- GitHub credential for local testing: `<github-token>`
 ```
 
 ### Bad: `MissingProvenance`
