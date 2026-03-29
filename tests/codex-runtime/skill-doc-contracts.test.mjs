@@ -116,6 +116,20 @@ function assertDownstreamMaterialStaysGateAndHarnessAware(content, label) {
   );
 }
 
+function assertForbidsTimedObligationHook(content, label, description, timings, targetPattern) {
+  const obligationPattern = '(?:must|always|required|requires)';
+  const timingPattern = `(?:${timings.join('|')})`;
+  const patterns = [
+    new RegExp(`${timingPattern}[^.\\n]{0,160}${obligationPattern}[^.\\n]{0,160}${targetPattern}`, 'i'),
+    new RegExp(`${obligationPattern}[^.\\n]{0,160}${targetPattern}[^.\\n]{0,160}${timingPattern}`, 'i'),
+    new RegExp(`${targetPattern}[^.\\n]{0,160}${obligationPattern}[^.\\n]{0,160}${timingPattern}`, 'i'),
+    new RegExp(`${timingPattern}[^.\\n]{0,160}${targetPattern}[^.\\n]{0,160}${obligationPattern}`, 'i'),
+  ];
+  for (const pattern of patterns) {
+    assert.doesNotMatch(content, pattern, `${label} should not turn ${description} into a timed obligation`);
+  }
+}
+
 test('templates declare exactly one base or review preamble placeholder', () => {
   for (const skill of listGeneratedSkills()) {
     const template = readUtf8(getTemplatePath(skill));
@@ -606,9 +620,22 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(writingPlans, /supportive context only/i);
   assert.match(writingPlans, /Missing or stale notes do not block planning\./);
   assert.doesNotMatch(writingPlans, /project memory[^.\n]*(prerequisite|required|gate)/i);
-  assert.doesNotMatch(writingPlans, /(?:before (?:planning|decomposing tasks)|to plan)[^.\n]*(?:must|always|required|requires)[^.\n]*consult `docs\/project_notes\/(?:decisions|key_facts)\.md`/i);
-  assert.doesNotMatch(writingPlans, /(?:must|always|required|requires)[^.\n]*consult `docs\/project_notes\/(?:decisions|key_facts)\.md`[^.\n]*(?:before (?:planning|decomposing tasks)|to plan)/i);
-  assert.doesNotMatch(writingPlans, /(?:planning|decomposing tasks)[^.\n]*(?:requires|required)[^.\n]*`docs\/project_notes\/(?:decisions|key_facts)\.md`/i);
+  assertForbidsTimedObligationHook(
+    writingPlans,
+    'writing-plans',
+    'the project-memory consult into a mandatory-before-planning hook',
+    [
+      'before planning',
+      'before defining tasks',
+      'before decomposing tasks',
+      'to plan',
+      'to start planning',
+      'to continue planning',
+      'task breakdown',
+      'planning start',
+    ],
+    'docs\\/project_notes\\/(?:decisions|key_facts)\\.md',
+  );
 
   const systematicDebugging = readUtf8(getSkillPath('systematic-debugging'));
   assert.match(systematicDebugging, /Check Recurring Bug Memory When It Exists/);
@@ -617,9 +644,22 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(systematicDebugging, /recurring or historically familiar/i);
   assert.match(systematicDebugging, /durable recurring bug pattern/i);
   assert.doesNotMatch(systematicDebugging, /project memory[^.\n]*(prerequisite|required|gate)/i);
-  assert.doesNotMatch(systematicDebugging, /(?:after (?:every|each) fix|after fixes|before fixing)[^.\n]*(?:must|always|required|requires)[^.\n]*update `docs\/project_notes\/bugs\.md`/i);
-  assert.doesNotMatch(systematicDebugging, /(?:must|always|required|requires)[^.\n]*update `docs\/project_notes\/bugs\.md`[^.\n]*(?:after (?:every|each) fix|after fixes|before fixing)/i);
-  assert.doesNotMatch(systematicDebugging, /(?:fix(?:es)?|repair)[^.\n]*(?:requires|required)[^.\n]*`docs\/project_notes\/bugs\.md`/i);
+  assertForbidsTimedObligationHook(
+    systematicDebugging,
+    'systematic-debugging',
+    'the bugs.md update into an always-after-fix requirement',
+    [
+      'after (?:every|each) fix',
+      'after fixes',
+      'after resolving the bug',
+      'once the fix lands',
+      'after the fix lands',
+      'after debugging',
+      'before fixing',
+      'after the repair',
+    ],
+    'docs\\/project_notes\\/bugs\\.md',
+  );
   const recurringBugMemoryIndex = systematicDebugging.indexOf('5. **Check Recurring Bug Memory When It Exists**');
   const traceDataFlowIndex = systematicDebugging.indexOf('6. **Trace Data Flow**');
   assert.ok(
@@ -634,9 +674,21 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(documentRelease, /docs\/project_notes\//);
   assert.match(documentRelease, /follow-up release-readiness action/i);
   assert.doesNotMatch(documentRelease, /project memory[^.\n]*(prerequisite|required|gate)/i);
-  assert.doesNotMatch(documentRelease, /(?:before branch completion|before presenting completion options|to complete the branch)[^.\n]*(?:must|always|required|requires)[^.\n]*`docs\/project_notes\//i);
-  assert.doesNotMatch(documentRelease, /(?:branch completion|presenting completion options)[^.\n]*(?:requires|required)[^.\n]*`docs\/project_notes\//i);
-  assert.doesNotMatch(documentRelease, /(?:must|always|required|requires)[^.\n]*`docs\/project_notes\/[^`]+`[^.\n]*(?:before branch completion|before presenting completion options)/i);
+  assertForbidsTimedObligationHook(
+    documentRelease,
+    'document-release',
+    'the project-memory follow-up into a required release-pass gate',
+    [
+      'before branch completion',
+      'before presenting completion options',
+      'to complete the branch',
+      'required document-release handoff',
+      'finish the release pass',
+      'complete the release pass',
+      'release-readiness pass',
+    ],
+    'docs\\/project_notes\\/',
+  );
 });
 
 test('generated skills use canonical runtime commands instead of helper executables', () => {

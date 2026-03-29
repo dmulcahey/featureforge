@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md
 **Plan Revision:** 4
-**Plan Fingerprint:** 8a4032c6de674489dcc3e857efd7634753f432b8330ef88d14a7c149ab8b90c4
+**Plan Fingerprint:** 9e55e6225ca9844689dc7804d686c31982935146bb1a328389b04f6e5a0a5b14
 **Source Spec Path:** docs/featureforge/specs/featureforge-project-memory-integration-spec.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 380d670c07298daeddc5648ee9855a19e3590ce20e16e5ee6b313114c3aff061
@@ -669,3 +669,18 @@
 - tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:f0a470342354d4fa838a89b29a91c0ad8c7eddabc3a8ca04e119d27b47dd75c6
 **Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after tightening the non-gating hook assertions and fixing the systematic-debugging numbering.
 **Invalidation Reason:** Review found the Task 4 negative assertions too phrase-specific and the numbering fix still unprotected by the contract test.
+
+#### Attempt 3
+**Status:** Invalidated
+**Recorded At:** 2026-03-29T20:25:05.312291Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 5
+**Packet Fingerprint:** d6f8d1fcfbcfbaa48d5a32541096a25ca002b1e8fe29501a11872b38fb6c8bd9
+**Head SHA:** 4898f694e8b461b70d7a8bcc21c236159e7c05de
+**Base SHA:** 4898f694e8b461b70d7a8bcc21c236159e7c05de
+**Claim:** Committed the final Task 4 review remediation as 4898f694e8b461b70d7a8bcc21c236159e7c05de with the message test: harden task4 hook guardrails.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:e0726349c9c0db2437fb4addbc84b9d9fa6c1a8736437b928606d3a05942aeb3
+**Verification Summary:** Manual inspection only: Verified with node scripts/gen-skill-docs.mjs --check and node --test tests/codex-runtime/skill-doc-contracts.test.mjs after broadening the non-gating regression checks and adding an order-sensitive numbering assertion.
+**Invalidation Reason:** Review found the Task 4 negative assertions still too phrase-specific to fail closed on planning-start, after-fix, and release-pass gate semantics.
