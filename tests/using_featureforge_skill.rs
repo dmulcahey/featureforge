@@ -673,6 +673,11 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "Please repair docs/project_notes/README.md before continuing plan review.\n",
         "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.\n",
     ];
+    let negative_messages = [
+        "What does docs/project_notes/bugs.md say right now?\n",
+        "Please read docs/project_notes/issues.md before continuing plan review.\n",
+        "Do not use featureforge:project-memory for this follow-up.\n",
+    ];
 
     for active_owner in [
         "featureforge:plan-eng-review",
@@ -726,6 +731,29 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
                 explicit_entry["selected_route"],
                 Value::String(String::from("featureforge:project-memory")),
                 "explicit project-memory requests should override whichever workflow owner is active",
+            );
+        }
+
+        for negative_message in negative_messages {
+            let negative_entry = simulate_supported_route_selection(
+                state,
+                home,
+                &preamble,
+                &normal_stack,
+                &route_block,
+                "project-memory-route-enabled",
+                negative_message,
+                active_owner,
+            );
+            assert_eq!(
+                negative_entry["helper_outcome"],
+                Value::String(String::from("enabled")),
+                "negative route coverage should still use the real enabled entry path",
+            );
+            assert_eq!(
+                negative_entry["selected_route"],
+                Value::String(String::from(active_owner)),
+                "read-only path mentions or negated skill mentions should keep the active workflow owner",
             );
         }
 

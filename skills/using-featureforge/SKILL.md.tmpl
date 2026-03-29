@@ -150,6 +150,8 @@ Treat the request as explicit project-memory intent when it clearly asks to:
 - invoke `featureforge:project-memory` or work on project memory itself
 - edit a concrete `docs/project_notes/README.md`, `bugs.md`, `decisions.md`, `key_facts.md`, or `issues.md` path
 
+Read-only questions about `docs/project_notes/*` or explicit negation of `featureforge:project-memory` are not enough by themselves.
+
 If those signals are absent, keep the helper-derived workflow route.
 
 ### Manual fallback routing

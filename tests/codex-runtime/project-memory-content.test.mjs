@@ -97,12 +97,15 @@ function assertApprovedSeedSources(name, entry) {
 }
 
 test('seed provenance contract allows documented stable-source variants without widening to junk paths', () => {
+  const reviewArtifact = '.featureforge/reviews/2026-03-29-featureforge-project-memory-integration-plan-fidelity.md';
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'README.md'), true);
+  assert.equal(isAllowedSeedSourceReference('bugs.md', reviewArtifact), true);
   assert.throws(() => resolveRepoSourceReference('./README.md'), /repo-relative/);
   assert.equal(isAllowedSeedSourceReference('key_facts.md', 'src/main.rs'), false);
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'src/main.rs'), false);
   assert.equal(isAllowedSeedSourceReference('key_facts.md', 'node_modules/pkg/index.js'), false);
   assert.equal(fs.existsSync(resolveRepoSourceReference('README.md')), true);
+  assert.equal(fs.existsSync(resolveRepoSourceReference(reviewArtifact)), true);
 });
 
 test('project memory corpus includes the required repo-visible files', () => {
