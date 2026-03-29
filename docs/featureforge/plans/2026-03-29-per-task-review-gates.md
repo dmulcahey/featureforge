@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-29-per-task-review-gates-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -139,37 +139,31 @@ task_all_closed -> final_review_pending -> qa_pending/document_release_pending -
 - Modify: `src/execution/transitions.rs`
 - Test: `tests/plan_execution.rs`
 
-- [ ] **Step 1: Add failing test for missing task-boundary review/verification closure state**
-
+- [x] **Step 1: Add failing test for missing task-boundary review/verification closure state**
 Run: `cargo test --test plan_execution -- task_boundary_begin_blocked_without_prior_task_closure --exact`
 Expected: FAIL with missing behavior assertion.
 
-- [ ] **Step 2: Add helper(s) in `state.rs` to compute prior-task closure state from authoritative artifacts**
-
+- [x] **Step 2: Add helper(s) in `state.rs` to compute prior-task closure state from authoritative artifacts**
 Implement pure helper path(s) for:
 - prior task selection
 - review-closure evaluation
 - task-verification receipt evaluation
 
-- [ ] **Step 3: Add/extend reason codes for task-boundary closure failures**
-
+- [x] **Step 3: Add/extend reason codes for task-boundary closure failures**
 Add deterministic reason-code emission for:
 - `prior_task_review_not_green`
 - `prior_task_verification_missing`
 - `task_cycle_break_active`
 - malformed/legacy migration codes for missing verification receipts
 
-- [ ] **Step 4: Wire helper coverage into existing runtime state export path**
-
+- [x] **Step 4: Wire helper coverage into existing runtime state export path**
 Expose enough status data to support `begin` blocking and workflow/operator diagnostics without duplicating parsing logic.
 
-- [ ] **Step 5: Extend tests for closure helpers and reason-code behavior**
-
+- [x] **Step 5: Extend tests for closure helpers and reason-code behavior**
 Run: `cargo test --test plan_execution -- task_boundary_ --nocapture`
 Expected: PASS for new helper and reason-code cases.
 
-- [ ] **Step 6: Run targeted regression for cycle-break compatibility**
-
+- [x] **Step 6: Run targeted regression for cycle-break compatibility**
 Run: `cargo test --test plan_execution -- cycle_break --nocapture`
 Expected: PASS; no behavior regression in existing cycle-break tests.
 
@@ -187,25 +181,20 @@ Expected: PASS; no behavior regression in existing cycle-break tests.
 - Modify: `src/execution/state.rs`
 - Test: `tests/plan_execution.rs`
 
-- [ ] **Step 1: Add failing begin-transition test for cross-task advancement without prior task closure**
-
+- [x] **Step 1: Add failing begin-transition test for cross-task advancement without prior task closure**
 Run: `cargo test --test plan_execution -- begin_blocks_cross_task_without_prior_task_closure --exact`
 Expected: FAIL with current permissive begin behavior.
 
-- [ ] **Step 2: Add begin-time gate check in `mutate::begin` using Task 1 helper**
-
+- [x] **Step 2: Add begin-time gate check in `mutate::begin` using Task 1 helper**
 Return `ExecutionStateNotReady` plus reason codes when prior task is not closed.
 
-- [ ] **Step 3: Preserve same-task recovery paths**
-
+- [x] **Step 3: Preserve same-task recovery paths**
 Verify active/interrupted/blocking semantics still function for same task/step flows.
 
-- [ ] **Step 4: Add legacy in-flight migration-path test cases**
-
+- [x] **Step 4: Add legacy in-flight migration-path test cases**
 Cover explicit fail-closed behavior when legacy runs are missing new task verification receipts.
 
-- [ ] **Step 5: Run targeted begin/reopen regression suite**
-
+- [x] **Step 5: Run targeted begin/reopen regression suite**
 Run: `cargo test --test plan_execution -- begin_ --nocapture`
 Expected: PASS for new and existing begin-related behavior.
 
@@ -224,25 +213,20 @@ Expected: PASS for new and existing begin-related behavior.
 - Test: `tests/workflow_runtime.rs`
 - Test: `tests/workflow_shell_smoke.rs`
 
-- [ ] **Step 1: Add failing workflow phase test for task-boundary blocked state**
-
+- [x] **Step 1: Add failing workflow phase test for task-boundary blocked state**
 Run: `cargo test --test workflow_runtime -- workflow_phase_routes_task_boundary_blocked --exact`
 Expected: FAIL with current `executing` or downstream-only behavior.
 
-- [ ] **Step 2: Extend operator context derivation to include task-boundary gate diagnostics**
-
+- [x] **Step 2: Extend operator context derivation to include task-boundary gate diagnostics**
 Evaluate task-boundary state before unconditional `executing` advancement.
 
-- [ ] **Step 3: Add/route deterministic phase or next-action text for task-boundary blocks**
-
+- [x] **Step 3: Add/route deterministic phase or next-action text for task-boundary blocks**
 Ensure doctor/handoff surfaces carry reason-code guidance.
 
-- [ ] **Step 4: Preserve final review and finish routing behavior**
-
+- [x] **Step 4: Preserve final review and finish routing behavior**
 Keep existing `final_review_pending`, `qa_pending`, `document_release_pending`, and `ready_for_branch_completion` transitions unchanged after all task-boundary gates pass.
 
-- [ ] **Step 5: Run targeted workflow/operator regression tests**
-
+- [x] **Step 5: Run targeted workflow/operator regression tests**
 Run: `cargo test --test workflow_runtime -- workflow_phase_ --nocapture`
 Run: `cargo test --test workflow_shell_smoke -- workflow_phase_ --nocapture`
 Expected: PASS including new task-boundary route tests.
@@ -261,25 +245,21 @@ Expected: PASS including new task-boundary route tests.
 - Modify: `tests/workflow_runtime.rs`
 - Modify: `tests/workflow_runtime_final_review.rs`
 
-- [ ] **Step 1: Create isolated lane worktree for Task 4**
-
+- [x] **Step 1: Create isolated lane worktree for Task 4**
 Run: `git worktree add .worktrees/task4-runtime-tests -b codex/task4-runtime-tests`
 Expected: new clean worktree created.
 
-- [ ] **Step 2: Add/extend runtime tests for stale/non-independent review provenance and malformed verification receipts**
-
+- [x] **Step 2: Add/extend runtime tests for stale/non-independent review provenance and malformed verification receipts**
 Keep fixtures deterministic and reason-code explicit, including:
 - stale review provenance bindings that no longer match the active checkpoint
 - non-independent reviewer provenance
 - malformed review-provenance receipts (missing/malformed required headers or invalid binding fields)
 - malformed task verification receipt headers/payloads
 
-- [ ] **Step 3: Add regression proving final whole-diff review remains required after task-boundary gating**
-
+- [x] **Step 3: Add regression proving final whole-diff review remains required after task-boundary gating**
 Ensure task-level gating does not short-circuit final review requirements.
 
-- [ ] **Step 4: Run lane-targeted runtime tests**
-
+- [x] **Step 4: Run lane-targeted runtime tests**
 Run: `cargo test --test plan_execution -- task_boundary_ --nocapture`
 Run: `cargo test --test workflow_runtime -- task_boundary_ --nocapture`
 Run: `cargo test --test workflow_runtime_final_review -- task_boundary_ --nocapture`
@@ -302,26 +282,21 @@ Expected: PASS.
 - Modify: `tests/runtime_instruction_contracts.rs`
 - Test: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Create isolated lane worktree for Task 5**
-
+- [x] **Step 1: Create isolated lane worktree for Task 5**
 Run: `git worktree add .worktrees/task5-skill-contracts -b codex/task5-skill-contracts`
 Expected: new clean worktree created.
 
-- [ ] **Step 2: Update templates with mandatory per-task review->verification->advance sequencing**
-
+- [x] **Step 2: Update templates with mandatory per-task review->verification->advance sequencing**
 Apply edits in `.tmpl` files only first.
 
-- [ ] **Step 3: Update execution-phase subagent consent language**
-
+- [x] **Step 3: Update execution-phase subagent consent language**
 State execution-phase runtime-selected subagent dispatch is allowed without per-dispatch user-consent prompts.
 
-- [ ] **Step 4: Regenerate checked-in skill docs from templates**
-
+- [x] **Step 4: Regenerate checked-in skill docs from templates**
 Run: `node scripts/gen-skill-docs.mjs`
 Expected: generated `SKILL.md` files update to match templates.
 
-- [ ] **Step 5: Update instruction-contract expectations and run node contract tests**
-
+- [x] **Step 5: Update instruction-contract expectations and run node contract tests**
 Run: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 Expected: PASS.
 
@@ -343,37 +318,31 @@ Expected: PASS.
 - Modify: `skills/executing-plans/SKILL.md`
 - Modify: `skills/subagent-driven-development/SKILL.md`
 
-- [ ] **Step 1: Merge Task 4 and Task 5 outputs into integration branch**
-
+- [x] **Step 1: Merge Task 4 and Task 5 outputs into integration branch**
 Run: `git merge codex/task4-runtime-tests`
 Run: `git merge codex/task5-skill-contracts`
 Expected: clean merge or resolved conflicts with tests updated accordingly.
 
-- [ ] **Step 2: Run strict lint gate**
-
+- [x] **Step 2: Run strict lint gate**
 Run: `cargo clippy --all-targets --all-features -- -D warnings`
 Expected: PASS with zero warnings.
 
-- [ ] **Step 3: Run targeted runtime and workflow regressions**
-
+- [x] **Step 3: Run targeted runtime and workflow regressions**
 Run: `cargo test --test plan_execution -- --nocapture`
 Run: `cargo test --test workflow_runtime -- --nocapture`
 Run: `cargo test --test workflow_runtime_final_review -- --nocapture`
 Run: `cargo test --test workflow_shell_smoke -- --nocapture`
 Expected: PASS.
 
-- [ ] **Step 4: Run skill-contract verification**
-
+- [x] **Step 4: Run skill-contract verification**
 Run: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 Expected: PASS.
 
-- [ ] **Step 5: Run workflow/plan contract lint for this plan+spec pair**
-
+- [x] **Step 5: Run workflow/plan contract lint for this plan+spec pair**
 Run: `featureforge plan contract lint --spec docs/featureforge/specs/2026-03-29-per-task-review-gates-design.md --plan docs/featureforge/plans/2026-03-29-per-task-review-gates.md`
 Expected: PASS.
 
-- [ ] **Step 6: Prepare and record independent plan-fidelity review artifact**
-
+- [x] **Step 6: Prepare and record independent plan-fidelity review artifact**
 Run independent review and then:
 `featureforge workflow plan-fidelity record --plan docs/featureforge/plans/2026-03-29-per-task-review-gates.md --review-artifact .featureforge/reviews/2026-03-29-per-task-review-gates-plan-fidelity.md`
 Expected: runtime-owned pass receipt recorded.
