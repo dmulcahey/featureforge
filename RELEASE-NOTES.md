@@ -7,6 +7,7 @@ Independent-review dispatch hard-gate release focused on explicit task-boundary 
 - enforce explicit `featureforge plan execution gate-review --plan <approved-plan-path>` dispatch proof at task boundaries before next-task begin can proceed
 - keep task-boundary fail-closed behavior for stale or missing dispatch lineage, non-independent review receipts, and missing task verification receipts
 - align workflow operator surfaces and execution skill docs on the exact runnable `gate-review` command text for blocked task-boundary remediation
+- harden execution guidance so repo-writing work records runtime begin before mutation and treats backfill as recovery-only workflow repair
 - expand runtime, workflow, final-review, and instruction-contract coverage for dispatch hard-gate semantics and preserved final-review behavior
 - refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for `1.6.0`
 

@@ -4776,6 +4776,28 @@ Task 1 -> Task 2
         ),
         "workflow doctor for task-boundary dispatch-blocked fixture",
     );
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for task-boundary dispatch-blocked fixture",
+        ),
+        "workflow phase for task-boundary dispatch-blocked fixture",
+    );
+    assert!(
+        phase_json["next_step"]
+            .as_str()
+            .is_some_and(|next_step| next_step.contains("featureforge plan execution gate-review --plan")),
+        "workflow phase json should expose gate-review command guidance for dispatch-blocked repair flow, got {phase_json:?}"
+    );
+    assert!(
+        phase_json["next_step"]
+            .as_str()
+            .is_some_and(|next_step| next_step.contains(plan_rel)),
+        "workflow phase json should include the approved plan path in dispatch-blocked next-step guidance, got {phase_json:?}"
+    );
     assert!(
         doctor_json["next_step"]
             .as_str()

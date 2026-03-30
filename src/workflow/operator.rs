@@ -115,6 +115,7 @@ pub fn phase(current_dir: &Path) -> Result<WorkflowPhase, JsonFailure> {
         phase: context.phase.clone(),
         route_status: context.route.status.clone(),
         next_skill: public_next_skill(&context),
+        next_step: next_step_text(&context),
         next_action: next_action_for_context(&context).to_owned(),
         spec_path: context.route.spec_path.clone(),
         plan_path: context.route.plan_path.clone(),

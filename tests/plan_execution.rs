@@ -5057,7 +5057,7 @@ fn task_boundary_begin_reports_prior_task_review_dispatch_stale() {
         &begin_task2_step1,
         "task-boundary begin stale review dispatch evidence gate",
     );
-    assert_eq!(failure["error_class"], "StaleProvenance");
+    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
     assert!(
         failure["message"]
             .as_str()
@@ -5112,7 +5112,7 @@ fn task_boundary_begin_reports_prior_task_review_dispatch_stale_when_source_step
         &begin_task2_step1,
         "task-boundary begin invalid review dispatch source step gate",
     );
-    assert_eq!(failure["error_class"], "StaleProvenance");
+    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
     assert!(
         failure["message"]
             .as_str()
@@ -5168,7 +5168,7 @@ fn task_boundary_begin_reports_prior_task_review_dispatch_stale_when_execution_r
         &begin_task2_step1,
         "task-boundary begin invalid review dispatch run identity gate",
     );
-    assert_eq!(failure["error_class"], "StaleProvenance");
+    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
     assert!(
         failure["message"]
             .as_str()
@@ -5231,7 +5231,7 @@ fn task_boundary_begin_reports_prior_task_review_dispatch_stale_when_strategy_ch
         &begin_task2_step1,
         "task-boundary begin invalid review dispatch checkpoint fingerprint gate",
     );
-    assert_eq!(failure["error_class"], "StaleProvenance");
+    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
     assert!(
         failure["message"]
             .as_str()

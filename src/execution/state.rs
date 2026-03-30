@@ -5889,7 +5889,7 @@ fn ensure_prior_task_review_dispatch_closed(
     let expected_task_completion_lineage =
         task_completion_lineage_fingerprint(context, prior_task).ok_or_else(|| {
             task_boundary_error(
-                FailureClass::StaleProvenance,
+                FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
                     "Task {target_task} may not begin because Task {prior_task} review dispatch lineage cannot be computed from the latest completed task evidence."
@@ -5898,7 +5898,7 @@ fn ensure_prior_task_review_dispatch_closed(
         })?;
     let expected_source_step = latest_attempted_step_for_task(context, prior_task).ok_or_else(|| {
         task_boundary_error(
-            FailureClass::StaleProvenance,
+            FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
                 "Task {target_task} may not begin because Task {prior_task} review dispatch lineage cannot be validated against the latest completed task step evidence."
@@ -5962,7 +5962,7 @@ fn validate_task_review_dispatch_lineage(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             task_boundary_error(
-                FailureClass::StaleProvenance,
+                FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
                     "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
@@ -5972,7 +5972,7 @@ fn validate_task_review_dispatch_lineage(
         })?;
     let observed_source_task = lineage.source_task.ok_or_else(|| {
         task_boundary_error(
-            FailureClass::StaleProvenance,
+            FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
                 "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
@@ -5982,7 +5982,7 @@ fn validate_task_review_dispatch_lineage(
     })?;
     let observed_source_step = lineage.source_step.ok_or_else(|| {
         task_boundary_error(
-            FailureClass::StaleProvenance,
+            FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
                 "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
@@ -5997,7 +5997,7 @@ fn validate_task_review_dispatch_lineage(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             task_boundary_error(
-                FailureClass::StaleProvenance,
+                FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
                     "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
@@ -6012,7 +6012,7 @@ fn validate_task_review_dispatch_lineage(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             task_boundary_error(
-                FailureClass::StaleProvenance,
+                FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
                     "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
@@ -6028,7 +6028,7 @@ fn validate_task_review_dispatch_lineage(
         || observed_task_completion_lineage != expected.task_completion_lineage
     {
         return Err(task_boundary_error(
-            FailureClass::StaleProvenance,
+            FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
                 "Task {target_task} may not begin because Task {prior_task} review-dispatch evidence is stale against current task/strategy lineage. Re-run `featureforge plan execution gate-review --plan {}` after Task {prior_task} closure.",
