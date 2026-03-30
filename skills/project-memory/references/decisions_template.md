@@ -8,6 +8,7 @@ Use for compact decision memory with backlinks, not as a replacement for approve
 - PM-XXX | YYYY-MM-DD | <decision summary>
   Context: <one sentence>
   Decision: <one sentence>
+  Alternatives considered: <one sentence>
   Consequence: <one sentence>
   Source: `<approved artifact or stable repo doc>`
 ```

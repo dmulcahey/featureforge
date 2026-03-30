@@ -677,6 +677,10 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   assert.match(writingPlans, /## Optional Project Memory Consult/);
   assert.match(writingPlans, /consult `docs\/project_notes\/decisions\.md`/);
   assert.match(writingPlans, /consult `docs\/project_notes\/key_facts\.md`/);
+  assert.match(
+    writingPlans,
+    /later `featureforge:project-memory` summary update to `docs\/project_notes\/decisions\.md` may be appropriate after approval\./,
+  );
   assert.match(writingPlans, /supportive context only/i);
   assert.match(writingPlans, /Missing or stale notes do not block planning\./);
   assertForbidsGateLikeHookLanguage(

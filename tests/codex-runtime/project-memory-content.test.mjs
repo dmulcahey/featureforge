@@ -109,6 +109,15 @@ test('seed provenance contract allows documented stable-source variants without 
   assert.equal(isAllowedSeedSourceReference('bugs.md', 'docs/archive/old-note.md'), false);
 });
 
+test('project-memory reference templates stay aligned with enforced entry shapes', () => {
+  const decisionsTemplate = readProjectMemorySkillFile('references/decisions_template.md');
+  assert.match(decisionsTemplate, /Context:/, 'decisions template should include Context');
+  assert.match(decisionsTemplate, /Decision:/, 'decisions template should include Decision');
+  assert.match(decisionsTemplate, /Alternatives considered:/, 'decisions template should include Alternatives considered');
+  assert.match(decisionsTemplate, /Consequence:/, 'decisions template should include Consequence');
+  assert.match(decisionsTemplate, /Source:/, 'decisions template should include Source');
+});
+
 test('project memory corpus includes the required repo-visible files', () => {
   assert.equal(fs.existsSync(MEMORY_DIR), true, 'docs/project_notes should exist');
 

@@ -207,6 +207,7 @@ When Layer 2 materially affects reuse or warnings, capture it in plan-body secti
 
 - When repo-visible project memory exists, consult `docs/project_notes/decisions.md` for relevant prior decisions that should shape task decomposition.
 - When repo-visible project memory exists, consult `docs/project_notes/key_facts.md` for durable repo facts worth carrying into the plan.
+- If this plan is likely to create an important new approved decision, note that a later `featureforge:project-memory` summary update to `docs/project_notes/decisions.md` may be appropriate after approval.
 - Treat these files as supportive context only. Missing or stale notes do not block planning.
 
 ## File Structure
