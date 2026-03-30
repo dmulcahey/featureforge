@@ -126,13 +126,13 @@ git commit -m "test: codify begin-before-mutation skill contract"
 **Files:**
 - Modify: `skills/executing-plans/SKILL.md.tmpl`
 
-- [ ] **Step 1: Add explicit no-edit-before-first-begin rule after successful preflight**
+- [x] **Step 1: Add explicit no-edit-before-first-begin rule after successful preflight**
 Clarify that successful preflight does not authorize repo mutation until first `begin` is recorded for the active step.
 
-- [ ] **Step 2: Add dirty-before-begin warning and recovery-only retroactive policy text**
+- [x] **Step 2: Add dirty-before-begin warning and recovery-only retroactive policy text**
 State that dirtying workspace before first `begin` can block later preflight and that retroactive tracking is recovery-only.
 
-- [ ] **Step 3: Add the five-step recovery runbook with helper `status` anchoring and factual-only backfill**
+- [x] **Step 3: Add the five-step recovery runbook with helper `status` anchoring and factual-only backfill**
 Ensure runbook includes:
 1. reconcile/isolate
 2. fresh preflight acceptance
@@ -140,7 +140,7 @@ Ensure runbook includes:
 4. factual-only authoritative mutation backfill
 5. task-boundary review/verification resume
 
-- [ ] **Step 4: Commit the `executing-plans` template change**
+- [x] **Step 4: Commit the `executing-plans` template change**
 ```bash
 git add skills/executing-plans/SKILL.md.tmpl
 git commit -m "docs: enforce begin-before-mutation in executing-plans template"

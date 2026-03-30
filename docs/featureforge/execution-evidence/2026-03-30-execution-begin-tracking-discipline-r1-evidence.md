@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-30-execution-begin-tracking-discipline.md
 **Plan Revision:** 1
-**Plan Fingerprint:** b560802456c61aac449c32d477ed5982ac4fba87355616edd8ab31fe155c269b
+**Plan Fingerprint:** ddcf9f994a7073f0fd40990df3d3412202a5cb670514ccb95191fda21db8d79e
 **Source Spec Path:** docs/featureforge/specs/2026-03-30-execution-begin-tracking-discipline-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 43c55b60d6174b68219d533ad967a1c24c3c60c4851d62d72124bda6cdec3961
@@ -55,4 +55,68 @@
 **Files Proven:**
 - tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:50e0dfd23ff700c5577162d29375817cca463217655d2abb553f85f0cb333e88
 **Verification Summary:** Manual inspection only: Created commit 950a0ef containing only tests/codex-runtime/skill-doc-contracts.test.mjs with failing assertion additions.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T14:42:58.09319Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 1
+**Packet Fingerprint:** 5ff76097ae249d6272f57694da6e6b9bf8070b8ea94f2caae5b36fd0b12c879b
+**Head SHA:** 6094cd2670f2ece7dc05098a07d359768850fecb
+**Base SHA:** 6094cd2670f2ece7dc05098a07d359768850fecb
+**Claim:** Added explicit no-edit-before-first-begin hard gate language after successful preflight in executing-plans template.
+**Files Proven:**
+- skills/executing-plans/SKILL.md.tmpl | sha256:fb08a1666915875fe75269095dd2d1290c4dad04ae7fd981498633ea6cb1b2a5
+**Verification Summary:** Manual inspection only: Confirmed the template now states no code or test edits after successful preflight and before first begin.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T14:43:15.818354Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 2
+**Packet Fingerprint:** 1d119c2d6672f1922ca17c77185381fb15495088ceab5830890bf55297372ebd
+**Head SHA:** 6094cd2670f2ece7dc05098a07d359768850fecb
+**Base SHA:** 6094cd2670f2ece7dc05098a07d359768850fecb
+**Claim:** Added dirty-before-begin fail-closed warning tied to tracked_worktree_dirty and marked retroactive execution tracking as recovery-only.
+**Files Proven:**
+- skills/executing-plans/SKILL.md.tmpl | sha256:fb08a1666915875fe75269095dd2d1290c4dad04ae7fd981498633ea6cb1b2a5
+**Verification Summary:** Manual inspection only: Confirmed executing-plans now warns dirty-before-first-begin can fail closed and labels retroactive tracking as recovery-only.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T14:43:33.239378Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 3
+**Packet Fingerprint:** 396eb6ba52e4b9f21c1fa5e2f49bc46e369319709135fbca8b1b3a9c27954114
+**Head SHA:** 6094cd2670f2ece7dc05098a07d359768850fecb
+**Base SHA:** 6094cd2670f2ece7dc05098a07d359768850fecb
+**Claim:** Added the five-step recovery runbook with status anchoring, factual-only backfill, and task-boundary review/verification resume rules.
+**Files Proven:**
+- skills/executing-plans/SKILL.md.tmpl | sha256:fb08a1666915875fe75269095dd2d1290c4dad04ae7fd981498633ea6cb1b2a5
+**Verification Summary:** Manual inspection only: Confirmed the five-step recovery runbook includes reconcile/isolate, fresh preflight acceptance, status read, factual-only backfill, and resume via task-boundary review/verification before next begin.
+**Invalidation Reason:** N/A
+
+### Task 2 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T14:44:05.377962Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 4
+**Packet Fingerprint:** a1e8f28164a58fa3aba9feb707320fd693cbb49de6e500ea0d0ec4d98985392f
+**Head SHA:** 8278c5b307d83059d152b5ec43761a7f06a58d62
+**Base SHA:** 8278c5b307d83059d152b5ec43761a7f06a58d62
+**Claim:** Committed executing-plans template hardening for begin-before-mutation guidance.
+**Files Proven:**
+- skills/executing-plans/SKILL.md.tmpl | sha256:fb08a1666915875fe75269095dd2d1290c4dad04ae7fd981498633ea6cb1b2a5
+**Verification Summary:** `git show --name-only --oneline HEAD` -> PASS: commit 8278c5b includes skills/executing-plans/SKILL.md.tmpl
 **Invalidation Reason:** N/A
