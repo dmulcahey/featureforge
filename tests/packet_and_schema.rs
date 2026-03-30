@@ -11,7 +11,6 @@ use featureforge::execution::state::write_plan_execution_schema;
 use featureforge::repo_safety::write_repo_safety_schema;
 use featureforge::update_check::write_update_check_schema;
 use featureforge::workflow::status::write_workflow_schemas;
-use featureforge::write_session_entry_schema;
 use serde_json::Value;
 
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-22-plan-contract-fixture-design.md";
@@ -636,10 +635,9 @@ fn checked_in_plan_execution_schema_matches_generated_output() {
 }
 
 #[test]
-fn checked_in_repo_safety_and_session_entry_schemas_match_generated_output() {
+fn checked_in_repo_safety_schema_matches_generated_output_and_session_entry_schema_is_absent() {
     let schemas_dir = unique_temp_dir("policy-schemas");
     write_repo_safety_schema(&schemas_dir).expect("repo-safety schema should write");
-    write_session_entry_schema(&schemas_dir).expect("session-entry schema should write");
 
     let generated_repo_safety =
         fs::read_to_string(schemas_dir.join("repo-safety-check.schema.json"))
@@ -652,16 +650,9 @@ fn checked_in_repo_safety_and_session_entry_schemas_match_generated_output() {
         checked_in_repo_safety.trim_end()
     );
 
-    let generated_session_entry =
-        fs::read_to_string(schemas_dir.join("session-entry-resolve.schema.json"))
-            .expect("generated session-entry schema should read");
-    let checked_in_session_entry = fs::read_to_string(repo_fixture_path(
-        "schemas/session-entry-resolve.schema.json",
-    ))
-    .expect("checked-in session-entry schema should read");
-    assert_eq!(
-        generated_session_entry.trim_end(),
-        checked_in_session_entry.trim_end()
+    assert!(
+        !repo_fixture_path("schemas/session-entry-resolve.schema.json").exists(),
+        "session-entry schema should not remain an active checked-in schema artifact"
     );
 }
 
