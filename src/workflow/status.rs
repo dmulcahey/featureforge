@@ -969,16 +969,6 @@ fn fallback_limit() -> Option<usize> {
         .filter(|limit| *limit > 0)
 }
 
-fn env_flag(name: &str) -> bool {
-    env::var(name)
-        .ok()
-        .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-        })
-        .unwrap_or(false)
-}
-
 pub fn sync_reason_codes(route: &WorkflowRoute) -> Vec<String> {
     route.reason_codes.clone()
 }

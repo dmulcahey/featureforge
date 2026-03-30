@@ -428,8 +428,7 @@ fn session_entry_argv0_alias_is_removed_from_active_cli_surface() {
 
     let output = run(
         {
-            let command = Command::new(&alias_path);
-            command
+            Command::new(&alias_path)
         },
         "session-entry argv0 alias removed",
     );

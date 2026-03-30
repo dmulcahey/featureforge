@@ -5,7 +5,6 @@ pub mod plan_contract;
 pub mod plan_execution;
 pub mod repo_safety;
 pub mod runtime_root;
-pub mod session_entry;
 pub mod slug;
 pub mod update_check;
 pub mod workflow;
