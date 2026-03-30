@@ -158,16 +158,16 @@ git commit -m "docs: enforce begin-before-mutation in executing-plans template"
 **Files:**
 - Modify: `skills/subagent-driven-development/SKILL.md.tmpl`
 
-- [ ] **Step 1: Add no-edit-before-first-begin guidance in preflight/dispatch flow**
+- [x] **Step 1: Add no-edit-before-first-begin guidance in preflight/dispatch flow**
 Ensure dispatch guidance states implementation edits must wait until first runtime `begin` for active step.
 
-- [ ] **Step 2: Add dirty-before-begin warning plus recovery-only retroactive policy**
+- [x] **Step 2: Add dirty-before-begin warning plus recovery-only retroactive policy**
 Mirror risk posture and prohibit treating retroactive tracking as normal execution path.
 
-- [ ] **Step 3: Add semantically equivalent five-step recovery runbook**
+- [x] **Step 3: Add semantically equivalent five-step recovery runbook**
 Include helper `status` anchoring and factual-only backfill before returning to task-boundary review/verification gate.
 
-- [ ] **Step 4: Commit the `subagent-driven-development` template change**
+- [x] **Step 4: Commit the `subagent-driven-development` template change**
 ```bash
 git add skills/subagent-driven-development/SKILL.md.tmpl
 git commit -m "docs: mirror begin-before-mutation guardrails in subagent template"
