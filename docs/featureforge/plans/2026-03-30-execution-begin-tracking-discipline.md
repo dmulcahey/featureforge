@@ -186,17 +186,17 @@ git commit -m "docs: mirror begin-before-mutation guardrails in subagent templat
 - Modify: `skills/executing-plans/SKILL.md`
 - Modify: `skills/subagent-driven-development/SKILL.md`
 
-- [ ] **Step 1: Regenerate checked-in skill docs from updated templates**
+- [x] **Step 1: Regenerate checked-in skill docs from updated templates**
 Run: `node scripts/gen-skill-docs.mjs`
 Expected: script completes and updates generated docs for modified templates.
 
-- [ ] **Step 2: Verify generated docs contain the new guardrails on both skill surfaces**
+- [x] **Step 2: Verify generated docs contain the new guardrails on both skill surfaces**
 Run:
 - `rg -n 'no .* edit|first .*begin|recovery-only|factual-only|tracked_worktree_dirty' skills/executing-plans/SKILL.md`
 - `rg -n 'no .* edit|first .*begin|recovery-only|factual-only|tracked_worktree_dirty' skills/subagent-driven-development/SKILL.md`
 Expected: both files include semantically equivalent guardrail language.
 
-- [ ] **Step 3: Commit regenerated skill docs**
+- [x] **Step 3: Commit regenerated skill docs**
 ```bash
 git add skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md
 git commit -m "chore: regenerate execution skill docs for begin-tracking hardening"

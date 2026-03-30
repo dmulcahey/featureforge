@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-30-execution-begin-tracking-discipline.md
 **Plan Revision:** 1
-**Plan Fingerprint:** 08986421f806adfb90a942c2f00f8cc5bcbf069f28df10239bde22f65069d499
+**Plan Fingerprint:** 6020cf00d3bf15ebb9c5bdd9afebf3b4fa0155ceb65a1cd64fc98fc78a2e8d92
 **Source Spec Path:** docs/featureforge/specs/2026-03-30-execution-begin-tracking-discipline-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 43c55b60d6174b68219d533ad967a1c24c3c60c4851d62d72124bda6cdec3961
@@ -183,4 +183,55 @@
 **Files Proven:**
 - skills/subagent-driven-development/SKILL.md.tmpl | sha256:9d7f109cfcabe9d7553bde955039f47d0aac04accfcb001390c181026f641137
 **Verification Summary:** `git show --name-only --oneline HEAD` -> PASS: commit 7d78861 includes skills/subagent-driven-development/SKILL.md.tmpl
+**Invalidation Reason:** N/A
+
+### Task 4 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T15:00:22.036577Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 1
+**Packet Fingerprint:** 476e87155207908c15d5288ca126cfeac6dd584447c6e878a63de82c7c44fd60
+**Head SHA:** b396855d320d29da3cf670efb3f8a10ffff91451
+**Base SHA:** b396855d320d29da3cf670efb3f8a10ffff91451
+**Claim:** Regenerated skill docs from updated templates.
+**Files Proven:**
+- skills/executing-plans/SKILL.md | sha256:363807d9da2a9d0d5fe5137bdfb8b26d34b2d13d4ea6fc78d6f98ee9e118ba5d
+- skills/subagent-driven-development/SKILL.md | sha256:737200e5fdbae9208920a3e497e0c170213a53d6f0ebb4a26438b611436f806d
+**Verification Summary:** `node scripts/gen-skill-docs.mjs` -> PASS
+**Invalidation Reason:** N/A
+
+### Task 4 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T15:00:42.230903Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 2
+**Packet Fingerprint:** 3113e19c5ec7ae8db51069918a6b0ad97886ccc5cb60e13c3d7061f1127edb3d
+**Head SHA:** b396855d320d29da3cf670efb3f8a10ffff91451
+**Base SHA:** b396855d320d29da3cf670efb3f8a10ffff91451
+**Claim:** Verified regenerated docs contain begin-before-mutation guardrails on both execution skill surfaces.
+**Files Proven:**
+- skills/executing-plans/SKILL.md | sha256:363807d9da2a9d0d5fe5137bdfb8b26d34b2d13d4ea6fc78d6f98ee9e118ba5d
+- skills/subagent-driven-development/SKILL.md | sha256:737200e5fdbae9208920a3e497e0c170213a53d6f0ebb4a26438b611436f806d
+**Verification Summary:** `rg -n 'no .* edit|first .*begin|recovery-only|factual-only|tracked_worktree_dirty' skills/executing-plans/SKILL.md && rg -n 'no .* edit|first .*begin|recovery-only|factual-only|tracked_worktree_dirty' skills/subagent-driven-development/SKILL.md` -> PASS
+**Invalidation Reason:** N/A
+
+### Task 4 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T15:01:16.829536Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 4
+**Step Number:** 3
+**Packet Fingerprint:** e2f471be112e348967f06e01c11423db58a7bd5a6bf0c3a010ebbedd75906f1b
+**Head SHA:** af5914e6895f09825ec61529363085a546c212a5
+**Base SHA:** af5914e6895f09825ec61529363085a546c212a5
+**Claim:** Committed regenerated execution skill docs for begin-tracking guidance hardening.
+**Files Proven:**
+- skills/executing-plans/SKILL.md | sha256:363807d9da2a9d0d5fe5137bdfb8b26d34b2d13d4ea6fc78d6f98ee9e118ba5d
+- skills/subagent-driven-development/SKILL.md | sha256:737200e5fdbae9208920a3e497e0c170213a53d6f0ebb4a26438b611436f806d
+**Verification Summary:** `git show --name-only --oneline HEAD` -> PASS: commit af5914e includes regenerated SKILL.md files
 **Invalidation Reason:** N/A
