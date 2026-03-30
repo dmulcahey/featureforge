@@ -107,8 +107,8 @@
 
 ### Task 1 Step 5
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-03-30T21:16:08.243209Z
+**Status:** Invalidated
+**Recorded At:** 2026-03-30T21:46:20.672754Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 1
 **Step Number:** 5
@@ -125,4 +125,22 @@
 - tests/cli_parse_boundary.rs | sha256:f7f63c7c2a8c9a581de77863439b74b2713d97104c0dafd59bd9a3dc7007d893
 - tests/packet_and_schema.rs | sha256:3df2e367bea7bd27798eddde13bedf83fcc1aedac12dd1278ee41124266fda3f
 **Verification Summary:** Manual inspection only: git commit -m 'refactor: remove session-entry command surfaces' created c6ccf00 after cargo nextest run --test cli_parse_boundary and cargo nextest run --test packet_and_schema passed.
+**Invalidation Reason:** Resolve dedicated review findings by removing compiled-but-unused session-entry runtime code and satisfying the strict clippy warning-free bar.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-03-30T21:47:41.018599Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 5
+**Packet Fingerprint:** 2d55714a49ff00f660f0e1fe7411f53e3bb66b8e2c48b531acd339c79a0ad9f4
+**Head SHA:** b77cc43ef4c7c25a2070f15b8ec4a89863eabc5f
+**Base SHA:** b77cc43ef4c7c25a2070f15b8ec4a89863eabc5f
+**Claim:** Committed the Task 1 review-remediation cleanup by removing compiled-but-unused session-entry runtime code, dropping the unused CLI module export, and satisfying the strict clippy warning-free bar while preserving the schema writer bridge.
+**Files Proven:**
+- src/cli/mod.rs | sha256:0d022c6350bf49bf97d7e79aa88d4d5f4097c215fca174a28a3f9972debe9768
+- src/session_entry/mod.rs | sha256:dd2e4767e9b8528e05b1aab7652c14e2f691929a98c6671be9d93a2b01337049
+- src/workflow/status.rs | sha256:e4a8eb6911794de82fb317797fa40b146b45e171b54a55571e43348605bf495b
+- tests/cli_parse_boundary.rs | sha256:61e9dd601d725ca2b26098e4e05fecd0c337262f97df860d5ec52410ae339130
+**Verification Summary:** Manual inspection only: cargo clippy --all-targets --all-features -- -D warnings passed, and cargo nextest run --test cli_parse_boundary --test packet_and_schema --test workflow_runtime --test workflow_shell_smoke --test workflow_runtime_final_review passed after commit b77cc43.
 **Invalidation Reason:** N/A
