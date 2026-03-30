@@ -1099,9 +1099,7 @@ fn should_preserve_manifest_expected_paths(route: &WorkflowRoute) -> bool {
 }
 
 fn workflow_session_key() -> String {
-    env::var("FEATUREFORGE_SESSION_KEY")
-        .or_else(|_| env::var("PPID"))
-        .unwrap_or_else(|_| String::from("current"))
+    session_entry::runtime_session_key()
 }
 
 fn env_flag(name: &str) -> bool {

@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1124,8 +1123,5 @@ fn execution_status_args(args: &PlanArgs) -> ExecutionStatusArgs {
 }
 
 fn session_key() -> Option<String> {
-    env::var("FEATUREFORGE_SESSION_KEY")
-        .ok()
-        .or_else(|| env::var("PPID").ok())
-        .filter(|value| !value.trim().is_empty())
+    Some(session_entry::runtime_session_key())
 }

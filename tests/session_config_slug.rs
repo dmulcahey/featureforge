@@ -154,6 +154,25 @@ fn run_rust_featureforge_with_env_control(
     )
 }
 
+fn run_rust_featureforge_with_state_env_control(
+    repo: Option<&Path>,
+    state_dir: &Path,
+    env_remove: &[&str],
+    envs: &[(&str, &str)],
+    args: &[&str],
+    context: &str,
+) -> Output {
+    featureforge_support::run_rust_featureforge_with_env_control(
+        repo,
+        Some(state_dir),
+        None,
+        env_remove,
+        envs,
+        args,
+        context,
+    )
+}
+
 fn canonical_session_entry_path(state_dir: &Path, session_key: &str) -> PathBuf {
     state_dir
         .join("session-entry")
@@ -207,6 +226,123 @@ fn canonical_session_entry_missing_decision_matches_helper_semantics() {
         rust_json["decision_path"].as_str(),
         Some(
             canonical_session_entry_path(state, "missing-session")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+}
+
+#[test]
+fn canonical_session_entry_derives_session_key_from_codex_thread_id() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-codex-thread-key");
+    let state = state_dir.path();
+    let message_file = state.join("codex-thread-message.txt");
+    write_file(&message_file, "Can you help with this task?\n");
+
+    let rust_output = run_rust_featureforge_with_state_env_control(
+        None,
+        state,
+        &[
+            "FEATUREFORGE_SESSION_KEY",
+            "GITHUB_COPILOT_SESSION_ID",
+            "COPILOT_SESSION_ID",
+            "PPID",
+        ],
+        &[("CODEX_THREAD_ID", "codex-thread-123")],
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+        ],
+        "canonical session-entry codex thread id",
+    );
+    let rust_json = parse_json(&rust_output, "canonical session-entry codex thread id");
+
+    assert_eq!(
+        rust_json["session_key"],
+        Value::String(String::from("codex-thread-123"))
+    );
+    assert_eq!(
+        rust_json["decision_path"].as_str(),
+        Some(
+            canonical_session_entry_path(state, "codex-thread-123")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+}
+
+#[test]
+fn canonical_session_entry_derives_session_key_from_copilot_session_id() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-copilot-session-key");
+    let state = state_dir.path();
+    let message_file = state.join("copilot-session-message.txt");
+    write_file(&message_file, "Can you help with this task?\n");
+
+    let rust_output = run_rust_featureforge_with_state_env_control(
+        None,
+        state,
+        &["FEATUREFORGE_SESSION_KEY", "CODEX_THREAD_ID", "COPILOT_SESSION_ID", "PPID"],
+        &[("GITHUB_COPILOT_SESSION_ID", "copilot-session-42")],
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+        ],
+        "canonical session-entry copilot session id",
+    );
+    let rust_json = parse_json(&rust_output, "canonical session-entry copilot session id");
+
+    assert_eq!(
+        rust_json["session_key"],
+        Value::String(String::from("copilot-session-42"))
+    );
+    assert_eq!(
+        rust_json["decision_path"].as_str(),
+        Some(
+            canonical_session_entry_path(state, "copilot-session-42")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+}
+
+#[test]
+fn canonical_session_entry_prefers_featureforge_session_key_over_thread_ids() {
+    let (_repo_dir, state_dir) = init_repo("session-entry-parent-key-priority");
+    let state = state_dir.path();
+    let message_file = state.join("parent-key-message.txt");
+    write_file(&message_file, "Can you help with this task?\n");
+
+    let rust_output = run_rust_featureforge_with_state_env_control(
+        None,
+        state,
+        &["PPID"],
+        &[
+            ("FEATUREFORGE_SESSION_KEY", "parent-session-key"),
+            ("CODEX_THREAD_ID", "codex-child-thread"),
+            ("GITHUB_COPILOT_SESSION_ID", "copilot-child-session"),
+        ],
+        &[
+            "session-entry",
+            "resolve",
+            "--message-file",
+            message_file.to_str().expect("message file should be utf8"),
+        ],
+        "canonical session-entry parent key precedence",
+    );
+    let rust_json = parse_json(&rust_output, "canonical session-entry parent key precedence");
+
+    assert_eq!(
+        rust_json["session_key"],
+        Value::String(String::from("parent-session-key"))
+    );
+    assert_eq!(
+        rust_json["decision_path"].as_str(),
+        Some(
+            canonical_session_entry_path(state, "parent-session-key")
                 .to_string_lossy()
                 .as_ref()
         )

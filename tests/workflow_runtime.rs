@@ -294,6 +294,28 @@ fn run_rust_featureforge_with_env(
     run(command, context)
 }
 
+fn run_rust_featureforge_with_env_control(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    env_remove: &[&str],
+    extra_env: &[(&str, &str)],
+    context: &str,
+) -> Output {
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
+        .args(args);
+    for key in env_remove {
+        command.env_remove(key);
+    }
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    run(command, context)
+}
+
 fn missing_null_fields(object: &Value, fields: &[&str]) -> Vec<String> {
     fields
         .iter()
@@ -2870,6 +2892,68 @@ fn canonical_workflow_status_fail_closes_when_strict_session_entry_gate_is_unres
     assert_eq!(
         manifest_after_bypassed_session.expected_plan_path, enabled_manifest.expected_plan_path,
         "other-session strict bypassed refresh should not clear existing expected plan path"
+    );
+}
+
+#[test]
+fn canonical_workflow_status_strict_gate_uses_codex_thread_id_when_session_key_env_is_missing() {
+    let (repo_dir, state_dir) = init_repo("workflow-status-strict-session-entry-codex-thread");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "codex-thread-workflow";
+    let decision_path = state
+        .join("session-entry")
+        .join("using-featureforge")
+        .join(session_key);
+
+    install_full_contract_ready_artifacts(repo);
+    write_file(&decision_path, "enabled\n");
+
+    let status_json = parse_json(
+        &run_rust_featureforge_with_env_control(
+            repo,
+            state,
+            &["workflow", "status", "--refresh"],
+            &[
+                "FEATUREFORGE_SESSION_KEY",
+                "GITHUB_COPILOT_SESSION_ID",
+                "COPILOT_SESSION_ID",
+                "PPID",
+            ],
+            &[
+                ("FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY", "1"),
+                ("CODEX_THREAD_ID", session_key),
+            ],
+            "workflow status should honor codex thread id when strict session-entry gating is enabled",
+        ),
+        "workflow status should honor codex thread id when strict session-entry gating is enabled",
+    );
+
+    assert_eq!(status_json["status"], "implementation_ready");
+
+    let unresolved_status_json = parse_json(
+        &run_rust_featureforge_with_env_control(
+            repo,
+            state,
+            &["workflow", "status", "--refresh"],
+            &[
+                "FEATUREFORGE_SESSION_KEY",
+                "CODEX_THREAD_ID",
+                "GITHUB_COPILOT_SESSION_ID",
+                "COPILOT_SESSION_ID",
+                "PPID",
+            ],
+            &[("FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY", "1")],
+            "workflow status should fail closed without codex thread id or explicit session key",
+        ),
+        "workflow status should fail closed without codex thread id or explicit session key",
+    );
+    assert_eq!(unresolved_status_json["status"], "needs_user_choice");
+    assert!(
+        unresolved_status_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code == "session_entry_unresolved")),
+        "strict workflow status should require a resolved session-entry decision without codex thread id"
     );
 }
 

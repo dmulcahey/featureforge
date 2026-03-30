@@ -15,6 +15,13 @@ const MAX_MESSAGE_BYTES: u64 = 65_536;
 const ACTIVE_SESSION_ENTRY_SKILL: &str = "using-featureforge";
 const SPAWNED_SUBAGENT_ENV: &str = "FEATUREFORGE_SPAWNED_SUBAGENT";
 const SPAWNED_SUBAGENT_OPT_IN_ENV: &str = "FEATUREFORGE_SPAWNED_SUBAGENT_OPT_IN";
+const SESSION_KEY_ENV_CANDIDATES: &[&str] = &[
+    "FEATUREFORGE_SESSION_KEY",
+    "CODEX_THREAD_ID",
+    "GITHUB_COPILOT_SESSION_ID",
+    "COPILOT_SESSION_ID",
+    "PPID",
+];
 const FEATUREFORGE_REENTRY_PHRASES: &[&str] = &[
     "use featureforge",
     "enable featureforge",
@@ -493,11 +500,14 @@ impl SessionEntryContext {
     }
 }
 
+pub fn runtime_session_key() -> String {
+    derive_session_key(None).unwrap_or_else(|_| String::from("current"))
+}
+
 fn derive_session_key(raw_session_key: Option<&str>) -> Result<String, DiagnosticError> {
     let candidate = raw_session_key
         .map(str::to_owned)
-        .or_else(|| env::var("FEATUREFORGE_SESSION_KEY").ok())
-        .or_else(|| env::var("PPID").ok())
+        .or_else(derived_session_key_from_env)
         .unwrap_or_else(|| String::from("current"));
     let normalized = normalize_identifier_token(&candidate);
     if normalized.is_empty() {
@@ -507,6 +517,17 @@ fn derive_session_key(raw_session_key: Option<&str>) -> Result<String, Diagnosti
         ));
     }
     Ok(normalized)
+}
+
+fn derived_session_key_from_env() -> Option<String> {
+    for variable in SESSION_KEY_ENV_CANDIDATES {
+        if let Ok(value) = env::var(variable)
+            && !value.trim().is_empty()
+        {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn read_decision_file(path: &Path) -> Result<DecisionState, DiagnosticError> {
