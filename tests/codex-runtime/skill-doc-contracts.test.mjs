@@ -654,7 +654,7 @@ test('repo-writing workflow skills document the protected-branch repo-safety gat
     'project-memory': /repo-file-write/,
     'plan-ceo-review': /approval-header-write/,
     'writing-plans': /plan-artifact-write/,
-    'plan-eng-review': /approval-header-write/,
+    'plan-eng-review': /plan-artifact-write/,
     'executing-plans': /execution-task-slice/,
     'subagent-driven-development': /execution-task-slice/,
     'document-release': /release-doc-write/,
@@ -670,6 +670,11 @@ test('repo-writing workflow skills document the protected-branch repo-safety gat
     assert.match(content, /branch, the stage, and the blocking `failure_class`/, `${skill} should surface blocked-write diagnostics`);
     assert.match(content, targetPattern, `${skill} should use the correct write target family`);
   }
+
+  const planEngReview = readUtf8(getSkillPath('plan-eng-review'));
+  assert.match(planEngReview, /plan-artifact-write/, 'plan-eng-review should gate plan-body writes');
+  assert.match(planEngReview, /approval-header-write/, 'plan-eng-review should gate approval-header writes separately');
+  assert.doesNotMatch(planEngReview, /repo-file-write/, 'plan-eng-review should not regress to repo-file-write');
 });
 
 test('project-memory workflow hooks stay consult-only and non-gating', () => {

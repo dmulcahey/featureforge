@@ -287,9 +287,7 @@ Task 4 -> Task 5
 - [x] **Step 2: Update `skills/writing-plans/SKILL.md.tmpl`, `skills/systematic-debugging/SKILL.md.tmpl`, and `skills/document-release/SKILL.md.tmpl` with those exact file-specific consult and update hooks, then regenerate their checked-in `SKILL.md` outputs**
 - [x] **Step 3: Re-read the generated docs and trim any wording that turns the hook into a protocol block instead of a narrow reminder**
 - [x] **Step 4: Run `node --test tests/codex-runtime/skill-doc-contracts.test.mjs` and `node scripts/gen-skill-docs.mjs --check`, then fix failures until the lane is green**
-- [ ] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "docs: add project-memory workflow hooks"`**
-
-  **Execution Note:** Active - Commit the lane in its dedicated worktree with `git commit -m "docs: add project-memory workflow hooks"`
+- [x] **Step 5: Commit the lane in its dedicated worktree with `git commit -m "docs: add project-memory workflow hooks"`**
 ## Task 5: Harden Validation and Final Regression
 
 **Spec Coverage:** REQ-001, REQ-003, REQ-006, REQ-007, REQ-008, REQ-009, REQ-010, REQ-015, REQ-018, REQ-020, REQ-021, DEC-010, DEC-012, VERIFY-001, VERIFY-002, VERIFY-003, NONGOAL-001, NONGOAL-002
@@ -312,11 +310,11 @@ Task 4 -> Task 5
 - Test: `tests/runtime_instruction_contracts.rs`
 - Test: `tests/using_featureforge_skill.rs`
 
-- [ ] **Step 1: Add or extend red assertions in `tests/runtime_instruction_contracts.rs`, `tests/using_featureforge_skill.rs`, `tests/codex-runtime/skill-doc-contracts.test.mjs`, and `tests/codex-runtime/project-memory-content.test.mjs` for the authority boundary, reject vocabulary, repo-safety wording, explicit memory routing, concise repo docs, deterministic partial-initialization rules, and the full positive-and-negative `examples.md` matrix for `bugs.md`, `decisions.md`, `key_facts.md`, and `issues.md`**
-- [ ] **Step 2: Extend `tests/codex-runtime/skill-doc-generation.test.mjs` so the new skill and its generated output remain discoverable and checked in**
-- [ ] **Step 3: Run `node --test tests/codex-runtime/skill-doc-generation.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/project-memory-content.test.mjs` and `cargo nextest run --test using_featureforge_skill --test runtime_instruction_contracts`, then fix failures until the targeted suites are green**
-- [ ] **Step 4: Run the final regression gate: `node scripts/gen-skill-docs.mjs --check`, `node --test tests/codex-runtime/*.test.mjs`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo nextest run --test using_featureforge_skill --test runtime_instruction_contracts`**
-- [ ] **Step 5: Commit the slice with `git commit -m "test: harden project-memory validation"`**
+- [x] **Step 1: Add or extend red assertions in `tests/runtime_instruction_contracts.rs`, `tests/using_featureforge_skill.rs`, `tests/codex-runtime/skill-doc-contracts.test.mjs`, and `tests/codex-runtime/project-memory-content.test.mjs` for the authority boundary, reject vocabulary, repo-safety wording, explicit memory routing, concise repo docs, deterministic partial-initialization rules, and the full positive-and-negative `examples.md` matrix for `bugs.md`, `decisions.md`, `key_facts.md`, and `issues.md`**
+- [x] **Step 2: Extend `tests/codex-runtime/skill-doc-generation.test.mjs` so the new skill and its generated output remain discoverable and checked in**
+- [x] **Step 3: Run `node --test tests/codex-runtime/skill-doc-generation.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/project-memory-content.test.mjs` and `cargo nextest run --test using_featureforge_skill --test runtime_instruction_contracts`, then fix failures until the targeted suites are green**
+- [x] **Step 4: Run the final regression gate: `node scripts/gen-skill-docs.mjs --check`, `node --test tests/codex-runtime/*.test.mjs`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo nextest run --test using_featureforge_skill --test runtime_instruction_contracts`**
+- [x] **Step 5: Commit the slice with `git commit -m "test: harden project-memory validation"`**
 ## Failure Modes
 
 - The new `skills/project-memory/` template lands but generation fails to produce or refresh `SKILL.md`. Covered by Tasks 1 and 5 generator checks; error handling is explicit contract failure, and the operator sees a loud test break instead of a silently missing skill.

@@ -162,6 +162,8 @@ cp target/aarch64-apple-darwin/release/featureforge bin/featureforge
 chmod +x bin/featureforge
 ```
 
+If Homebrew `cargo`/`rustc` shadow rustup-managed toolchains on your `PATH`, make sure the rustup toolchain shims are ahead of Homebrew Rust before running the Windows GNU refresh command so the installed `x86_64-pc-windows-gnu` standard library is visible.
+
 ## Updating
 
 Update the shared checkout used by supported local installs:
