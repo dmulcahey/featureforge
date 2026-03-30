@@ -9,8 +9,8 @@ use featureforge::contracts::plan::parse_plan_file;
 use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::state::write_plan_execution_schema;
 use featureforge::repo_safety::write_repo_safety_schema;
-use featureforge::session_entry::write_session_entry_schema;
 use featureforge::update_check::write_update_check_schema;
+use featureforge::write_session_entry_schema;
 use serde_json::Value;
 
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-22-plan-contract-fixture-design.md";

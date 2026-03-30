@@ -29,8 +29,6 @@ pub enum Command {
     Repo(RepoCli),
     #[command(name = "repo-safety")]
     RepoSafety(repo_safety::RepoSafetyCli),
-    #[command(name = "session-entry")]
-    SessionEntry(session_entry::SessionEntryCli),
     #[command(name = "update-check")]
     UpdateCheck(update_check::UpdateCheckCli),
     Workflow(workflow::WorkflowCli),
