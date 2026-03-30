@@ -83,6 +83,7 @@ Execution starts from an engineering-approved plan and the exact approved plan p
 
 Task closure is enforced at task boundaries, not only at the end of the full plan:
 
+- after implementation steps complete, STOP and run `featureforge plan execution gate-review --plan <approved-plan-path>` to mint task-boundary review-dispatch proof
 - each task runs a fresh-context independent review loop until `gate-review` is green
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
