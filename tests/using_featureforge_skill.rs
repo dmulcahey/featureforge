@@ -688,6 +688,9 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "Please record issue breadcrumbs in docs/project_notes/issues.md before continuing plan review.\n",
         "Please repair docs/project_notes/README.md before continuing plan review.\n",
         "Please rewrite docs/project_notes/issues.md before continuing plan review.\n",
+        "Please add a breadcrumb to docs/project_notes/issues.md before continuing plan review.\n",
+        "Please write docs/project_notes/issues.md with the latest breadcrumb before continuing plan review.\n",
+        "Please create docs/project_notes/issues.md if it is missing before continuing plan review.\n",
         "Please record durable bugs in docs/project_notes/bugs.md before continuing plan review.\n",
     ];
     let negative_messages = [
@@ -695,7 +698,11 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         "Please read docs/project_notes/issues.md before continuing plan review.\n",
         "Do not use featureforge:project-memory for this follow-up.\n",
         "Please do not set up project memory before planning.\n",
+        "Please do not log a bug fix in project memory before continuing plan review.\n",
+        "Please do not record a decision in project memory before continuing plan review.\n",
+        "Please do not update our key facts in project memory before continuing plan review.\n",
         "Please do not rewrite docs/project_notes/issues.md before continuing plan review.\n",
+        "Please do not add a breadcrumb to docs/project_notes/issues.md before continuing plan review.\n",
         "Please record a decision in the approved plan before continuing.\n",
         "Please log a bug fix in the execution evidence before continuing.\n",
         "Please update our key facts in the approved spec before continuing.\n",

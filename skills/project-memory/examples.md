@@ -108,9 +108,7 @@ Approved plan and execution evidence explain the full workflow for project-memor
 ```markdown
 - 2026-03-29: Project-memory integration is intentionally split into one foundation slice, three isolated middle lanes, and a final validation seam.
   Why it matters: later changes should preserve the narrow authority boundary instead of bolting on runtime state.
-  Sources:
-  - `docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md`
-  - `docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`
+  Source: `docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md`, `docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`
 ```
 
 ### Bad: `OversizedDuplication`

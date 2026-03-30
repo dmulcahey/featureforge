@@ -299,9 +299,9 @@ Treat the request as explicit project-memory intent when it clearly asks to:
 - set up or repair project memory under `docs/project_notes/`
 - log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or record durable issue breadcrumbs in project memory
 - invoke `featureforge:project-memory` or work on project memory itself
-- edit a concrete `docs/project_notes/README.md`, `bugs.md`, `decisions.md`, `key_facts.md`, or `issues.md` path
+- write to, create, append to, or otherwise edit a concrete `docs/project_notes/README.md`, `bugs.md`, `decisions.md`, `key_facts.md`, or `issues.md` path
 
-Read-only questions about `docs/project_notes/*`, or explicit negation of `featureforge:project-memory`, project-memory setup, repair, or concrete path edits, are not enough by themselves.
+Read-only questions about `docs/project_notes/*`, or explicit negation of `featureforge:project-memory`, project-memory setup, durable-memory recording, or concrete path mutations, are not enough by themselves.
 
 If those signals are absent, keep the helper-derived workflow route.
 
