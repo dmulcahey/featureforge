@@ -651,6 +651,11 @@ fn checked_in_repo_safety_schema_matches_generated_output_and_session_entry_sche
     );
 
     assert!(
+        !schemas_dir.join("session-entry-resolve.schema.json").exists(),
+        "active schema writers should not emit a session-entry schema artifact"
+    );
+
+    assert!(
         !repo_fixture_path("schemas/session-entry-resolve.schema.json").exists(),
         "session-entry schema should not remain an active checked-in schema artifact"
     );

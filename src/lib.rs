@@ -19,12 +19,8 @@ pub mod output;
 pub mod paths;
 pub mod repo_safety;
 pub mod runtime_root;
-mod session_entry;
 pub mod update_check;
 pub mod workflow;
-
-#[doc(hidden)]
-pub use session_entry::write_session_entry_schema;
 
 pub fn run() -> std::process::ExitCode {
     let args = canonicalized_args();
