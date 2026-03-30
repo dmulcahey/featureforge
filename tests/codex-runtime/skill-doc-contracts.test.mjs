@@ -263,6 +263,15 @@ test('using-featureforge omits the removed bypass-gate contract', () => {
   assert.doesNotMatch(content, /featureforge-session-entry/, 'using-featureforge should not keep helper-style session-entry commands');
 });
 
+test('generated skill docs omit removed session-entry env markers across active surfaces', () => {
+  for (const skill of listGeneratedSkills()) {
+    const content = readUtf8(getSkillPath(skill));
+    assert.doesNotMatch(content, /FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY/, `${skill} should not mention the removed strict gate env key`);
+    assert.doesNotMatch(content, /FEATUREFORGE_SPAWNED_SUBAGENT/, `${skill} should not mention the removed spawned-subagent env key`);
+    assert.doesNotMatch(content, /FEATUREFORGE_SPAWNED_SUBAGENT_OPT_IN/, `${skill} should not mention the removed spawned-subagent opt-in env key`);
+  }
+});
+
 test('generated skill docs never execute runtime commands through root-selected launchers', () => {
   for (const skill of listGeneratedSkills()) {
     const content = readUtf8(getSkillPath(skill));
