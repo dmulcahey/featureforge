@@ -457,6 +457,7 @@ fn workflow_status_summary_matches_json_semantics_for_ready_plans() {
         "workflow status json",
     );
     let json_stdout = String::from_utf8_lossy(&json_output.stdout);
+    assert!(json_stdout.contains("\"schema_version\":3"));
     assert!(json_stdout.contains("\"status\":\"implementation_ready\""));
     assert!(json_stdout.contains("\"next_skill\":\"\""));
 
@@ -504,6 +505,7 @@ fn workflow_operator_commands_work_for_ready_plan() {
     assert!(next_stdout.contains(
         "Return to execution preflight for the approved plan: docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md"
     ));
+    assert!(!next_stdout.contains("session-entry"));
 
     let artifacts_output = run_featureforge_with_env(
         repo,
@@ -532,6 +534,7 @@ fn workflow_operator_commands_work_for_ready_plan() {
     let explain_stdout = String::from_utf8_lossy(&explain_output.stdout);
     assert!(explain_stdout.contains("Why FeatureForge chose this state"));
     assert!(explain_stdout.contains("What to do:"));
+    assert!(!explain_stdout.contains("session-entry"));
 }
 
 #[derive(Clone, Copy)]

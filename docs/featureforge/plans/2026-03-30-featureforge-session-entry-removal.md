@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-30-featureforge-session-entry-removal-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -158,15 +158,15 @@ Task 5 -> Task 6
 - Modify: `tests/cli_parse_boundary.rs`
 - Test: `tests/cli_parse_boundary.rs`
 
-- [ ] **Step 1: Add red parse-boundary assertions in `tests/cli_parse_boundary.rs` for removed `session-entry` command surface**
-- [ ] **Step 2: Run targeted test and confirm red state**
+- [x] **Step 1: Add red parse-boundary assertions in `tests/cli_parse_boundary.rs` for removed `session-entry` command surface**
+- [x] **Step 2: Run targeted test and confirm red state**
 Run: `cargo nextest run --test cli_parse_boundary`  
 Expected: fail on old command assumptions
-- [ ] **Step 3: Remove CLI wiring, module exports, argv0 alias, and delete `session_entry` source files**
-- [ ] **Step 4: Re-run parse-boundary suite and confirm green**
+- [x] **Step 3: Remove CLI wiring, module exports, argv0 alias, and delete `session_entry` source files**
+- [x] **Step 4: Re-run parse-boundary suite and confirm green**
 Run: `cargo nextest run --test cli_parse_boundary`  
 Expected: pass with unknown-command behavior for `session-entry`
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add src/cli/mod.rs src/lib.rs src/compat/argv0.rs tests/cli_parse_boundary.rs
 git rm src/cli/session_entry.rs src/session_entry/mod.rs
