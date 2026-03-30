@@ -216,19 +216,21 @@ git commit -m "chore: regenerate execution skill docs for begin-tracking hardeni
 - Test: `tests/workflow_shell_smoke.rs`
 - Test: `tests/plan_execution_topology.rs`
 
-- [ ] **Step 1: Run skill-doc contract tests**
+- [x] **Step 1: Run skill-doc contract tests**
 Run: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 Expected: PASS.
 
-- [ ] **Step 2: Run targeted runtime-smoke coverage for execution preflight/begin invariants**
+- [x] **Step 2: Run targeted runtime-smoke coverage for execution preflight/begin invariants**
 Run: `cargo test --test workflow_shell_smoke -- task-boundary-blocked`
 Expected: PASS with task-boundary/preflight scenarios green.
 
-- [ ] **Step 3: Run targeted topology coverage for preflight identity/recommendation stability**
+- [x] **Step 3: Run targeted topology coverage for preflight identity/recommendation stability**
 Run: `cargo test --test plan_execution_topology -- preflight`
 Expected: PASS for targeted preflight/topology scenarios.
 
 - [ ] **Step 4: Commit verification-facing updates (if any) and finalize branch state**
+
+  **Execution Note:** Active - Commit verification-facing updates (if any) and finalize branch state
 ```bash
 git add -A
 git commit -m "test: verify execution begin-tracking guidance hardening"

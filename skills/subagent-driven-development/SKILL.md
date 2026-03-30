@@ -226,7 +226,7 @@ Before dispatching any implementation subagent:
 8. Run `featureforge plan execution preflight --plan <approved-plan-path>` before dispatching implementation subagents.
 9. If the preflight helper returns `allowed` `false`, stop and resolve the reported `failure_class`, `reason_codes`, and `diagnostics` before dispatching work.
 10. Treat execution start as a hard gate, not a reminder:
-   - no code or test edits are allowed after successful preflight and before the first `begin` for the active step
+   - no code edits and no test edits are allowed after successful preflight and before the first `begin` for the active step
    - do not dispatch implementation subagents for repo-writing work until that first `begin` is recorded
    - if the workspace becomes dirty before the first `begin`, expect later preflight retries to fail closed (for example `tracked_worktree_dirty`) until the workspace is reconciled or isolated
    - retroactive execution tracking is recovery-only and must never be treated as the normal execution path

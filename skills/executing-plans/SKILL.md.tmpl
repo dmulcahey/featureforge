@@ -40,7 +40,7 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 10. If the preflight helper returns `allowed` `false`, stop and resolve the reported `failure_class`, `reason_codes`, and `diagnostics` before starting work.
 11. If preflight passes, review the plan critically for execution concerns and use the approved plan checklist as the execution progress record.
 12. Treat execution start as a hard gate, not a reminder:
-   - no code or test edits are allowed after successful preflight and before the first `begin` for the active step
+   - no code edits and no test edits are allowed after successful preflight and before the first `begin` for the active step
    - no repo mutation is allowed until that first `begin` is recorded
    - the first `begin` is the mandatory execution-tracking boundary; preflight acceptance alone is not permission to start implementation
    - if the workspace becomes dirty before the first `begin`, expect later preflight retries to fail closed (for example `tracked_worktree_dirty`) until the workspace is reconciled or isolated

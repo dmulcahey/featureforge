@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-30-execution-begin-tracking-discipline.md
 **Plan Revision:** 1
-**Plan Fingerprint:** 6020cf00d3bf15ebb9c5bdd9afebf3b4fa0155ceb65a1cd64fc98fc78a2e8d92
+**Plan Fingerprint:** dcf8cbe872f89063bf8305cbf3cd6ccc63b2ea7eaf1ad8d642cc47e9dc2356f5
 **Source Spec Path:** docs/featureforge/specs/2026-03-30-execution-begin-tracking-discipline-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** 43c55b60d6174b68219d533ad967a1c24c3c60c4851d62d72124bda6cdec3961
@@ -234,4 +234,56 @@
 - skills/executing-plans/SKILL.md | sha256:363807d9da2a9d0d5fe5137bdfb8b26d34b2d13d4ea6fc78d6f98ee9e118ba5d
 - skills/subagent-driven-development/SKILL.md | sha256:737200e5fdbae9208920a3e497e0c170213a53d6f0ebb4a26438b611436f806d
 **Verification Summary:** `git show --name-only --oneline HEAD` -> PASS: commit af5914e includes regenerated SKILL.md files
+**Invalidation Reason:** N/A
+
+### Task 5 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T15:06:09.206462Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 5
+**Step Number:** 1
+**Packet Fingerprint:** a7a3e1e71d196bafe066a8f23c9d8bea808e7f21bfb65d6c0102b5de0dbe91b4
+**Head SHA:** f39f296d5f4ee64ce893c9025f6a002cd33862dc
+**Base SHA:** f39f296d5f4ee64ce893c9025f6a002cd33862dc
+**Claim:** Skill-doc contract tests pass after tightening begin-before-edit wording to satisfy required contract semantics.
+**Files Proven:**
+- skills/executing-plans/SKILL.md | sha256:27db8451bb4df94a6c9fcfb0d116ffe602e21599e028a16f74d26c1798bbf186
+- skills/executing-plans/SKILL.md.tmpl | sha256:6e4ed74ec0267dba21a30a54f2f1cba278bc143ba095d95821b574ca79f10854
+- skills/subagent-driven-development/SKILL.md | sha256:c6bb06a300b7f560b4faa0fe408932b9736c601984e2238a083cebf5659b92ee
+- skills/subagent-driven-development/SKILL.md.tmpl | sha256:7399c89ffd07b1a6d50e32693c33cb0d4b3293e5f4beb4c55c93f2381e449b34
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:50e0dfd23ff700c5577162d29375817cca463217655d2abb553f85f0cb333e88
+**Verification Summary:** `node --test tests/codex-runtime/skill-doc-contracts.test.mjs` -> PASS
+**Invalidation Reason:** N/A
+
+### Task 5 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T15:06:53.385864Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 5
+**Step Number:** 2
+**Packet Fingerprint:** ac6fe7884078963e04da4e42ffa774cd66a29c3960ced2e3e2f964e4f6cd22e3
+**Head SHA:** f39f296d5f4ee64ce893c9025f6a002cd33862dc
+**Base SHA:** f39f296d5f4ee64ce893c9025f6a002cd33862dc
+**Claim:** Verified workflow_shell_smoke coverage for task-boundary/preflight-related scenarios.
+**Files Proven:**
+- tests/workflow_shell_smoke.rs | sha256:efa6d86b6ebf881a3b86aad04d106d9c8e3e4cc32bd6d2eb1d37b30ef8e32e0c
+**Verification Summary:** `cargo test --test workflow_shell_smoke` -> PASS: 20 passed, 0 failed
+**Invalidation Reason:** N/A
+
+### Task 5 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-03-30T15:07:14.965901Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 5
+**Step Number:** 3
+**Packet Fingerprint:** 728242a4d277998dd1af1d1dee5a40f9026d4e4c4bdefff8a63c486748dc73aa
+**Head SHA:** f39f296d5f4ee64ce893c9025f6a002cd33862dc
+**Base SHA:** f39f296d5f4ee64ce893c9025f6a002cd33862dc
+**Claim:** Verified topology preflight coverage remains green with execution run/chunk identity stability checks.
+**Files Proven:**
+- tests/plan_execution_topology.rs | sha256:1c5db7d2d20267fc9a34ad086dd153618414480f465b9b0db98ea3d94d16ba37
+**Verification Summary:** `cargo test --test plan_execution_topology -- preflight` -> PASS: 2 passed, 0 failed
 **Invalidation Reason:** N/A
