@@ -228,9 +228,7 @@ Expected: PASS with task-boundary/preflight scenarios green.
 Run: `cargo test --test plan_execution_topology -- preflight`
 Expected: PASS for targeted preflight/topology scenarios.
 
-- [ ] **Step 4: Commit verification-facing updates (if any) and finalize branch state**
-
-  **Execution Note:** Active - Commit verification-facing updates (if any) and finalize branch state
+- [x] **Step 4: Commit verification-facing updates (if any) and finalize branch state**
 ```bash
 git add -A
 git commit -m "test: verify execution begin-tracking guidance hardening"
