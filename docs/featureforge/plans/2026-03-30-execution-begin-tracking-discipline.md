@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-30-execution-begin-tracking-discipline-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -96,8 +96,7 @@ Task 4 -> Task 5
 **Files:**
 - Test: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Add failing assertion coverage for the new guidance contract**
-
+- [x] **Step 1: Add failing assertion coverage for the new guidance contract**
 Update the execution-skill assertions to require:
 - no code/test edits between successful preflight and first `begin`
 - dirty-before-begin fail-closed warning posture
@@ -105,13 +104,11 @@ Update the execution-skill assertions to require:
 - five-step recovery runbook including helper `status` anchoring and factual-only backfill
 - semantic parity expectations across both execution skills
 
-- [ ] **Step 2: Run skill-doc contract tests to confirm the new assertions fail before template changes**
-
+- [x] **Step 2: Run skill-doc contract tests to confirm the new assertions fail before template changes**
 Run: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 Expected: FAIL with assertion errors pointing to missing new wording in execution skill docs.
 
-- [ ] **Step 3: Commit the failing-test contract scaffold**
-
+- [x] **Step 3: Commit the failing-test contract scaffold**
 ```bash
 git add tests/codex-runtime/skill-doc-contracts.test.mjs
 git commit -m "test: codify begin-before-mutation skill contract"
@@ -130,15 +127,12 @@ git commit -m "test: codify begin-before-mutation skill contract"
 - Modify: `skills/executing-plans/SKILL.md.tmpl`
 
 - [ ] **Step 1: Add explicit no-edit-before-first-begin rule after successful preflight**
-
 Clarify that successful preflight does not authorize repo mutation until first `begin` is recorded for the active step.
 
 - [ ] **Step 2: Add dirty-before-begin warning and recovery-only retroactive policy text**
-
 State that dirtying workspace before first `begin` can block later preflight and that retroactive tracking is recovery-only.
 
 - [ ] **Step 3: Add the five-step recovery runbook with helper `status` anchoring and factual-only backfill**
-
 Ensure runbook includes:
 1. reconcile/isolate
 2. fresh preflight acceptance
@@ -147,7 +141,6 @@ Ensure runbook includes:
 5. task-boundary review/verification resume
 
 - [ ] **Step 4: Commit the `executing-plans` template change**
-
 ```bash
 git add skills/executing-plans/SKILL.md.tmpl
 git commit -m "docs: enforce begin-before-mutation in executing-plans template"
@@ -166,19 +159,15 @@ git commit -m "docs: enforce begin-before-mutation in executing-plans template"
 - Modify: `skills/subagent-driven-development/SKILL.md.tmpl`
 
 - [ ] **Step 1: Add no-edit-before-first-begin guidance in preflight/dispatch flow**
-
 Ensure dispatch guidance states implementation edits must wait until first runtime `begin` for active step.
 
 - [ ] **Step 2: Add dirty-before-begin warning plus recovery-only retroactive policy**
-
 Mirror risk posture and prohibit treating retroactive tracking as normal execution path.
 
 - [ ] **Step 3: Add semantically equivalent five-step recovery runbook**
-
 Include helper `status` anchoring and factual-only backfill before returning to task-boundary review/verification gate.
 
 - [ ] **Step 4: Commit the `subagent-driven-development` template change**
-
 ```bash
 git add skills/subagent-driven-development/SKILL.md.tmpl
 git commit -m "docs: mirror begin-before-mutation guardrails in subagent template"
@@ -198,19 +187,16 @@ git commit -m "docs: mirror begin-before-mutation guardrails in subagent templat
 - Modify: `skills/subagent-driven-development/SKILL.md`
 
 - [ ] **Step 1: Regenerate checked-in skill docs from updated templates**
-
 Run: `node scripts/gen-skill-docs.mjs`
 Expected: script completes and updates generated docs for modified templates.
 
 - [ ] **Step 2: Verify generated docs contain the new guardrails on both skill surfaces**
-
 Run:
 - `rg -n 'no .* edit|first .*begin|recovery-only|factual-only|tracked_worktree_dirty' skills/executing-plans/SKILL.md`
 - `rg -n 'no .* edit|first .*begin|recovery-only|factual-only|tracked_worktree_dirty' skills/subagent-driven-development/SKILL.md`
 Expected: both files include semantically equivalent guardrail language.
 
 - [ ] **Step 3: Commit regenerated skill docs**
-
 ```bash
 git add skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md
 git commit -m "chore: regenerate execution skill docs for begin-tracking hardening"
@@ -231,22 +217,18 @@ git commit -m "chore: regenerate execution skill docs for begin-tracking hardeni
 - Test: `tests/plan_execution_topology.rs`
 
 - [ ] **Step 1: Run skill-doc contract tests**
-
 Run: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 Expected: PASS.
 
 - [ ] **Step 2: Run targeted runtime-smoke coverage for execution preflight/begin invariants**
-
 Run: `cargo test --test workflow_shell_smoke -- task-boundary-blocked`
 Expected: PASS with task-boundary/preflight scenarios green.
 
 - [ ] **Step 3: Run targeted topology coverage for preflight identity/recommendation stability**
-
 Run: `cargo test --test plan_execution_topology -- preflight`
 Expected: PASS for targeted preflight/topology scenarios.
 
 - [ ] **Step 4: Commit verification-facing updates (if any) and finalize branch state**
-
 ```bash
 git add -A
 git commit -m "test: verify execution begin-tracking guidance hardening"
