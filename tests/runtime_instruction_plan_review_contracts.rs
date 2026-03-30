@@ -85,3 +85,67 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
         "plan_fidelity_receipt.state",
     );
 }
+
+#[test]
+fn planning_skill_docs_describe_lightweight_lane_contract() {
+    let root = repo_root();
+
+    assert_file_contains(
+        root.join("skills/brainstorming/SKILL.md"),
+        "Delivery Lane",
+    );
+    assert_file_contains(
+        root.join("skills/brainstorming/SKILL.md"),
+        "bounded-change statement",
+    );
+    assert_file_contains(
+        root.join("skills/plan-ceo-review/SKILL.md"),
+        "default to hold-scope rigor",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "Why lightweight is safe",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "Contract Version",
+    );
+    assert_file_contains(
+        root.join("skills/plan-fidelity-review/SKILL.md"),
+        "Delivery Lane",
+    );
+    assert_file_contains(
+        root.join("skills/plan-fidelity-review/SKILL.md"),
+        "delivery_lane",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "explicitly escalate to `standard` when disqualifiers appear",
+    );
+}
+
+#[test]
+fn planning_skill_docs_describe_risk_gate_signals_and_design_review_contracts() {
+    let root = repo_root();
+
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "Risk & Gate Signals",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "Release & Distribution Notes",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "validate/finalize the `Risk & Gate Signals`",
+    );
+    assert_file_contains(
+        root.join("skills/plan-design-review/SKILL.md"),
+        "material UI changes",
+    );
+    assert_file_contains(
+        root.join("skills/plan-design-review/SKILL.md"),
+        "runtime-owned",
+    );
+}

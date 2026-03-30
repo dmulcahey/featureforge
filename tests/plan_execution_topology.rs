@@ -8,12 +8,16 @@ mod process_support;
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::cli::plan_execution::ExecutionTopologyArg;
 use featureforge::contracts::plan::{AnalyzePlanReport, analyze_plan};
+use featureforge::execution::state::ExecutionRuntime;
 use featureforge::execution::harness::{LearnedTopologyGuidance, TopologySelectionContext};
 use featureforge::execution::topology::recommend_topology;
+use featureforge::execution::worktree_manager::recommended_worktree_root_for_repo;
+use featureforge::paths::harness_state_path;
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
 use serde_json::Value;
+use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
@@ -263,6 +267,16 @@ fn topology_context(
         current_parallel_path_ready,
         learned_guidance,
     }
+}
+
+fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
+    let runtime = ExecutionRuntime::discover(repo)
+        .expect("execution runtime should discover fixture repository");
+    write_file(
+        &harness_state_path(state, &runtime.repo_slug, &runtime.branch_name),
+        &serde_json::to_string_pretty(payload)
+            .expect("harness state payload should serialize"),
+    );
 }
 
 fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) {
@@ -728,6 +742,121 @@ fn runtime_topology_can_select_worktree_backed_parallel_for_separate_session_coo
         "the same-session flag should remain about session intent, not topology eligibility"
     );
     assert_eq!(recommendation.decision_flags.tasks_independent, "yes");
+}
+
+#[test]
+fn runtime_topology_recommends_global_featureforge_worktree_root_by_default() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-global-worktree-root");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+
+    let expected_root = recommended_worktree_root_for_repo(repo);
+    let rust = run_rust_json(
+        repo,
+        state,
+        &[
+            "recommend",
+            "--plan",
+            PLAN_REL,
+            "--isolated-agents",
+            "available",
+            "--session-intent",
+            "stay",
+            "--workspace-prepared",
+            "yes",
+        ],
+        "rust recommend with default worktree root",
+    );
+
+    assert_eq!(
+        rust["recommended_worktree_root"],
+        Value::String(expected_root.display().to_string())
+    );
+    assert!(
+        rust["recommended_worktree_root"]
+            .as_str()
+            .is_some_and(|value| value.contains(".config/featureforge/worktrees")),
+        "default recommendation should prefer the global FeatureForge worktree root"
+    );
+}
+
+#[test]
+fn runtime_topology_prefers_existing_repo_local_worktree_root() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-local-worktree-root");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+    fs::create_dir_all(repo.join(".worktrees"))
+        .expect("repo-local .worktrees should be creatable");
+
+    let expected_root = recommended_worktree_root_for_repo(repo);
+    let rust = run_rust_json(
+        repo,
+        state,
+        &[
+            "recommend",
+            "--plan",
+            PLAN_REL,
+            "--isolated-agents",
+            "available",
+            "--session-intent",
+            "stay",
+            "--workspace-prepared",
+            "yes",
+        ],
+        "rust recommend with repo-local worktree root",
+    );
+
+    assert_eq!(
+        rust["recommended_worktree_root"],
+        Value::String(expected_root.display().to_string())
+    );
+    assert_eq!(
+        expected_root,
+        repo.join(".worktrees")
+            .canonicalize()
+            .unwrap_or_else(|_| repo.join(".worktrees"))
+    );
+}
+
+#[test]
+fn canonical_recommend_exposes_current_task_slice_fence_mode() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-recommend-task-slice-fence-mode");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_independent_plan(repo);
+    write_harness_state_payload(
+        repo,
+        state,
+        &serde_json::json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "task_slice_fence_mode": "guarded"
+        }),
+    );
+
+    let rust = run_rust_json(
+        repo,
+        state,
+        &[
+            "recommend",
+            "--plan",
+            PLAN_REL,
+            "--isolated-agents",
+            "available",
+            "--session-intent",
+            "stay",
+            "--workspace-prepared",
+            "yes",
+        ],
+        "recommend task-slice fence mode",
+    );
+
+    assert_eq!(rust["task_slice_fence_mode"], "guarded");
 }
 
 #[test]

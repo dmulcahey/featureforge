@@ -120,6 +120,15 @@ Do NOT invoke any implementation skill, write any code, scaffold any project, or
 
 Every project goes through this process. A todo list, a single-function utility, a config change — all of them. "Simple" projects are where unexamined assumptions cause the most wasted work. The design can be short (a few sentences for truly simple projects), but you MUST present it and get approval.
 
+## Lightweight Lane
+
+When a bounded change is a credible candidate for `**Delivery Lane:** lightweight_change`:
+
+- keep the spec concise and delta-oriented instead of expansion-heavy by default
+- require a short bounded-change statement that says what is changing and what is explicitly out of scope
+- for current spec contract revisions, keep the header block explicit with `**Contract Version:** 2` and `**Delivery Lane:** standard | lightweight_change`
+- keep the spec real, reviewable, and approval-bound; lightweight never means informal
+
 ## Checklist
 
 You MUST create a task for each of these items and complete them in order:

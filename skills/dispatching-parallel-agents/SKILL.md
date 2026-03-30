@@ -112,6 +112,10 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 
 You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work. Use it when the runtime-selected topology has already chosen parallel lanes and you need to coordinate those agents across isolated worktrees.
 
+Dispatching is coordination-only once FeatureForge has selected worktree-backed parallel execution. The runtime-owned substrate still owns the recommended worktree root, lane manifests, harvested patches, and any `resolution_required` blocked-lane state.
+
+Task-slice fences also remain runtime-owned. If a lane hits `guarded` or `full` fence enforcement, the coordinator must capture an explicit override reason before allowing a blocked-write bypass instead of letting child agents silently expand scope.
+
 When you have multiple unrelated failures (different test files, different subsystems, different bugs), investigating them sequentially wastes time. Each investigation is independent and can happen in parallel.
 
 **Core principle:** Dispatch one agent per independent problem domain. Let them work concurrently.

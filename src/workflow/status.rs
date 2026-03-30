@@ -1,12 +1,16 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use schemars::JsonSchema;
 use schemars::schema_for;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
-use crate::cli::workflow::{ArtifactKind, PlanFidelityRecordArgs};
+use crate::cli::workflow::{
+    ArtifactKind, PlanDesignReviewRecordArgs, PlanFidelityRecordArgs, SecurityReviewRecordArgs,
+};
 use crate::contracts::plan::{
     AnalyzePlanReport, evaluate_plan_fidelity_receipt_at_path, parse_plan_file,
 };
@@ -16,15 +20,22 @@ use crate::contracts::runtime::{
 };
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
 use crate::diagnostics::{DiagnosticError, FailureClass};
+use crate::execution::leases::authoritative_state_path;
+use crate::execution::state::{
+    ExecutionRuntime, current_repo_state_fingerprint, load_execution_context,
+};
 use crate::execution::topology::{
     ensure_plan_fidelity_source_spec_is_approved, parse_plan_fidelity_review_artifact,
     validate_plan_fidelity_review_artifact,
 };
 use crate::git::{
-    RepositoryIdentity, discover_repo_identity, discover_slug_identity,
+    RepositoryIdentity, discover_repo_identity, discover_slug_identity, sha256_hex,
     stored_repo_root_matches_current,
 };
-use crate::paths::{RepoPath, featureforge_state_dir};
+use crate::paths::{
+    RepoPath, branch_storage_key, featureforge_state_dir, harness_authoritative_artifact_path,
+    write_atomic,
+};
 use crate::session_entry;
 use crate::workflow::manifest::{
     ManifestLoadResult, WorkflowManifest, load_manifest, load_manifest_read_only, manifest_path,
@@ -99,6 +110,23 @@ pub struct PlanFidelityRecord {
     pub reviewer_source: String,
     pub reviewer_id: String,
     pub verified_surfaces: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct PlanDesignReviewRecord {
+    pub status: String,
+    pub receipt_path: String,
+    pub review_artifact_path: String,
+    pub verdict: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct SecurityReviewRecord {
+    pub status: String,
+    pub state_path: String,
+    pub review_artifact_path: String,
+    pub verdict: String,
+    pub artifact_fingerprint: String,
 }
 
 #[derive(Debug, Clone)]
@@ -762,6 +790,7 @@ fn resolve_route(
         let reason = compatibility_reason(&reason_codes);
 
         if plan.workflow_state == "Draft" {
+            let parsed_plan = parse_plan_file(runtime.identity.repo_root.join(&plan.path)).ok();
             let plan_fidelity_gate =
                 evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
             if plan_fidelity_gate.state != "pass" {
@@ -804,6 +833,83 @@ fn resolve_route(
                     note: reason,
                 });
             }
+            if parsed_plan.as_ref().is_some_and(plan_requires_design_review) {
+                let plan_revision = parsed_plan
+                    .as_ref()
+                    .map(|document| document.plan_revision)
+                    .unwrap_or(1);
+                let plan_fingerprint = parsed_plan
+                    .as_ref()
+                    .map(|document| sha256_hex(document.source.as_bytes()))
+                    .unwrap_or_default();
+                let design_review_gate = evaluate_plan_design_review_gate(
+                    runtime,
+                    &plan.path,
+                    plan_revision,
+                    &plan_fingerprint,
+                );
+                if design_review_gate.state != "pass" {
+                    let next_skill = if design_review_gate.state == "revise" {
+                        "featureforge:writing-plans"
+                    } else {
+                        "featureforge:plan-design-review"
+                    };
+                    let mut combined_reason_codes = design_review_gate.reason_codes.clone();
+                    for code in &reason_codes {
+                        if !combined_reason_codes.iter().any(|existing| existing == code) {
+                            combined_reason_codes.push(code.clone());
+                        }
+                    }
+                    let mut combined_diagnostics = design_review_gate.diagnostics.clone();
+                    for diagnostic in &diagnostics {
+                        if combined_diagnostics
+                            .iter()
+                            .any(|existing| existing.code == diagnostic.code)
+                        {
+                            continue;
+                        }
+                        combined_diagnostics.push(diagnostic.clone());
+                    }
+                    let reason = compatibility_reason(&combined_reason_codes);
+                    return Ok(WorkflowRoute {
+                        schema_version: 2,
+                        status: String::from("plan_draft"),
+                        next_skill: String::from(next_skill),
+                        spec_path: approved_spec.path.clone(),
+                        plan_path: plan.path.clone(),
+                        contract_state,
+                        reason_codes: combined_reason_codes,
+                        diagnostics: combined_diagnostics,
+                        scan_truncated,
+                        spec_candidate_count,
+                        plan_candidate_count: 1,
+                        manifest_path,
+                        root,
+                        reason: reason.clone(),
+                        note: reason,
+                    });
+                }
+            }
+            if should_reroute_draft_plan_to_writing_plans(&reason_codes) {
+                let reason = compatibility_reason(&reason_codes);
+                return Ok(WorkflowRoute {
+                    schema_version: 2,
+                    status: String::from("plan_draft"),
+                    next_skill: String::from("featureforge:writing-plans"),
+                    spec_path: approved_spec.path.clone(),
+                    plan_path: plan.path.clone(),
+                    contract_state,
+                    reason_codes,
+                    diagnostics,
+                    scan_truncated,
+                    spec_candidate_count,
+                    plan_candidate_count: 1,
+                    manifest_path,
+                    root,
+                    reason: reason.clone(),
+                    note: reason,
+                });
+            }
             return Ok(WorkflowRoute {
                 schema_version: 2,
                 status: String::from("plan_draft"),
@@ -821,6 +927,51 @@ fn resolve_route(
                 reason: reason.clone(),
                 note: reason,
             });
+        }
+
+        let parsed_plan = parse_plan_file(runtime.identity.repo_root.join(&plan.path)).ok();
+        if plan.workflow_state == "Engineering Approved"
+            && parsed_plan.as_ref().is_some_and(plan_requires_design_review)
+        {
+            let plan_revision = parsed_plan
+                .as_ref()
+                .map(|document| document.plan_revision)
+                .unwrap_or(1);
+            let plan_fingerprint = parsed_plan
+                .as_ref()
+                .map(|document| sha256_hex(document.source.as_bytes()))
+                .unwrap_or_default();
+            let design_review_gate = evaluate_plan_design_review_gate(
+                runtime,
+                &plan.path,
+                plan_revision,
+                &plan_fingerprint,
+            );
+            if design_review_gate.state != "pass" {
+                let next_skill = if design_review_gate.state == "revise" {
+                    "featureforge:writing-plans"
+                } else {
+                    "featureforge:plan-design-review"
+                };
+                let reason = compatibility_reason(&design_review_gate.reason_codes);
+                return Ok(WorkflowRoute {
+                    schema_version: 2,
+                    status: String::from("plan_draft"),
+                    next_skill: String::from(next_skill),
+                    spec_path: approved_spec.path.clone(),
+                    plan_path: plan.path.clone(),
+                    contract_state,
+                    reason_codes: design_review_gate.reason_codes,
+                    diagnostics: design_review_gate.diagnostics,
+                    scan_truncated,
+                    spec_candidate_count,
+                    plan_candidate_count: 1,
+                    manifest_path,
+                    root,
+                    reason: reason.clone(),
+                    note: reason,
+                });
+            }
         }
 
         if !stale_source_spec_linkage
@@ -1033,6 +1184,58 @@ pub fn record_plan_fidelity_receipt(
     let review_artifact =
         parse_plan_fidelity_review_artifact(&review_artifact_abs, &review_artifact_path)?;
     validate_plan_fidelity_review_artifact(&review_artifact, &plan, &spec)?;
+    let contract_report = crate::contracts::plan::analyze_documents(&spec, &plan);
+    if contract_report.reason_codes.iter().any(|code| {
+        matches!(
+            code.as_str(),
+            "delivery_lane_mismatch"
+                | "lightweight_missing_safety_justification"
+                | "lightweight_missing_release_surface_signal"
+                | "lightweight_release_surface_disallowed"
+                | "lightweight_missing_distribution_impact_signal"
+                | "lightweight_distribution_impact_too_high"
+                | "lightweight_missing_deploy_impact_signal"
+                | "lightweight_deploy_impact_too_high"
+                | "lightweight_missing_migration_risk_signal"
+                | "lightweight_migration_risk_too_high"
+                | "lightweight_missing_security_review_signal"
+                | "lightweight_security_review_signal_invalid"
+                | "lightweight_security_review_required"
+                | "lightweight_file_scope_exceeds_cap"
+                | "lightweight_lane_escalated"
+                | "missing_plan_risk_gate_signals"
+                | "missing_plan_release_distribution_notes"
+                | "risk_gate_delivery_lane_mismatch"
+                | "risk_gate_ui_scope_missing"
+                | "risk_gate_ui_scope_invalid"
+                | "risk_gate_browser_qa_required_missing"
+                | "risk_gate_browser_qa_required_invalid"
+                | "risk_gate_design_review_required_missing"
+                | "risk_gate_design_review_required_invalid"
+                | "risk_gate_security_review_required_missing"
+                | "risk_gate_security_review_required_invalid"
+                | "risk_gate_performance_review_required_missing"
+                | "risk_gate_performance_review_required_invalid"
+                | "risk_gate_release_surface_missing"
+                | "risk_gate_release_surface_invalid"
+                | "risk_gate_distribution_impact_missing"
+                | "risk_gate_distribution_impact_invalid"
+                | "risk_gate_deploy_impact_missing"
+                | "risk_gate_deploy_impact_invalid"
+                | "risk_gate_migration_risk_missing"
+                | "risk_gate_migration_risk_invalid"
+                | "release_distribution_notes_path_missing"
+                | "risk_gate_versioning_decision_missing"
+                | "risk_gate_versioning_decision_invalid"
+                | "release_distribution_notes_versioning_rationale_missing"
+                | "release_distribution_notes_rollout_missing"
+        )
+    }) {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "Plan-fidelity pass receipts cannot be recorded while the current draft plan is missing or violating required Delivery Lane, Risk & Gate Signals, or Release & Distribution Notes contract fields.",
+        ));
+    }
 
     let receipt =
         build_plan_fidelity_receipt(crate::contracts::runtime::PlanFidelityReceiptInput {
@@ -1075,6 +1278,496 @@ pub fn render_plan_fidelity_record(record: PlanFidelityRecord) -> String {
         record.reviewer_source,
         record.reviewer_id,
         record.verified_surfaces.join(", "),
+    )
+}
+
+fn plan_design_review_receipt_path(
+    state_dir: &Path,
+    repo_slug: &str,
+    branch_name: &str,
+) -> PathBuf {
+    let safe_branch = branch_storage_key(branch_name);
+    state_dir
+        .join("workflow")
+        .join(repo_slug)
+        .join(format!("{}-plan-design-review-receipt.md", safe_branch))
+}
+
+pub fn record_plan_design_review_receipt(
+    current_dir: &Path,
+    args: &PlanDesignReviewRecordArgs,
+) -> Result<PlanDesignReviewRecord, DiagnosticError> {
+    let repo_root = discover_slug_identity(current_dir).repo_root;
+    let state_dir = featureforge_state_dir();
+    let slug_identity = discover_slug_identity(repo_root.as_path());
+    let plan_path = normalize_repo_path(&args.plan)?;
+    let plan_abs = repo_root.join(&plan_path);
+    let plan = parse_plan_file(&plan_abs)?;
+    if !plan_requires_design_review(&plan) {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "Plan-design-review receipts can only be recorded for plans that require design review.",
+        ));
+    }
+    let review_artifact_abs = if args.review_artifact.is_absolute() {
+        args.review_artifact.clone()
+    } else {
+        current_dir.join(&args.review_artifact)
+    };
+    ensure_canonical_runtime_review_artifact(
+        &review_artifact_abs,
+        &state_dir,
+        &slug_identity.repo_slug,
+        &slug_identity.branch_name,
+        "plan-design-review",
+    )?;
+    let review_artifact = crate::execution::final_review::parse_artifact_document(&review_artifact_abs);
+    let review_artifact_source = fs::read_to_string(&review_artifact_abs).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not read plan-design-review artifact {}: {err}",
+                review_artifact_abs.display()
+            ),
+        )
+    })?;
+    let canonical_fingerprint = canonical_gate_artifact_fingerprint(&review_artifact_source)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Plan-design-review artifact fingerprint could not be computed.",
+            )
+        })?;
+    let plan_fingerprint = sha256_hex(plan.source.as_bytes());
+    let verdict = review_artifact.headers.get("Result").cloned().unwrap_or_default();
+    let authoritative_artifact_fingerprint = sha256_hex(review_artifact_source.as_bytes());
+    let valid = review_artifact.title.as_deref() == Some("# Plan Design Review Result")
+        && review_artifact.headers.get("Artifact Kind")
+            == Some(&String::from("plan-design-review"))
+        && review_artifact.headers.get("Schema Version") == Some(&String::from("1"))
+        && review_artifact.headers.get("Artifact Provenance")
+            == Some(&String::from("runtime-owned"))
+        && review_artifact.headers.get("Retention Policy")
+            == Some(&String::from("featureforge:authoritative-runtime-artifact"))
+        && review_artifact.headers.get("Source Plan") == Some(&format!("`{plan_path}`"))
+        && review_artifact.headers.get("Source Plan Revision")
+            == Some(&plan.plan_revision.to_string())
+        && review_artifact.headers.get("Source Plan Fingerprint") == Some(&plan_fingerprint)
+        && review_artifact.headers.get("Branch") == Some(&slug_identity.branch_name)
+        && review_artifact.headers.get("Repo") == Some(&slug_identity.repo_slug)
+        && review_artifact.headers.get("Receipt Fingerprint") == Some(&canonical_fingerprint)
+        && matches!(verdict.as_str(), "pass" | "revise")
+        && review_artifact.headers.get("Generated By")
+            == Some(&String::from("featureforge:plan-design-review"))
+        && review_artifact
+            .headers
+            .get("Generated At")
+            .is_some_and(|value| !value.trim().is_empty());
+    if !valid {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "Plan-design-review artifact does not satisfy the required contract for receipt recording.",
+        ));
+    }
+    let authoritative_artifact_path = harness_authoritative_artifact_path(
+        &state_dir,
+        &slug_identity.repo_slug,
+        &slug_identity.branch_name,
+        &format!("plan-design-review-{}.md", authoritative_artifact_fingerprint),
+    );
+    ensure_safe_runtime_write_target(
+        &authoritative_artifact_path,
+        "authoritative plan-design-review artifact",
+    )?;
+    if let Some(parent) = authoritative_artifact_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!(
+                    "Could not create authoritative plan-design-review artifact directory {}: {err}",
+                    parent.display()
+                ),
+            )
+        })?;
+    }
+    write_atomic(&authoritative_artifact_path, review_artifact_source.as_bytes()).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not publish authoritative plan-design-review artifact {}: {err}",
+                authoritative_artifact_path.display()
+            ),
+        )
+    })?;
+    let receipt_body = format!(
+        "# Plan Design Review Receipt\n\n**Schema Version:** 1\n**Source Plan:** `{plan_path}`\n**Source Plan Revision:** {}\n**Source Plan Fingerprint:** {}\n**Review Artifact:** `{}`\n**Review Artifact Fingerprint:** {}\n**Branch:** {}\n**Repo:** {}\n**Verdict:** {}\n**Generated By:** featureforge:plan-design-review\n",
+        plan.plan_revision,
+        plan_fingerprint,
+        authoritative_artifact_path.display(),
+        authoritative_artifact_fingerprint,
+        slug_identity.branch_name,
+        slug_identity.repo_slug,
+        verdict,
+    );
+    let receipt_path = plan_design_review_receipt_path(
+        &state_dir,
+        &slug_identity.repo_slug,
+        &slug_identity.branch_name,
+    );
+    ensure_safe_runtime_write_target(&receipt_path, "plan-design-review receipt")?;
+    if let Some(parent) = receipt_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!(
+                    "Could not create plan-design-review receipt directory {}: {err}",
+                    parent.display()
+                ),
+            )
+        })?;
+    }
+    write_atomic(&receipt_path, receipt_body.as_bytes()).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not write plan-design-review receipt {}: {err}",
+                receipt_path.display()
+            ),
+        )
+    })?;
+
+    Ok(PlanDesignReviewRecord {
+        status: String::from("ok"),
+        receipt_path: receipt_path.display().to_string(),
+        review_artifact_path: review_artifact_abs.display().to_string(),
+        verdict,
+    })
+}
+
+pub fn render_plan_design_review_record(record: PlanDesignReviewRecord) -> String {
+    format!(
+        "Recorded plan-design-review receipt at {}\nReview artifact: {}\nVerdict: {}",
+        record.receipt_path, record.review_artifact_path, record.verdict
+    )
+}
+
+fn canonical_runtime_review_artifact_dir(state_dir: &Path, repo_slug: &str) -> PathBuf {
+    state_dir.join("projects").join(repo_slug)
+}
+
+fn ensure_canonical_runtime_review_artifact(
+    artifact_path: &Path,
+    state_dir: &Path,
+    repo_slug: &str,
+    branch_name: &str,
+    kind: &str,
+) -> Result<(), DiagnosticError> {
+    let metadata = fs::symlink_metadata(artifact_path).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not inspect {kind} artifact {}: {err}",
+                artifact_path.display()
+            ),
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "{kind} artifact {} must not be a symlink.",
+                artifact_path.display()
+            ),
+        ));
+    }
+    let canonical_dir = fs::canonicalize(canonical_runtime_review_artifact_dir(state_dir, repo_slug))
+        .map_err(|err| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!(
+                    "Could not resolve canonical runtime artifact directory for {kind}: {err}",
+                ),
+            )
+        })?;
+    let canonical_artifact = fs::canonicalize(artifact_path).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not resolve canonical {kind} artifact path {}: {err}",
+                artifact_path.display()
+            ),
+        )
+    })?;
+    if !canonical_artifact.starts_with(&canonical_dir) {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "{kind} artifact {} must live under the authoritative runtime artifact directory {}.",
+                canonical_artifact.display(),
+                canonical_dir.display()
+            ),
+        ));
+    }
+    let file_name = canonical_artifact
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let safe_branch = branch_storage_key(branch_name);
+    let expected_fragment = format!("-{safe_branch}-{kind}-");
+    if !file_name.ends_with(".md") || !file_name.contains(&expected_fragment) {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "{kind} artifact {} must use the canonical branch-scoped runtime filename pattern containing {}.",
+                artifact_path.display(),
+                expected_fragment
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn current_repo_head_sha(repo_root: &Path) -> Result<String, DiagnosticError> {
+    let output = Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(repo_root)
+        .output()
+        .map_err(|err| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("Could not resolve current HEAD SHA: {err}"),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not resolve current HEAD SHA: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn ensure_safe_runtime_write_target(path: &Path, label: &str) -> Result<(), DiagnosticError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("Could not inspect {label} {}: {err}", path.display()),
+            ));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("{label} {} must not be a symlink.", path.display()),
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("{label} {} must be a regular file.", path.display()),
+        ));
+    }
+    Ok(())
+}
+
+pub fn record_security_review_receipt(
+    current_dir: &Path,
+    args: &SecurityReviewRecordArgs,
+) -> Result<SecurityReviewRecord, DiagnosticError> {
+    let runtime = ExecutionRuntime::discover(current_dir).map_err(|error| {
+        DiagnosticError::new(FailureClass::InstructionParseFailed, error.message)
+    })?;
+    let context = load_execution_context(&runtime, &args.plan).map_err(|error| {
+        DiagnosticError::new(FailureClass::InstructionParseFailed, error.message)
+    })?;
+    if !plan_requires_security_review(&context.plan_document) {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "Security-review receipts can only be recorded for plans that require security review.",
+        ));
+    }
+
+    let review_artifact_abs = if args.review_artifact.is_absolute() {
+        args.review_artifact.clone()
+    } else {
+        current_dir.join(&args.review_artifact)
+    };
+    ensure_canonical_runtime_review_artifact(
+        &review_artifact_abs,
+        &runtime.state_dir,
+        &runtime.repo_slug,
+        &runtime.branch_name,
+        "security-review",
+    )?;
+    let review_artifact = crate::execution::final_review::parse_artifact_document(&review_artifact_abs);
+    let review_artifact_source = fs::read_to_string(&review_artifact_abs).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not read security-review artifact {}: {err}",
+                review_artifact_abs.display()
+            ),
+        )
+    })?;
+    let canonical_fingerprint = canonical_gate_artifact_fingerprint(&review_artifact_source)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "Security-review artifact fingerprint could not be computed.",
+            )
+        })?;
+    let current_head = current_repo_head_sha(&runtime.repo_root)?;
+    let current_diff_fingerprint = current_repo_state_fingerprint(&runtime.repo_root).map_err(
+        |error| DiagnosticError::new(FailureClass::InstructionParseFailed, error.message),
+    )?;
+    let verdict = review_artifact.headers.get("Result").cloned().unwrap_or_default();
+    let valid = review_artifact.title.as_deref() == Some("# Security Review Result")
+        && review_artifact.headers.get("Artifact Kind") == Some(&String::from("security-review"))
+        && review_artifact.headers.get("Schema Version") == Some(&String::from("1"))
+        && review_artifact.headers.get("Artifact Provenance")
+            == Some(&String::from("runtime-owned"))
+        && review_artifact.headers.get("Retention Policy")
+            == Some(&String::from("featureforge:authoritative-runtime-artifact"))
+        && review_artifact.headers.get("Source Plan") == Some(&format!("`{}`", context.plan_rel))
+        && review_artifact.headers.get("Source Plan Revision")
+            == Some(&context.plan_document.plan_revision.to_string())
+        && review_artifact.headers.get("Branch") == Some(&runtime.branch_name)
+        && review_artifact.headers.get("Repo") == Some(&runtime.repo_slug)
+        && review_artifact.headers.get("Head SHA") == Some(&current_head)
+        && review_artifact.headers.get("Execution Diff Fingerprint")
+            == Some(&current_diff_fingerprint)
+        && review_artifact.headers.get("Receipt Fingerprint") == Some(&canonical_fingerprint)
+        && matches!(verdict.as_str(), "pass" | "needs-user-input" | "blocked")
+        && review_artifact.headers.get("Generated By")
+            == Some(&String::from("featureforge:security-review"))
+        && review_artifact
+            .headers
+            .get("Generated At")
+            .is_some_and(|value| !value.trim().is_empty());
+    if !valid {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "Security-review artifact does not satisfy the required contract for authoritative recording.",
+        ));
+    }
+
+    let authoritative_artifact_path = harness_authoritative_artifact_path(
+        &runtime.state_dir,
+        &runtime.repo_slug,
+        &runtime.branch_name,
+        &format!("security-review-{}.md", sha256_hex(review_artifact_source.as_bytes())),
+    );
+    ensure_safe_runtime_write_target(&authoritative_artifact_path, "authoritative security-review artifact")?;
+    if let Some(parent) = authoritative_artifact_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!(
+                    "Could not create authoritative security-review artifact directory {}: {err}",
+                    parent.display()
+                ),
+            )
+        })?;
+    }
+    write_atomic(&authoritative_artifact_path, review_artifact_source.as_bytes()).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not publish authoritative security-review artifact {}: {err}",
+                authoritative_artifact_path.display()
+            ),
+        )
+    })?;
+
+    let state_path = authoritative_state_path(&context);
+    ensure_safe_runtime_write_target(&state_path, "authoritative execution state")?;
+    let state_source = fs::read_to_string(&state_path).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not read authoritative execution state {}: {err}",
+                state_path.display()
+            ),
+        )
+    })?;
+    let mut state_json: serde_json::Value = serde_json::from_str(&state_source).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not parse authoritative execution state {}: {err}",
+                state_path.display()
+            ),
+        )
+    })?;
+    let root = state_json.as_object_mut().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Authoritative execution state {} is not a JSON object.",
+                state_path.display()
+            ),
+        )
+    })?;
+    root.insert(
+        String::from("security_review_state"),
+        serde_json::Value::String(String::from("fresh")),
+    );
+    root.insert(
+        String::from("last_security_review_artifact_fingerprint"),
+        serde_json::Value::String(sha256_hex(review_artifact_source.as_bytes())),
+    );
+    if let Some(sequence) = root
+        .get("latest_authoritative_sequence")
+        .and_then(|value| value.as_u64())
+    {
+        root.insert(
+            String::from("latest_authoritative_sequence"),
+            serde_json::Value::Number(serde_json::Number::from(sequence + 1)),
+        );
+        root.insert(
+            String::from("authoritative_sequence"),
+            serde_json::Value::Number(serde_json::Number::from(sequence + 1)),
+        );
+    }
+    let serialized_state = serde_json::to_string_pretty(&state_json).map_err(|err| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!(
+                    "Could not serialize authoritative execution state {}: {err}",
+                    state_path.display()
+                ),
+            )
+        })?;
+    write_atomic(&state_path, serialized_state.as_bytes()).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!(
+                "Could not write authoritative execution state {}: {err}",
+                state_path.display()
+            ),
+        )
+    })?;
+
+    Ok(SecurityReviewRecord {
+        status: String::from("ok"),
+        state_path: state_path.display().to_string(),
+        review_artifact_path: review_artifact_abs.display().to_string(),
+        verdict,
+        artifact_fingerprint: sha256_hex(review_artifact_source.as_bytes()),
+    })
+}
+
+pub fn render_security_review_record(record: SecurityReviewRecord) -> String {
+    format!(
+        "Recorded security-review state in {}\nReview artifact: {}\nVerdict: {}\nFingerprint: {}",
+        record.state_path, record.review_artifact_path, record.verdict, record.artifact_fingerprint
     )
 }
 
@@ -1216,6 +1909,9 @@ fn analyze_full_contract(
 
     let spec_path = repo_root.join(&spec.path);
     let plan_path = repo_root.join(&plan.path);
+    if let Ok(report) = crate::contracts::plan::analyze_plan(&spec_path, &plan_path) {
+        return Some(report);
+    }
     let spec_source = fs::read_to_string(spec_path).ok()?;
     let plan_source = fs::read_to_string(plan_path).ok()?;
     Some(analyze_contract_report(
@@ -1225,6 +1921,44 @@ fn analyze_full_contract(
         &spec_source,
         &plan_source,
     ))
+}
+
+fn should_reroute_draft_plan_to_writing_plans(reason_codes: &[String]) -> bool {
+    reason_codes.iter().any(|code| {
+        matches!(
+            code.as_str(),
+            "delivery_lane_mismatch"
+                | "lightweight_missing_safety_justification"
+                | "lightweight_file_scope_exceeds_cap"
+                | "lightweight_lane_escalated"
+                | "missing_plan_risk_gate_signals"
+                | "missing_plan_release_distribution_notes"
+                | "risk_gate_delivery_lane_mismatch"
+                    | "risk_gate_ui_scope_missing"
+                | "risk_gate_ui_scope_invalid"
+                    | "risk_gate_browser_qa_required_missing"
+                | "risk_gate_browser_qa_required_invalid"
+                    | "risk_gate_design_review_required_missing"
+                | "risk_gate_design_review_required_invalid"
+                    | "risk_gate_security_review_required_missing"
+                | "risk_gate_security_review_required_invalid"
+                    | "risk_gate_performance_review_required_missing"
+                | "risk_gate_performance_review_required_invalid"
+                    | "risk_gate_release_surface_missing"
+                | "risk_gate_release_surface_invalid"
+                    | "risk_gate_distribution_impact_missing"
+                | "risk_gate_distribution_impact_invalid"
+                    | "risk_gate_deploy_impact_missing"
+                | "risk_gate_deploy_impact_invalid"
+                    | "risk_gate_migration_risk_missing"
+                | "risk_gate_migration_risk_invalid"
+                | "release_distribution_notes_path_missing"
+                    | "risk_gate_versioning_decision_missing"
+                | "risk_gate_versioning_decision_invalid"
+                | "release_distribution_notes_versioning_rationale_missing"
+                | "release_distribution_notes_rollout_missing"
+        )
+    })
 }
 
 fn needs_packet_buildability_failure(report: &AnalyzePlanReport) -> bool {
@@ -1406,6 +2140,290 @@ fn evaluate_plan_fidelity_gate(
     )
 }
 
+#[derive(Debug, Clone)]
+struct PlanDesignReviewGate {
+    state: String,
+    reason_codes: Vec<String>,
+    diagnostics: Vec<WorkflowDiagnostic>,
+}
+
+fn plan_requires_design_review(plan: &crate::contracts::plan::PlanDocument) -> bool {
+    plan.risk_gate_signals.as_ref().is_some_and(|signals| {
+        signals.design_review_required == "yes" || signals.ui_scope == "material"
+    })
+}
+
+fn plan_requires_security_review(plan: &crate::contracts::plan::PlanDocument) -> bool {
+    match plan.risk_gate_signals.as_ref() {
+        Some(signals) => signals.security_review_required == "yes",
+        None => true,
+    }
+}
+
+fn evaluate_plan_design_review_gate(
+    runtime: &WorkflowRuntime,
+    plan_path: &str,
+    plan_revision: u32,
+    plan_fingerprint: &str,
+) -> PlanDesignReviewGate {
+    let slug = discover_slug_identity(&runtime.identity.repo_root);
+    let receipt_path = plan_design_review_receipt_path(
+        &runtime.state_dir,
+        &slug.repo_slug,
+        &slug.branch_name,
+    );
+    let receipt_source = match fs::read_to_string(&receipt_path) {
+        Ok(source) => source,
+        Err(_) => {
+            return PlanDesignReviewGate {
+                state: String::from("missing"),
+                reason_codes: vec![String::from("plan_design_review_required")],
+                diagnostics: vec![WorkflowDiagnostic {
+                    code: String::from("plan_design_review_required"),
+                    severity: String::from("error"),
+                    artifact: plan_path.to_owned(),
+                    message: String::from(
+                        "Design review is required before engineering approval can continue.",
+                    ),
+                    remediation: String::from(
+                        "Run featureforge:plan-design-review, record the receipt, and return with a fresh pass result.",
+                    ),
+                }],
+            };
+        }
+    };
+
+    let receipt_plan = parse_header_value(&receipt_source, "Source Plan").ok();
+    let receipt_revision = parse_header_value(&receipt_source, "Source Plan Revision").ok();
+    let receipt_plan_fingerprint = parse_header_value(&receipt_source, "Source Plan Fingerprint").ok();
+    let receipt_branch = parse_header_value(&receipt_source, "Branch").ok();
+    let receipt_repo = parse_header_value(&receipt_source, "Repo").ok();
+    let receipt_artifact = parse_header_value(&receipt_source, "Review Artifact").ok();
+    let receipt_fingerprint = parse_header_value(&receipt_source, "Review Artifact Fingerprint").ok();
+    let receipt_verdict = parse_header_value(&receipt_source, "Verdict").unwrap_or_default();
+
+    let receipt_matches_plan = receipt_plan.as_deref() == Some(&format!("`{plan_path}`"))
+        && receipt_revision.as_deref() == Some(&plan_revision.to_string())
+        && receipt_plan_fingerprint.as_deref() == Some(plan_fingerprint)
+        && receipt_branch.as_deref() == Some(&slug.branch_name)
+        && receipt_repo.as_deref() == Some(&slug.repo_slug);
+    if !receipt_matches_plan {
+        return PlanDesignReviewGate {
+            state: String::from("invalid"),
+            reason_codes: vec![String::from("plan_design_review_required")],
+            diagnostics: vec![WorkflowDiagnostic {
+                code: String::from("plan_design_review_required"),
+                severity: String::from("error"),
+                artifact: receipt_path.display().to_string(),
+                message: String::from(
+                    "The recorded plan-design-review receipt no longer matches the current approved plan revision.",
+                ),
+                remediation: String::from(
+                    "Re-run featureforge:plan-design-review and record a fresh receipt.",
+                ),
+            }],
+        };
+    }
+
+    let Some(receipt_artifact) = receipt_artifact else {
+        return PlanDesignReviewGate {
+            state: String::from("invalid"),
+            reason_codes: vec![String::from("plan_design_review_required")],
+            diagnostics: vec![WorkflowDiagnostic {
+                code: String::from("plan_design_review_required"),
+                severity: String::from("error"),
+                artifact: receipt_path.display().to_string(),
+                message: String::from(
+                    "The recorded plan-design-review receipt is missing the review artifact path.",
+                ),
+                remediation: String::from(
+                    "Re-run featureforge:plan-design-review and record a fresh receipt.",
+                ),
+            }],
+        };
+    };
+    let Some(receipt_fingerprint) = receipt_fingerprint else {
+        return PlanDesignReviewGate {
+            state: String::from("invalid"),
+            reason_codes: vec![String::from("plan_design_review_required")],
+            diagnostics: vec![WorkflowDiagnostic {
+                code: String::from("plan_design_review_required"),
+                severity: String::from("error"),
+                artifact: receipt_path.display().to_string(),
+                message: String::from(
+                    "The recorded plan-design-review receipt is missing the artifact fingerprint binding.",
+                ),
+                remediation: String::from(
+                    "Re-run featureforge:plan-design-review and record a fresh receipt.",
+                ),
+            }],
+        };
+    };
+
+    let authoritative_artifact_path = harness_authoritative_artifact_path(
+        &runtime.state_dir,
+        &slug.repo_slug,
+        &slug.branch_name,
+        &format!("plan-design-review-{}.md", receipt_fingerprint),
+    );
+    if receipt_artifact.trim_matches('`') != authoritative_artifact_path.display().to_string() {
+        return PlanDesignReviewGate {
+            state: String::from("invalid"),
+            reason_codes: vec![String::from("plan_design_review_required")],
+            diagnostics: vec![WorkflowDiagnostic {
+                code: String::from("plan_design_review_required"),
+                severity: String::from("error"),
+                artifact: receipt_path.display().to_string(),
+                message: String::from(
+                    "The recorded plan-design-review receipt does not bind to the authoritative artifact path for its fingerprint.",
+                ),
+                remediation: String::from(
+                    "Re-run featureforge:plan-design-review and record a fresh authoritative receipt.",
+                ),
+            }],
+        };
+    }
+    let artifact_metadata = match fs::symlink_metadata(&authoritative_artifact_path) {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            return PlanDesignReviewGate {
+                state: String::from("invalid"),
+                reason_codes: vec![String::from("plan_design_review_required")],
+                diagnostics: vec![WorkflowDiagnostic {
+                    code: String::from("plan_design_review_required"),
+                    severity: String::from("error"),
+                    artifact: authoritative_artifact_path.display().to_string(),
+                    message: String::from(
+                        "The authoritative plan-design-review artifact is missing or unreadable.",
+                    ),
+                    remediation: String::from(
+                        "Re-run featureforge:plan-design-review and record a fresh authoritative receipt.",
+                    ),
+                }],
+            };
+        }
+    };
+    if artifact_metadata.file_type().is_symlink() || !artifact_metadata.is_file() {
+        return PlanDesignReviewGate {
+            state: String::from("invalid"),
+            reason_codes: vec![String::from("plan_design_review_required")],
+            diagnostics: vec![WorkflowDiagnostic {
+                code: String::from("plan_design_review_required"),
+                severity: String::from("error"),
+                artifact: authoritative_artifact_path.display().to_string(),
+                message: String::from(
+                    "The authoritative plan-design-review artifact must be a regular file.",
+                ),
+                remediation: String::from(
+                    "Re-run featureforge:plan-design-review and record a fresh authoritative receipt.",
+                ),
+            }],
+        };
+    }
+    let source_bytes = match fs::read(&authoritative_artifact_path) {
+        Ok(source) => source,
+        Err(_) => {
+            return PlanDesignReviewGate {
+                state: String::from("invalid"),
+                reason_codes: vec![String::from("plan_design_review_required")],
+                diagnostics: vec![WorkflowDiagnostic {
+                    code: String::from("plan_design_review_required"),
+                    severity: String::from("error"),
+                    artifact: authoritative_artifact_path.display().to_string(),
+                    message: String::from(
+                        "The authoritative plan-design-review artifact is unreadable.",
+                    ),
+                    remediation: String::from(
+                        "Re-run featureforge:plan-design-review and record a fresh authoritative receipt.",
+                    ),
+                }],
+            };
+        }
+    };
+    if sha256_hex(&source_bytes) != receipt_fingerprint {
+        return PlanDesignReviewGate {
+            state: String::from("invalid"),
+            reason_codes: vec![String::from("plan_design_review_required")],
+            diagnostics: vec![WorkflowDiagnostic {
+                code: String::from("plan_design_review_required"),
+                severity: String::from("error"),
+                artifact: authoritative_artifact_path.display().to_string(),
+                message: String::from(
+                    "The authoritative plan-design-review artifact content no longer matches the recorded receipt fingerprint.",
+                ),
+                remediation: String::from(
+                    "Re-run featureforge:plan-design-review and record a fresh authoritative receipt.",
+                ),
+            }],
+        };
+    }
+    let source = String::from_utf8_lossy(&source_bytes).to_string();
+    let document = crate::execution::final_review::parse_artifact_document(&authoritative_artifact_path);
+    let canonical_fingerprint = canonical_gate_artifact_fingerprint(&source);
+    let result = document.headers.get("Result").cloned().unwrap_or_default();
+    let valid = document.title.as_deref() == Some("# Plan Design Review Result")
+        && document.headers.get("Artifact Kind") == Some(&String::from("plan-design-review"))
+        && document.headers.get("Schema Version") == Some(&String::from("1"))
+        && document.headers.get("Artifact Provenance")
+            == Some(&String::from("runtime-owned"))
+        && document.headers.get("Retention Policy")
+            == Some(&String::from("featureforge:authoritative-runtime-artifact"))
+        && document.headers.get("Source Plan") == Some(&format!("`{plan_path}`"))
+        && document.headers.get("Source Plan Revision") == Some(&plan_revision.to_string())
+        && document.headers.get("Source Plan Fingerprint") == Some(&plan_fingerprint.to_string())
+        && document.headers.get("Branch") == Some(&slug.branch_name)
+        && document.headers.get("Repo") == Some(&slug.repo_slug)
+        && document.headers.get("Receipt Fingerprint") == canonical_fingerprint.as_ref()
+        && matches!(receipt_verdict.as_str(), "pass" | "revise")
+        && result == receipt_verdict
+        && document.headers.get("Generated By")
+            == Some(&String::from("featureforge:plan-design-review"))
+        && document
+            .headers
+            .get("Generated At")
+            .is_some_and(|value| !value.trim().is_empty());
+
+    if valid && result == "pass" {
+        PlanDesignReviewGate {
+            state: String::from("pass"),
+            reason_codes: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    } else if valid && result == "revise" {
+        PlanDesignReviewGate {
+            state: String::from("revise"),
+            reason_codes: vec![String::from("plan_design_review_revise_required")],
+            diagnostics: vec![WorkflowDiagnostic {
+                code: String::from("plan_design_review_revise_required"),
+                severity: String::from("error"),
+                artifact: receipt_path.display().to_string(),
+                message: String::from(
+                    "The recorded plan-design-review receipt requires plan changes before engineering approval can continue.",
+                ),
+                remediation: String::from(
+                    "Return to featureforge:writing-plans, address the design review findings, rerun featureforge:plan-design-review, and record a fresh pass receipt.",
+                ),
+            }],
+        }
+    } else {
+        PlanDesignReviewGate {
+            state: String::from("invalid"),
+            reason_codes: vec![String::from("plan_design_review_required")],
+            diagnostics: vec![WorkflowDiagnostic {
+                code: String::from("plan_design_review_required"),
+                severity: String::from("error"),
+                artifact: receipt_path.display().to_string(),
+                message: String::from(
+                    "The recorded plan-design-review receipt no longer matches a valid current artifact contract.",
+                ),
+                remediation: String::from(
+                    "Re-run featureforge:plan-design-review and record a fresh pass receipt.",
+                ),
+            }],
+        }
+    }
+}
+
 fn load_plan_fidelity_spec_document(spec_abs: &Path) -> Result<SpecDocument, DiagnosticError> {
     parse_spec_file(spec_abs)
 }
@@ -1440,6 +2458,20 @@ fn parse_header_value(source: &str, header: &str) -> Result<String, DiagnosticEr
                 format!("Missing or malformed {header} header."),
             )
         })
+}
+
+fn canonical_gate_artifact_fingerprint(source: &str) -> Option<String> {
+    let filtered = source
+        .lines()
+        .filter(|line| !line.trim().starts_with("**Receipt Fingerprint:**"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if filtered.trim().is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(filtered.as_bytes());
+    Some(format!("{:x}", hasher.finalize()))
 }
 
 fn compatibility_reason(reason_codes: &[String]) -> String {

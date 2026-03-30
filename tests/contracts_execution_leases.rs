@@ -8,7 +8,7 @@ mod process_support;
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::contracts::harness::{
     BlockingEvidenceReference, DowngradeReasonClass, ExecutionTopologyDowngradeRecord,
-    WorktreeLease, WorktreeLeaseState,
+    TaskSliceFenceMode, WorktreeLaneTerminalState, WorktreeLease, WorktreeLeaseState,
 };
 use featureforge::execution::leases::{
     is_worktree_lease_terminal_state, validate_worktree_lease, worktree_lease_states,
@@ -639,6 +639,55 @@ fn worktree_lease_helper_exposes_closed_lifecycle_state_vocab() {
         WorktreeLeaseState::Cleaned
     ));
     assert!(!is_worktree_lease_terminal_state(WorktreeLeaseState::Open));
+}
+
+#[test]
+fn worktree_lane_terminal_state_contract_values_stay_stable() {
+    assert_eq!(WorktreeLaneTerminalState::MergeReady.as_str(), "merge_ready");
+    assert_eq!(
+        WorktreeLaneTerminalState::ResolutionRequired.as_str(),
+        "resolution_required"
+    );
+    assert_eq!(WorktreeLaneTerminalState::Abandoned.as_str(), "abandoned");
+
+    assert_eq!(
+        serde_json::to_string(&WorktreeLaneTerminalState::MergeReady)
+            .expect("lane terminal state should serialize"),
+        "\"merge_ready\""
+    );
+    assert_eq!(
+        serde_json::to_string(&WorktreeLaneTerminalState::ResolutionRequired)
+            .expect("lane terminal state should serialize"),
+        "\"resolution_required\""
+    );
+    assert_eq!(
+        serde_json::to_string(&WorktreeLaneTerminalState::Abandoned)
+            .expect("lane terminal state should serialize"),
+        "\"abandoned\""
+    );
+}
+
+#[test]
+fn task_slice_fence_mode_contract_values_stay_stable() {
+    assert_eq!(TaskSliceFenceMode::Audit.as_str(), "audit");
+    assert_eq!(TaskSliceFenceMode::Guarded.as_str(), "guarded");
+    assert_eq!(TaskSliceFenceMode::Full.as_str(), "full");
+
+    assert_eq!(
+        serde_json::to_string(&TaskSliceFenceMode::Audit)
+            .expect("task-slice fence mode should serialize"),
+        "\"audit\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TaskSliceFenceMode::Guarded)
+            .expect("task-slice fence mode should serialize"),
+        "\"guarded\""
+    );
+    assert_eq!(
+        serde_json::to_string(&TaskSliceFenceMode::Full)
+            .expect("task-slice fence mode should serialize"),
+        "\"full\""
+    );
 }
 
 #[test]

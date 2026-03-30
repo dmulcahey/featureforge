@@ -474,9 +474,431 @@ fn analyze_valid_contract_fixture_reports_clean_coverage() {
             required_worktrees: 2,
         }]
     );
-    assert!(report.reason_codes.is_empty());
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "spec_delivery_lane_inferred")
+    );
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "plan_delivery_lane_inferred")
+    );
     assert!(report.overlapping_write_scopes.is_empty());
     assert!(report.diagnostics.is_empty());
+}
+
+#[test]
+fn parse_spec_and_plan_capture_delivery_lane_headers() {
+    let repo_root = unique_temp_dir("contract-delivery-lane-headers");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Last Reviewed By:** plan-ceo-review\n",
+        "**Last Reviewed By:** plan-ceo-review\n**Delivery Lane:** lightweight_change\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Last Reviewed By:** plan-eng-review\n",
+        "**Last Reviewed By:** plan-eng-review\n**Delivery Lane:** lightweight_change\n",
+    );
+
+    let spec = parse_spec_file(repo_root.join(SPEC_REL)).expect("spec should parse");
+    let plan = parse_plan_file(repo_root.join(PLAN_REL)).expect("plan should parse");
+
+    assert_eq!(spec.delivery_lane, "lightweight_change");
+    assert_eq!(plan.delivery_lane, "lightweight_change");
+}
+
+#[test]
+fn parse_spec_rejects_malformed_delivery_lane_headers() {
+    let repo_root = unique_temp_dir("contract-delivery-lane-malformed-spec");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Last Reviewed By:** plan-ceo-review\n",
+        "**Last Reviewed By:** plan-ceo-review\n**Delivery Lane:** fast-track\n",
+    );
+
+    let error = parse_spec_file(repo_root.join(SPEC_REL)).expect_err("malformed delivery lane should fail");
+    assert!(
+        error.to_string().contains("Malformed Delivery Lane header"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn parse_spec_requires_delivery_lane_for_contract_version_two() {
+    let repo_root = unique_temp_dir("contract-delivery-lane-versioned-spec");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Workflow State:** CEO Approved\n",
+        "**Workflow State:** CEO Approved\n**Contract Version:** 2\n",
+    );
+
+    let error = parse_spec_file(repo_root.join(SPEC_REL)).expect_err("current-version specs should require Delivery Lane");
+    assert!(
+        error.to_string().contains("Missing or malformed Delivery Lane header"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn parse_plan_requires_delivery_lane_for_contract_version_two() {
+    let repo_root = unique_temp_dir("contract-delivery-lane-versioned-plan");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Workflow State:** Engineering Approved\n",
+        "**Workflow State:** Engineering Approved\n**Contract Version:** 2\n",
+    );
+
+    let error = parse_plan_file(repo_root.join(PLAN_REL)).expect_err("current-version plans should require Delivery Lane");
+    assert!(
+        error.to_string().contains("Missing or malformed Delivery Lane"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn analyze_plan_escalates_disqualified_lightweight_lane_back_to_standard() {
+    let repo_root = unique_temp_dir("contract-lightweight-escalation");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Last Reviewed By:** plan-ceo-review\n",
+        "**Last Reviewed By:** plan-ceo-review\n**Delivery Lane:** lightweight_change\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Last Reviewed By:** plan-eng-review\n",
+        "**Last Reviewed By:** plan-eng-review\n**Delivery Lane:** lightweight_change\n",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), repo_root.join(PLAN_REL))
+        .expect("analysis should succeed even when lightweight qualification fails");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert_eq!(report.spec_delivery_lane, "lightweight_change");
+    assert_eq!(report.plan_delivery_lane, "lightweight_change");
+    assert_eq!(report.effective_delivery_lane, "standard");
+    assert!(!report.lightweight_qualified);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "lightweight_missing_safety_justification")
+    );
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "lightweight_lane_escalated")
+    );
+}
+
+#[test]
+fn analyze_plan_escalates_lightweight_lane_when_security_review_is_required() {
+    let repo_root = unique_temp_dir("contract-lightweight-security-escalation");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Last Reviewed By:** plan-ceo-review\n",
+        "**Last Reviewed By:** plan-ceo-review\n**Delivery Lane:** lightweight_change\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Last Reviewed By:** plan-eng-review\n",
+        "**Last Reviewed By:** plan-eng-review\n**Delivery Lane:** lightweight_change\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "## Execution Strategy\n",
+        "## Why lightweight is safe\n\n- One bounded workflow change with no rollout complexity.\n\n## Risk & Gate Signals\n- Delivery Lane: lightweight_change\n- UI Scope: none\n- Browser QA Required: no\n- Design Review Required: no\n- Security Review Required: yes\n- Performance Review Required: no\n- Release Surface: code_only_no_deploy\n- Distribution Impact: low\n- Deploy Impact: low\n- Migration Risk: low\n\n## Execution Strategy\n",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), repo_root.join(PLAN_REL))
+        .expect("analysis should succeed even when lightweight qualification fails");
+
+    assert_eq!(report.effective_delivery_lane, "standard");
+    assert!(!report.lightweight_qualified);
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "lightweight_security_review_required")
+    );
+}
+
+#[test]
+fn analyze_plan_cli_reports_declared_lightweight_lane_fields() {
+    let repo_root = unique_temp_dir("contract-analyze-cli-lightweight-lane");
+    let state_dir = unique_temp_dir("contract-analyze-cli-lightweight-lane-state");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Workflow State:** CEO Approved\n",
+        "**Workflow State:** CEO Approved\n**Contract Version:** 2\n",
+    );
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Last Reviewed By:** plan-ceo-review\n",
+        "**Last Reviewed By:** plan-ceo-review\n**Delivery Lane:** lightweight_change\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Workflow State:** Engineering Approved\n",
+        "**Workflow State:** Engineering Approved\n**Contract Version:** 2\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Last Reviewed By:** plan-eng-review\n",
+        "**Last Reviewed By:** plan-eng-review\n**Delivery Lane:** lightweight_change\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "## Execution Strategy\n",
+        "## Why lightweight is safe\n\n- Bounded contract-only change with no rollout expansion.\n\n## Risk & Gate Signals\n- Delivery Lane: lightweight_change\n- UI Scope: none\n- Browser QA Required: no\n- Design Review Required: no\n- Security Review Required: no\n- Performance Review Required: no\n- Release Surface: code_only_no_deploy\n- Distribution Impact: low\n- Deploy Impact: low\n- Migration Risk: low\n\n## Release & Distribution Notes\n- Discoverability / Distribution Path: internal workflow update only\n- Versioning Decision: none\n- Versioning Rationale: no published surface changes\n- Deployment / Rollout Notes: none\n\n## Execution Strategy\n",
+    );
+
+    let report = parse_success_json(
+        &run_rust(
+            &repo_root,
+            &state_dir,
+            &[
+                "analyze-plan",
+                "--spec",
+                SPEC_REL,
+                "--plan",
+                PLAN_REL,
+                "--format",
+                "json",
+            ],
+            "rust analyze valid lightweight lane contract",
+        ),
+        "rust analyze valid lightweight lane contract",
+    );
+
+    assert_eq!(report["contract_state"], "valid");
+    assert_eq!(report["spec_delivery_lane"], "lightweight_change");
+    assert_eq!(report["plan_delivery_lane"], "lightweight_change");
+    assert_eq!(report["effective_delivery_lane"], "lightweight_change");
+    assert_eq!(report["lightweight_qualified"], true);
+}
+
+#[test]
+fn analyze_plan_cli_invalidates_current_version_artifacts_missing_delivery_lane() {
+    let repo_root = unique_temp_dir("contract-analyze-cli-versioned-missing-lane");
+    let state_dir = unique_temp_dir("contract-analyze-cli-versioned-missing-lane-state");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Workflow State:** CEO Approved\n",
+        "**Workflow State:** CEO Approved\n**Contract Version:** 2\n",
+    );
+
+    let report = parse_success_json(
+        &run_rust(
+            &repo_root,
+            &state_dir,
+            &[
+                "analyze-plan",
+                "--spec",
+                SPEC_REL,
+                "--plan",
+                PLAN_REL,
+                "--format",
+                "json",
+            ],
+            "rust analyze current-version artifact missing delivery lane",
+        ),
+        "rust analyze current-version artifact missing delivery lane",
+    );
+
+    assert_eq!(report["contract_state"], "invalid");
+    assert!(
+        report["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "missing_spec_delivery_lane"),
+        "current-version artifacts should fail closed on missing Delivery Lane"
+    );
+}
+
+#[test]
+fn analyze_plan_invalidates_current_version_plans_missing_risk_gate_sections() {
+    let repo_root = unique_temp_dir("contract-analyze-cli-missing-risk-gate-sections");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Workflow State:** CEO Approved\n",
+        "**Workflow State:** CEO Approved\n**Contract Version:** 2\n",
+    );
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Last Reviewed By:** plan-ceo-review\n",
+        "**Last Reviewed By:** plan-ceo-review\n**Delivery Lane:** standard\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Workflow State:** Engineering Approved\n",
+        "**Workflow State:** Engineering Approved\n**Contract Version:** 2\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Last Reviewed By:** plan-eng-review\n",
+        "**Last Reviewed By:** plan-eng-review\n**Delivery Lane:** standard\n",
+    );
+
+    let report = analyze_plan(repo_root.join(SPEC_REL), repo_root.join(PLAN_REL))
+        .expect("analysis should succeed and report missing required plan sections");
+
+    assert_eq!(report.contract_state, "invalid");
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "missing_plan_risk_gate_signals"),
+        "current-version plans should fail closed when `Risk & Gate Signals` is missing, got {:?}",
+        report.reason_codes
+    );
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "missing_plan_release_distribution_notes"),
+        "current-version plans should fail closed when `Release & Distribution Notes` is missing, got {:?}",
+        report.reason_codes
+    );
+}
+
+#[test]
+fn analyze_plan_cli_invalidates_current_version_plans_missing_risk_gate_sections() {
+    let repo_root = unique_temp_dir("contract-analyze-cli-missing-risk-gate-sections-json");
+    let state_dir = unique_temp_dir("contract-analyze-cli-missing-risk-gate-sections-json-state");
+    install_valid_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Workflow State:** CEO Approved\n",
+        "**Workflow State:** CEO Approved\n**Contract Version:** 2\n",
+    );
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Last Reviewed By:** plan-ceo-review\n",
+        "**Last Reviewed By:** plan-ceo-review\n**Delivery Lane:** standard\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Workflow State:** Engineering Approved\n",
+        "**Workflow State:** Engineering Approved\n**Contract Version:** 2\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Last Reviewed By:** plan-eng-review\n",
+        "**Last Reviewed By:** plan-eng-review\n**Delivery Lane:** standard\n",
+    );
+
+    let report = parse_success_json(
+        &run_rust(
+            &repo_root,
+            &state_dir,
+            &[
+                "analyze-plan",
+                "--spec",
+                SPEC_REL,
+                "--plan",
+                PLAN_REL,
+                "--format",
+                "json",
+            ],
+            "rust analyze current-version plan missing risk-gate sections",
+        ),
+        "rust analyze current-version plan missing risk-gate sections",
+    );
+
+    assert_eq!(report["contract_state"], "invalid");
+    assert!(
+        report["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "missing_plan_risk_gate_signals"),
+        "current-version CLI analysis should fail closed on missing Risk & Gate Signals"
+    );
+    assert!(
+        report["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "missing_plan_release_distribution_notes"),
+        "current-version CLI analysis should fail closed on missing Release & Distribution Notes"
+    );
+}
+
+#[test]
+fn record_plan_fidelity_rejects_missing_delivery_lane_verification_when_declared() {
+    let repo_root = unique_temp_dir("contract-plan-fidelity-delivery-lane-verification");
+    let state_dir = unique_temp_dir("contract-plan-fidelity-delivery-lane-verification-state");
+    install_valid_draft_artifacts(&repo_root);
+
+    replace_in_file(
+        &repo_root.join(SPEC_REL),
+        "**Last Reviewed By:** plan-ceo-review\n",
+        "**Last Reviewed By:** plan-ceo-review\n**Delivery Lane:** standard\n",
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Last Reviewed By:** writing-plans\n",
+        "**Last Reviewed By:** writing-plans\n**Delivery Lane:** standard\n",
+    );
+
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-missing-delivery-lane.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-missing-delivery-lane",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
+    );
+
+    let failure = parse_failure_json(
+        &run_record_plan_fidelity(
+            &repo_root,
+            &state_dir,
+            &[
+                "record",
+                "--plan",
+                PLAN_REL,
+                "--review-artifact",
+                ".featureforge/reviews/plan-fidelity-missing-delivery-lane.md",
+                "--json",
+            ],
+            "record plan-fidelity should require delivery-lane verification when declared",
+        ),
+        "record plan-fidelity should require delivery-lane verification when declared",
+    );
+
+    assert_eq!(failure["error_class"], "InstructionParseFailed");
 }
 
 #[test]
@@ -1142,9 +1564,13 @@ fn analyze_plan_detects_stale_source_spec_linkage() {
     let report =
         analyze_plan(repo_root.join(SPEC_REL), plan_path).expect("analysis should succeed");
     assert_eq!(report.contract_state, "invalid");
-    assert_eq!(
-        report.reason_codes,
-        vec![String::from("stale_spec_plan_linkage")]
+    assert!(
+        report
+            .reason_codes
+            .iter()
+            .any(|code| code == "stale_spec_plan_linkage"),
+        "expected stale spec linkage reason code, got {:?}",
+        report.reason_codes
     );
     assert!(report.coverage_complete);
 }
@@ -1312,7 +1738,22 @@ fn analyze_plan_cli_reports_fixture_matrix() {
             "required_worktrees": 2
         }])
     );
-    assert_eq!(valid["reason_codes"], Value::Array(vec![]));
+    assert!(
+        valid["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "spec_delivery_lane_inferred"),
+        "legacy fixtures should surface inferred spec delivery-lane state"
+    );
+    assert!(
+        valid["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "plan_delivery_lane_inferred"),
+        "legacy fixtures should surface inferred plan delivery-lane state"
+    );
     assert_eq!(valid["diagnostics"], Value::Array(vec![]));
 
     let stale_plan = repo_root.join(PLAN_REL);

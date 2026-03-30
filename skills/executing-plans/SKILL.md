@@ -139,6 +139,7 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 9. Run `featureforge plan execution preflight --plan <approved-plan-path>` before starting execution.
 10. If the preflight helper returns `allowed` `false`, stop and resolve the reported `failure_class`, `reason_codes`, and `diagnostics` before starting work.
 11. If preflight passes, review the plan critically for execution concerns and use the approved plan checklist as the execution progress record.
+12. If `featureforge plan execution recommend --plan <approved-plan-path> ...` selects worktree-backed parallel, honor the helper's `recommended_worktree_root` instead of inventing a lane path ad hoc.
 
 ## Helper-Owned Execution State
 
@@ -151,6 +152,14 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 - Coordinators and subagents may prepare candidate artifacts (for example task packets, coverage matrix context, and handoff drafts), but they must not directly invoke these commands; the runtime helper owns and executes execution-state mutations.
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:executing-plans`
 - The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker.
+
+## Worktree-Backed Lane Substrate
+
+- When the runtime selects worktree-backed parallel execution, prefer the helper-owned `recommended_worktree_root`. Existing repo-local `.worktrees/` or `worktrees/` directories still win when they already exist or repo instructions require them.
+- Treat per-lane changed-file manifests, diff stats, and harvested patch artifacts as runtime-owned evidence attached to authoritative worktree lease bindings rather than coordinator prose.
+- If runtime status exposes any lane in `resolution_required`, stop completion and merge-readiness work for that lane until the patch-harvest collision or missing metadata is resolved.
+- Task-slice fences derive from the task `Files:` block. In `audit` mode the runtime records out-of-slice writes in evidence; in `guarded` and `full` modes it requires an explicit override reason before permitting blocked-write bypasses.
+- `guarded` mode blocks out-of-slice writes for `subagent-driven-development` lanes first. `full` mode blocks them for all runtime-owned execution lanes unless an explicit override reason is captured.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 

@@ -6,6 +6,7 @@ use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 
 use crate::cli::plan_execution::{BeginArgs, CompleteArgs, NoteArgs, ReopenArgs, TransferArgs};
+use crate::contracts::harness::TaskSliceFenceMode;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::state::{
     EvidenceAttempt, ExecutionContext, ExecutionEvidence, ExecutionRuntime, FileProof,
@@ -157,7 +158,7 @@ pub fn complete(
     let mut context = load_execution_context(runtime, &args.plan)?;
     validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
     normalize_source(&request.source, &context.plan_document.execution_mode)?;
-    let authoritative_state = load_authoritative_transition_state(&context)?;
+    let mut authoritative_state = load_authoritative_transition_state(&context)?;
     enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Complete)?;
     enforce_active_contract_scope(
         authoritative_state.as_ref(),
@@ -195,6 +196,46 @@ pub fn complete(
         canonicalize_files(&request.files)?
     };
     let files = canonicalize_repo_visible_paths(&context.runtime.repo_root, &files)?;
+    let out_of_slice_files = out_of_slice_files(&context, request.task, &files)?;
+    if request.fence_false_positive && out_of_slice_files.is_empty() {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            "Fence false-positive feedback requires at least one detected out-of-slice write.",
+        ));
+    }
+    let fence_mode = authoritative_state
+        .as_ref()
+        .map(AuthoritativeTransitionState::task_slice_fence_mode)
+        .unwrap_or(TaskSliceFenceMode::Audit);
+    let requires_enforcement = matches!(fence_mode, TaskSliceFenceMode::Full)
+        || matches!(fence_mode, TaskSliceFenceMode::Guarded)
+            && request.source == "featureforge:subagent-driven-development";
+    if !out_of_slice_files.is_empty() && requires_enforcement && request.fence_override_reason.is_none()
+    {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidRepoPath,
+            format!(
+                "Detected out-of-slice writes for the current task slice: {}",
+                out_of_slice_files.join(", ")
+            ),
+        ));
+    }
+    let task_slice_fence_outcome = if out_of_slice_files.is_empty() {
+        None
+    } else if request.fence_override_reason.is_some() {
+        if let Some(authoritative_state) = authoritative_state.as_mut() {
+            authoritative_state.record_task_slice_fence_override()?;
+        }
+        Some(String::from("overridden"))
+    } else {
+        Some(String::from("detected"))
+    };
+    if let Some(authoritative_state) = authoritative_state.as_mut() {
+        authoritative_state.record_task_slice_fence_rollout_observation(
+            request.fence_false_positive,
+            request.representative_parallel_validation,
+        )?;
+    }
     let file_proofs = files
         .iter()
         .map(|path| FileProof {
@@ -245,6 +286,8 @@ pub fn complete(
         repo_state_baseline_head_sha: provenance.repo_state_baseline_head_sha,
         repo_state_baseline_worktree_fingerprint: provenance
             .repo_state_baseline_worktree_fingerprint,
+        task_slice_fence_outcome,
+        task_slice_fence_override_reason: request.fence_override_reason,
     };
 
     context.evidence.attempts.push(new_attempt);
@@ -268,6 +311,16 @@ pub fn complete(
         &rendered_evidence,
         "complete_after_plan_write",
     )?;
+    if let Some(authoritative_state) = authoritative_state.as_ref() {
+        persist_authoritative_state_with_rollback(
+            authoritative_state,
+            &context.plan_abs,
+            &context.plan_source,
+            &context.evidence_abs,
+            context.evidence.source.as_deref(),
+            "complete_after_plan_write_before_authoritative_state_publish",
+        )?;
+    }
     let reloaded = load_execution_context(runtime, &args.plan)?;
     status_from_context(&reloaded)
 }
@@ -667,6 +720,41 @@ fn default_files_for_task(context: &ExecutionContext, task_number: u32) -> Vec<S
     }
 }
 
+fn out_of_slice_files(
+    context: &ExecutionContext,
+    task_number: u32,
+    files: &[String],
+) -> Result<Vec<String>, JsonFailure> {
+    let Some(task) = context.tasks_by_number.get(&task_number) else {
+        return Ok(Vec::new());
+    };
+    let allowed_paths = task
+        .files
+        .iter()
+        .map(|entry| normalize_repo_relative_path(&entry.path))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                "Task slice fence could not normalize one or more declared task file paths.",
+            )
+        })?;
+    if allowed_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    Ok(files
+        .iter()
+        .filter(|path| path.as_str() != NO_REPO_FILES_MARKER)
+        .filter(|path| {
+            !allowed_paths.iter().any(|allowed| {
+                path.as_str() == allowed || path.starts_with(&format!("{allowed}/"))
+            })
+        })
+        .cloned()
+        .collect())
+}
+
 fn render_plan_source(
     original_source: &str,
     execution_mode: &str,
@@ -854,6 +942,18 @@ fn render_evidence_source(
             output.push(String::from("**Files Proven:**"));
             for proof in &attempt.file_proofs {
                 output.push(format!("- {} | {}", proof.path, proof.proof));
+            }
+            if let Some(task_slice_fence_outcome) = &attempt.task_slice_fence_outcome {
+                output.push(format!(
+                    "**Task Slice Fence Outcome:** {task_slice_fence_outcome}"
+                ));
+            }
+            if let Some(task_slice_fence_override_reason) =
+                &attempt.task_slice_fence_override_reason
+            {
+                output.push(format!(
+                    "**Task Slice Fence Override Reason:** {task_slice_fence_override_reason}"
+                ));
             }
             output.push(format!(
                 "**Verification Summary:** {}",

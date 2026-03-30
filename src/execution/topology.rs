@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::ExecutionTopologyArg;
+use crate::contracts::harness::TaskSliceFenceMode;
 use crate::contracts::plan::{AnalyzePlanReport, PLAN_FIDELITY_REVIEW_STAGE, PlanDocument};
 use crate::contracts::spec::SpecDocument;
 use crate::diagnostics::{DiagnosticError, FailureClass};
@@ -35,6 +36,8 @@ pub struct RecommendDecisionFlags {
 pub struct RecommendOutput {
     pub selected_topology: ExecutionTopologyArg,
     pub recommended_skill: String,
+    pub recommended_worktree_root: String,
+    pub task_slice_fence_mode: TaskSliceFenceMode,
     pub reason: String,
     pub decision_flags: RecommendDecisionFlags,
     pub reason_codes: Vec<String>,
@@ -667,6 +670,20 @@ pub(crate) fn validate_plan_fidelity_review_artifact(
         return Err(DiagnosticError::new(
             FailureClass::InstructionParseFailed,
             "Plan-fidelity review artifact must verify both `requirement_index` and `execution_topology`.",
+        ));
+    }
+    let delivery_lane_declared = spec
+        .source
+        .lines()
+        .any(|line| line.starts_with("**Delivery Lane:** "))
+        || plan
+            .source
+            .lines()
+            .any(|line| line.starts_with("**Delivery Lane:** "));
+    if delivery_lane_declared && !verified_surfaces.contains("delivery_lane") {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "Plan-fidelity review artifact must verify `delivery_lane` when the reviewed spec or plan declares `Delivery Lane`.",
         ));
     }
     let verified_requirement_ids = artifact

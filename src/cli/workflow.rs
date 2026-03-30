@@ -15,6 +15,8 @@ pub enum WorkflowCommand {
     Expect(ExpectArgs),
     Sync(SyncArgs),
     PlanFidelity(WorkflowPlanFidelityCli),
+    PlanDesignReview(WorkflowPlanDesignReviewCli),
+    SecurityReview(WorkflowSecurityReviewCli),
     Next,
     Artifacts,
     Explain,
@@ -87,13 +89,55 @@ pub struct WorkflowPlanFidelityCli {
     pub command: WorkflowPlanFidelityCommand,
 }
 
+#[derive(Debug, Args)]
+pub struct WorkflowPlanDesignReviewCli {
+    #[command(subcommand)]
+    pub command: WorkflowPlanDesignReviewCommand,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkflowSecurityReviewCli {
+    #[command(subcommand)]
+    pub command: WorkflowSecurityReviewCommand,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum WorkflowPlanFidelityCommand {
     Record(PlanFidelityRecordArgs),
 }
 
+#[derive(Debug, Subcommand)]
+pub enum WorkflowPlanDesignReviewCommand {
+    Record(PlanDesignReviewRecordArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkflowSecurityReviewCommand {
+    Record(SecurityReviewRecordArgs),
+}
+
 #[derive(Debug, Args)]
 pub struct PlanFidelityRecordArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long)]
+    pub review_artifact: PathBuf,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PlanDesignReviewRecordArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long)]
+    pub review_artifact: PathBuf,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SecurityReviewRecordArgs {
     #[arg(long)]
     pub plan: PathBuf,
     #[arg(long)]

@@ -1,0 +1,91 @@
+---
+name: plan-fidelity-review
+description: Use when an approved FeatureForge spec and current draft plan need an independent fidelity review before engineering review
+---
+
+{{REVIEW_PREAMBLE}}
+
+
+# FeatureForge Artifact Contract
+
+- Review the exact approved spec named by the draft plan and the exact current draft plan under `docs/featureforge/specs/` and `docs/featureforge/plans/`.
+- If the user names exact artifact paths, use those paths. Otherwise, inspect the current workflow-routed draft plan and its `**Source Spec:**` path.
+- Stop and return to `featureforge:writing-plans` when the source spec is missing, not `CEO Approved`, the draft plan is missing, or the draft plan does not stay in `Draft` state.
+- This skill reviews only fidelity. It does not expand business scope, approve engineering execution, or start implementation.
+- The draft plan must keep these exact header lines:
+
+```markdown
+**Workflow State:** Draft
+**Plan Revision:** <integer>
+**Execution Mode:** none | featureforge:executing-plans | featureforge:subagent-driven-development
+**Source Spec:** <path>
+**Source Spec Revision:** <integer>
+```
+
+- The source spec must keep these exact approval headers:
+
+```markdown
+**Workflow State:** CEO Approved
+**Spec Revision:** <integer>
+**Last Reviewed By:** plan-ceo-review
+```
+
+- Use the reviewer checklist in `skills/plan-fidelity-review/references/checklist.md` as the minimum fidelity floor.
+
+## Review Scope
+
+Review only whether the draft plan faithfully implements the approved spec and its own execution contract.
+
+At minimum, verify:
+
+- requirement-index completeness against the approved spec
+- coverage fidelity between approved requirements and planned tasks
+- execution-topology fidelity versus the plan's `Execution Strategy` and `Dependency Diagram`
+- delivery-lane fidelity when the spec and plan declare `**Delivery Lane:**`
+- file-scope and task-scope fidelity for the plan's `Files:` blocks
+
+Do not treat this as a chance to reopen product direction. If fidelity fails, return the plan to `featureforge:writing-plans` with concrete corrections.
+
+## Review Artifact
+
+Write a dedicated independent review artifact under `.featureforge/reviews/` for the exact plan/spec revision pair.
+
+The artifact must include:
+
+- `Review Stage: featureforge:plan-fidelity-review`
+- `Review Verdict: pass` or `Review Verdict: revise`
+- exact reviewed spec and plan paths, revisions, and fingerprints
+- reviewer provenance that stays distinct from `featureforge:writing-plans` and `featureforge:plan-eng-review`
+- verified surfaces, including `requirement_index` and `execution_topology`, plus `delivery_lane` whenever the reviewed spec or plan declares `Delivery Lane`
+- verified requirement ids
+- requirement coverage gaps, topology concerns, lane mismatches, and pass/fail rationale
+
+## Record the Runtime-Owned Receipt
+
+After a passing dedicated review artifact exists, record the runtime-owned receipt through the existing helper flow:
+
+```bash
+"$_FEATUREFORGE_BIN" workflow plan-fidelity record --plan docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md \
+  --review-artifact .featureforge/reviews/YYYY-MM-DD-<feature-name>-plan-fidelity.md
+```
+
+- Do not hand-author the receipt.
+- Do not treat a markdown note inside the plan as authoritative evidence.
+- Do not invoke `featureforge:plan-eng-review` until the runtime-owned receipt exists in pass state for the current draft plan revision and approved spec revision.
+
+## Return Path
+
+- If fidelity fails or the receipt cannot be recorded cleanly, return control to `featureforge:writing-plans`.
+- If fidelity passes and the receipt records successfully, return control to `featureforge:plan-eng-review`.
+
+**The terminal state is either returning the plan to writing-plans for fidelity fixes or handing the exact same draft plan forward to engineering review after a fresh pass receipt.**
+
+## Stop Conditions
+
+Stop and ask for clarification instead of guessing when:
+
+- the approved spec path and the plan's `**Source Spec:**` disagree
+- the plan revision changed after the review artifact was written
+- the approved spec revision changed after the review artifact was written
+- the review artifact cannot prove independent reviewer provenance
+- the plan's execution-topology claims are ambiguous or internally inconsistent

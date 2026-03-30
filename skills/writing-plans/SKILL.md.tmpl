@@ -76,6 +76,8 @@ Before breaking work into tasks, make sure the plan explicitly covers:
 
 - change surface
 - preconditions
+- `Risk & Gate Signals`
+- `Release & Distribution Notes`
 - execution strategy
 - `Requirement Coverage Matrix`
 - ordered implementation steps
@@ -85,6 +87,44 @@ Before breaking work into tasks, make sure the plan explicitly covers:
 - rollout plan
 - rollback plan
 - risks and mitigations
+
+## Lightweight Lane
+
+If the approved spec declares `**Delivery Lane:** lightweight_change`, keep the full plan contract but compress the prose.
+
+- for current plan contract revisions, keep the header block explicit with `**Contract Version:** 2` and `**Delivery Lane:** standard | lightweight_change`
+- add a short `## Why lightweight is safe` note explaining why the bounded change still fits the lightweight lane
+- add explicit `## Risk & Gate Signals` and `## Release & Distribution Notes` sections so downstream gates become runtime-owned routing truth instead of reviewer guesswork
+- keep `Requirement Coverage Matrix`, `Files:` blocks, approvals, and plan-fidelity review unchanged
+- prefer serial execution unless isolated parallel work is explicitly proven safe
+
+## Dynamic Gate Contract
+
+Current-version plans must include these exact sections once the approved spec is execution-bound:
+
+```markdown
+## Risk & Gate Signals
+- Delivery Lane: standard | lightweight_change
+- UI Scope: none | minor | material
+- Browser QA Required: yes | no
+- Design Review Required: yes | no
+- Security Review Required: yes | no
+- Performance Review Required: yes | no
+- Release Surface: docs_only | code_only_no_deploy | library_package | app_service_deploy
+- Distribution Impact: none | low | high
+- Deploy Impact: none | low | high
+- Migration Risk: none | low | high
+
+## Release & Distribution Notes
+- Discoverability / Distribution Path: ...
+- Versioning Decision: none | patch | minor | major | unknown
+- Versioning Rationale: ...
+- Deployment / Rollout Notes: ...
+```
+
+- Draft these sections as canonical contract data, not as optional prose.
+- If `Design Review Required: yes`, plan for a dedicated `featureforge:plan-design-review` pass before engineering approval can finish.
+- If `Security Review Required: yes`, keep that requirement visible in the plan because the runtime will route to `featureforge:security-review` after implementation and before final code review.
 
 ## Search-Before-Building Carry-Through
 
@@ -278,7 +318,7 @@ After saving the full plan:
 
 2. dispatch or resume a dedicated independent plan-fidelity reviewer before `plan-eng-review` becomes reachable.
 3. The reviewer must explicitly verify both the spec `Requirement Index` and the draft plan's current execution-topology claims.
-4. Persist the dedicated reviewer output as a markdown review artifact that includes `Review Stage`, `Review Verdict`, `Reviewed Plan`, `Reviewed Plan Revision`, `Reviewed Plan Fingerprint`, `Reviewed Spec`, `Reviewed Spec Revision`, `Reviewed Spec Fingerprint`, `Reviewer Source`, `Reviewer ID`, `Distinct From Stages`, `Verified Surfaces`, and `Verified Requirement IDs`. The artifact must record `Review Verdict: pass`, bind to the exact reviewed plan/spec fingerprints, prove the reviewer stayed distinct from both `featureforge:writing-plans` and `featureforge:plan-eng-review`, and enumerate the exact Requirement Index ids that were verified before you record the runtime-owned receipt:
+4. Persist the dedicated reviewer output as a markdown review artifact that includes `Review Stage`, `Review Verdict`, `Reviewed Plan`, `Reviewed Plan Revision`, `Reviewed Plan Fingerprint`, `Reviewed Spec`, `Reviewed Spec Revision`, `Reviewed Spec Fingerprint`, `Reviewer Source`, `Reviewer ID`, `Distinct From Stages`, `Verified Surfaces`, and `Verified Requirement IDs`. The artifact must record `Review Verdict: pass`, bind to the exact reviewed plan/spec fingerprints, prove the reviewer stayed distinct from both `featureforge:writing-plans` and `featureforge:plan-eng-review`, enumerate the exact Requirement Index ids that were verified, and include `delivery_lane` in `Verified Surfaces` whenever the reviewed spec or plan declares `Delivery Lane` before you record the runtime-owned receipt:
 
 ```bash
 "$_FEATUREFORGE_BIN" workflow plan-fidelity record --plan docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md \

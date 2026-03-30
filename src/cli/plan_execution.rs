@@ -172,6 +172,12 @@ pub struct CompleteArgs {
     pub verify_result: Option<String>,
     #[arg(long = "manual-verify-summary")]
     pub manual_verify_summary: Option<String>,
+    #[arg(long = "fence-override-reason")]
+    pub fence_override_reason: Option<String>,
+    #[arg(long = "fence-false-positive", default_value_t = false)]
+    pub fence_false_positive: bool,
+    #[arg(long = "representative-parallel-validation", default_value_t = false)]
+    pub representative_parallel_validation: bool,
     #[arg(long = "expect-execution-fingerprint")]
     pub expect_execution_fingerprint: String,
 }

@@ -35,6 +35,8 @@ pub struct FinalReviewReceipt {
     pub generated_by: Option<String>,
     pub recorded_execution_deviations: Option<String>,
     pub deviation_review_verdict: Option<String>,
+    pub scope_check_result: Option<String>,
+    pub scope_check_resolution: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +50,8 @@ struct ReviewerArtifactExpectations<'a> {
     expected_base_branch: &'a str,
     expected_deviation_record: &'a str,
     expected_deviation_verdict: &'a str,
+    expected_scope_check_result: &'a str,
+    expected_scope_check_resolution: &'a str,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -84,6 +88,8 @@ pub enum FinalReviewReceiptIssue {
     GeneratedByMismatch,
     DeviationRecordMismatch,
     DeviationReviewVerdictMismatch,
+    ScopeCheckResultMissing,
+    ScopeCheckResolutionInvalid,
 }
 
 impl FinalReviewReceiptIssue {
@@ -123,6 +129,10 @@ impl FinalReviewReceiptIssue {
             Self::GeneratedByMismatch => "review_receipt_generator_mismatch",
             Self::DeviationRecordMismatch => "review_receipt_deviation_record_mismatch",
             Self::DeviationReviewVerdictMismatch => "review_receipt_deviation_verdict_mismatch",
+            Self::ScopeCheckResultMissing => "review_receipt_scope_check_missing",
+            Self::ScopeCheckResolutionInvalid => {
+                "review_receipt_scope_check_resolution_invalid"
+            }
         }
     }
 
@@ -192,6 +202,12 @@ impl FinalReviewReceiptIssue {
             Self::DeviationReviewVerdictMismatch => {
                 "The latest code-review artifact has an invalid execution-deviation review verdict."
             }
+            Self::ScopeCheckResultMissing => {
+                "The latest code-review artifact is missing a valid scope-check result classification."
+            }
+            Self::ScopeCheckResolutionInvalid => {
+                "The latest code-review artifact has an invalid scope-check resolution for its scope-check result."
+            }
         }
     }
 }
@@ -250,6 +266,8 @@ pub fn parse_final_review_receipt(path: &Path) -> FinalReviewReceipt {
             .get("Recorded Execution Deviations")
             .cloned(),
         deviation_review_verdict: document.headers.get("Deviation Review Verdict").cloned(),
+        scope_check_result: document.headers.get("Scope Check Result").cloned(),
+        scope_check_resolution: document.headers.get("Scope Check Resolution").cloned(),
     }
 }
 
@@ -343,6 +361,8 @@ pub fn validate_final_review_receipt(
     if receipt.deviation_review_verdict.as_deref() != Some(expected_deviation_verdict) {
         return Err(FinalReviewReceiptIssue::DeviationReviewVerdictMismatch);
     }
+    let (expected_scope_check_result, expected_scope_check_resolution) =
+        validate_scope_check_contract(receipt)?;
     let expectations = ReviewerArtifactExpectations {
         expected_plan_path: expectations.expected_plan_path,
         expected_plan_revision: expectations.expected_plan_revision,
@@ -354,9 +374,49 @@ pub fn validate_final_review_receipt(
         expected_base_branch: expectations.expected_base_branch,
         expected_deviation_record,
         expected_deviation_verdict,
+        expected_scope_check_result,
+        expected_scope_check_resolution,
     };
     validate_reviewer_artifact_binding(receipt, review_receipt_path, &expectations)?;
     Ok(())
+}
+
+fn validate_scope_check_contract(
+    receipt: &FinalReviewReceipt,
+) -> Result<(&'static str, &'static str), FinalReviewReceiptIssue> {
+    let result = receipt
+        .scope_check_result
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    let resolution = receipt
+        .scope_check_resolution
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+
+    match result {
+        "CLEAN" => {
+            if resolution == "not_required" {
+                Ok(("CLEAN", "not_required"))
+            } else {
+                Err(FinalReviewReceiptIssue::ScopeCheckResolutionInvalid)
+            }
+        }
+        "DRIFT_DETECTED" => {
+            if matches!(resolution, "accepted" | "todo_follow_up" | "reopen_execution") {
+                Ok(("DRIFT_DETECTED", match resolution {
+                    "accepted" => "accepted",
+                    "todo_follow_up" => "todo_follow_up",
+                    _ => "reopen_execution",
+                }))
+            } else {
+                Err(FinalReviewReceiptIssue::ScopeCheckResolutionInvalid)
+            }
+        }
+        "REQUIREMENTS_MISSING" => Err(FinalReviewReceiptIssue::ScopeCheckResolutionInvalid),
+        _ => Err(FinalReviewReceiptIssue::ScopeCheckResultMissing),
+    }
 }
 
 pub fn resolve_release_base_branch(git_dir: &Path, current_branch: &str) -> Option<String> {
@@ -483,6 +543,22 @@ pub(crate) fn authoritative_browser_qa_artifact_path_checked(
         "browser-qa",
         "browser QA",
         "last_browser_qa_artifact_fingerprint",
+    )
+}
+
+pub(crate) fn authoritative_security_review_artifact_path_checked(
+    context: &ExecutionContext,
+) -> Result<Option<PathBuf>, JsonFailure> {
+    let Some(overlay) = load_status_authoritative_overlay_checked(context)? else {
+        return Ok(None);
+    };
+    authoritative_fingerprinted_artifact_path_checked(
+        context,
+        overlay.security_review_state.as_deref(),
+        overlay.last_security_review_artifact_fingerprint.as_deref(),
+        "security-review",
+        "security review",
+        "last_security_review_artifact_fingerprint",
     )
 }
 
@@ -1034,6 +1110,22 @@ fn reviewer_artifact_matches_final_review_contract(
         .get("Deviation Review Verdict")
         .map(String::as_str)
         != Some(expectations.expected_deviation_verdict)
+    {
+        return false;
+    }
+    if reviewer_artifact
+        .headers
+        .get("Scope Check Result")
+        .map(String::as_str)
+        != Some(expectations.expected_scope_check_result)
+    {
+        return false;
+    }
+    if reviewer_artifact
+        .headers
+        .get("Scope Check Resolution")
+        .map(String::as_str)
+        != Some(expectations.expected_scope_check_resolution)
     {
         return false;
     }

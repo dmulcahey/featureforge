@@ -7,6 +7,7 @@ use jiff::Timestamp;
 use serde_json::Value;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::contracts::harness::TaskSliceFenceMode;
 use crate::execution::gates::{
     ActiveContractState, GateAuthorityState, require_active_contract_state,
 };
@@ -169,6 +170,7 @@ impl AuthoritativeTransitionState {
             "last_handoff_path",
             "last_handoff_fingerprint",
             "last_final_review_artifact_fingerprint",
+            "last_security_review_artifact_fingerprint",
             "last_browser_qa_artifact_fingerprint",
             "last_release_docs_artifact_fingerprint",
         ] {
@@ -176,6 +178,10 @@ impl AuthoritativeTransitionState {
         }
         root.insert(
             String::from("final_review_state"),
+            Value::String(String::from("stale")),
+        );
+        root.insert(
+            String::from("security_review_state"),
             Value::String(String::from("stale")),
         );
         root.insert(
@@ -648,6 +654,113 @@ impl AuthoritativeTransitionState {
                 "repo_state_baseline_worktree_fingerprint",
             ),
         }
+    }
+
+    pub(crate) fn task_slice_fence_mode(&self) -> TaskSliceFenceMode {
+        match json_string(&self.state_payload, "task_slice_fence_mode").as_deref() {
+            Some("guarded") => TaskSliceFenceMode::Guarded,
+            Some("full") => TaskSliceFenceMode::Full,
+            _ => TaskSliceFenceMode::Audit,
+        }
+    }
+
+    pub(crate) fn record_task_slice_fence_override(&mut self) -> Result<(), JsonFailure> {
+        let next_override_count = json_u64(&self.state_payload, "blocked_write_override_count") + 1;
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("blocked_write_override_count"),
+            Value::Number(next_override_count.into()),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn record_task_slice_fence_rollout_observation(
+        &mut self,
+        fence_false_positive: bool,
+        representative_parallel_validation: bool,
+    ) -> Result<(), JsonFailure> {
+        let execution_run_id = self
+            .state_payload
+            .get("run_identity")
+            .and_then(Value::as_object)
+            .and_then(|run_identity| run_identity.get("execution_run_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown-run")
+            .to_owned();
+        let rollout_run_already_recorded = json_string(
+            &self.state_payload,
+            "last_rollout_window_execution_run_id",
+        )
+        .as_deref()
+            == Some(execution_run_id.as_str());
+        let representative_parallel_run_already_recorded = json_string(
+            &self.state_payload,
+            "last_representative_parallel_validation_execution_run_id",
+        )
+        .as_deref()
+            == Some(execution_run_id.as_str());
+        let next_rollout_window_run_count = if rollout_run_already_recorded {
+            None
+        } else {
+            Some(json_u64(&self.state_payload, "rollout_window_run_count") + 1)
+        };
+        let next_fence_false_positive_count = if fence_false_positive {
+            Some(json_u64(&self.state_payload, "fence_false_positive_count") + 1)
+        } else {
+            None
+        };
+        let next_representative_parallel_run_validation_count =
+            if representative_parallel_validation && !representative_parallel_run_already_recorded {
+                Some(
+                    json_u64(
+                        &self.state_payload,
+                        "representative_parallel_run_validation_count",
+                    ) + 1,
+                )
+            } else {
+                None
+            };
+        if next_rollout_window_run_count.is_none()
+            && next_fence_false_positive_count.is_none()
+            && next_representative_parallel_run_validation_count.is_none()
+        {
+            return Ok(());
+        }
+
+        let root = self.root_object_mut()?;
+        if let Some(next_rollout_window_run_count) = next_rollout_window_run_count {
+            root.insert(
+                String::from("rollout_window_run_count"),
+                Value::Number(next_rollout_window_run_count.into()),
+            );
+            root.insert(
+                String::from("last_rollout_window_execution_run_id"),
+                Value::String(execution_run_id.clone()),
+            );
+        }
+        if let Some(next_fence_false_positive_count) = next_fence_false_positive_count {
+            root.insert(
+                String::from("fence_false_positive_count"),
+                Value::Number(next_fence_false_positive_count.into()),
+            );
+        }
+        if let Some(next_representative_parallel_run_validation_count) =
+            next_representative_parallel_run_validation_count
+        {
+            root.insert(
+                String::from("representative_parallel_run_validation_count"),
+                Value::Number(next_representative_parallel_run_validation_count.into()),
+            );
+            root.insert(
+                String::from("last_representative_parallel_validation_execution_run_id"),
+                Value::String(execution_run_id),
+            );
+        }
+        self.dirty = true;
+        Ok(())
     }
 
     pub(crate) fn persist_if_dirty_with_failpoint(

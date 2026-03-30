@@ -18,8 +18,10 @@ pub struct Requirement {
 pub struct SpecDocument {
     pub path: String,
     pub workflow_state: String,
+    pub contract_version: u32,
     pub spec_revision: u32,
     pub last_reviewed_by: String,
+    pub delivery_lane: String,
     pub requirements: Vec<Requirement>,
     #[serde(skip)]
     pub source: String,
@@ -38,20 +40,49 @@ pub fn parse_spec_file(path: impl AsRef<Path>) -> Result<SpecDocument, Diagnosti
 
 pub fn parse_spec_source(path: &Path, source: String) -> Result<SpecDocument, DiagnosticError> {
     let workflow_state = parse_required_header(&source, "Workflow State")?;
+    let contract_version = parse_contract_version(&source)?;
     let spec_revision = parse_required_header(&source, "Spec Revision")?
         .parse::<u32>()
         .map_err(|_| missing_header("Spec Revision"))?;
     let last_reviewed_by = parse_required_header(&source, "Last Reviewed By")?;
+    let delivery_lane = parse_delivery_lane(&source, contract_version)?;
     let requirements = parse_requirement_index(&source)?;
 
     Ok(SpecDocument {
         path: repo_relative_string(path),
         workflow_state,
+        contract_version,
         spec_revision,
         last_reviewed_by,
+        delivery_lane,
         requirements,
         source,
     })
+}
+
+const CURRENT_SPEC_CONTRACT_VERSION: u32 = 2;
+
+fn parse_contract_version(source: &str) -> Result<u32, DiagnosticError> {
+    match headers::parse_required_header(source, "Contract Version") {
+        Some(raw) => raw
+            .parse::<u32>()
+            .map_err(|_| malformed_header("Contract Version")),
+        None => Ok(1),
+    }
+}
+
+fn parse_delivery_lane(source: &str, contract_version: u32) -> Result<String, DiagnosticError> {
+    let delivery_lane = match headers::parse_required_header(source, "Delivery Lane") {
+        Some(delivery_lane) => delivery_lane,
+        None if contract_version >= CURRENT_SPEC_CONTRACT_VERSION => {
+            return Err(missing_header("Delivery Lane"));
+        }
+        None => String::from("standard"),
+    };
+    match delivery_lane.as_str() {
+        "standard" | "lightweight_change" => Ok(delivery_lane),
+        _ => Err(malformed_header("Delivery Lane")),
+    }
 }
 
 fn parse_required_header(source: &str, header: &str) -> Result<String, DiagnosticError> {
@@ -120,6 +151,13 @@ fn missing_header(header: &str) -> DiagnosticError {
     DiagnosticError::new(
         FailureClass::InstructionParseFailed,
         format!("Missing or malformed {header} header."),
+    )
+}
+
+fn malformed_header(header: &str) -> DiagnosticError {
+    DiagnosticError::new(
+        FailureClass::InstructionParseFailed,
+        format!("Malformed {header} header."),
     )
 }
 

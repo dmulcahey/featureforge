@@ -48,6 +48,50 @@ impl WorktreeLeaseState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum WorktreeLaneTerminalState {
+    MergeReady,
+    ResolutionRequired,
+    Abandoned,
+}
+
+impl WorktreeLaneTerminalState {
+    pub const ALL: [Self; 3] = [
+        Self::MergeReady,
+        Self::ResolutionRequired,
+        Self::Abandoned,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MergeReady => "merge_ready",
+            Self::ResolutionRequired => "resolution_required",
+            Self::Abandoned => "abandoned",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSliceFenceMode {
+    Audit,
+    Guarded,
+    Full,
+}
+
+impl TaskSliceFenceMode {
+    pub const ALL: [Self; 3] = [Self::Audit, Self::Guarded, Self::Full];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Audit => "audit",
+            Self::Guarded => "guarded",
+            Self::Full => "full",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum DowngradeReasonClass {
     WriteScopeOverlap,
     DependencyMismatch,

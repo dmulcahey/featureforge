@@ -3,50 +3,52 @@
   "title": "PlanExecutionStatus",
   "type": "object",
   "properties": {
+    "abandoned_lane_count": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
     "active_contract_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "active_contract_path": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "active_step": {
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": ["integer", "null"],
       "format": "uint32",
       "minimum": 0
     },
     "active_task": {
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": ["integer", "null"],
       "format": "uint32",
       "minimum": 0
+    },
+    "active_worktree_lease_bindings": {
+      "type": ["array", "null"],
+      "items": {
+        "$ref": "#/$defs/WorktreeLeaseBindingSnapshot"
+      }
     },
     "aggregate_evaluation_state": {
       "$ref": "#/$defs/AggregateEvaluationState"
     },
+    "blocked_write_override_count": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "blocked_write_override_rate": {
+      "type": "number",
+      "format": "double"
+    },
     "blocking_step": {
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": ["integer", "null"],
       "format": "uint32",
       "minimum": 0
     },
     "blocking_task": {
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": ["integer", "null"],
       "format": "uint32",
       "minimum": 0
     },
@@ -122,6 +124,15 @@
     "execution_started": {
       "type": "string"
     },
+    "fence_false_positive_count": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "fence_false_positive_rate": {
+      "type": "number",
+      "format": "double"
+    },
     "final_review_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"
     },
@@ -132,10 +143,7 @@
       "$ref": "#/$defs/HarnessPhase"
     },
     "last_browser_qa_artifact_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "last_evaluation_evaluator_kind": {
       "anyOf": [
@@ -148,16 +156,10 @@
       ]
     },
     "last_evaluation_report_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "last_evaluation_report_path": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "last_evaluation_verdict": {
       "anyOf": [
@@ -170,22 +172,16 @@
       ]
     },
     "last_final_review_artifact_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "last_release_docs_artifact_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
+    },
+    "last_security_review_artifact_fingerprint": {
+      "type": ["string", "null"]
     },
     "last_strategy_checkpoint_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "latest_authoritative_sequence": {
       "type": "integer",
@@ -193,22 +189,18 @@
       "minimum": 0
     },
     "latest_base_sha": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "latest_head_sha": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "latest_packet_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
+    },
+    "merge_ready_lane_count": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
     },
     "non_passing_evaluator_kinds": {
       "type": "array",
@@ -243,19 +235,18 @@
       "$ref": "#/$defs/DownstreamFreshnessState"
     },
     "repo_state_baseline_head_sha": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "repo_state_baseline_worktree_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "repo_state_drift_state": {
       "type": "string"
+    },
+    "representative_parallel_run_validation_count": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
     },
     "required_evaluator_kinds": {
       "type": "array",
@@ -273,30 +264,34 @@
         }
       ]
     },
+    "resolution_required_lane_count": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
     "resume_step": {
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": ["integer", "null"],
       "format": "uint32",
       "minimum": 0
     },
     "resume_task": {
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": ["integer", "null"],
       "format": "uint32",
       "minimum": 0
     },
     "review_stack": {
-      "type": [
-        "array",
-        "null"
-      ],
+      "type": ["array", "null"],
       "items": {
         "type": "string"
       }
+    },
+    "rollout_window_run_count": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "security_review_state": {
+      "$ref": "#/$defs/DownstreamFreshnessState"
     },
     "strategy_checkpoint_kind": {
       "type": "string"
@@ -307,6 +302,9 @@
     "strategy_state": {
       "type": "string"
     },
+    "task_slice_fence_mode": {
+      "$ref": "#/$defs/TaskSliceFenceMode"
+    },
     "warning_codes": {
       "type": "array",
       "items": {
@@ -314,19 +312,13 @@
       }
     },
     "write_authority_holder": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "write_authority_state": {
       "type": "string"
     },
     "write_authority_worktree": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     }
   },
   "required": [
@@ -348,12 +340,23 @@
     "repo_state_drift_state",
     "dependency_index_state",
     "final_review_state",
+    "security_review_state",
     "browser_qa_state",
     "release_docs_state",
     "strategy_state",
     "strategy_checkpoint_kind",
     "strategy_reset_required",
     "reason_codes",
+    "merge_ready_lane_count",
+    "resolution_required_lane_count",
+    "abandoned_lane_count",
+    "task_slice_fence_mode",
+    "fence_false_positive_count",
+    "fence_false_positive_rate",
+    "blocked_write_override_count",
+    "blocked_write_override_rate",
+    "rollout_window_run_count",
+    "representative_parallel_run_validation_count",
     "execution_mode",
     "execution_fingerprint",
     "evidence_path",
@@ -363,47 +366,26 @@
   "$defs": {
     "AggregateEvaluationState": {
       "type": "string",
-      "enum": [
-        "pass",
-        "pending",
-        "fail",
-        "blocked"
-      ]
+      "enum": ["pass", "pending", "fail", "blocked"]
     },
     "ChunkId": {
       "type": "string"
     },
     "ChunkingStrategy": {
       "type": "string",
-      "enum": [
-        "task",
-        "task-group",
-        "whole-run"
-      ]
+      "enum": ["task", "task-group", "whole-run"]
     },
     "DownstreamFreshnessState": {
       "type": "string",
-      "enum": [
-        "not_required",
-        "missing",
-        "fresh",
-        "stale"
-      ]
+      "enum": ["not_required", "missing", "fresh", "stale"]
     },
     "EvaluationVerdict": {
       "type": "string",
-      "enum": [
-        "pass",
-        "fail",
-        "blocked"
-      ]
+      "enum": ["pass", "fail", "blocked"]
     },
     "EvaluatorKind": {
       "type": "string",
-      "enum": [
-        "spec_compliance",
-        "code_quality"
-      ]
+      "enum": ["spec_compliance", "code_quality"]
     },
     "EvaluatorPolicyName": {
       "type": "string"
@@ -432,10 +414,100 @@
     },
     "ResetPolicy": {
       "type": "string",
-      "enum": [
-        "none",
-        "chunk-boundary",
-        "adaptive"
+      "enum": ["none", "chunk-boundary", "adaptive"]
+    },
+    "TaskSliceFenceMode": {
+      "type": "string",
+      "enum": ["audit", "guarded", "full"]
+    },
+    "WorktreeLaneTerminalState": {
+      "type": "string",
+      "enum": ["merge_ready", "resolution_required", "abandoned"]
+    },
+    "WorktreeLeaseBindingSnapshot": {
+      "type": "object",
+      "properties": {
+        "approved_task_packet_fingerprint": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "approved_unit_contract_fingerprint": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "changed_files_manifest_fingerprint": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "changed_files_manifest_path": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "diff_stat": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "execution_context_key": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "execution_run_id": {
+          "type": "string"
+        },
+        "harvested_patch_artifact_path": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "harvested_patch_fingerprint": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "lane_terminal_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorktreeLaneTerminalState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "lease_artifact_path": {
+          "type": "string"
+        },
+        "lease_fingerprint": {
+          "type": "string"
+        },
+        "reconcile_mode": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "reconcile_result_commit_sha": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "reconcile_result_proof_fingerprint": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "review_receipt_artifact_path": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "review_receipt_fingerprint": {
+          "type": ["string", "null"],
+          "default": null
+        },
+        "reviewed_checkpoint_commit_sha": {
+          "type": ["string", "null"],
+          "default": null
+        }
+      },
+      "required": [
+        "execution_run_id",
+        "lease_fingerprint",
+        "lease_artifact_path"
       ]
     }
   }

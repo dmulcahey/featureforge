@@ -110,6 +110,12 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 
 Report-only browser QA for web applications. Test like a user, gather evidence, score health, and never fix anything.
 
+For workflow-routed implementation work, browser QA is required only when the approved plan's `Risk & Gate Signals` says `Browser QA Required: yes`.
+
+If workflow doctor or handoff routes here, treat that runtime-owned gate decision as authoritative.
+
+In the late-stage finish order, QA is a verification gate after required pre-final-review completion work and after independent final code review.
+
 ## Browser prerequisite
 
 This skill depends on browser automation support from `playwright` or `playwright-interactive`.

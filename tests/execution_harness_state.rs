@@ -832,6 +832,7 @@ fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_
             "release_docs_state",
             "strategy_state",
             "strategy_checkpoint_kind",
+            "task_slice_fence_mode",
         ],
     );
     assert!(
@@ -893,6 +894,10 @@ fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_
             "current_chunk_retry_count",
             "current_chunk_retry_budget",
             "current_chunk_pivot_threshold",
+            "fence_false_positive_count",
+            "blocked_write_override_count",
+            "rollout_window_run_count",
+            "representative_parallel_run_validation_count",
         ],
     );
     assert!(
@@ -992,6 +997,121 @@ fn status_projects_authoritative_state_for_write_repo_dependency_downstream_and_
         status["reason_codes"],
         json!(["write_authority_conflict", "blocked_on_plan_revision"])
     );
+}
+
+#[test]
+fn status_projects_active_worktree_lane_evidence_and_terminal_counts() {
+    let (repo_dir, state_dir) = init_repo("execution-harness-state-lane-evidence");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 17,
+            "active_worktree_lease_fingerprints": [
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ],
+            "active_worktree_lease_bindings": [
+                {
+                    "execution_run_id": "run-a",
+                    "lease_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "lease_artifact_path": "worktree-lease-run-a-unit-a.json",
+                    "changed_files_manifest_path": "lane-a-changed-files.json",
+                    "diff_stat": "1 file changed, 3 insertions(+)",
+                    "harvested_patch_artifact_path": "lane-a.patch",
+                    "harvested_patch_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "lane_terminal_state": "merge_ready"
+                },
+                {
+                    "execution_run_id": "run-a",
+                    "lease_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "lease_artifact_path": "worktree-lease-run-a-unit-b.json",
+                    "changed_files_manifest_path": "lane-b-changed-files.json",
+                    "diff_stat": "2 files changed, 1 insertion(+), 1 deletion(-)",
+                    "lane_terminal_state": "resolution_required"
+                }
+            ]
+        }),
+    );
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "plan execution status lane evidence projection",
+    );
+
+    assert_eq!(status["merge_ready_lane_count"], 1);
+    assert_eq!(status["resolution_required_lane_count"], 1);
+    assert_eq!(status["abandoned_lane_count"], 0);
+    let bindings = status["active_worktree_lease_bindings"]
+        .as_array()
+        .expect("status should expose active_worktree_lease_bindings as an array");
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(
+        bindings[0]["changed_files_manifest_path"],
+        Value::String(String::from("lane-a-changed-files.json"))
+    );
+    assert_eq!(
+        bindings[0]["lane_terminal_state"],
+        Value::String(String::from("merge_ready"))
+    );
+    assert_eq!(
+        bindings[1]["lane_terminal_state"],
+        Value::String(String::from("resolution_required"))
+    );
+}
+
+#[test]
+fn status_projects_task_slice_fence_mode_and_rollout_counters() {
+    let (repo_dir, state_dir) = init_repo("execution-harness-state-task-slice-fence");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 23,
+            "task_slice_fence_mode": "guarded",
+            "fence_false_positive_count": 1,
+            "blocked_write_override_count": 2,
+            "rollout_window_run_count": 40,
+            "representative_parallel_run_validation_count": 3
+        }),
+    );
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "plan execution status task-slice fence rollout projection",
+    );
+
+    assert_eq!(status["task_slice_fence_mode"], "guarded");
+    assert_eq!(status["fence_false_positive_count"], 1);
+    assert_eq!(status["blocked_write_override_count"], 2);
+    assert_eq!(status["rollout_window_run_count"], 40);
+    assert_eq!(status["representative_parallel_run_validation_count"], 3);
+    let false_positive_rate = status["fence_false_positive_rate"]
+        .as_f64()
+        .expect("status should expose fence_false_positive_rate as a number");
+    let override_rate = status["blocked_write_override_rate"]
+        .as_f64()
+        .expect("status should expose blocked_write_override_rate as a number");
+    assert!((false_positive_rate - 0.025).abs() < f64::EPSILON);
+    assert!((override_rate - 0.05).abs() < f64::EPSILON);
 }
 
 #[test]

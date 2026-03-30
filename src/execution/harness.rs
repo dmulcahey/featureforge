@@ -5,6 +5,8 @@ use std::str::FromStr;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::contracts::harness::WorktreeLaneTerminalState;
+
 pub const INITIAL_AUTHORITATIVE_SEQUENCE: u64 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -266,6 +268,18 @@ pub struct WorktreeLeaseBindingSnapshot {
     pub review_receipt_fingerprint: Option<String>,
     #[serde(default)]
     pub review_receipt_artifact_path: Option<String>,
+    #[serde(default)]
+    pub changed_files_manifest_path: Option<String>,
+    #[serde(default)]
+    pub changed_files_manifest_fingerprint: Option<String>,
+    #[serde(default)]
+    pub diff_stat: Option<String>,
+    #[serde(default)]
+    pub harvested_patch_artifact_path: Option<String>,
+    #[serde(default)]
+    pub harvested_patch_fingerprint: Option<String>,
+    #[serde(default)]
+    pub lane_terminal_state: Option<WorktreeLaneTerminalState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -298,9 +312,11 @@ pub enum DownstreamFreshnessState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DownstreamFreshnessSnapshot {
     pub final_review_state: DownstreamFreshnessState,
+    pub security_review_state: DownstreamFreshnessState,
     pub browser_qa_state: DownstreamFreshnessState,
     pub release_docs_state: DownstreamFreshnessState,
     pub last_final_review_artifact_fingerprint: Option<String>,
+    pub last_security_review_artifact_fingerprint: Option<String>,
     pub last_browser_qa_artifact_fingerprint: Option<String>,
     pub last_release_docs_artifact_fingerprint: Option<String>,
 }

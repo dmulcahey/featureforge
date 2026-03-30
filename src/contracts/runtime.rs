@@ -14,10 +14,11 @@ use crate::cli::plan_contract::{
 use crate::contracts::plan::{
     AnalyzePlanReport, ContractDiagnostic, OverlappingWriteScope, PLAN_FIDELITY_RECEIPT_KIND,
     PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION, PlanDocument, PlanFidelityReceipt,
-    PlanFidelityReviewerProvenance, PlanFidelityVerification, analyze_execution_topology,
-    evaluate_plan_fidelity_receipt_at_path, parse_plan_file, plan_fidelity_receipt_path_for_repo,
+    PlanFidelityReviewerProvenance, PlanFidelityVerification, analyze_documents,
+    analyze_execution_topology, evaluate_plan_fidelity_receipt_at_path, parse_plan_file,
+    parse_plan_source, plan_fidelity_receipt_path_for_repo,
 };
-use crate::contracts::spec::{SpecDocument, parse_spec_file};
+use crate::contracts::spec::{SpecDocument, parse_spec_file, parse_spec_source};
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::git::discover_slug_identity;
 use crate::paths::{
@@ -108,6 +109,12 @@ struct TaskParseError {
 struct LintContractError {
     error_class: String,
     message: String,
+}
+
+#[derive(Debug, Clone)]
+struct SoftLaneHeader {
+    delivery_lane: String,
+    inferred: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -718,9 +725,13 @@ fn analyze_contract(
         spec_path: spec_path.to_owned(),
         spec_revision: 0,
         spec_fingerprint: sha256_hex(spec_source.as_bytes()),
+        spec_delivery_lane: String::from("standard"),
         plan_path: plan_path.to_owned(),
         plan_revision: 0,
         plan_fingerprint: sha256_hex(plan_source.as_bytes()),
+        plan_delivery_lane: String::from("standard"),
+        effective_delivery_lane: String::from("standard"),
+        lightweight_qualified: false,
         task_count: 0,
         packet_buildable_tasks: 0,
         coverage_complete: true,
@@ -1047,8 +1058,39 @@ fn analyze_contract(
     for diagnostic in topology.diagnostics {
         push_reason(&mut report, &diagnostic.code, &diagnostic.message);
     }
+    if let Some(strict_delivery_lane_report) = strict_delivery_lane_report(
+        spec_path,
+        plan_path,
+        spec_source,
+        plan_source,
+    ) {
+        report.spec_delivery_lane = strict_delivery_lane_report.spec_delivery_lane;
+        report.plan_delivery_lane = strict_delivery_lane_report.plan_delivery_lane;
+        report.effective_delivery_lane = strict_delivery_lane_report.effective_delivery_lane;
+        report.lightweight_qualified = strict_delivery_lane_report.lightweight_qualified;
+        for code in strict_delivery_lane_report.reason_codes {
+            if is_delivery_lane_reason_code(&code) || is_gate_signal_reason_code(&code)
+                && !report.reason_codes.iter().any(|existing| existing == &code)
+            {
+                report.reason_codes.push(code);
+            }
+        }
+        for diagnostic in strict_delivery_lane_report.diagnostics {
+            if (is_delivery_lane_reason_code(&diagnostic.code)
+                || is_gate_signal_reason_code(&diagnostic.code))
+                && !report
+                    .diagnostics
+                    .iter()
+                    .any(|existing| existing.code == diagnostic.code)
+            {
+                report.diagnostics.push(diagnostic);
+            }
+        }
+    } else {
+        apply_soft_delivery_lane_headers(&mut report, spec_source, plan_source);
+    }
     report.overlapping_write_scopes = overlapping_scopes(&task_scopes);
-    if report.reason_codes.is_empty() {
+    if report.diagnostics.is_empty() {
         report.contract_state = String::from("valid");
     }
     if headers.is_none() {
@@ -1991,6 +2033,145 @@ fn push_reason(report: &mut AnalyzePlanReport, code: &str, message: &str) {
             code: code.to_owned(),
             message: message.to_owned(),
         });
+    }
+}
+
+fn strict_delivery_lane_report(
+    spec_path: &str,
+    plan_path: &str,
+    spec_source: &str,
+    plan_source: &str,
+) -> Option<AnalyzePlanReport> {
+    let spec = parse_spec_source(Path::new(spec_path), spec_source.to_owned()).ok()?;
+    let plan = parse_plan_source(Path::new(plan_path), plan_source.to_owned()).ok()?;
+    Some(analyze_documents(&spec, &plan))
+}
+
+fn is_delivery_lane_reason_code(code: &str) -> bool {
+    matches!(
+        code,
+        "spec_delivery_lane_inferred"
+            | "plan_delivery_lane_inferred"
+            | "missing_spec_delivery_lane"
+            | "missing_plan_delivery_lane"
+            | "malformed_spec_delivery_lane"
+            | "malformed_plan_delivery_lane"
+            | "malformed_spec_contract_version"
+            | "malformed_plan_contract_version"
+            | "delivery_lane_mismatch"
+    ) || code.starts_with("lightweight_")
+}
+
+fn is_gate_signal_reason_code(code: &str) -> bool {
+    matches!(
+        code,
+        "missing_plan_risk_gate_signals"
+            | "missing_plan_release_distribution_notes"
+            | "release_distribution_notes_path_missing"
+            | "release_distribution_notes_versioning_rationale_missing"
+            | "release_distribution_notes_rollout_missing"
+    ) || code.starts_with("risk_gate_")
+        || code.starts_with("release_distribution_notes_")
+}
+
+fn apply_soft_delivery_lane_headers(
+    report: &mut AnalyzePlanReport,
+    spec_source: &str,
+    plan_source: &str,
+) {
+    let spec_lane = parse_soft_lane_header(spec_source, "spec", report);
+    let plan_lane = parse_soft_lane_header(plan_source, "plan", report);
+
+    report.spec_delivery_lane = spec_lane.delivery_lane.clone();
+    report.plan_delivery_lane = plan_lane.delivery_lane.clone();
+    report.effective_delivery_lane = if spec_lane.delivery_lane == plan_lane.delivery_lane {
+        plan_lane.delivery_lane.clone()
+    } else {
+        String::from("standard")
+    };
+    report.lightweight_qualified = false;
+
+    if spec_lane.inferred && !report.reason_codes.iter().any(|code| code == "spec_delivery_lane_inferred") {
+        report
+            .reason_codes
+            .push(String::from("spec_delivery_lane_inferred"));
+    }
+    if plan_lane.inferred && !report.reason_codes.iter().any(|code| code == "plan_delivery_lane_inferred") {
+        report
+            .reason_codes
+            .push(String::from("plan_delivery_lane_inferred"));
+    }
+    if spec_lane.delivery_lane != plan_lane.delivery_lane
+        && (find_header_value(spec_source, "Delivery Lane").is_some()
+            || find_header_value(plan_source, "Delivery Lane").is_some())
+    {
+        push_reason(
+            report,
+            "delivery_lane_mismatch",
+            "Spec and plan Delivery Lane headers must agree.",
+        );
+    }
+}
+
+fn parse_soft_lane_header(
+    source: &str,
+    artifact_kind: &str,
+    report: &mut AnalyzePlanReport,
+) -> SoftLaneHeader {
+    let contract_version = match parse_soft_contract_version(source) {
+        Ok(version) => version,
+        Err(()) => {
+            push_reason(
+                report,
+                &format!("malformed_{artifact_kind}_contract_version"),
+                "Contract Version header is malformed.",
+            );
+            1
+        }
+    };
+
+    match find_header_value(source, "Delivery Lane") {
+        Some("standard") => SoftLaneHeader {
+            delivery_lane: String::from("standard"),
+            inferred: false,
+        },
+        Some("lightweight_change") => SoftLaneHeader {
+            delivery_lane: String::from("lightweight_change"),
+            inferred: false,
+        },
+        Some(_) => {
+            push_reason(
+                report,
+                &format!("malformed_{artifact_kind}_delivery_lane"),
+                "Delivery Lane header is malformed.",
+            );
+            SoftLaneHeader {
+                delivery_lane: String::from("standard"),
+                inferred: false,
+            }
+        }
+        None if contract_version >= 2 => {
+            push_reason(
+                report,
+                &format!("missing_{artifact_kind}_delivery_lane"),
+                "Current-version artifacts must declare `Delivery Lane` explicitly.",
+            );
+            SoftLaneHeader {
+                delivery_lane: String::from("standard"),
+                inferred: false,
+            }
+        }
+        None => SoftLaneHeader {
+            delivery_lane: String::from("standard"),
+            inferred: true,
+        },
+    }
+}
+
+fn parse_soft_contract_version(source: &str) -> Result<u32, ()> {
+    match find_header_value(source, "Contract Version") {
+        Some(raw) => raw.parse::<u32>().map_err(|_| ()),
+        None => Ok(1),
     }
 }
 

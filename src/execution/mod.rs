@@ -9,3 +9,4 @@ pub mod observability;
 pub mod state;
 pub mod topology;
 pub mod transitions;
+pub mod worktree_manager;

@@ -9,8 +9,9 @@ use serde_json::Value;
 
 use crate::cli::plan_execution::{RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs};
 use crate::contracts::harness::{
-    EvaluationReport, ExecutionContract, ExecutionHandoff, WorktreeLease, read_evaluation_report,
-    read_execution_contract, read_execution_handoff,
+    EvaluationReport, ExecutionContract, ExecutionHandoff, WORKTREE_LEASE_VERSION,
+    WorktreeLease, WorktreeLeaseState, read_evaluation_report, read_execution_contract,
+    read_execution_handoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::dependency_index::{
@@ -319,7 +320,103 @@ impl MutableHarnessState {
             .or(self.authoritative_sequence)
             .unwrap_or(INITIAL_AUTHORITATIVE_SEQUENCE)
     }
+}
 
+
+fn persist_mutable_harness_state(
+    state: &MutableHarnessState,
+    state_path: &Path,
+) -> Result<(), JsonFailure> {
+    let serialized = serde_json::to_string_pretty(state).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not serialize authoritative harness state mutation {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    write_atomic_file(state_path, serialized).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not publish authoritative harness state {}: {error}",
+                state_path.display()
+            ),
+        )
+    })
+}
+
+fn upsert_active_worktree_lease_binding(
+    state: &mut MutableHarnessState,
+    binding: WorktreeLeaseBindingSnapshot,
+) {
+    let fingerprints = state.active_worktree_lease_fingerprints.get_or_insert_with(Vec::new);
+    if !fingerprints
+        .iter()
+        .any(|candidate| candidate == &binding.lease_fingerprint)
+    {
+        fingerprints.push(binding.lease_fingerprint.clone());
+    }
+
+    let bindings = state.active_worktree_lease_bindings.get_or_insert_with(Vec::new);
+    if let Some(existing) = bindings
+        .iter_mut()
+        .find(|candidate| candidate.lease_fingerprint == binding.lease_fingerprint)
+    {
+        existing.execution_run_id = binding.execution_run_id;
+        existing.lease_artifact_path = binding.lease_artifact_path;
+        if binding.execution_context_key.is_some() {
+            existing.execution_context_key = binding.execution_context_key;
+        }
+        if binding.approved_task_packet_fingerprint.is_some() {
+            existing.approved_task_packet_fingerprint = binding.approved_task_packet_fingerprint;
+        }
+        if binding.approved_unit_contract_fingerprint.is_some() {
+            existing.approved_unit_contract_fingerprint = binding.approved_unit_contract_fingerprint;
+        }
+        if binding.reconcile_result_proof_fingerprint.is_some() {
+            existing.reconcile_result_proof_fingerprint = binding.reconcile_result_proof_fingerprint;
+        }
+        if binding.reviewed_checkpoint_commit_sha.is_some() {
+            existing.reviewed_checkpoint_commit_sha = binding.reviewed_checkpoint_commit_sha;
+        }
+        if binding.reconcile_result_commit_sha.is_some() {
+            existing.reconcile_result_commit_sha = binding.reconcile_result_commit_sha;
+        }
+        if binding.reconcile_mode.is_some() {
+            existing.reconcile_mode = binding.reconcile_mode;
+        }
+        if binding.review_receipt_fingerprint.is_some() {
+            existing.review_receipt_fingerprint = binding.review_receipt_fingerprint;
+        }
+        if binding.review_receipt_artifact_path.is_some() {
+            existing.review_receipt_artifact_path = binding.review_receipt_artifact_path;
+        }
+        if binding.changed_files_manifest_path.is_some() {
+            existing.changed_files_manifest_path = binding.changed_files_manifest_path;
+        }
+        if binding.changed_files_manifest_fingerprint.is_some() {
+            existing.changed_files_manifest_fingerprint = binding.changed_files_manifest_fingerprint;
+        }
+        if binding.diff_stat.is_some() {
+            existing.diff_stat = binding.diff_stat;
+        }
+        if binding.harvested_patch_artifact_path.is_some() {
+            existing.harvested_patch_artifact_path = binding.harvested_patch_artifact_path;
+        }
+        if binding.harvested_patch_fingerprint.is_some() {
+            existing.harvested_patch_fingerprint = binding.harvested_patch_fingerprint;
+        }
+        if binding.lane_terminal_state.is_some() {
+            existing.lane_terminal_state = binding.lane_terminal_state;
+        }
+    } else {
+        bindings.push(binding);
+    }
+}
+
+impl MutableHarnessState {
     fn set_latest_sequence(&mut self, value: u64) {
         self.latest_authoritative_sequence = Some(value);
         self.authoritative_sequence = Some(value);
@@ -901,7 +998,138 @@ pub fn write_authoritative_worktree_lease_artifact(
     runtime: &ExecutionRuntime,
     lease: &WorktreeLease,
 ) -> Result<PathBuf, JsonFailure> {
-    let (_lock, state, _state_path) = load_mutable_harness_state_for_authoritative_write(runtime)?;
+    let (_lock, mut state, state_path) = load_mutable_harness_state_for_authoritative_write(runtime)?;
+    let artifact_path = publish_authoritative_worktree_lease(runtime, &mut state, lease)?;
+    if let Err(error) = persist_mutable_harness_state(&state, &state_path) {
+        let _ = fs::remove_file(&artifact_path);
+        return Err(error);
+    }
+    Ok(artifact_path)
+}
+
+pub fn write_authoritative_unit_review_receipt_artifact(
+    runtime: &ExecutionRuntime,
+    execution_run_id: &str,
+    execution_unit_id: &str,
+    source: &str,
+) -> Result<PathBuf, JsonFailure> {
+    let (_lock, mut state, state_path) = load_mutable_harness_state_for_authoritative_write(runtime)?;
+    validate_safe_identifier_token(execution_run_id, "execution_run_id")?;
+    validate_safe_identifier_token(
+        execution_unit_id.trim_start_matches("unit-"),
+        "execution_unit_id",
+    )?;
+    if let Some(run_identity) = state.run_identity.as_ref()
+        && run_identity.execution_run_id.as_str() != execution_run_id
+    {
+        return Err(JsonFailure::new(
+            FailureClass::ArtifactIntegrityMismatch,
+            "Authoritative unit-review receipt execution_run_id does not match active run identity.",
+        ));
+    }
+    let expected_strategy_checkpoint_fingerprint = state
+        .last_strategy_checkpoint_fingerprint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    validate_receipt_identity_headers(
+        source,
+        execution_run_id,
+        execution_unit_id,
+        expected_strategy_checkpoint_fingerprint,
+    )?;
+    let Some(canonical_fingerprint) = canonical_unit_review_receipt_fingerprint(source) else {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Could not derive canonical authoritative unit-review receipt fingerprint.",
+        ));
+    };
+    if unit_review_receipt_declared_fingerprint(source).as_deref() != Some(&canonical_fingerprint) {
+        return Err(JsonFailure::new(
+            FailureClass::ArtifactIntegrityMismatch,
+            "Authoritative unit-review receipt fingerprint does not match canonical content.",
+        ));
+    }
+
+    let receipt_file_name = format!(
+        "unit-review-{}-{}.md",
+        execution_run_id,
+        execution_unit_id.trim_start_matches("unit-")
+    );
+    let artifact_path = harness_authoritative_artifact_path(
+        &runtime.state_dir,
+        &runtime.repo_slug,
+        &runtime.branch_name,
+        &receipt_file_name,
+    );
+    write_atomic_file(&artifact_path, source).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not publish authoritative unit-review receipt {}: {error}",
+                artifact_path.display()
+            ),
+        )
+    })?;
+    let matching_binding = state
+        .active_worktree_lease_bindings
+        .as_ref()
+        .and_then(|bindings| {
+            bindings.iter().find(|binding| {
+                if binding.execution_run_id != execution_run_id {
+                    return false;
+                }
+                let Some(lease_artifact_path) = binding
+                    .lease_artifact_path
+                    .split('/')
+                    .next_back()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    return false;
+                };
+                let lease_path = harness_authoritative_artifact_path(
+                    &runtime.state_dir,
+                    &runtime.repo_slug,
+                    &runtime.branch_name,
+                    lease_artifact_path,
+                );
+                let Ok(lease_source) = fs::read_to_string(&lease_path) else {
+                    return false;
+                };
+                let Ok(lease) = serde_json::from_str::<WorktreeLease>(&lease_source) else {
+                    return false;
+                };
+                lease.execution_unit_id == execution_unit_id
+            })
+        })
+        .cloned();
+    let mut binding = if let Some(binding) = matching_binding {
+        binding
+    } else {
+        synthesize_serial_worktree_lease_binding(runtime, &mut state, source)?
+    };
+    binding.review_receipt_fingerprint = Some(canonical_fingerprint);
+    binding.review_receipt_artifact_path = Some(
+        artifact_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_owned(),
+    );
+    upsert_active_worktree_lease_binding(&mut state, binding);
+    if let Err(error) = persist_mutable_harness_state(&state, &state_path) {
+        let _ = fs::remove_file(&artifact_path);
+        return Err(error);
+    }
+    Ok(artifact_path)
+}
+
+fn publish_authoritative_worktree_lease(
+    runtime: &ExecutionRuntime,
+    state: &mut MutableHarnessState,
+    lease: &WorktreeLease,
+) -> Result<PathBuf, JsonFailure> {
     validate_worktree_lease(lease)?;
     validate_safe_identifier_token(&lease.execution_run_id, "execution_run_id")?;
     validate_safe_identifier_token(&lease.execution_context_key, "execution_context_key")?;
@@ -962,74 +1190,128 @@ pub fn write_authoritative_worktree_lease_artifact(
             ),
         )
     })?;
+    upsert_active_worktree_lease_binding(
+        state,
+        WorktreeLeaseBindingSnapshot {
+            execution_run_id: lease.execution_run_id.clone(),
+            lease_fingerprint: lease.lease_fingerprint.clone(),
+            lease_artifact_path: artifact_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_owned(),
+            execution_context_key: Some(lease.execution_context_key.clone()),
+            approved_task_packet_fingerprint: None,
+            approved_unit_contract_fingerprint: None,
+            reconcile_result_proof_fingerprint: lease.reconcile_result_proof_fingerprint.clone(),
+            reviewed_checkpoint_commit_sha: lease.reviewed_checkpoint_commit_sha.clone(),
+            reconcile_result_commit_sha: lease.reconcile_result_commit_sha.clone(),
+            reconcile_mode: Some(lease.reconcile_mode.clone()),
+            review_receipt_fingerprint: None,
+            review_receipt_artifact_path: None,
+            changed_files_manifest_path: None,
+            changed_files_manifest_fingerprint: None,
+            diff_stat: None,
+            harvested_patch_artifact_path: None,
+            harvested_patch_fingerprint: None,
+            lane_terminal_state: None,
+        },
+    );
     Ok(artifact_path)
 }
 
-pub fn write_authoritative_unit_review_receipt_artifact(
+fn synthesize_serial_worktree_lease_binding(
     runtime: &ExecutionRuntime,
-    execution_run_id: &str,
-    execution_unit_id: &str,
+    state: &mut MutableHarnessState,
     source: &str,
-) -> Result<PathBuf, JsonFailure> {
-    let (_lock, state, _state_path) = load_mutable_harness_state_for_authoritative_write(runtime)?;
-    validate_safe_identifier_token(execution_run_id, "execution_run_id")?;
-    validate_safe_identifier_token(
-        execution_unit_id.trim_start_matches("unit-"),
-        "execution_unit_id",
-    )?;
-    if let Some(run_identity) = state.run_identity.as_ref()
-        && run_identity.execution_run_id.as_str() != execution_run_id
-    {
-        return Err(JsonFailure::new(
-            FailureClass::ArtifactIntegrityMismatch,
-            "Authoritative unit-review receipt execution_run_id does not match active run identity.",
-        ));
-    }
-    let expected_strategy_checkpoint_fingerprint = state
-        .last_strategy_checkpoint_fingerprint
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    validate_receipt_identity_headers(
-        source,
-        execution_run_id,
-        execution_unit_id,
-        expected_strategy_checkpoint_fingerprint,
-    )?;
-    let Some(canonical_fingerprint) = canonical_unit_review_receipt_fingerprint(source) else {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            "Could not derive canonical authoritative unit-review receipt fingerprint.",
-        ));
-    };
-    if unit_review_receipt_declared_fingerprint(source).as_deref() != Some(&canonical_fingerprint) {
-        return Err(JsonFailure::new(
-            FailureClass::ArtifactIntegrityMismatch,
-            "Authoritative unit-review receipt fingerprint does not match canonical content.",
-        ));
-    }
+) -> Result<WorktreeLeaseBindingSnapshot, JsonFailure> {
+    let execution_run_id = require_receipt_header(source, "Execution Run ID")?;
+    let execution_unit_id = require_receipt_header(source, "Execution Unit ID")?;
+    let execution_context_key = require_receipt_header(source, "Execution Context Key")?;
+    let lease_fingerprint = require_receipt_header(source, "Lease Fingerprint")?;
+    let approved_task_packet_fingerprint =
+        require_receipt_header(source, "Approved Task Packet Fingerprint")?;
+    let approved_unit_contract_fingerprint =
+        require_receipt_header(source, "Approved Unit Contract Fingerprint")?;
+    let reconcile_result_commit_sha = require_receipt_header(source, "Reconciled Result SHA")?;
+    let reconcile_result_proof_fingerprint =
+        require_receipt_header(source, "Reconcile Result Proof Fingerprint")?;
+    let reconcile_mode = require_receipt_header(source, "Reconcile Mode")?;
+    let reviewed_worktree = require_receipt_header(source, "Reviewed Worktree")?;
+    let reviewed_checkpoint_commit_sha = require_receipt_header(source, "Reviewed Checkpoint SHA")?;
+    let source_plan_path = trim_code_span(&require_receipt_header(source, "Source Plan")?);
+    let source_plan_revision = require_receipt_header(source, "Source Plan Revision")?
+        .parse::<u32>()
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Authoritative unit-review receipt Source Plan Revision must be an integer: {error}"
+                ),
+            )
+        })?;
 
-    let receipt_file_name = format!(
-        "unit-review-{}-{}.md",
+    let lease = WorktreeLease {
+        lease_version: WORKTREE_LEASE_VERSION,
+        authoritative_sequence: state.latest_sequence() + 1,
+        execution_run_id: execution_run_id.clone(),
+        execution_context_key: execution_context_key.clone(),
+        source_plan_path,
+        source_plan_revision,
+        execution_unit_id,
+        source_branch: runtime.branch_name.clone(),
+        authoritative_integration_branch: runtime.branch_name.clone(),
+        worktree_path: reviewed_worktree,
+        repo_state_baseline_head_sha: reviewed_checkpoint_commit_sha.clone(),
+        repo_state_baseline_worktree_fingerprint: approved_task_packet_fingerprint.clone(),
+        lease_state: WorktreeLeaseState::Cleaned,
+        cleanup_state: String::from("cleaned"),
+        reviewed_checkpoint_commit_sha: Some(reviewed_checkpoint_commit_sha.clone()),
+        reconcile_result_commit_sha: Some(reconcile_result_commit_sha.clone()),
+        reconcile_result_proof_fingerprint: Some(reconcile_result_proof_fingerprint.clone()),
+        reconcile_mode: reconcile_mode.clone(),
+        generated_by: String::from("featureforge:executing-plans"),
+        generated_at: String::from("runtime-derived"),
+        lease_fingerprint: lease_fingerprint.clone(),
+    };
+    let artifact_path = publish_authoritative_worktree_lease(runtime, state, &lease)?;
+    Ok(WorktreeLeaseBindingSnapshot {
         execution_run_id,
-        execution_unit_id.trim_start_matches("unit-")
-    );
-    let artifact_path = harness_authoritative_artifact_path(
-        &runtime.state_dir,
-        &runtime.repo_slug,
-        &runtime.branch_name,
-        &receipt_file_name,
-    );
-    write_atomic_file(&artifact_path, source).map_err(|error| {
+        lease_fingerprint,
+        lease_artifact_path: artifact_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_owned(),
+        execution_context_key: Some(execution_context_key),
+        approved_task_packet_fingerprint: Some(approved_task_packet_fingerprint),
+        approved_unit_contract_fingerprint: Some(approved_unit_contract_fingerprint),
+        reconcile_result_proof_fingerprint: Some(reconcile_result_proof_fingerprint),
+        reviewed_checkpoint_commit_sha: Some(reviewed_checkpoint_commit_sha),
+        reconcile_result_commit_sha: Some(reconcile_result_commit_sha),
+        reconcile_mode: Some(reconcile_mode),
+        review_receipt_fingerprint: None,
+        review_receipt_artifact_path: None,
+        changed_files_manifest_path: None,
+        changed_files_manifest_fingerprint: None,
+        diff_stat: None,
+        harvested_patch_artifact_path: None,
+        harvested_patch_fingerprint: None,
+        lane_terminal_state: None,
+    })
+}
+
+fn require_receipt_header(source: &str, header: &str) -> Result<String, JsonFailure> {
+    parse_markdown_header_value(source, header).ok_or_else(|| {
         JsonFailure::new(
-            FailureClass::PartialAuthoritativeMutation,
-            format!(
-                "Could not publish authoritative unit-review receipt {}: {error}",
-                artifact_path.display()
-            ),
+            FailureClass::MalformedExecutionState,
+            format!("Authoritative unit-review receipt is missing {header}."),
         )
-    })?;
-    Ok(artifact_path)
+    })
+}
+
+fn trim_code_span(value: &str) -> String {
+    value.trim().trim_matches('`').to_owned()
 }
 
 pub fn persist_active_worktree_lease_index(
@@ -1059,30 +1341,35 @@ pub fn persist_active_worktree_lease_index(
                 "review_receipt_artifact_path",
             )?;
         }
+        if let Some(changed_files_manifest_path) = binding.changed_files_manifest_path.as_deref() {
+            validate_artifact_file_name(
+                changed_files_manifest_path,
+                "changed_files_manifest_path",
+            )?;
+        }
+        if let Some(changed_files_manifest_fingerprint) =
+            binding.changed_files_manifest_fingerprint.as_deref()
+        {
+            validate_safe_identifier_token(
+                changed_files_manifest_fingerprint,
+                "changed_files_manifest_fingerprint",
+            )?;
+        }
+        if let Some(harvested_patch_artifact_path) =
+            binding.harvested_patch_artifact_path.as_deref()
+        {
+            validate_artifact_file_name(
+                harvested_patch_artifact_path,
+                "harvested_patch_artifact_path",
+            )?;
+        }
     }
     state.run_identity = Some(run_identity);
     state.chunk_id = Some(chunk_id.as_str().to_owned());
     state.active_worktree_lease_fingerprints = Some(active_worktree_lease_fingerprints);
     state.active_worktree_lease_bindings = Some(active_worktree_lease_bindings);
 
-    let serialized = serde_json::to_string_pretty(&state).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::PartialAuthoritativeMutation,
-            format!(
-                "Could not serialize authoritative harness state mutation {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
-    write_atomic_file(&state_path, serialized).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::PartialAuthoritativeMutation,
-            format!(
-                "Could not publish authoritative harness state {}: {error}",
-                state_path.display()
-            ),
-        )
-    })
+    persist_mutable_harness_state(&state, &state_path)
 }
 
 fn load_mutable_harness_state_for_authoritative_write(

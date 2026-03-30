@@ -10,13 +10,20 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::PlanArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
+use crate::execution::final_review::{
+    authoritative_final_review_artifact_path_checked,
+    authoritative_release_docs_artifact_path_checked, latest_branch_artifact_path,
+    parse_artifact_document,
+};
 use crate::execution::harness::{EvaluatorKind, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
-use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
+use crate::execution::state::{
+    ExecutionRuntime, GateResult, PlanExecutionStatus, load_execution_context,
+};
 use crate::execution::topology::RecommendOutput;
 use crate::session_entry::{self, SessionEntryResolveOutput};
 use crate::workflow::status::{SessionEntryState, WorkflowPhase, WorkflowRoute, WorkflowRuntime};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct WorkflowDoctor {
     pub phase: String,
     pub route_status: String,
@@ -37,9 +44,13 @@ pub struct WorkflowDoctor {
     pub gate_review: Option<GateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate_finish: Option<GateResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_check: Option<ScopeCheckSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_readiness: Option<ReleaseReadinessSnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct WorkflowHandoff {
     pub phase: String,
     pub route_status: String,
@@ -59,6 +70,24 @@ pub struct WorkflowHandoff {
     pub plan_contract: Option<AnalyzePlanReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommendation: Option<RecommendOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_check: Option<ScopeCheckSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_readiness: Option<ReleaseReadinessSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ScopeCheckSnapshot {
+    pub result: String,
+    pub resolution: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ReleaseReadinessSnapshot {
+    pub release_surface: String,
+    pub publishability_distribution_check: String,
+    pub versioning_decision: String,
+    pub versioning_rationale: String,
 }
 
 struct OperatorContext {
@@ -69,6 +98,8 @@ struct OperatorContext {
     preflight: Option<GateResult>,
     gate_review: Option<GateResult>,
     gate_finish: Option<GateResult>,
+    scope_check: Option<ScopeCheckSnapshot>,
+    release_readiness: Option<ReleaseReadinessSnapshot>,
     execution_preflight_block_reason: Option<String>,
     phase: String,
 }
@@ -159,6 +190,8 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
         preflight: context.preflight,
         gate_review: context.gate_review,
         gate_finish: context.gate_finish,
+        scope_check: context.scope_check,
+        release_readiness: context.release_readiness,
     })
 }
 
@@ -193,6 +226,27 @@ pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
         output.push_str(&format!(
             "Finish gate reason codes: {}\n",
             reason_codes_text(&gate_finish.reason_codes)
+        ));
+    }
+    if let Some(scope_check) = doctor.scope_check.as_ref() {
+        output.push_str(&format!("Scope check: {}\n", scope_check.result));
+        output.push_str(&format!(
+            "Scope check resolution: {}\n",
+            scope_check.resolution
+        ));
+    }
+    if let Some(release_readiness) = doctor.release_readiness.as_ref() {
+        output.push_str(&format!(
+            "Release surface: {}\n",
+            release_readiness.release_surface
+        ));
+        output.push_str(&format!(
+            "Publishability / distribution check: {}\n",
+            release_readiness.publishability_distribution_check
+        ));
+        output.push_str(&format!(
+            "Versioning decision: {}\n",
+            release_readiness.versioning_decision
         ));
     }
     Ok(output)
@@ -269,6 +323,10 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
                 String::from("featureforge:requesting-code-review"),
                 reason_text(&context),
             ),
+            "security_review_pending" => (
+                String::from("featureforge:security-review"),
+                reason_text(&context),
+            ),
             "qa_pending" if finish_requires_test_plan_refresh(&context) => (
                 String::from("featureforge:plan-eng-review"),
                 reason_text(&context),
@@ -319,6 +377,8 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
         execution_status: context.execution_status,
         plan_contract: context.plan_contract,
         recommendation,
+        scope_check: context.scope_check,
+        release_readiness: context.release_readiness,
     })
 }
 
@@ -342,6 +402,27 @@ pub fn render_handoff(current_dir: &Path) -> Result<String, JsonFailure> {
     }
     if let Some(execution_status) = handoff.execution_status.as_ref() {
         append_execution_status_metadata(&mut output, execution_status);
+    }
+    if let Some(scope_check) = handoff.scope_check.as_ref() {
+        output.push_str(&format!("Scope check: {}\n", scope_check.result));
+        output.push_str(&format!(
+            "Scope check resolution: {}\n",
+            scope_check.resolution
+        ));
+    }
+    if let Some(release_readiness) = handoff.release_readiness.as_ref() {
+        output.push_str(&format!(
+            "Release surface: {}\n",
+            release_readiness.release_surface
+        ));
+        output.push_str(&format!(
+            "Publishability / distribution check: {}\n",
+            release_readiness.publishability_distribution_check
+        ));
+        output.push_str(&format!(
+            "Versioning decision: {}\n",
+            release_readiness.versioning_decision
+        ));
     }
     Ok(output)
 }
@@ -417,6 +498,9 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
         }
     }
 
+    let scope_check = scope_check_snapshot(current_dir, &route, gate_finish.as_ref());
+    let release_readiness = release_readiness_snapshot(current_dir, &route, gate_finish.as_ref());
+
     let phase = derive_phase(
         &route.status,
         &session_entry.outcome,
@@ -434,9 +518,173 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
         preflight,
         gate_review,
         gate_finish,
+        scope_check,
+        release_readiness,
         execution_preflight_block_reason,
         phase,
     })
+}
+
+fn scope_check_snapshot(
+    current_dir: &Path,
+    route: &WorkflowRoute,
+    gate_finish: Option<&GateResult>,
+) -> Option<ScopeCheckSnapshot> {
+    if route.plan_path.is_empty() {
+        return None;
+    }
+    if gate_finish.is_some_and(review_snapshot_is_stale) {
+        return None;
+    }
+    let runtime = ExecutionRuntime::discover(current_dir).ok()?;
+    let artifact_dir = runtime.state_dir.join("projects").join(&runtime.repo_slug);
+    let review_path = authoritative_review_path(current_dir, route)
+        .or_else(|| latest_branch_artifact_path(&artifact_dir, &runtime.branch_name, "code-review"))?;
+    let review = parse_artifact_document(&review_path);
+    Some(ScopeCheckSnapshot {
+        result: review.headers.get("Scope Check Result")?.trim().to_owned(),
+        resolution: review.headers.get("Scope Check Resolution")?.trim().to_owned(),
+    })
+}
+
+fn release_readiness_snapshot(
+    current_dir: &Path,
+    route: &WorkflowRoute,
+    gate_finish: Option<&GateResult>,
+) -> Option<ReleaseReadinessSnapshot> {
+    if route.plan_path.is_empty() {
+        return None;
+    }
+    if gate_finish.is_some_and(release_snapshot_is_stale) {
+        return None;
+    }
+    let runtime = ExecutionRuntime::discover(current_dir).ok()?;
+    let artifact_dir = runtime.state_dir.join("projects").join(&runtime.repo_slug);
+    if let Some(release_path) = authoritative_release_path(current_dir, route)
+        .or_else(|| latest_branch_artifact_path(&artifact_dir, &runtime.branch_name, "release-readiness"))
+    {
+        let release = parse_artifact_document(&release_path);
+        return Some(ReleaseReadinessSnapshot {
+            release_surface: release
+                .headers
+                .get("Release Surface")
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| String::from("unknown")),
+            publishability_distribution_check: release
+                .headers
+                .get("Publishability / Distribution Check")
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| String::from("unknown")),
+            versioning_decision: release
+                .headers
+                .get("Versioning Decision")
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| String::from("unknown")),
+            versioning_rationale: release
+                .headers
+                .get("Versioning Rationale")
+                .map(|value| value.trim().to_owned())
+                .unwrap_or_default(),
+        });
+    }
+
+    let plan_path = PathBuf::from(&route.root).join(&route.plan_path);
+    let source = fs::read_to_string(plan_path).ok()?;
+    Some(ReleaseReadinessSnapshot {
+        release_surface: plan_bullet_value(&source, "## Risk & Gate Signals", "Release Surface")
+            .unwrap_or_else(|| String::from("unknown")),
+        publishability_distribution_check: String::from("unknown"),
+        versioning_decision: plan_bullet_value(
+            &source,
+            "## Release & Distribution Notes",
+            "Versioning Decision",
+        )
+        .unwrap_or_else(|| String::from("unknown")),
+        versioning_rationale: plan_bullet_value(
+            &source,
+            "## Release & Distribution Notes",
+            "Versioning Rationale",
+        )
+        .unwrap_or_default(),
+    })
+}
+
+fn authoritative_review_path(current_dir: &Path, route: &WorkflowRoute) -> Option<PathBuf> {
+    let runtime = ExecutionRuntime::discover(current_dir).ok()?;
+    let context = load_execution_context(&runtime, Path::new(&route.plan_path)).ok()?;
+    authoritative_final_review_artifact_path_checked(&context)
+        .ok()
+        .flatten()
+}
+
+fn authoritative_release_path(current_dir: &Path, route: &WorkflowRoute) -> Option<PathBuf> {
+    let runtime = ExecutionRuntime::discover(current_dir).ok()?;
+    let context = load_execution_context(&runtime, Path::new(&route.plan_path)).ok()?;
+    authoritative_release_docs_artifact_path_checked(&context)
+        .ok()
+        .flatten()
+}
+
+fn review_snapshot_is_stale(gate: &GateResult) -> bool {
+    gate.reason_codes.iter().any(|code| {
+        matches!(
+            code.as_str(),
+            "review_artifact_authoritative_provenance_invalid"
+                | "review_artifact_malformed"
+                | "review_artifact_branch_mismatch"
+                | "review_artifact_base_branch_unresolved"
+                | "review_artifact_base_branch_mismatch"
+                | "review_artifact_repo_mismatch"
+        ) || code.starts_with("review_receipt_")
+            || code.starts_with("reviewer_artifact_")
+    })
+}
+
+fn release_snapshot_is_stale(gate: &GateResult) -> bool {
+    gate.reason_codes.iter().any(|code| {
+        matches!(
+            code.as_str(),
+            "release_artifact_authoritative_provenance_invalid"
+                | "release_artifact_malformed"
+                | "release_artifact_branch_mismatch"
+                | "release_artifact_repo_mismatch"
+                | "release_artifact_base_branch_mismatch"
+                | "release_artifact_release_surface_missing"
+                | "release_readiness_versioning_missing"
+                | "release_artifact_versioning_rationale_missing"
+                | "release_artifact_distribution_check_missing"
+        )
+    })
+}
+
+fn plan_bullet_value(source: &str, section_header: &str, key: &str) -> Option<String> {
+    let mut in_section = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed == section_header {
+            in_section = true;
+            continue;
+        }
+        if in_section && trimmed.starts_with("## ") {
+            break;
+        }
+        if !in_section {
+            continue;
+        }
+        let Some(entry) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let Some((entry_key, entry_value)) = entry.split_once(':') else {
+            continue;
+        };
+        if entry_key.trim() == key {
+            return Some(entry_value.trim().to_owned());
+        }
+    }
+    None
 }
 
 fn doctor_phase_for_context(context: &OperatorContext) -> String {
@@ -633,6 +881,9 @@ fn derive_phase(
     if let Some(gate_review) = gate_review
         && !gate_review.allowed
     {
+        if gate_review.failure_class == "SecurityArtifactNotFresh" {
+            return String::from("security_review_pending");
+        }
         return String::from("final_review_pending");
     }
 
@@ -644,6 +895,12 @@ fn derive_phase(
         return String::from("ready_for_branch_completion");
     }
 
+    if gate_has_any_reason(
+        Some(gate_finish),
+        &["security_review_required"],
+    ) {
+        return String::from("security_review_pending");
+    }
     if gate_has_any_reason(
         Some(gate_finish),
         &[
@@ -662,6 +919,7 @@ fn derive_phase(
 
     match gate_finish.failure_class.as_str() {
         "ReviewArtifactNotFresh" => String::from("final_review_pending"),
+        "SecurityArtifactNotFresh" => String::from("security_review_pending"),
         "QaArtifactNotFresh" => String::from("qa_pending"),
         "ReleaseArtifactNotFresh" => String::from("document_release_pending"),
         _ => String::from("final_review_pending"),
@@ -785,6 +1043,15 @@ fn next_text_for_phase(
                 )
             }
         }
+        "security_review_pending" => {
+            if plan_path.is_empty() {
+                String::from("Use featureforge:security-review before final code review.")
+            } else {
+                format!(
+                    "Use featureforge:security-review for the approved plan before final code review: {plan_path}"
+                )
+            }
+        }
         "qa_pending" => String::from(
             "Run featureforge:qa-only and return with a fresh QA result artifact before branch completion.",
         ),
@@ -838,6 +1105,12 @@ fn reason_text(context: &OperatorContext) -> String {
             .unwrap_or_else(|| {
                 String::from("Execution is blocked on the final review gate for the approved plan.")
             }),
+        "security_review_pending" => gate_first_diagnostic_message(context.gate_finish.as_ref())
+            .unwrap_or_else(|| {
+                String::from(
+                    "Execution is blocked on a required security review before final code review.",
+                )
+            }),
         "qa_pending" | "document_release_pending" => {
             gate_first_diagnostic_message(context.gate_finish.as_ref())
                 .unwrap_or_else(|| context.route.reason.clone())
@@ -888,6 +1161,7 @@ fn next_action_for_phase(phase: &str) -> &'static str {
         | "handoff_required" => "return_to_execution",
         "pivot_required" => "plan_update",
         "final_review_pending" => "request_code_review",
+        "security_review_pending" => "run_security_review",
         "qa_pending" => "run_qa_only",
         "document_release_pending" => "run_document_release",
         "ready_for_branch_completion" => "finish_branch",
@@ -978,6 +1252,42 @@ fn append_execution_status_metadata(output: &mut String, status: &PlanExecutionS
         "Write authority worktree: {}\n",
         optional_text(status.write_authority_worktree.as_deref())
     ));
+    output.push_str(&format!(
+        "Worktree merge-ready lanes: {}\n",
+        status.merge_ready_lane_count
+    ));
+    output.push_str(&format!(
+        "Worktree resolution-required lanes: {}\n",
+        status.resolution_required_lane_count
+    ));
+    output.push_str(&format!(
+        "Worktree abandoned lanes: {}\n",
+        status.abandoned_lane_count
+    ));
+    output.push_str(&format!(
+        "Active worktree lane evidence: {}\n",
+        worktree_lane_bindings_text(status.active_worktree_lease_bindings.as_deref())
+    ));
+    output.push_str(&format!(
+        "Task-slice fence mode: {}\n",
+        status.task_slice_fence_mode.as_str()
+    ));
+    output.push_str(&format!(
+        "Fence false-positive count/rate: {} / {:.3}\n",
+        status.fence_false_positive_count, status.fence_false_positive_rate
+    ));
+    output.push_str(&format!(
+        "Blocked-write override count/rate: {} / {:.3}\n",
+        status.blocked_write_override_count, status.blocked_write_override_rate
+    ));
+    output.push_str(&format!(
+        "Fence rollout window runs: {}\n",
+        status.rollout_window_run_count
+    ));
+    output.push_str(&format!(
+        "Representative parallel validations: {}\n",
+        status.representative_parallel_run_validation_count
+    ));
     output.push_str(&format!("Strategy state: {}\n", status.strategy_state));
     output.push_str(&format!(
         "Strategy checkpoint kind: {}\n",
@@ -995,6 +1305,33 @@ fn append_execution_status_metadata(output: &mut String, status: &PlanExecutionS
             "no"
         }
     ));
+}
+
+fn worktree_lane_bindings_text(
+    bindings: Option<&[crate::execution::harness::WorktreeLeaseBindingSnapshot]>,
+) -> String {
+    let Some(bindings) = bindings else {
+        return String::from("none");
+    };
+    if bindings.is_empty() {
+        return String::from("none");
+    }
+
+    bindings
+        .iter()
+        .map(|binding| {
+            let lane_state = binding
+                .lane_terminal_state
+                .map(|state| state.as_str())
+                .unwrap_or("in_progress");
+            let manifest = binding
+                .changed_files_manifest_path
+                .as_deref()
+                .unwrap_or("manifest_missing");
+            format!("{lane_state}:{manifest}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn reason_codes_text(reason_codes: &[String]) -> String {

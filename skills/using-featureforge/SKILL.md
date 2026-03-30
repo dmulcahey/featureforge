@@ -197,6 +197,12 @@ Legacy Claude, Cursor, and OpenCode-specific loading flows are intentionally uns
 
 These skills are written for Codex and GitHub Copilot local installs. See `references/codex-tools.md` for platform-native primitives used in the workflow.
 
+## Runtime-Owned Operator Truth
+
+Treat `workflow doctor`, `workflow handoff`, and related read-only operator surfaces as views over one shared runtime-owned operator snapshot. Do not invent separate prose-only route logic when the runtime already exposes route state, gate state, scope-check state, or release-readiness state.
+
+That operator truth also owns late-stage precedence: required `document-release` and `security-review` gates route before independent final code review, while QA stays after final review as a verification gate.
+
 # Using Skills
 
 ## The Rule
@@ -262,6 +268,13 @@ When multiple skills could apply, use this order:
 
 "Let's build X" → brainstorming first, then follow the artifact-state workflow: plan-ceo-review -> writing-plans -> plan-fidelity review -> plan-eng-review -> execution.
 "Fix this bug" → debugging first, then if it changes FeatureForge product or workflow behavior follow the artifact-state workflow; otherwise continue to the appropriate implementation skill.
+
+When approved plans declare dynamic gates, the helper-backed workflow may also insert:
+
+- `featureforge:plan-design-review` while the plan is still draft when approved signals require a dedicated design pass, followed by a return to `featureforge:plan-eng-review` for final engineering approval
+- `featureforge:security-review` after implementation and before final code review when `Security Review Required: yes`
+- `featureforge:qa-only` only when the approved signals require browser QA
+- `featureforge:document-release` when release-readiness artifacts are missing or stale
 
 ## Skill Types
 

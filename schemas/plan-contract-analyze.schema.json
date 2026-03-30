@@ -18,6 +18,9 @@
         "$ref": "#/$defs/ContractDiagnostic"
       }
     },
+    "effective_delivery_lane": {
+      "type": "string"
+    },
     "execution_strategy_present": {
       "type": "boolean"
     },
@@ -25,6 +28,9 @@
       "type": "boolean"
     },
     "files_blocks_valid": {
+      "type": "boolean"
+    },
+    "lightweight_qualified": {
       "type": "boolean"
     },
     "open_questions_resolved": {
@@ -64,6 +70,9 @@
         "$ref": "#/$defs/ParallelWorktreeRequirement"
       }
     },
+    "plan_delivery_lane": {
+      "type": "string"
+    },
     "plan_fidelity_receipt": {
       "$ref": "#/$defs/PlanFidelityGateReport"
     },
@@ -86,6 +95,9 @@
     },
     "serial_hazards_resolved": {
       "type": "boolean"
+    },
+    "spec_delivery_lane": {
+      "type": "string"
     },
     "spec_fingerprint": {
       "type": "string"
@@ -112,9 +124,13 @@
     "spec_path",
     "spec_revision",
     "spec_fingerprint",
+    "spec_delivery_lane",
     "plan_path",
     "plan_revision",
     "plan_fingerprint",
+    "plan_delivery_lane",
+    "effective_delivery_lane",
+    "lightweight_qualified",
     "task_count",
     "packet_buildable_tasks",
     "coverage_complete",
@@ -145,10 +161,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "code",
-        "message"
-      ]
+      "required": ["code", "message"]
     },
     "OverlappingWriteScope": {
       "type": "object",
@@ -165,10 +178,7 @@
           }
         }
       },
-      "required": [
-        "path",
-        "tasks"
-      ]
+      "required": ["path", "tasks"]
     },
     "ParallelWorktreeRequirement": {
       "type": "object",
@@ -192,11 +202,7 @@
           }
         }
       },
-      "required": [
-        "tasks",
-        "declared_worktrees",
-        "required_worktrees"
-      ]
+      "required": ["tasks", "declared_worktrees", "required_worktrees"]
     },
     "PlanFidelityGateReport": {
       "type": "object",

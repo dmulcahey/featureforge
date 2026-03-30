@@ -101,3 +101,107 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
         "Source Plan`, `Source Plan Revision`, `Strategy Checkpoint Fingerprint`, `Branch`, `Repo`, `Base Branch`, `Head SHA`",
     );
 }
+
+#[test]
+fn late_stage_skill_docs_describe_scope_check_distribution_and_versioning_contracts() {
+    let root = repo_root();
+
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "Scope Check",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "DRIFT_DETECTED",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "REQUIREMENTS_MISSING",
+    );
+    assert_file_contains(
+        root.join("skills/document-release/SKILL.md"),
+        "Versioning Decision",
+    );
+    assert_file_contains(
+        root.join("skills/document-release/SKILL.md"),
+        "publishability",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "distribution",
+    );
+    assert_file_contains(
+        root.join("skills/systematic-debugging/SKILL.md"),
+        "debug report",
+    );
+    assert_file_contains(
+        root.join("skills/receiving-code-review/SKILL.md"),
+        "mechanical low-risk",
+    );
+    assert_file_contains(
+        root.join("skills/verification-before-completion/SKILL.md"),
+        "scope-check",
+    );
+    assert_file_contains(
+        root.join("skills/finishing-a-development-branch/SKILL.md"),
+        "dynamic required gates",
+    );
+}
+
+#[test]
+fn late_stage_skill_docs_describe_security_review_gate_contract() {
+    let root = repo_root();
+
+    assert_file_contains(
+        root.join("skills/security-review/SKILL.md"),
+        "post-implementation",
+    );
+    assert_file_contains(
+        root.join("skills/security-review/SKILL.md"),
+        "runtime-owned",
+    );
+    assert_file_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "security-review",
+    );
+    assert_file_contains(
+        root.join("skills/security-review/SKILL.md"),
+        "Artifact Kind: security-review",
+    );
+    assert_file_contains(
+        root.join("skills/security-review/SKILL.md"),
+        "Schema Version: 1",
+    );
+    assert_file_contains(
+        root.join("skills/security-review/SKILL.md"),
+        "Artifact Provenance: runtime-owned",
+    );
+    assert_file_contains(
+        root.join("skills/security-review/SKILL.md"),
+        "Retention Policy: featureforge:authoritative-runtime-artifact",
+    );
+    assert_file_contains(
+        root.join("skills/security-review/SKILL.md"),
+        "Execution Diff Fingerprint",
+    );
+    assert_file_contains(
+        root.join("skills/plan-design-review/SKILL.md"),
+        "Artifact Kind: plan-design-review",
+    );
+    assert_file_contains(
+        root.join("skills/plan-design-review/SKILL.md"),
+        "Schema Version: 1",
+    );
+    assert_file_contains(
+        root.join("skills/plan-design-review/SKILL.md"),
+        "Artifact Provenance: runtime-owned",
+    );
+    assert_file_contains(
+        root.join("skills/plan-design-review/SKILL.md"),
+        "Retention Policy: featureforge:authoritative-runtime-artifact",
+    );
+    assert_file_contains(
+        root.join("skills/plan-design-review/SKILL.md"),
+        "Generated At",
+    );
+}

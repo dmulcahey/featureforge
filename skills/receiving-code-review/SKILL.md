@@ -219,6 +219,8 @@ FOR multi-item feedback:
   4. Verify no regressions
 ```
 
+When multiple comments are clearly mechanical low-risk fixes, you may batch them together after verification. Keep judgment-heavy, architectural, behavioral, or ambiguous review items isolated so each one is evaluated and tested on its own merits.
+
 ## When To Push Back
 
 Push back when:

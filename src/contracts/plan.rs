@@ -37,14 +37,40 @@ pub struct PlanTask {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RiskGateSignals {
+    pub delivery_lane: String,
+    pub ui_scope: String,
+    pub browser_qa_required: String,
+    pub design_review_required: String,
+    pub security_review_required: String,
+    pub performance_review_required: String,
+    pub release_surface: String,
+    pub distribution_impact: String,
+    pub deploy_impact: String,
+    pub migration_risk: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ReleaseDistributionNotes {
+    pub discoverability_distribution_path: String,
+    pub versioning_decision: String,
+    pub versioning_rationale: String,
+    pub deployment_rollout_notes: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanDocument {
     pub path: String,
     pub workflow_state: String,
+    pub contract_version: u32,
     pub plan_revision: u32,
     pub execution_mode: String,
     pub source_spec_path: String,
     pub source_spec_revision: u32,
     pub last_reviewed_by: String,
+    pub delivery_lane: String,
+    pub risk_gate_signals: Option<RiskGateSignals>,
+    pub release_distribution_notes: Option<ReleaseDistributionNotes>,
     pub coverage_matrix: BTreeMap<String, Vec<u32>>,
     pub tasks: Vec<PlanTask>,
     #[serde(skip)]
@@ -55,6 +81,7 @@ pub const PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION: u32 = 2;
 pub const PLAN_FIDELITY_RECEIPT_KIND: &str = "plan_fidelity_receipt";
 pub const PLAN_FIDELITY_REVIEW_STAGE: &str = "featureforge:plan-fidelity-review";
 pub const PLAN_FIDELITY_REQUIRED_SURFACES: [&str; 2] = ["requirement_index", "execution_topology"];
+pub const PLAN_FIDELITY_OPTIONAL_DELIVERY_SURFACE: &str = "delivery_lane";
 pub const PLAN_FIDELITY_DISTINCT_STAGES: [&str; 2] =
     ["featureforge:writing-plans", "featureforge:plan-eng-review"];
 
@@ -126,9 +153,13 @@ pub struct AnalyzePlanReport {
     pub spec_path: String,
     pub spec_revision: u32,
     pub spec_fingerprint: String,
+    pub spec_delivery_lane: String,
     pub plan_path: String,
     pub plan_revision: u32,
     pub plan_fingerprint: String,
+    pub plan_delivery_lane: String,
+    pub effective_delivery_lane: String,
+    pub lightweight_qualified: bool,
     pub task_count: usize,
     pub packet_buildable_tasks: usize,
     pub coverage_complete: bool,
@@ -162,6 +193,34 @@ pub(crate) struct ExecutionTopologyAnalysis {
     pub reason_codes: Vec<String>,
     pub diagnostics: Vec<ContractDiagnostic>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeliveryLaneAnalysis {
+    effective_delivery_lane: String,
+    lightweight_qualified: bool,
+    reason_codes: Vec<String>,
+    diagnostics: Vec<ContractDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RiskGateContractAnalysis {
+    reason_codes: Vec<String>,
+    diagnostics: Vec<ContractDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LightweightSignalSnapshot {
+    release_surface: Option<String>,
+    distribution_impact: Option<String>,
+    deploy_impact: Option<String>,
+    migration_risk: Option<String>,
+    security_review_required: Option<String>,
+}
+
+const STANDARD_DELIVERY_LANE: &str = "standard";
+const LIGHTWEIGHT_DELIVERY_LANE: &str = "lightweight_change";
+const LIGHTWEIGHT_MAX_NON_TEST_FILES: usize = 8;
+const CURRENT_PLAN_CONTRACT_VERSION: u32 = 2;
 
 pub fn parse_plan_file(path: impl AsRef<Path>) -> Result<PlanDocument, DiagnosticError> {
     let path = path.as_ref();
@@ -261,6 +320,32 @@ pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePla
             diagnostics.push(diagnostic.clone());
         }
     }
+    let delivery_lane = analyze_delivery_lane(spec, plan);
+    for code in &delivery_lane.reason_codes {
+        if !reason_codes.iter().any(|existing| existing == code) {
+            reason_codes.push(code.clone());
+        }
+    }
+    for diagnostic in &delivery_lane.diagnostics {
+        if !diagnostics.iter().any(|existing| {
+            existing.code == diagnostic.code && existing.message == diagnostic.message
+        }) {
+            diagnostics.push(diagnostic.clone());
+        }
+    }
+    let risk_gate_analysis = analyze_risk_gate_contract(plan);
+    for code in &risk_gate_analysis.reason_codes {
+        if !reason_codes.iter().any(|existing| existing == code) {
+            reason_codes.push(code.clone());
+        }
+    }
+    for diagnostic in &risk_gate_analysis.diagnostics {
+        if !diagnostics.iter().any(|existing| {
+            existing.code == diagnostic.code && existing.message == diagnostic.message
+        }) {
+            diagnostics.push(diagnostic.clone());
+        }
+    }
     let contract_state = if diagnostics.is_empty() {
         "valid"
     } else {
@@ -272,9 +357,13 @@ pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePla
         spec_path: spec.path.clone(),
         spec_revision: spec.spec_revision,
         spec_fingerprint: sha256_hex(spec.source.as_bytes()),
+        spec_delivery_lane: spec.delivery_lane.clone(),
         plan_path: plan.path.clone(),
         plan_revision: plan.plan_revision,
         plan_fingerprint: sha256_hex(plan.source.as_bytes()),
+        plan_delivery_lane: plan.delivery_lane.clone(),
+        effective_delivery_lane: delivery_lane.effective_delivery_lane,
+        lightweight_qualified: delivery_lane.lightweight_qualified,
         task_count: plan.tasks.len(),
         packet_buildable_tasks,
         coverage_complete,
@@ -527,9 +616,14 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
         .iter()
         .map(|requirement| requirement.id.clone())
         .collect::<BTreeSet<_>>();
+    let delivery_lane_declared = headers::parse_required_header(&spec.source, "Delivery Lane")
+        .is_some()
+        || headers::parse_required_header(&plan.source, "Delivery Lane").is_some();
     let verified_requirement_index = checked_surfaces.contains("requirement_index")
         && verified_requirement_ids == expected_requirement_ids;
     let verified_execution_topology = checked_surfaces.contains("execution_topology");
+    let verified_delivery_lane = !delivery_lane_declared
+        || checked_surfaces.contains(PLAN_FIDELITY_OPTIONAL_DELIVERY_SURFACE);
     if !verified_requirement_index {
         push_diagnostic(
             &mut diagnostics,
@@ -546,7 +640,15 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
             "Plan-fidelity receipt must prove the reviewer checked the draft plan's execution-topology claims.",
         );
     }
-    if !verified_requirement_index || !verified_execution_topology {
+    if !verified_delivery_lane {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "plan_fidelity_receipt_missing_delivery_lane_check",
+            "Plan-fidelity receipt must prove the reviewer checked delivery-lane fidelity when spec or plan declares `Delivery Lane`.",
+        );
+    }
+    if !verified_requirement_index || !verified_execution_topology || !verified_delivery_lane {
         push_diagnostic(
             &mut diagnostics,
             &mut reason_codes,
@@ -578,6 +680,7 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
 pub fn parse_plan_source(path: &Path, source: String) -> Result<PlanDocument, DiagnosticError> {
     let workflow_state = parse_required_header(&source, "Workflow State")?;
     validate_plan_workflow_state(&workflow_state)?;
+    let contract_version = parse_contract_version(&source)?;
     let plan_revision = parse_required_header(&source, "Plan Revision")?
         .parse::<u32>()
         .map_err(|_| missing_header("Plan Revision"))?;
@@ -592,21 +695,566 @@ pub fn parse_plan_source(path: &Path, source: String) -> Result<PlanDocument, Di
         .map_err(|_| missing_header("Source Spec Revision"))?;
     let last_reviewed_by = parse_required_header(&source, "Last Reviewed By")?;
     validate_plan_last_reviewed_by(&last_reviewed_by)?;
+    let delivery_lane = parse_delivery_lane(&source, contract_version)?;
+    let risk_gate_signals = parse_risk_gate_signals(&source);
+    let release_distribution_notes = parse_release_distribution_notes(&source);
     let coverage_matrix = parse_coverage_matrix(&source)?;
     let tasks = parse_tasks(&source)?;
 
     Ok(PlanDocument {
         path: repo_relative_string(path),
         workflow_state,
+        contract_version,
         plan_revision,
         execution_mode,
         source_spec_path,
         source_spec_revision,
         last_reviewed_by,
+        delivery_lane,
+        risk_gate_signals,
+        release_distribution_notes,
         coverage_matrix,
         tasks,
         source,
     })
+}
+
+fn parse_contract_version(source: &str) -> Result<u32, DiagnosticError> {
+    match headers::parse_required_header(source, "Contract Version") {
+        Some(raw) => raw
+            .parse::<u32>()
+            .map_err(|_| malformed_header("Contract Version")),
+        None => Ok(1),
+    }
+}
+
+fn parse_delivery_lane(source: &str, contract_version: u32) -> Result<String, DiagnosticError> {
+    let delivery_lane = match headers::parse_required_header(source, "Delivery Lane") {
+        Some(delivery_lane) => delivery_lane,
+        None if contract_version >= CURRENT_PLAN_CONTRACT_VERSION => {
+            return Err(missing_header("Delivery Lane"));
+        }
+        None => String::from(STANDARD_DELIVERY_LANE),
+    };
+    match delivery_lane.as_str() {
+        STANDARD_DELIVERY_LANE | LIGHTWEIGHT_DELIVERY_LANE => Ok(delivery_lane),
+        _ => Err(malformed_header("Delivery Lane")),
+    }
+}
+
+fn analyze_risk_gate_contract(plan: &PlanDocument) -> RiskGateContractAnalysis {
+    let mut diagnostics = Vec::new();
+    let mut reason_codes = Vec::new();
+
+    if plan.contract_version < CURRENT_PLAN_CONTRACT_VERSION {
+        return RiskGateContractAnalysis {
+            reason_codes,
+            diagnostics,
+        };
+    }
+
+    let Some(signals) = plan.risk_gate_signals.as_ref() else {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "missing_plan_risk_gate_signals",
+            "Current-version plans must include a `Risk & Gate Signals` section.",
+        );
+        if plan.release_distribution_notes.is_none() {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "missing_plan_release_distribution_notes",
+                "Current-version plans must include `Release & Distribution Notes`.",
+            );
+        }
+        return RiskGateContractAnalysis {
+            reason_codes,
+            diagnostics,
+        };
+    };
+
+    if plan.release_distribution_notes.is_none() {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "missing_plan_release_distribution_notes",
+            "Current-version plans must include `Release & Distribution Notes`.",
+        );
+    }
+
+    if signals.delivery_lane != plan.delivery_lane {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "risk_gate_delivery_lane_mismatch",
+            "`Risk & Gate Signals` must repeat the plan header `Delivery Lane` exactly.",
+        );
+    }
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "ui_scope",
+        "UI Scope",
+        &signals.ui_scope,
+        &["none", "minor", "material"],
+    );
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "browser_qa_required",
+        "Browser QA Required",
+        &signals.browser_qa_required,
+        &["yes", "no"],
+    );
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "design_review_required",
+        "Design Review Required",
+        &signals.design_review_required,
+        &["yes", "no"],
+    );
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "security_review_required",
+        "Security Review Required",
+        &signals.security_review_required,
+        &["yes", "no"],
+    );
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "performance_review_required",
+        "Performance Review Required",
+        &signals.performance_review_required,
+        &["yes", "no"],
+    );
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "release_surface",
+        "Release Surface",
+        &signals.release_surface,
+        &["docs_only", "code_only_no_deploy", "library_package", "app_service_deploy"],
+    );
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "distribution_impact",
+        "Distribution Impact",
+        &signals.distribution_impact,
+        &["none", "low", "high"],
+    );
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "deploy_impact",
+        "Deploy Impact",
+        &signals.deploy_impact,
+        &["none", "low", "high"],
+    );
+    validate_signal_value(
+        &mut diagnostics,
+        &mut reason_codes,
+        "migration_risk",
+        "Migration Risk",
+        &signals.migration_risk,
+        &["none", "low", "high"],
+    );
+
+    if let Some(notes) = plan.release_distribution_notes.as_ref() {
+        if notes.discoverability_distribution_path.trim().is_empty() {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "release_distribution_notes_path_missing",
+                "`Release & Distribution Notes` must include `Discoverability / Distribution Path`.",
+            );
+        }
+        validate_signal_value(
+            &mut diagnostics,
+            &mut reason_codes,
+            "versioning_decision",
+            "Versioning Decision",
+            &notes.versioning_decision,
+            &["none", "patch", "minor", "major", "unknown"],
+        );
+        if notes.versioning_rationale.trim().is_empty() {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "release_distribution_notes_versioning_rationale_missing",
+                "`Release & Distribution Notes` must include `Versioning Rationale`.",
+            );
+        }
+        if notes.deployment_rollout_notes.trim().is_empty() {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "release_distribution_notes_rollout_missing",
+                "`Release & Distribution Notes` must include `Deployment / Rollout Notes`.",
+            );
+        }
+    }
+
+    RiskGateContractAnalysis {
+        reason_codes,
+        diagnostics,
+    }
+}
+
+fn validate_signal_value(
+    diagnostics: &mut Vec<ContractDiagnostic>,
+    reason_codes: &mut Vec<String>,
+    key: &str,
+    label: &str,
+    value: &str,
+    allowed: &[&str],
+) {
+    if value.trim().is_empty() {
+        let message = format!("`Risk & Gate Signals` must include `{label}`.");
+        push_diagnostic(
+            diagnostics,
+            reason_codes,
+            &format!("risk_gate_{key}_missing"),
+            &message,
+        );
+        return;
+    }
+    if !allowed.iter().any(|candidate| candidate == &value) {
+        let message = format!("`{label}` must be one of: {}.", allowed.join(", "));
+        push_diagnostic(
+            diagnostics,
+            reason_codes,
+            &format!("risk_gate_{key}_invalid"),
+            &message,
+        );
+    }
+}
+
+fn parse_risk_gate_signals(source: &str) -> Option<RiskGateSignals> {
+    let entries = parse_section_entries(source, "## Risk & Gate Signals")?;
+    Some(RiskGateSignals {
+        delivery_lane: entries.get("Delivery Lane").cloned().unwrap_or_default(),
+        ui_scope: entries.get("UI Scope").cloned().unwrap_or_default(),
+        browser_qa_required: entries
+            .get("Browser QA Required")
+            .cloned()
+            .unwrap_or_default(),
+        design_review_required: entries
+            .get("Design Review Required")
+            .cloned()
+            .unwrap_or_default(),
+        security_review_required: entries
+            .get("Security Review Required")
+            .cloned()
+            .unwrap_or_default(),
+        performance_review_required: entries
+            .get("Performance Review Required")
+            .cloned()
+            .unwrap_or_default(),
+        release_surface: entries.get("Release Surface").cloned().unwrap_or_default(),
+        distribution_impact: entries
+            .get("Distribution Impact")
+            .cloned()
+            .unwrap_or_default(),
+        deploy_impact: entries.get("Deploy Impact").cloned().unwrap_or_default(),
+        migration_risk: entries.get("Migration Risk").cloned().unwrap_or_default(),
+    })
+}
+
+fn parse_release_distribution_notes(source: &str) -> Option<ReleaseDistributionNotes> {
+    let entries = parse_section_entries(source, "## Release & Distribution Notes")?;
+    Some(ReleaseDistributionNotes {
+        discoverability_distribution_path: entries
+            .get("Discoverability / Distribution Path")
+            .cloned()
+            .unwrap_or_default(),
+        versioning_decision: entries.get("Versioning Decision").cloned().unwrap_or_default(),
+        versioning_rationale: entries.get("Versioning Rationale").cloned().unwrap_or_default(),
+        deployment_rollout_notes: entries
+            .get("Deployment / Rollout Notes")
+            .cloned()
+            .unwrap_or_default(),
+    })
+}
+
+fn parse_section_entries(source: &str, section_header: &str) -> Option<BTreeMap<String, String>> {
+    let mut in_section = false;
+    let mut entries = BTreeMap::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed == section_header {
+            in_section = true;
+            continue;
+        }
+        if in_section && trimmed.starts_with("## ") {
+            break;
+        }
+        if !in_section {
+            continue;
+        }
+        let Some(entry) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let Some((key, value)) = entry.split_once(':') else {
+            continue;
+        };
+        entries.insert(key.trim().to_owned(), value.trim().to_owned());
+    }
+    if in_section { Some(entries) } else { None }
+}
+
+fn analyze_delivery_lane(spec: &SpecDocument, plan: &PlanDocument) -> DeliveryLaneAnalysis {
+    let mut diagnostics = Vec::new();
+    let mut reason_codes = Vec::new();
+
+    let spec_lane_declared = headers::parse_required_header(&spec.source, "Delivery Lane").is_some();
+    let plan_lane_declared = headers::parse_required_header(&plan.source, "Delivery Lane").is_some();
+
+    if !spec_lane_declared {
+        reason_codes.push(String::from("spec_delivery_lane_inferred"));
+    }
+    if !plan_lane_declared {
+        reason_codes.push(String::from("plan_delivery_lane_inferred"));
+    }
+
+    if (spec_lane_declared || plan_lane_declared) && spec.delivery_lane != plan.delivery_lane {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "delivery_lane_mismatch",
+            "Spec and plan Delivery Lane headers must agree.",
+        );
+    }
+
+    let requested_lightweight = spec.delivery_lane == LIGHTWEIGHT_DELIVERY_LANE
+        || plan.delivery_lane == LIGHTWEIGHT_DELIVERY_LANE;
+    if !requested_lightweight {
+        return DeliveryLaneAnalysis {
+            effective_delivery_lane: String::from(STANDARD_DELIVERY_LANE),
+            lightweight_qualified: false,
+            reason_codes,
+            diagnostics,
+        };
+    }
+
+    let mut lightweight_qualified = diagnostics.is_empty();
+    if !plan
+        .source
+        .lines()
+        .any(|line| line.contains("Why lightweight is safe"))
+    {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "lightweight_missing_safety_justification",
+            "Lightweight plans must include a concise `Why lightweight is safe` note.",
+        );
+        lightweight_qualified = false;
+    }
+
+    let risk_signals = parse_lightweight_signal_snapshot(&plan.source);
+    match risk_signals.release_surface.as_deref() {
+        Some("docs_only") | Some("code_only_no_deploy") => {}
+        Some(_) => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_release_surface_disallowed",
+                "Lightweight plans must keep `Release Surface` at `docs_only` or `code_only_no_deploy`.",
+            );
+            lightweight_qualified = false;
+        }
+        None => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_missing_release_surface_signal",
+                "Lightweight plans must declare `Release Surface` in `Risk & Gate Signals`.",
+            );
+            lightweight_qualified = false;
+        }
+    }
+    match risk_signals.distribution_impact.as_deref() {
+        Some("none") | Some("low") => {}
+        Some(_) => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_distribution_impact_too_high",
+                "Lightweight plans must keep `Distribution Impact` at `none` or `low`.",
+            );
+            lightweight_qualified = false;
+        }
+        None => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_missing_distribution_impact_signal",
+                "Lightweight plans must declare `Distribution Impact` in `Risk & Gate Signals`.",
+            );
+            lightweight_qualified = false;
+        }
+    }
+    match risk_signals.deploy_impact.as_deref() {
+        Some("none") | Some("low") => {}
+        Some(_) => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_deploy_impact_too_high",
+                "Lightweight plans must keep `Deploy Impact` at `none` or `low`.",
+            );
+            lightweight_qualified = false;
+        }
+        None => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_missing_deploy_impact_signal",
+                "Lightweight plans must declare `Deploy Impact` in `Risk & Gate Signals`.",
+            );
+            lightweight_qualified = false;
+        }
+    }
+    match risk_signals.migration_risk.as_deref() {
+        Some("none") | Some("low") => {}
+        Some(_) => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_migration_risk_too_high",
+                "Lightweight plans must keep `Migration Risk` at `none` or `low`.",
+            );
+            lightweight_qualified = false;
+        }
+        None => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_missing_migration_risk_signal",
+                "Lightweight plans must declare `Migration Risk` in `Risk & Gate Signals`.",
+            );
+            lightweight_qualified = false;
+        }
+    }
+    match risk_signals.security_review_required.as_deref() {
+        Some("no") => {}
+        Some("yes") => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_security_review_required",
+                "Lightweight plans must escalate to `standard` when `Security Review Required: yes`.",
+            );
+            lightweight_qualified = false;
+        }
+        Some(_) => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_security_review_signal_invalid",
+                "Lightweight plans must declare `Security Review Required` as `yes` or `no`.",
+            );
+            lightweight_qualified = false;
+        }
+        None => {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "lightweight_missing_security_review_signal",
+                "Lightweight plans must declare `Security Review Required` in `Risk & Gate Signals`.",
+            );
+            lightweight_qualified = false;
+        }
+    }
+
+    let non_test_files = plan
+        .tasks
+        .iter()
+        .flat_map(|task| task.files.iter())
+        .filter(|file| file.action != "Test")
+        .map(|file| file.path.clone())
+        .collect::<BTreeSet<_>>()
+        .len();
+    if non_test_files > LIGHTWEIGHT_MAX_NON_TEST_FILES {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "lightweight_file_scope_exceeds_cap",
+            "Lightweight plans may touch at most 8 non-test files across task `Files:` blocks.",
+        );
+        lightweight_qualified = false;
+    }
+
+    if !lightweight_qualified {
+        push_diagnostic(
+            &mut diagnostics,
+            &mut reason_codes,
+            "lightweight_lane_escalated",
+            "The draft plan no longer qualifies for `lightweight_change` and must be promoted back to `standard`.",
+        );
+    }
+
+    DeliveryLaneAnalysis {
+        effective_delivery_lane: if lightweight_qualified {
+            String::from(LIGHTWEIGHT_DELIVERY_LANE)
+        } else {
+            String::from(STANDARD_DELIVERY_LANE)
+        },
+        lightweight_qualified,
+        reason_codes,
+        diagnostics,
+    }
+}
+
+fn parse_lightweight_signal_snapshot(source: &str) -> LightweightSignalSnapshot {
+    let mut in_signals = false;
+    let mut release_surface = None;
+    let mut distribution_impact = None;
+    let mut deploy_impact = None;
+    let mut migration_risk = None;
+    let mut security_review_required = None;
+
+    for line in source.lines() {
+        if line.trim() == "## Risk & Gate Signals" {
+            in_signals = true;
+            continue;
+        }
+        if in_signals && line.starts_with("## ") {
+            break;
+        }
+        if !in_signals {
+            continue;
+        }
+        let trimmed = line.trim();
+        let Some(entry) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let Some((key, value)) = entry.split_once(':') else {
+            continue;
+        };
+        let normalized = value.trim().to_owned();
+        match key.trim() {
+            "Release Surface" => release_surface = Some(normalized),
+            "Distribution Impact" => distribution_impact = Some(normalized),
+            "Deploy Impact" => deploy_impact = Some(normalized),
+            "Migration Risk" => migration_risk = Some(normalized),
+            "Security Review Required" => security_review_required = Some(normalized),
+            _ => {}
+        }
+    }
+
+    LightweightSignalSnapshot {
+        release_surface,
+        distribution_impact,
+        deploy_impact,
+        migration_risk,
+        security_review_required,
+    }
 }
 
 fn parse_required_header(source: &str, header: &str) -> Result<String, DiagnosticError> {

@@ -9,5 +9,6 @@ pub mod spec;
 pub use harness::{
     BlockingEvidenceReference, DowngradeBlockingEvidence, DowngradeOperatorImpact,
     DowngradeOperatorImpactSeverity, DowngradeReasonClass, ExecutionTopologyDowngradeDetail,
-    ExecutionTopologyDowngradeRecord, WorktreeLease, WorktreeLeaseState,
+    ExecutionTopologyDowngradeRecord, TaskSliceFenceMode, WorktreeLaneTerminalState, WorktreeLease,
+    WorktreeLeaseState,
 };

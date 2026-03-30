@@ -407,6 +407,16 @@ These techniques are part of systematic debugging and available in this director
 - **featureforge:test-driven-development** - For creating failing test case (Phase 4, Step 1)
 - **featureforge:verification-before-completion** - Verify fix worked before claiming success
 
+## Debug Output Contract
+
+Before leaving a debugging pass, produce a lightweight debug report artifact or a standard summary output that captures:
+
+- reproduction steps
+- key evidence gathered
+- the confirmed or current leading root-cause hypothesis
+- what was ruled out
+- the next fix or next investigation step
+
 ## Real-World Impact
 
 From debugging sessions:

@@ -215,6 +215,7 @@ Before dispatching any implementation subagent:
 7. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
 8. Run `featureforge plan execution preflight --plan <approved-plan-path>` before dispatching implementation subagents.
 9. If the preflight helper returns `allowed` `false`, stop and resolve the reported `failure_class`, `reason_codes`, and `diagnostics` before dispatching work.
+10. If `featureforge plan execution recommend --plan <approved-plan-path> ...` selects worktree-backed parallel, use the helper's `recommended_worktree_root` for lane allocation rather than inventing a local path.
 
 ## Helper-Owned Execution State
 
@@ -225,6 +226,14 @@ Before dispatching any implementation subagent:
 - calls `note` when work is interrupted or blocked
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:subagent-driven-development`
 - The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker.
+
+## Worktree-Backed Lane Substrate
+
+- The runtime-owned worktree substrate governs lane allocation, changed-file manifests, diff stats, harvested patches, and authoritative lane state.
+- Prefer the helper-reported `recommended_worktree_root`; existing repo-local `.worktrees/` or `worktrees/` directories still take precedence when already present or explicitly required by instructions.
+- A lane in `resolution_required` is blocked pending patch-harvest resolution; do not treat it as merge-ready or reusable work.
+- Task-slice fences derive from the task `Files:` block. In `audit` mode the runtime records out-of-slice writes in evidence; in `guarded` and `full` modes it requires an explicit override reason before allowing a blocked-write bypass.
+- `guarded` mode blocks out-of-slice writes for this workflow first. `full` mode extends the same enforcement to every runtime-owned execution lane.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 

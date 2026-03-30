@@ -130,6 +130,8 @@ ls -d worktrees 2>/dev/null      # Alternative
 
 **If found:** Use that directory. If both exist, `.worktrees` wins.
 
+If neither directory exists, keep honoring explicit instruction-file preferences, but otherwise prefer the global FeatureForge root over creating a new repo-local directory.
+
 ### 2. Check Instruction Files
 
 ```bash
@@ -147,7 +149,7 @@ Legacy prompt docs such as `CLAUDE.md` are intentionally unsupported in this run
 If no directory exists and no instruction-file preference, ask one interactive user question using the required format.
 
 Recommendation:
-- Recommend `A)` `.worktrees/` by default because it keeps the worktree close to the project and matches the preferred local layout
+- Recommend `B)` `~/.config/featureforge/worktrees/<project-name>/` by default so fresh repos avoid local repo churn
 
 Options:
 - `A)` `.worktrees/` (project-local, hidden)
@@ -319,3 +321,7 @@ Ready to implement auth feature
 
 **Pairs with:**
 - **finishing-a-development-branch** - Optional cleanup after work complete
+
+**Runtime note:**
+- `executing-plans` and `subagent-driven-development` may provide a runtime-owned `recommended_worktree_root`; prefer that recommendation unless existing repo-local directories or instruction files already require a different location.
+- Worktree isolation does not bypass task-slice fences. Out-of-slice writes still follow the runtime-owned `audit` -> `guarded` -> `full` enforcement model and may require an explicit override reason.

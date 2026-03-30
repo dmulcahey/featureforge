@@ -222,6 +222,38 @@ pub fn run() -> std::process::ExitCode {
                         }
                     }
                 }
+                cli::workflow::WorkflowCommand::PlanDesignReview(plan_design_review_cli) => {
+                    match plan_design_review_cli.command {
+                        cli::workflow::WorkflowPlanDesignReviewCommand::Record(args) => {
+                            let result = workflow::status::record_plan_design_review_receipt(
+                                &current_dir,
+                                &args,
+                            );
+                            if args.json {
+                                emit_json(result)
+                            } else {
+                                emit_text(
+                                    result.map(workflow::status::render_plan_design_review_record),
+                                )
+                            }
+                        }
+                    }
+                }
+                cli::workflow::WorkflowCommand::SecurityReview(security_review_cli) => {
+                    match security_review_cli.command {
+                        cli::workflow::WorkflowSecurityReviewCommand::Record(args) => {
+                            let result =
+                                workflow::status::record_security_review_receipt(&current_dir, &args);
+                            if args.json {
+                                emit_json(result)
+                            } else {
+                                emit_text(
+                                    result.map(workflow::status::render_security_review_record),
+                                )
+                            }
+                        }
+                    }
+                }
                 cli::workflow::WorkflowCommand::Next => emit_text(
                     workflow::operator::render_next(&current_dir)
                         .map_err(map_read_only_workflow_failure),

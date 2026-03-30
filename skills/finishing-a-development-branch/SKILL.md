@@ -114,6 +114,8 @@ Guide completion of development work by presenting clear options and handling ch
 
 **Core principle:** Verify tests → Run required pre-completion gates → Present options → Execute choice → Clean up.
 
+For workflow-routed work, branch completion is the final stage after required pre-final-review completion passes, independent final code review, and any required verification gates.
+
 **Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
 
 ## The Process
@@ -186,6 +188,8 @@ Before moving on, perform a short Gate F-style confirmation:
 - rollout and rollback are addressed
 - known risks are documented
 - monitoring or verification expectations are addressed when relevant
+- dynamic required gates still match the current HEAD
+- final review scope-check state is explicit and non-blocking
 
 ### Step 1.85: Conditional Pre-Landing QA Gate
 
@@ -248,6 +252,8 @@ If no current-branch test-plan artifact exists for workflow-routed work, stop an
 If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, run `featureforge plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.
 
 If the current work is governed by an approved FeatureForge plan and the finish gate returns `allowed` `false`, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
+
+Treat the finish gate as the dynamic required gates and scope-check state authority. Do not substitute prose judgment for helper-owned gate truth.
 
 If `gate-finish` fails with `test_plan_artifact_missing` or `test_plan_artifact_stale`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
 

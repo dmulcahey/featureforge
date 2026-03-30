@@ -56,6 +56,17 @@ plan-eng-review also owns the late refresh-test-plan lane when finish readiness 
 
 In that late-stage lane, the terminal state is returning to the finish-gate flow with a regenerated current-branch test-plan artifact, not reopening execution preflight.
 
+## Lightweight Lane
+
+- Map any legacy `small_change` assumptions to `lightweight_change`.
+- Validate `Delivery Lane` and any lightweight safety justification as part of normal engineering approval.
+- validate/finalize the `Risk & Gate Signals` before approving execution.
+- explicitly escalate to `standard` when disqualifiers appear.
+- Lightweight plans still require approvals and a passing plan-fidelity receipt before engineering review proceeds.
+- When the plan introduces or changes a user-facing artifact, entry point, package, route, flag, workflow, or deployable surface, require explicit distribution / publishability checks in the approved plan and its downstream handoff expectations.
+- If `Design Review Required: yes`, the draft plan may route to `featureforge:plan-design-review` before final engineering approval; resume `plan-eng-review` after that pass and only then mark the plan `Engineering Approved`.
+- If `Security Review Required: yes`, keep that requirement explicit in the approved plan because finish routing will require `featureforge:security-review` before final code review.
+
 # Plan Review Mode
 
 Review this plan thoroughly before making any code changes. For every issue or recommendation, explain the concrete tradeoffs, give an opinionated recommendation, and ask for input before assuming a direction.

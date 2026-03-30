@@ -163,6 +163,15 @@ featureforge repo-safety check --intent write --stage featureforge:plan-ceo-revi
 
 **The terminal state is invoking writing-plans.**
 
+## Lightweight Lane
+
+For specs that declare `**Delivery Lane:** lightweight_change`, default to hold-scope rigor, not expansion-first behavior.
+
+- keep approval authority unchanged
+- allow concise review only when the bounded delta is credible and accurately described
+- if scope broadens or the artifact stops looking safely lightweight, push it back to `standard` before planning continues
+- For specs that add or change user-facing artifacts, entry points, packages, routes, flags, workflows, or deployable surfaces, require explicit publishability / distribution expectations so planning and release review inherit them cleanly.
+
 # Spec Review Mode
 
 ## Accelerated Review Activation

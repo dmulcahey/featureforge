@@ -114,6 +114,8 @@ Claiming work is complete without verification is dishonesty, not efficiency.
 
 **Core principle:** Evidence before claims, always.
 
+In workflow-routed finish work, this verification gate sits after required pre-final-review completion work, after independent final code review, and after any required QA.
+
 **Violating the letter of this rule is violating the spirit of this rule.**
 
 ## The Iron Law
@@ -232,6 +234,8 @@ From 24 failure memories:
 - Paraphrases and synonyms
 - Implications of success
 - ANY communication suggesting completion/correctness
+
+For workflow-routed work, fresh verification evidence must also reflect the current dynamic required gates and scope-check state. Do not claim branch-finish readiness until the latest review, QA, release-readiness, and scope-check signals agree with the current HEAD.
 
 ## The Bottom Line
 

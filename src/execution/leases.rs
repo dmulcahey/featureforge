@@ -8,7 +8,7 @@ use crate::contracts::harness::{
     ExecutionTopologyDowngradeRecord, WORKTREE_LEASE_VERSION, WorktreeLease, WorktreeLeaseState,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::harness::INITIAL_AUTHORITATIVE_SEQUENCE;
+use crate::execution::harness::{INITIAL_AUTHORITATIVE_SEQUENCE, WorktreeLeaseBindingSnapshot};
 use crate::execution::observability::validate_execution_topology_downgrade_record;
 use crate::execution::state::ExecutionContext;
 use crate::paths::{harness_authoritative_artifacts_dir, harness_branch_root, harness_state_path};
@@ -72,11 +72,15 @@ pub(crate) struct StatusAuthoritativeOverlay {
     #[serde(default)]
     pub(crate) final_review_state: Option<String>,
     #[serde(default)]
+    pub(crate) security_review_state: Option<String>,
+    #[serde(default)]
     pub(crate) browser_qa_state: Option<String>,
     #[serde(default)]
     pub(crate) release_docs_state: Option<String>,
     #[serde(default)]
     pub(crate) last_final_review_artifact_fingerprint: Option<String>,
+    #[serde(default)]
+    pub(crate) last_security_review_artifact_fingerprint: Option<String>,
     #[serde(default)]
     pub(crate) last_browser_qa_artifact_fingerprint: Option<String>,
     #[serde(default)]
@@ -91,6 +95,18 @@ pub(crate) struct StatusAuthoritativeOverlay {
     pub(crate) strategy_reset_required: Option<bool>,
     #[serde(default)]
     pub(crate) reason_codes: Vec<String>,
+    #[serde(default)]
+    pub(crate) active_worktree_lease_bindings: Option<Vec<WorktreeLeaseBindingSnapshot>>,
+    #[serde(default)]
+    pub(crate) task_slice_fence_mode: Option<String>,
+    #[serde(default)]
+    pub(crate) fence_false_positive_count: Option<u64>,
+    #[serde(default)]
+    pub(crate) blocked_write_override_count: Option<u64>,
+    #[serde(default)]
+    pub(crate) rollout_window_run_count: Option<u64>,
+    #[serde(default)]
+    pub(crate) representative_parallel_run_validation_count: Option<u64>,
 }
 
 pub(crate) fn load_status_authoritative_overlay_checked(
