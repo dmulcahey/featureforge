@@ -442,12 +442,6 @@ fn workflow_status_summary_matches_json_semantics_for_ready_plans() {
     let (repo_dir, state_dir) = init_repo("workflow-summary");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-summary";
-    let decision_path = state
-        .join("session-entry")
-        .join("using-featureforge")
-        .join(session_key);
-    write_file(&decision_path, "enabled\n");
     install_ready_artifacts(repo);
 
     let json_output = run_featureforge(
@@ -485,19 +479,12 @@ fn workflow_operator_commands_work_for_ready_plan() {
     let (repo_dir, state_dir) = init_repo("workflow-operator-commands");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-operator-commands";
-    let decision_path = state
-        .join("session-entry")
-        .join("using-featureforge")
-        .join(session_key);
-    write_file(&decision_path, "enabled\n");
     install_full_contract_ready_artifacts(repo);
 
-    let next_output = run_featureforge_with_env(
+    let next_output = run_featureforge(
         repo,
         state,
         &["workflow", "next"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
         "workflow next",
     );
     let next_stdout = String::from_utf8_lossy(&next_output.stdout);
@@ -507,11 +494,10 @@ fn workflow_operator_commands_work_for_ready_plan() {
     ));
     assert!(!next_stdout.contains("session-entry"));
 
-    let artifacts_output = run_featureforge_with_env(
+    let artifacts_output = run_featureforge(
         repo,
         state,
         &["workflow", "artifacts"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
         "workflow artifacts",
     );
     let artifacts_stdout = String::from_utf8_lossy(&artifacts_output.stdout);
@@ -524,11 +510,10 @@ fn workflow_operator_commands_work_for_ready_plan() {
             .contains("Plan: docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md")
     );
 
-    let explain_output = run_featureforge_with_env(
+    let explain_output = run_featureforge(
         repo,
         state,
         &["workflow", "explain"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
         "workflow explain",
     );
     let explain_stdout = String::from_utf8_lossy(&explain_output.stdout);

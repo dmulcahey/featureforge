@@ -2651,20 +2651,12 @@ fn canonical_workflow_phase_omits_session_entry_from_public_json() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-canonical-session-entry");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "phase-canonical-session-entry";
-    let decision_path = state
-        .join("session-entry")
-        .join("using-featureforge")
-        .join(session_key);
-
-    write_file(&decision_path, "enabled\n");
 
     let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
+        &run_rust_featureforge(
             repo,
             state,
             &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
             "rust canonical workflow phase should read canonical session-entry state",
         ),
         "rust canonical workflow phase should read canonical session-entry state",
@@ -2679,7 +2671,6 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     let (repo_dir, state_dir) = init_repo("workflow-no-session-entry-gate");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-no-session-entry-gate";
 
     let mut git_checkout = Command::new("git");
     git_checkout
@@ -2691,11 +2682,10 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
 
     let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
+        &run_rust_featureforge(
             repo,
             state,
             &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
             "workflow phase should route directly without a session-entry gate",
         ),
         "workflow phase should route directly without a session-entry gate",
@@ -2706,11 +2696,10 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     assert_eq!(phase_json["route"]["schema_version"], 3);
 
     let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
+        &run_rust_featureforge(
             repo,
             state,
             &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
             "workflow doctor should route directly without a session-entry gate",
         ),
         "workflow doctor should route directly without a session-entry gate",
@@ -2721,11 +2710,10 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     assert_eq!(doctor_json["route"]["schema_version"], 3);
 
     let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
+        &run_rust_featureforge(
             repo,
             state,
             &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
             "workflow handoff should route directly without a session-entry gate",
         ),
         "workflow handoff should route directly without a session-entry gate",
