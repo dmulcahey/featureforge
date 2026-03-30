@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-30-independent-review-dispatch-hard-gate-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -84,28 +84,23 @@ Task 5 -> Task 6
 - Modify: `src/execution/mutate.rs`
 - Modify: `tests/plan_execution.rs`
 
-- [ ] **Step 1: Add failing runtime tests for missing/stale dispatch-proof begin gating and no-bypass legacy behavior**
-
+- [x] **Step 1: Add failing runtime tests for missing/stale dispatch-proof begin gating and no-bypass legacy behavior**
 Run: `cargo test --test plan_execution task_boundary_begin_reports_task_cycle_break_active -- --nocapture`
 Expected: Existing test coverage baseline for task-boundary begin gating is visible before new assertions.
 
-- [ ] **Step 2: Implement begin-time dispatch-proof checks using existing authoritative dispatch-checkpoint lineage**
-
+- [x] **Step 2: Implement begin-time dispatch-proof checks using existing authoritative dispatch-checkpoint lineage**
 Run: `cargo test --test plan_execution task_boundary_begin_reports_task_cycle_break_active -- --nocapture`
 Expected: Existing begin-gate behavior still passes after introducing dispatch-proof checks.
 
-- [ ] **Step 3: Add deterministic missing/stale reason-code emissions and explicit `gate-review` remediation guidance**
-
+- [x] **Step 3: Add deterministic missing/stale reason-code emissions and explicit `gate-review` remediation guidance**
 Run: `cargo test --test plan_execution -- --nocapture`
 Expected: Updated task-boundary begin-gate cases pass with `ExecutionStateNotReady` and exact reason codes `prior_task_review_dispatch_missing` / `prior_task_review_dispatch_stale`.
 
-- [ ] **Step 4: Ensure reopen/re-complete invalidates stale dispatch proof and re-requires explicit dispatch**
-
+- [x] **Step 4: Ensure reopen/re-complete invalidates stale dispatch proof and re-requires explicit dispatch**
 Run: `cargo test --test plan_execution gate_review_dispatch -- --nocapture`
 Expected: Dispatch lineage invalidation and fresh-dispatch requirements are enforced.
 
-- [ ] **Step 5: Commit Task 1 changes**
-
+- [x] **Step 5: Commit Task 1 changes**
 ```bash
 git add src/execution/state.rs src/execution/transitions.rs src/execution/mutate.rs tests/plan_execution.rs
 git commit -m "feat: enforce explicit gate-review dispatch proof at task boundaries"
@@ -126,23 +121,19 @@ git commit -m "feat: enforce explicit gate-review dispatch proof at task boundar
 - Test: `tests/workflow_runtime.rs`
 - Test: `tests/workflow_shell_smoke.rs`
 
-- [ ] **Step 1: Add/extend failing tests for exact command guidance and reason-code parity across surfaces**
-
+- [x] **Step 1: Add/extend failing tests for exact command guidance and reason-code parity across surfaces**
 Run: `cargo test --test workflow_runtime workflow_phase_routes_task_boundary_blocked -- --nocapture`
 Expected: Fails until updated next-step command and reason-code parity is implemented.
 
-- [ ] **Step 2: Update operator/status guidance to emit exact runnable `gate-review` command on dispatch-gate blocks**
-
+- [x] **Step 2: Update operator/status guidance to emit exact runnable `gate-review` command on dispatch-gate blocks**
 Run: `cargo test --test workflow_runtime workflow_phase_routes_task_boundary_blocked -- --nocapture`
 Expected: Updated workflow phase/handoff guidance passes for blocked task-boundary cases.
 
-- [ ] **Step 3: Validate shell-smoke parity for command text stability**
-
+- [x] **Step 3: Validate shell-smoke parity for command text stability**
 Run: `cargo test --test workflow_shell_smoke -- --nocapture`
 Expected: Shell-smoke fixtures pass with updated command guidance.
 
-- [ ] **Step 4: Commit Task 2 changes**
-
+- [x] **Step 4: Commit Task 2 changes**
 ```bash
 git add src/workflow/operator.rs src/workflow/status.rs tests/workflow_runtime.rs tests/workflow_shell_smoke.rs
 git commit -m "feat: expose exact gate-review next-step command for dispatch gates"
@@ -161,18 +152,15 @@ git commit -m "feat: expose exact gate-review next-step command for dispatch gat
 - Modify: `skills/executing-plans/SKILL.md.tmpl`
 - Modify: `skills/subagent-driven-development/SKILL.md.tmpl`
 
-- [ ] **Step 1: Add explicit stop-and-dispatch command sequencing to both templates**
-
+- [x] **Step 1: Add explicit stop-and-dispatch command sequencing to both templates**
 Run: `rg -n "gate-review --plan <approved-plan-path>|only then begin Task" skills/executing-plans/SKILL.md.tmpl skills/subagent-driven-development/SKILL.md.tmpl`
 Expected: Both templates contain explicit required command call before next-task begin.
 
-- [ ] **Step 2: Regenerate skill docs from templates**
-
+- [x] **Step 2: Regenerate skill docs from templates**
 Run: `node scripts/gen-skill-docs.mjs`
 Expected: Generated `SKILL.md` files updated with no template drift errors.
 
-- [ ] **Step 3: Commit Task 3 changes**
-
+- [x] **Step 3: Commit Task 3 changes**
 ```bash
 git add skills/executing-plans/SKILL.md.tmpl skills/subagent-driven-development/SKILL.md.tmpl skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md
 git commit -m "docs: require explicit gate-review dispatch command at task boundaries"
@@ -192,28 +180,23 @@ git commit -m "docs: require explicit gate-review dispatch command at task bound
 - Modify: `tests/workflow_runtime.rs`
 - Modify: `tests/workflow_runtime_final_review.rs`
 
-- [ ] **Step 1: Add failing tests for missing vs stale dispatch reason-code split and explicit command remediation**
-
+- [x] **Step 1: Add failing tests for missing vs stale dispatch reason-code split and explicit command remediation**
 Run: `cargo test --test plan_execution task_boundary -- --nocapture`
 Expected: New cases fail before implementation alignment, including exact failure class `ExecutionStateNotReady` and exact reason-code assertions for missing/stale dispatch gating.
 
-- [ ] **Step 2: Add preservation tests for review provenance, verification gate, cycle-break, and final-review/finish behavior**
-
+- [x] **Step 2: Add preservation tests for review provenance, verification gate, cycle-break, and final-review/finish behavior**
 Run: `cargo test --test workflow_runtime_final_review -- --nocapture`
 Expected: Non-regression gates remain enforced with new dispatch gate semantics.
 
-- [ ] **Step 3: Add negative dispatch-proof tests proving non-`gate-review` workflow commands cannot satisfy REQ-006**
-
+- [x] **Step 3: Add negative dispatch-proof tests proving non-`gate-review` workflow commands cannot satisfy REQ-006**
 Run: `cargo test --test plan_execution gate_review_dispatch -- --nocapture`
 Expected: Non-`gate-review` command paths do not mint equivalent post-completion dispatch proof; only explicit `featureforge plan execution gate-review --plan <approved-plan-path>` satisfies the dispatch gate.
 
-- [ ] **Step 4: Add no-bypass legacy coverage (no compatibility override allowed)**
-
+- [x] **Step 4: Add no-bypass legacy coverage (no compatibility override allowed)**
 Run: `cargo test --test plan_execution legacy -- --nocapture`
 Expected: Legacy-in-flight paths fail closed without bypass.
 
-- [ ] **Step 5: Commit Task 4 changes**
-
+- [x] **Step 5: Commit Task 4 changes**
 ```bash
 git add tests/plan_execution.rs tests/workflow_runtime.rs tests/workflow_runtime_final_review.rs
 git commit -m "test: pin explicit dispatch-gate behavior and preserved execution gates"
@@ -231,23 +214,19 @@ git commit -m "test: pin explicit dispatch-gate behavior and preserved execution
 **Files:**
 - Modify: `tests/runtime_instruction_contracts.rs`
 
-- [ ] **Step 1: Add failing assertions for explicit command requirement in templates and generated execution skills**
-
+- [x] **Step 1: Add failing assertions for explicit command requirement in templates and generated execution skills**
 Run: `cargo test --test runtime_instruction_contracts -- --nocapture`
 Expected: Fails until template-derived and generated skill wording includes exact command call.
 
-- [ ] **Step 2: Add direct template wording check for explicit command in both execution templates**
-
+- [x] **Step 2: Add direct template wording check for explicit command in both execution templates**
 Run: `rg -n \"featureforge plan execution gate-review --plan <approved-plan-path>\" skills/executing-plans/SKILL.md.tmpl skills/subagent-driven-development/SKILL.md.tmpl`
 Expected: Both templates contain exact command wording before next-task begin.
 
-- [ ] **Step 3: Align assertions with updated generated skill text and rerun contracts**
-
+- [x] **Step 3: Align assertions with updated generated skill text and rerun contracts**
 Run: `cargo test --test runtime_instruction_contracts -- --nocapture`
 Expected: Pass with exact command contract pinned.
 
-- [ ] **Step 4: Commit Task 5 changes**
-
+- [x] **Step 4: Commit Task 5 changes**
 ```bash
 git add tests/runtime_instruction_contracts.rs
 git commit -m "test: enforce explicit gate-review dispatch command in skill contracts"
@@ -265,23 +244,21 @@ git commit -m "test: enforce explicit gate-review dispatch command in skill cont
 **Files:**
 - Modify: `docs/featureforge/plans/2026-03-30-independent-review-dispatch-hard-gate.md`
 
-- [ ] **Step 1: Run skill-doc regeneration and contract checks**
-
+- [x] **Step 1: Run skill-doc regeneration and contract checks**
 Run: `node scripts/gen-skill-docs.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
 Expected: PASS with no skill-doc contract drift.
 
-- [ ] **Step 2: Run Rust gate suites for execution/runtime/instruction contracts**
-
+- [x] **Step 2: Run Rust gate suites for execution/runtime/instruction contracts**
 Run: `cargo test --test plan_execution --test workflow_runtime --test workflow_runtime_final_review --test runtime_instruction_contracts -- --nocapture`
 Expected: PASS across task-boundary dispatch gate and preserved gate behavior.
 
-- [ ] **Step 3: Run lint bar for touched Rust surfaces**
-
+- [x] **Step 3: Run lint bar for touched Rust surfaces**
 Run: `cargo clippy --all-targets --all-features -- -D warnings`
 Expected: PASS with zero warnings.
 
 - [ ] **Step 4: Commit verification and final plan-body updates**
 
+  **Execution Note:** Active - Commit verification and final plan-body updates
 ```bash
 git add docs/featureforge/plans/2026-03-30-independent-review-dispatch-hard-gate.md
 git commit -m "chore: complete verification pass for dispatch hard-gate rollout"
