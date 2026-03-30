@@ -10,6 +10,7 @@ use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::state::write_plan_execution_schema;
 use featureforge::repo_safety::write_repo_safety_schema;
 use featureforge::update_check::write_update_check_schema;
+use featureforge::workflow::status::write_workflow_schemas;
 use featureforge::write_session_entry_schema;
 use serde_json::Value;
 
@@ -688,6 +689,36 @@ fn checked_in_runtime_root_schema_matches_generated_output() {
         .expect("checked-in runtime-root schema should read");
 
     assert_eq!(generated.trim_end(), checked_in.trim_end());
+}
+
+#[test]
+fn checked_in_workflow_schemas_match_generated_output() {
+    let schemas_dir = unique_temp_dir("workflow-schemas");
+    write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
+
+    let generated_status =
+        fs::read_to_string(schemas_dir.join("workflow-status.schema.json"))
+            .expect("generated workflow-status schema should read");
+    let checked_in_status =
+        fs::read_to_string(repo_fixture_path("schemas/workflow-status.schema.json"))
+            .expect("checked-in workflow-status schema should read");
+    let generated_status_json: Value =
+        serde_json::from_str(&generated_status).expect("generated workflow-status schema should parse");
+    let checked_in_status_json: Value =
+        serde_json::from_str(&checked_in_status).expect("checked-in workflow-status schema should parse");
+    assert_eq!(generated_status_json, checked_in_status_json);
+
+    let generated_resolve =
+        fs::read_to_string(schemas_dir.join("workflow-resolve.schema.json"))
+            .expect("generated workflow-resolve schema should read");
+    let checked_in_resolve =
+        fs::read_to_string(repo_fixture_path("schemas/workflow-resolve.schema.json"))
+            .expect("checked-in workflow-resolve schema should read");
+    let generated_resolve_json: Value = serde_json::from_str(&generated_resolve)
+        .expect("generated workflow-resolve schema should parse");
+    let checked_in_resolve_json: Value = serde_json::from_str(&checked_in_resolve)
+        .expect("checked-in workflow-resolve schema should parse");
+    assert_eq!(generated_resolve_json, checked_in_resolve_json);
 }
 
 #[test]

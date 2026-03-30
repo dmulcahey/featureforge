@@ -232,7 +232,8 @@ impl WorkflowRuntime {
             }
             _ => {}
         }
-        resolve_route(self, true, false).map(normalize_workflow_route)
+        resolve_route(self, true, false)
+            .map(|route| normalize_workflow_route(self.decorate_route_with_manifest_context(route)))
     }
 
     pub fn expect(
@@ -373,12 +374,26 @@ impl WorkflowRuntime {
         } else {
             String::from("use_next_skill")
         };
+        let next_step = if route.status == "implementation_ready" {
+            if route.plan_path.is_empty() {
+                String::from("Return to execution preflight for the approved plan.")
+            } else {
+                format!(
+                    "Return to execution preflight for the approved plan: {}",
+                    route.plan_path
+                )
+            }
+        } else if !route.next_skill.is_empty() {
+            format!("Use {}", route.next_skill)
+        } else {
+            String::from("Inspect the workflow state again after resolving the current issue.")
+        };
 
         Ok(WorkflowPhase {
             phase,
             route_status: route.status.clone(),
             next_skill: route.next_skill.clone(),
-            next_step: route.next_skill.clone(),
+            next_step,
             next_action,
             spec_path: route.spec_path.clone(),
             plan_path: route.plan_path.clone(),
@@ -1052,20 +1067,8 @@ pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
         )
     })?;
 
-    let status_schema =
-        serde_json::to_string_pretty(&schema_for!(WorkflowRoute)).map_err(|err| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                format!("Could not serialize workflow status schema: {err}"),
-            )
-        })?;
-    let resolve_schema =
-        serde_json::to_string_pretty(&schema_for!(WorkflowRoute)).map_err(|err| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                format!("Could not serialize workflow resolve schema: {err}"),
-            )
-        })?;
+    let status_schema = workflow_route_schema_json("workflow status")?;
+    let resolve_schema = workflow_route_schema_json("workflow resolve")?;
 
     fs::write(
         output_dir.join("workflow-status.schema.json"),
@@ -1088,6 +1091,41 @@ pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
         )
     })?;
 
+    Ok(())
+}
+
+fn workflow_route_schema_json(schema_label: &str) -> Result<String, DiagnosticError> {
+    let mut schema = serde_json::to_value(schema_for!(WorkflowRoute)).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize {schema_label} schema: {err}"),
+        )
+    })?;
+    lock_workflow_route_schema_version(&mut schema)?;
+    serde_json::to_string_pretty(&schema).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize {schema_label} schema: {err}"),
+        )
+    })
+}
+
+fn lock_workflow_route_schema_version(schema: &mut serde_json::Value) -> Result<(), DiagnosticError> {
+    let schema_version = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|properties| properties.get_mut("schema_version"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowRoute schema is missing the schema_version property.",
+            )
+        })?;
+    schema_version.insert(
+        String::from("const"),
+        serde_json::Value::from(WORKFLOW_ROUTE_SCHEMA_VERSION),
+    );
     Ok(())
 }
 

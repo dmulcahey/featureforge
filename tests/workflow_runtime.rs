@@ -2470,6 +2470,40 @@ fn canonical_workflow_status_refresh_recovers_legacy_symlinked_local_repo_manife
         },
     );
 
+    let phase_json = parse_json(
+        &run_rust_featureforge(
+            &alias_root,
+            state,
+            &["workflow", "phase", "--json"],
+            "workflow phase should preserve legacy local symlink manifest recovery reasons",
+        ),
+        "workflow phase should preserve legacy local symlink manifest recovery reasons",
+    );
+    assert!(
+        phase_json["route"]["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|value| value == "repo_slug_recovered")),
+        "workflow phase should preserve recovered manifest reason codes in the route payload"
+    );
+    assert_eq!(phase_json["plan_path"], plan_a);
+
+    let handoff_json = parse_json(
+        &run_rust_featureforge(
+            &alias_root,
+            state,
+            &["workflow", "handoff", "--json"],
+            "workflow handoff should preserve legacy local symlink manifest recovery reasons",
+        ),
+        "workflow handoff should preserve legacy local symlink manifest recovery reasons",
+    );
+    assert!(
+        handoff_json["route"]["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|value| value == "repo_slug_recovered")),
+        "workflow handoff should preserve recovered manifest reason codes in the route payload"
+    );
+    assert_eq!(handoff_json["plan_path"], plan_a);
+
     let status_json = parse_json(
         &run_rust_featureforge(
             &alias_root,
