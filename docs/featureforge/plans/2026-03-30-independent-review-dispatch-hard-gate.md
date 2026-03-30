@@ -256,9 +256,7 @@ Expected: PASS across task-boundary dispatch gate and preserved gate behavior.
 Run: `cargo clippy --all-targets --all-features -- -D warnings`
 Expected: PASS with zero warnings.
 
-- [ ] **Step 4: Commit verification and final plan-body updates**
-
-  **Execution Note:** Active - Commit verification and final plan-body updates
+- [x] **Step 4: Commit verification and final plan-body updates**
 ```bash
 git add docs/featureforge/plans/2026-03-30-independent-review-dispatch-hard-gate.md
 git commit -m "chore: complete verification pass for dispatch hard-gate rollout"
