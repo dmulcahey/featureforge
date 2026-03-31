@@ -1747,6 +1747,26 @@ fn removed_session_entry_gate_contracts_stay_absent_from_active_runtime_and_eval
         root.join("tests/evals/using-featureforge-routing.scenarios.md"),
         "pre-seeds the synthetic session decision to `enabled`",
     );
+    assert_file_not_contains(
+        root.join("tests/evals/using-featureforge-routing.orchestrator.md"),
+        "Pre-seed the runner's real session decision path to `enabled`",
+    );
+    assert_file_not_contains(
+        root.join("tests/evals/using-featureforge-routing.orchestrator.md"),
+        "the runner-derived session decision path used for the pre-seeded `enabled` state",
+    );
+    assert_file_not_contains(
+        root.join("tests/evals/using-featureforge-routing.judge.md"),
+        "whether the fixture pre-seeded the synthetic session decision to `enabled`",
+    );
+    assert_file_not_contains(
+        root.join("tests/evals/using-featureforge-routing.judge.md"),
+        "whether that pre-seeded state used the runner-derived decision path rather than a guessed `$PPID`",
+    );
+    assert!(
+        !root.join("src/cli/session_entry.rs").exists(),
+        "src/cli/session_entry.rs should stay absent from the active source tree"
+    );
 }
 
 #[test]
