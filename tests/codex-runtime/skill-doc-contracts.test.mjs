@@ -1264,6 +1264,28 @@ test('active docs describe the post-session-entry routing contract', () => {
     'docs/testing.md should describe the no-session-entry routing contract',
   );
 
+  for (const relativePath of [
+    '.codex/INSTALL.md',
+    '.copilot/INSTALL.md',
+  ]) {
+    const content = readUtf8(path.join(REPO_ROOT, relativePath));
+    assert.match(
+      content,
+      /packaged install binary.*featureforge repo runtime-root --path/is,
+      `${relativePath} should describe runtime-root-based packaged binary routing`,
+    );
+    assert.doesNotMatch(
+      content,
+      /featureforge session-entry resolve/i,
+      `${relativePath} should not mention the removed session-entry entry contract`,
+    );
+    assert.doesNotMatch(
+      content,
+      /--spawned-subagent(?:-opt-in)?/i,
+      `${relativePath} should not advertise removed spawned-subagent session-entry flags`,
+    );
+  }
+
   const releaseNotes = readUtf8(path.join(REPO_ROOT, 'RELEASE-NOTES.md'));
   assert.match(
     releaseNotes,
