@@ -1240,3 +1240,39 @@ test('release-facing docs point at docs/testing.md as the canonical validation e
     );
   }
 });
+
+test('active docs describe the post-session-entry routing contract', () => {
+  for (const relativePath of [
+    'README.md',
+    'docs/README.codex.md',
+    'docs/README.copilot.md',
+  ]) {
+    const content = readUtf8(path.join(REPO_ROOT, relativePath));
+    assert.match(
+      content,
+      /`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts\./,
+      `${relativePath} should describe direct workflow routing from repo-visible artifacts`,
+    );
+    assert.doesNotMatch(content, /featureforge session-entry/, `${relativePath} should not mention the removed session-entry command family`);
+    assert.doesNotMatch(content, /FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY/, `${relativePath} should not mention the removed strict gate env key`);
+  }
+
+  const testingDoc = readUtf8(path.join(REPO_ROOT, 'docs/testing.md'));
+  assert.match(
+    testingDoc,
+    /direct workflow routing without session-entry prerequisites/i,
+    'docs/testing.md should describe the no-session-entry routing contract',
+  );
+
+  const releaseNotes = readUtf8(path.join(REPO_ROOT, 'RELEASE-NOTES.md'));
+  assert.match(
+    releaseNotes,
+    /breaking contract delta: remove `featureforge session-entry`/i,
+    'RELEASE-NOTES.md should call out the removed session-entry command surface',
+  );
+  assert.match(
+    releaseNotes,
+    /workflow routing now ignores legacy session-entry decision files and gate env inputs/i,
+    'RELEASE-NOTES.md should describe the direct-routing breaking delta',
+  );
+});

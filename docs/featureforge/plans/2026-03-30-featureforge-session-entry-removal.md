@@ -198,15 +198,15 @@ git commit -m "refactor: remove session-entry command surfaces"
 - Test: `tests/workflow_shell_smoke.rs`
 - Test: `tests/workflow_runtime_final_review.rs`
 
-- [ ] **Step 1: Add red workflow output assertions for removed `session_entry` fields, removed gate-only phase/actions (`session_entry_gate`, `continue_outside_featureforge`), removed strict-gate reason codes, and removal of session-entry gate prose from text command outputs**
-- [ ] **Step 2: Run targeted workflow suites and confirm red state**
+- [x] **Step 1: Add red workflow output assertions for removed `session_entry` fields, removed gate-only phase/actions (`session_entry_gate`, `continue_outside_featureforge`), removed strict-gate reason codes, and removal of session-entry gate prose from text command outputs**
+- [x] **Step 2: Run targeted workflow suites and confirm red state**
 Run: `cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test workflow_runtime_final_review`  
 Expected: fail on prior gate semantics
-- [ ] **Step 3: Remove session-entry branches/fields from status/operator, update output version/schema files for changed families, and add explicit version assertions in tests for each changed output family**
-- [ ] **Step 4: Re-run targeted workflow suites and confirm green**
+- [x] **Step 3: Remove session-entry branches/fields from status/operator, update output version/schema files for changed families, and add explicit version assertions in tests for each changed output family**
+- [x] **Step 4: Re-run targeted workflow suites and confirm green**
 Run: `cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test workflow_runtime_final_review`  
 Expected: pass with direct non-gated routing model
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add src/workflow/status.rs src/workflow/operator.rs schemas/workflow-status.schema.json schemas/workflow-resolve.schema.json tests/workflow_runtime.rs tests/workflow_shell_smoke.rs tests/workflow_runtime_final_review.rs
 git commit -m "refactor: drop session-entry routing states and update output contracts"
@@ -234,17 +234,17 @@ git commit -m "refactor: drop session-entry routing states and update output con
 - Test: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 - Test: `tests/using_featureforge_skill.rs`
 
-- [ ] **Step 1: Add red Node/Rust assertions that fail when session-entry gate sections appear or when named env keys (`FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY`, `FEATUREFORGE_SPAWNED_SUBAGENT`, `FEATUREFORGE_SPAWNED_SUBAGENT_OPT_IN`) appear in active generated surfaces**
-- [ ] **Step 2: Run targeted suites and confirm red state**
+- [x] **Step 1: Add red Node/Rust assertions that fail when session-entry gate sections appear or when named env keys (`FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY`, `FEATUREFORGE_SPAWNED_SUBAGENT`, `FEATUREFORGE_SPAWNED_SUBAGENT_OPT_IN`) appear in active generated surfaces**
+- [x] **Step 2: Run targeted suites and confirm red state**
 Run: `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs`  
 Expected: fail on old gate content assumptions
-- [ ] **Step 3: Remove bypass-gate builder/template insertion from generator/template and regenerate skill docs**
+- [x] **Step 3: Remove bypass-gate builder/template insertion from generator/template and regenerate skill docs**
 Run: `node scripts/gen-skill-docs.mjs`
-- [ ] **Step 4: Re-run targeted Node and Rust suites and confirm green**
+- [x] **Step 4: Re-run targeted Node and Rust suites and confirm green**
 Run: `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs`  
 Run: `cargo nextest run --test using_featureforge_skill`  
 Expected: pass with no bypass-gate contract in active skill docs
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add scripts/gen-skill-docs.mjs skills/using-featureforge/SKILL.md.tmpl skills/using-featureforge/SKILL.md tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/using_featureforge_skill.rs
 git commit -m "docs: remove using-featureforge bypass-gate generation"
@@ -264,15 +264,15 @@ git commit -m "docs: remove using-featureforge bypass-gate generation"
 - Modify: `tests/packet_and_schema.rs`
 - Test: `tests/packet_and_schema.rs`
 
-- [ ] **Step 1: Add red schema parity assertions reflecting absence of session-entry schema artifact**
-- [ ] **Step 2: Run targeted schema suite and confirm red state**
+- [x] **Step 1: Add red schema parity assertions reflecting absence of session-entry schema artifact**
+- [x] **Step 2: Run targeted schema suite and confirm red state**
 Run: `cargo nextest run --test packet_and_schema`  
 Expected: fail while old schema is still expected
-- [ ] **Step 3: Remove checked-in schema artifact and update parity checks**
-- [ ] **Step 4: Re-run targeted schema suite and confirm green**
+- [x] **Step 3: Remove checked-in schema artifact and update parity checks**
+- [x] **Step 4: Re-run targeted schema suite and confirm green**
 Run: `cargo nextest run --test packet_and_schema`  
 Expected: pass without session-entry schema dependency
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add tests/packet_and_schema.rs
 git rm schemas/session-entry-resolve.schema.json
@@ -300,15 +300,15 @@ git commit -m "test: remove session-entry schema parity surface"
 - Test: `tests/workflow_entry_shell_smoke.rs`
 - Test: `tests/workflow_shell_smoke.rs`
 
-- [ ] **Step 1: Add red contract assertions for non-gated entry behavior and anti-regression checks against gate module/path reintroduction**
-- [ ] **Step 2: Run targeted suites and confirm red state**
+- [x] **Step 1: Add red contract assertions for non-gated entry behavior and anti-regression checks against gate module/path reintroduction**
+- [x] **Step 2: Run targeted suites and confirm red state**
 Run: `cargo nextest run --test runtime_instruction_contracts --test workflow_entry_shell_smoke --test workflow_shell_smoke`  
 Expected: fail on old gate expectations
-- [ ] **Step 3: Update runtime-instruction and eval docs/tests to direct-routing semantics and remove session-entry seeding requirements**
-- [ ] **Step 4: Re-run targeted suites and confirm green**
+- [x] **Step 3: Update runtime-instruction and eval docs/tests to direct-routing semantics and remove session-entry seeding requirements**
+- [x] **Step 4: Re-run targeted suites and confirm green**
 Run: `cargo nextest run --test runtime_instruction_contracts --test workflow_entry_shell_smoke --test workflow_shell_smoke`  
 Expected: pass under no-gate contracts
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add tests/runtime_instruction_contracts.rs tests/workflow_entry_shell_smoke.rs tests/workflow_shell_smoke.rs tests/evals/README.md tests/evals/using-featureforge-routing.scenarios.md
 git commit -m "test: enforce non-gated workflow entry contracts"
@@ -344,15 +344,17 @@ git commit -m "test: enforce non-gated workflow entry contracts"
 - Test: `tests/cli_parse_boundary.rs`
 - Test: `tests/packet_and_schema.rs`
 
-- [ ] **Step 1: Add/adjust doc assertions in contract suites for active README/testing surfaces with no session-entry gate language**
-- [ ] **Step 2: Update active docs and `RELEASE-NOTES.md` with explicit breaking output contract deltas**
-- [ ] **Step 3: Run final validation gate and fix failures until fully green**
+- [x] **Step 1: Add/adjust doc assertions in contract suites for active README/testing surfaces with no session-entry gate language**
+- [x] **Step 2: Update active docs and `RELEASE-NOTES.md` with explicit breaking output contract deltas**
+- [x] **Step 3: Run final validation gate and fix failures until fully green**
 Run: `node scripts/gen-skill-docs.mjs --check`  
 Run: `node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/gen-skill-docs.unit.test.mjs`  
 Run: `cargo clippy --all-targets --all-features -- -D warnings`  
 Run: `cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill --test workflow_runtime --test workflow_runtime_final_review --test workflow_shell_smoke --test workflow_entry_shell_smoke --test cli_parse_boundary --test packet_and_schema`  
 Expected: all pass
 - [ ] **Step 4: Commit final integration slice**
+
+  **Execution Note:** Active - Commit final integration slice
 ```bash
 git add README.md docs/README.codex.md docs/README.copilot.md docs/testing.md RELEASE-NOTES.md
 git commit -m "docs: finalize session-entry removal rollout contracts"

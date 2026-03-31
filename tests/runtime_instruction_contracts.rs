@@ -919,7 +919,15 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         .current_dir(&root);
     run_checked(gen_agents, "gen-agent-docs --check");
 
-    assert_file_contains(root.join("README.md"), "featureforge session-entry");
+    assert_file_contains(
+        root.join("README.md"),
+        "`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.",
+    );
+    assert_file_not_contains(root.join("README.md"), "featureforge session-entry");
+    assert_file_not_contains(
+        root.join("README.md"),
+        "FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY",
+    );
     assert_file_contains(root.join("README.md"), "featureforge repo-safety");
     assert_file_contains(root.join("README.md"), "featureforge plan contract");
     assert_file_contains(root.join("README.md"), "protected branches");
@@ -958,11 +966,29 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
+        "`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.",
+    );
+    assert_file_not_contains(root.join("docs/README.codex.md"), "featureforge session-entry");
+    assert_file_not_contains(
+        root.join("docs/README.codex.md"),
+        "FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY",
+    );
+    assert_file_contains(
+        root.join("docs/README.codex.md"),
         "run the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows)",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
         "Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-review`, not a separate workflow stage.",
+    );
+    assert_file_contains(
+        root.join("docs/README.copilot.md"),
+        "`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.",
+    );
+    assert_file_not_contains(root.join("docs/README.copilot.md"), "featureforge session-entry");
+    assert_file_not_contains(
+        root.join("docs/README.copilot.md"),
+        "FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
@@ -979,6 +1005,10 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
     assert_file_contains(
         root.join("README.md"),
         "node scripts/gen-agent-docs.mjs --check",
+    );
+    assert_file_contains(
+        root.join("docs/testing.md"),
+        "direct workflow routing without session-entry prerequisites",
     );
 }
 
