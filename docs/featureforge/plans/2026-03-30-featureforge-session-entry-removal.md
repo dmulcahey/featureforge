@@ -354,7 +354,7 @@ Run: `cargo nextest run --test runtime_instruction_contracts --test using_featur
 Expected: all pass
 - [ ] **Step 4: Commit final integration slice**
 
-  **Execution Note:** Active - Commit final integration slice
+  **Execution Note:** Interrupted - Final review found missing explicit workflow JSON version signaling and missing release-note breaking contract detail.
 ```bash
 git add README.md docs/README.codex.md docs/README.copilot.md docs/testing.md RELEASE-NOTES.md
 git commit -m "docs: finalize session-entry removal rollout contracts"

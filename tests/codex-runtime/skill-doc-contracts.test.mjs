@@ -1275,4 +1275,29 @@ test('active docs describe the post-session-entry routing contract', () => {
     /workflow routing now ignores legacy session-entry decision files and gate env inputs/i,
     'RELEASE-NOTES.md should describe the direct-routing breaking delta',
   );
+  assert.match(
+    releaseNotes,
+    /breaking output contract changes/i,
+    'RELEASE-NOTES.md should include a dedicated breaking output contract changes section',
+  );
+  assert.match(
+    releaseNotes,
+    /workflow phase --json.*session_entry.*needs_user_choice.*bypassed.*session_entry_gate.*continue_outside_featureforge.*schema_version.*2/is,
+    'RELEASE-NOTES.md should enumerate the workflow phase output removals and new schema version',
+  );
+  assert.match(
+    releaseNotes,
+    /workflow doctor --json.*session_entry.*needs_user_choice.*bypassed.*session_entry_gate.*continue_outside_featureforge.*schema_version.*2/is,
+    'RELEASE-NOTES.md should enumerate the workflow doctor output removals and new schema version',
+  );
+  assert.match(
+    releaseNotes,
+    /workflow handoff --json.*session_entry.*needs_user_choice.*bypassed.*session_entry_gate.*continue_outside_featureforge.*schema_version.*2/is,
+    'RELEASE-NOTES.md should enumerate the workflow handoff output removals and new schema version',
+  );
+  assert.match(
+    releaseNotes,
+    /workflow status --refresh.*needs_user_choice.*bypassed.*session_entry_unresolved.*session_entry_bypassed.*schema_version.*3/is,
+    'RELEASE-NOTES.md should enumerate the workflow status output removals and retained route schema version',
+  );
 });

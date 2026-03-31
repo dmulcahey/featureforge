@@ -34,6 +34,7 @@ use crate::workflow::markdown_scan::markdown_files_under;
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
 const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
 const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
+const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowRoute {
@@ -67,6 +68,7 @@ pub struct WorkflowDiagnostic {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowPhase {
+    pub schema_version: u32,
     pub phase: String,
     pub route_status: String,
     pub next_skill: String,
@@ -390,6 +392,7 @@ impl WorkflowRuntime {
         };
 
         Ok(WorkflowPhase {
+            schema_version: WORKFLOW_PHASE_SCHEMA_VERSION,
             phase,
             route_status: route.status.clone(),
             next_skill: route.next_skill.clone(),

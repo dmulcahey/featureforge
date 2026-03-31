@@ -2727,6 +2727,7 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     assert_eq!(phase_json["phase"], Value::String(execution_preflight_phase.clone()));
     assert_eq!(phase_json["next_action"], "execution_preflight");
     assert!(phase_json.get("session_entry").is_none());
+    assert_eq!(phase_json["schema_version"], 2);
     assert_eq!(phase_json["route"]["schema_version"], 3);
 
     let doctor_json = parse_json(
@@ -2741,6 +2742,7 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     assert_eq!(doctor_json["phase"], Value::String(execution_preflight_phase.clone()));
     assert_eq!(doctor_json["next_action"], "execution_preflight");
     assert!(doctor_json.get("session_entry").is_none());
+    assert_eq!(doctor_json["schema_version"], 2);
     assert_eq!(doctor_json["route"]["schema_version"], 3);
 
     let handoff_json = parse_json(
@@ -2756,6 +2758,7 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     assert_eq!(handoff_json["next_action"], "execution_preflight");
     assert_eq!(handoff_json["recommended_skill"], "featureforge:executing-plans");
     assert!(handoff_json.get("session_entry").is_none());
+    assert_eq!(handoff_json["schema_version"], 2);
     assert_eq!(handoff_json["route"]["schema_version"], 3);
 }
 
@@ -2986,6 +2989,7 @@ fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
     assert_eq!(phase_json["phase"], "execution_preflight");
     assert_eq!(phase_json["next_action"], "execution_preflight");
     assert!(phase_json.get("session_entry").is_none());
+    assert_eq!(phase_json["schema_version"], 2);
     assert_eq!(phase_json["route"]["schema_version"], 3);
 }
 
@@ -3646,6 +3650,7 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     assert_eq!(doctor_json["plan_path"], plan_rel);
     assert_eq!(doctor_json["contract_state"], "valid");
     assert!(doctor_json.get("session_entry").is_none());
+    assert_eq!(doctor_json["schema_version"], 2);
     assert_eq!(doctor_json["route"]["schema_version"], 3);
     assert_eq!(doctor_json["execution_status"]["execution_started"], "no");
     assert_eq!(doctor_json["preflight"]["allowed"], true);
@@ -3692,6 +3697,7 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
             .is_some_and(|value| !value.is_empty())
     );
     assert!(handoff_json.get("session_entry").is_none());
+    assert_eq!(handoff_json["schema_version"], 2);
     assert_eq!(handoff_json["route"]["schema_version"], 3);
 
     let preflight_json = parse_json(

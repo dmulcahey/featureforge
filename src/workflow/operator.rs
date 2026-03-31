@@ -14,8 +14,13 @@ use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus}
 use crate::execution::topology::RecommendOutput;
 use crate::workflow::status::{WorkflowPhase, WorkflowRoute, WorkflowRuntime};
 
+const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 2;
+const WORKFLOW_DOCTOR_SCHEMA_VERSION: u32 = 2;
+const WORKFLOW_HANDOFF_SCHEMA_VERSION: u32 = 2;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowDoctor {
+    pub schema_version: u32,
     pub phase: String,
     pub route_status: String,
     pub next_skill: String,
@@ -39,6 +44,7 @@ pub struct WorkflowDoctor {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowHandoff {
+    pub schema_version: u32,
     pub phase: String,
     pub route_status: String,
     pub next_skill: String,
@@ -107,6 +113,7 @@ pub fn render_explain(current_dir: &Path) -> Result<String, JsonFailure> {
 pub fn phase(current_dir: &Path) -> Result<WorkflowPhase, JsonFailure> {
     let context = build_context(current_dir)?;
     Ok(WorkflowPhase {
+        schema_version: WORKFLOW_PHASE_SCHEMA_VERSION,
         phase: context.phase.clone(),
         route_status: context.route.status.clone(),
         next_skill: public_next_skill(&context),
@@ -141,6 +148,7 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
         .unwrap_or_else(|| context.route.contract_state.clone());
 
     Ok(WorkflowDoctor {
+        schema_version: WORKFLOW_DOCTOR_SCHEMA_VERSION,
         phase: doctor_phase,
         route_status: context.route.status.clone(),
         next_skill: public_next_skill(&context),
@@ -301,6 +309,7 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
     };
 
     Ok(WorkflowHandoff {
+        schema_version: WORKFLOW_HANDOFF_SCHEMA_VERSION,
         phase: context.phase.clone(),
         route_status: context.route.status.clone(),
         next_skill: public_next_skill(&context),

@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-30-featureforge-session-entry-removal.md
 **Plan Revision:** 1
-**Plan Fingerprint:** cad38fdd965dfcb98c6bdcc971de1d1b20373cf19823ef99d35be0c91d645ee4
+**Plan Fingerprint:** 30f65ddfdf2b7153043b54d5f38876f9bd620686b5da5205422d7e4f04982f51
 **Source Spec Path:** docs/featureforge/specs/2026-03-30-featureforge-session-entry-removal-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** d994618450ab7675e1e445bf26d169ece3826046351c4a9a3b6834de12ae549c
@@ -833,3 +833,38 @@
 - tests/runtime_instruction_contracts.rs | sha256:3ea93f0cb4535f7798e153da8d8e93f800f1f29dda47ebc651f03a2e593bf339
 **Verification Summary:** Manual inspection only: node scripts/gen-skill-docs.mjs --check passed; node --test tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/gen-skill-docs.unit.test.mjs passed; cargo clippy --all-targets --all-features -- -D warnings passed; cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill --test workflow_runtime --test workflow_runtime_final_review --test workflow_shell_smoke --test workflow_entry_shell_smoke --test cli_parse_boundary --test packet_and_schema passed (158 tests).
 **Invalidation Reason:** N/A
+
+### Task 6 Step 4
+#### Attempt 1
+**Status:** Invalidated
+**Recorded At:** 2026-03-31T01:32:22.351108Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 4
+**Packet Fingerprint:** b1047bbf36554f152257a89617e7d31f7b95be9913926fd110a81b6a10082923
+**Head SHA:** d0629e05c577c34c87db31e568f8ac2fca1c34cc
+**Base SHA:** d0629e05c577c34c87db31e568f8ac2fca1c34cc
+**Claim:** Committed the final Task 6 integration slice, including the post-session-entry doc/test contract cleanup, project-memory provenance repairs, and refreshed checked-in darwin/windows runtime binaries with updated manifest and checksums.
+**Files Proven:**
+- README.md | sha256:6f972ea912e5650897524591d56a9c53b0603593fde437f70264f629ce45bf2f
+- RELEASE-NOTES.md | sha256:204c5029036dd22ba10403ec322266d1ebedc1cd3d1d696ed5b4b5109c6d14ff
+- bin/featureforge | sha256:6c53ecfffa5ecaf53e716de6ff33f47274320f8e8bc4145f8fe14314e68baa91
+- bin/prebuilt/darwin-arm64/featureforge | sha256:6c53ecfffa5ecaf53e716de6ff33f47274320f8e8bc4145f8fe14314e68baa91
+- bin/prebuilt/darwin-arm64/featureforge.sha256 | sha256:e5d19340cd90b691a76f5078bcd4553c5a22efc783a1a6162dbd6432bf9f7c96
+- bin/prebuilt/manifest.json | sha256:6cca95d9103f2dabb0bfff7e5e284b631f87dc7fba7ac0aeb89f3d3d6c5ef371
+- bin/prebuilt/windows-x64/featureforge.exe | sha256:4e39ef8839cb6469c5d66fe7735341188f2953953d03484fc2e19e4c3c8aad47
+- bin/prebuilt/windows-x64/featureforge.exe.sha256 | sha256:e344ee0da9c59bf1ed787057dd384a93fb9757125804bd66b1d55f3169f430b4
+- docs/README.codex.md | sha256:b24c71443c5118f054138625799bf131a177d074600c5abd6e3cfd34c5b5a9c2
+- docs/README.copilot.md | sha256:98e91e184fd96e20a5c1c20240b2bd41498f3cd439ea17de7d0f57b5e30f3835
+- docs/featureforge/execution-evidence/2026-03-30-featureforge-session-entry-removal-r1-evidence.md | sha256:ade1fe93402510a83e2b1c63da7a7a5a45080a361143b7d6f88b184c85ba3111
+- docs/featureforge/plans/2026-03-30-featureforge-session-entry-removal.md | sha256:8646b6aee138776c17b38261695a78942c29a9a725c7531dbbc00ea26c435ad7
+- docs/project_notes/bugs.md | sha256:3bab524a22738629a238b6883eb2bb8eea474bce9e47d9bfd854b786696151bd
+- docs/project_notes/decisions.md | sha256:609bb6ded7d47942a012b299b047d95c281561c058a4b9d1f745c7487e5a6618
+- docs/project_notes/issues.md | sha256:99b4758c862f7f2f9e5fb08df1873ed47739d37c087abdc27cec1a088a882748
+- docs/project_notes/key_facts.md | sha256:a90d32c4fdab49b3f5f38ffd2067e3a2b45395cc44707bdab2b6dde4756d8142
+- docs/testing.md | sha256:a11c462b584322ceecba4144782bd2e01b6c8abc809375d5465e73d24d08331a
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:cbc5b91c75d410720b1352f586756386a8c713822051bfeb96065256c147f461
+- tests/runtime_instruction_contracts.rs | sha256:3ea93f0cb4535f7798e153da8d8e93f800f1f29dda47ebc651f03a2e593bf339
+- tests/session_config_slug.rs | sha256:a90e2f91ce96700463971bc9e45200bc99fd897e05417b87ea100c0b5f01af47
+**Verification Summary:** Manual inspection only: FEATUREFORGE_PREBUILT_TARGET=darwin-arm64 scripts/refresh-prebuilt-runtime.sh passed; PATH="/Users/davidmulcahey/.cargo/bin:/opt/homebrew/opt/openssl@3/bin:/opt/homebrew/opt/python/bin:/Users/davidmulcahey/.nvm/versions/node/v24.13.1/bin:/Users/davidmulcahey/.nvm/versions/node/v24.13.1/bin:/Users/davidmulcahey/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand:/Users/davidmulcahey/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli:/opt/homebrew/bin:/opt/homebrew/sbin:/Library/Frameworks/Python.framework/Versions/3.9/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/opt/pkg/env/active/bin:/opt/pmk/env/global/bin:/Library/Apple/usr/bin:/Applications/Wireshark.app/Contents/MacOS:/Users/davidmulcahey/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand:/Users/davidmulcahey/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli:/Users/davidmulcahey/.local/bin:/opt/homebrew/opt/openssl@3/bin:/opt/homebrew/opt/python/bin:/Users/davidmulcahey/.nvm/versions/node/v24.13.1/bin:/Users/davidmulcahey/.cargo/bin" CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc FEATUREFORGE_PREBUILT_TARGET=windows-x64 FEATUREFORGE_PREBUILT_RUST_TARGET=x86_64-pc-windows-gnu scripts/refresh-prebuilt-runtime.sh passed; bin/featureforge was refreshed from target/aarch64-apple-darwin/release/featureforge; cargo nextest run --test powershell_wrapper_resolution --test workflow_shell_smoke --test workflow_runtime --test session_config_slug --test update_and_install --test upgrade_skill passed (120 tests); earlier full-suite verification remained green across node scripts/gen-skill-docs.mjs --check, node scripts/gen-agent-docs.mjs --check, node --test tests/codex-runtime/*.test.mjs, cargo clippy --all-targets --all-features -- -D warnings, cargo nextest run --no-fail-fast, and cargo test --doc.
+**Invalidation Reason:** Final review found missing explicit workflow JSON version signaling and missing release-note breaking contract detail.
