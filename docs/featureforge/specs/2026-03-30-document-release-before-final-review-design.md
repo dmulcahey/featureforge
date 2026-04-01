@@ -28,6 +28,8 @@ execution complete
   -> ready_for_branch_completion
 ```
 
+This sequence applies once execution is in a clean late-stage state (no active, blocking, or resume task and no unresolved task-boundary blocker family signaled by runtime `task_boundary_block_reason_code`, including review-not-green, review-independence/receipt-integrity, review-dispatch-lineage, and cycle-break blockers).
+
 The normal path should no longer encourage "review -> required doc update -> review again" churn.
 
 ## Scope
@@ -43,6 +45,7 @@ In scope:
 - add observability signals that show whether document-release-first routing is occurring and whether final review is being invalidated by post-review repo writes
 - add a routing-consistency matrix that verifies phase, `next_action`, `recommended_skill`, and `recommendation_reason` together across mixed late-stage stale-artifact states
 - add a terminal-final-gate-only guard so workflow-routed final review cannot be treated as terminal when release readiness is stale or missing, while preserving early checkpoint/ad-hoc review use
+- preserve the current review-dispatch command boundary (`gate-review-dispatch` mints dispatch proof; `gate-review` remains read-only status)
 - define one authoritative late-stage precedence decision table used by runtime tests and late-stage guidance text
 
 ## Out of Scope
@@ -52,6 +55,8 @@ In scope:
 - moving browser QA ahead of final review
 - requiring `document-release` for ad-hoc non-workflow work
 - blocking non-terminal `requesting-code-review` checkpoints behind `document-release`
+- changing task-boundary review-dispatch/cycle-break policy
+- collapsing `gate-review-dispatch` and `gate-review` into one command path
 - broad workflow redesign beyond late-stage precedence
 
 ## Requirement Index
@@ -59,7 +64,7 @@ In scope:
 - [REQ-001][behavior] Workflow-routed late-stage order must be `execution complete -> document_release_pending -> final_review_pending -> qa_pending (if required) -> ready_for_branch_completion`.
 - [REQ-002][behavior] Public phase selection must prefer `document_release_pending` over `final_review_pending` when release-facing docs or metadata are the earliest unresolved required late-stage artifact.
 - [REQ-003][behavior] `featureforge:finishing-a-development-branch` must describe and enforce the reordered sequence.
-- [REQ-004][behavior] `featureforge:requesting-code-review` must be the default last repo-write-sensitive late-stage gate in the normative path.
+- [REQ-004][behavior] `featureforge:requesting-code-review` must be the default last repo-write-sensitive late-stage gate in the normative path, and workflow-routed final-review dispatch must continue using `featureforge plan execution gate-review-dispatch` while `gate-review` remains read-only.
 - [REQ-005][behavior] Final-review freshness must remain fail closed when repo contents change after review completion.
 - [REQ-006][behavior] QA freshness must only surface after release docs and final review are current.
 - [REQ-007][behavior] `featureforge:document-release` must explicitly state that workflow-routed work normally runs before final review.
@@ -70,7 +75,7 @@ In scope:
 - [REQ-012][verification] A routing-consistency matrix must assert phase, `next_action`, `recommended_skill`, and `recommendation_reason` parity for mixed stale-artifact combinations across release docs, final review, and QA.
 - [REQ-013][behavior] In workflow-routed terminal final-review mode, `featureforge:requesting-code-review` must fail closed as non-terminal when release readiness is stale or missing and must route back to `featureforge:document-release`; ad-hoc or intentionally early checkpoint review use remains allowed.
 - [REQ-014][behavior] FeatureForge must define a single authoritative late-stage precedence decision table (`artifact/failure -> phase -> next_action -> recommended_skill -> reason-family`) and align runtime behavior, tests, and workflow-facing guidance to that table.
-- [REQ-015][verification] Tests must prove `requesting-code-review` remains valid for intentional non-terminal checkpoint use and is not universally blocked by document-release prerequisites.
+- [REQ-015][verification] Tests must prove `requesting-code-review` remains valid for intentional non-terminal checkpoint use, is not universally blocked by document-release prerequisites, and does not regress the `gate-review-dispatch` vs `gate-review` command boundary.
 - [REQ-016][behavior] The authoritative late-stage precedence decision table must be runtime-owned (source of truth in workflow runtime code), and skills/docs must reference a shared canonical table representation derived from that runtime source rather than maintaining divergent ad-hoc copies.
 - [REQ-017][verification] Contract tests must fail when workflow-facing guidance (skill/public doc precedence statements) diverges from the runtime-owned precedence table values.
 - [REQ-018][behavior] Authoritative harness-phase emission and operator public-phase routing must both consume the same canonical late-stage precedence contract so `harness_phase` and operator-visible phase/action/skill outputs cannot diverge on stale-artifact precedence.
@@ -96,8 +101,9 @@ The repo already has the right surfaces for this change:
 
 - `src/workflow/operator.rs` controls public phase routing, next action, next skill, and reason text
 - `src/execution/state.rs` and `src/execution/harness.rs` map runtime state to public/harness-facing phase diagnostics
+- `src/execution/state.rs` already enforces task-boundary review-dispatch lineage (`prior_task_review_dispatch_missing|stale`) before next-task advancement and emits explicit remediation guidance through operator repairing flows
 - `skills/finishing-a-development-branch/SKILL.md.tmpl` already acknowledges stale-review risk from document changes after review
-- `skills/document-release/SKILL.md.tmpl` and `skills/requesting-code-review/SKILL.md.tmpl` define the late-stage skill contract surfaces that must be explicitly ordered
+- `skills/document-release/SKILL.md.tmpl` and `skills/requesting-code-review/SKILL.md.tmpl` define the late-stage skill contract surfaces that must be explicitly ordered, including the workflow-routed `gate-review-dispatch` pre-dispatch gate for final review
 - `tests/workflow_runtime.rs`, `tests/workflow_runtime_final_review.rs`, and `tests/execution_harness_state.rs` already cover related phase behavior and can anchor precedence regressions
 
 ## Architecture Diagram
@@ -171,6 +177,12 @@ For workflow-routed terminal final-review mode only:
 - this guard is not a blanket restriction on `featureforge:requesting-code-review`
 - intentional earlier checkpoint reviews remain allowed
 
+### 4.5. Review-Dispatch Command Boundary Compatibility
+
+- preserve the current split where `featureforge plan execution gate-review-dispatch` records review-dispatch provenance and strategy remediation checkpoints
+- preserve `featureforge plan execution gate-review` as read-only gate inspection for status/reporting surfaces
+- late-stage guidance and routing copy must not regress to treating `gate-review` as the dispatch-minting command for workflow-routed final review
+
 ### 5. Observability
 
 Add deterministic observability for:
@@ -197,6 +209,7 @@ Add deterministic observability for:
 | terminal final review guard | workflow-routed terminal final review requested while release readiness stale/missing | `ExecutionStateNotReady` | `terminal_review_blocked_release_not_ready` | Y | route to `featureforge:document-release`, mark review non-terminal | clear “run document-release first” message |
 | release-artifact provenance validator | decoy/non-authoritative release artifact presented as fresh release readiness | `ExecutionStateNotReady` | `release_artifact_provenance_invalid` | Y | reject artifact, require authoritative document-release artifact/regeneration | explicit provenance-invalid diagnostic |
 | freshness invalidation detector | repo changed after recorded final review artifact | `ReviewArtifactNotFresh` | `post_review_repo_write_detected` | Y | invalidate prior final review artifact and require fresh final review on current `HEAD` | review stale message + rerun instruction |
+| task-boundary review-dispatch lineage gate | prior task review-dispatch provenance missing/stale while advancing execution | `ExecutionStateNotReady` | `prior_task_review_dispatch_missing`, `prior_task_review_dispatch_stale` | Y | route to repairing guidance and require `gate-review-dispatch` before next-task begin | explicit task-boundary remediation command |
 
 ## Failure Modes Registry
 
@@ -208,6 +221,7 @@ authoritative harness/operator alignment  | phase/action/skill/reason mismatch f
 terminal final review gate                | release readiness stale/missing                        | Y        | Y     | Explicit   | Y
 post-review freshness                     | repo mutation after review artifact                    | Y        | Y     | Explicit   | Y
 release-artifact provenance               | non-authoritative/decoy artifact accepted             | Y        | Y     | Explicit   | Y
+task-boundary dispatch lineage            | review-dispatch proof missing/stale before next task  | Y        | Y     | Explicit   | Y
 ```
 
 ## Skill and Documentation Changes
@@ -237,6 +251,7 @@ Required updates:
 - assume release-facing docs and metadata are already current in the normative path
 - state that newly discovered required release/doc repo writes make the review non-final until those writes land and review is rerun
 - explicitly scope terminal guard behavior to workflow-routed terminal final-review mode so intentional non-terminal checkpoint reviews remain valid
+- preserve the `gate-review-dispatch` (dispatch proof) vs `gate-review` (read-only status) command boundary in guidance text and examples
 
 ### Public Workflow Docs
 
@@ -274,6 +289,7 @@ Add or update tests to prove:
 - all late-stage artifacts fresh -> `ready_for_branch_completion`
 - direct terminal final-review invocation with stale release readiness fails closed back to `document_release_pending`
 - non-terminal checkpoint review invocations remain allowed
+- workflow-routed final-review dispatch path uses `gate-review-dispatch` and does not regress to `gate-review` as the dispatch-minting command
 
 ### Precedence Tests
 
@@ -291,6 +307,7 @@ Add tests that fail if generated skill/docs describe old ordering such as:
 - final review before required document release in normative workflow
 - completion guidance that frames document release as optional post-review cleanup for workflow-routed work
 - wording that makes checkpoint/ad-hoc `requesting-code-review` universally blocked by document-release
+- wording or examples that collapse `gate-review-dispatch` and `gate-review` semantics
 - precedence mappings in workflow-facing docs/skills that diverge from runtime-owned canonical table values
 
 ### End-to-End Regression

@@ -3,7 +3,7 @@
 > **For Codex and GitHub Copilot workers:** REQUIRED: Use the execution skill recommended by `featureforge plan execution recommend --plan <approved-plan-path>` after engineering approval; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Workflow State:** Engineering Approved
-**Plan Revision:** 1
+**Plan Revision:** 2
 **Execution Mode:** none
 **Source Spec:** `docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md`
 **Source Spec Revision:** 1
@@ -50,11 +50,18 @@
 - Approved spec `## Requirement Index` remains parseable with REQ-001 through REQ-023.
 - Work continues in a writable branch/worktree that passes repo-safety checks for plan and implementation artifacts.
 
+## Upstream Drift Since Plan Revision 1
+- `f9cbac4` hardened independent review-dispatch gating; this plan must preserve `gate-review-dispatch` as the dispatch-proof minting boundary.
+- `be8f85d` removed session-entry gating from active routing; this plan must not reintroduce session-entry coupling while implementing late-stage precedence.
+- `8320593` hardened runtime fail-closed repair flows; precedence changes must remain compatible with those repair surfaces.
+- `6c5ca2f` moved final-review fixture dispatch setup to `gate-review-dispatch`; this plan extends that seam instead of reviving deprecated dispatch assumptions.
+
 ## Existing Capabilities / Built-ins to Reuse
 - Existing workflow phase and handoff output surfaces in `src/workflow/operator.rs`.
 - Existing harness phase enum/state mapping in `src/execution/harness.rs` and `src/execution/state.rs`.
 - Existing structured observability payload seam in `src/execution/observability.rs` plus `tests/codex-runtime/eval-observability.test.mjs`.
 - Existing late-stage fixtures already asserting `document_release_pending`, `final_review_pending`, `qa_pending`, and `ready_for_branch_completion` in `tests/workflow_runtime.rs`.
+- Existing read-only-vs-dispatch boundary coverage in `canonical_workflow_gate_review_is_read_only_before_dispatch`.
 - Existing skill-doc generation pipeline: `node scripts/gen-skill-docs.mjs`.
 - Existing skill-doc contract coverage harness in `tests/codex-runtime/skill-doc-contracts.test.mjs`.
 - Existing runtime instruction contract checks in `tests/runtime_instruction_contracts.rs`.
@@ -63,6 +70,8 @@
 - Do not relax final-review freshness or finish-gate strictness while reordering precedence.
 - Do not make checkpoint/ad-hoc `requesting-code-review` invocations universally depend on `document-release`.
 - Keep release-artifact provenance authoritative; decoy/malformed artifacts must fail closed.
+- Apply late-stage precedence only after clean late-stage eligibility is true (no active/blocking/resume task and no unresolved task-boundary blocker family reported by runtime `task_boundary_block_reason_code`, including review-not-green, review-independence/receipt-integrity, review-dispatch-lineage, and cycle-break blockers).
+- Preserve command boundary semantics: `gate-review-dispatch` mints dispatch proof, and `gate-review` remains read-only status/reporting.
 - Avoid duplicated precedence logic between runtime code and skill/docs; use one canonical contract source.
 - Any `.md.tmpl` edits require regeneration of checked-in `SKILL.md` outputs.
 
@@ -74,7 +83,7 @@
 - REQ-001 -> Task 1, Task 3
 - REQ-002 -> Task 1, Task 2
 - REQ-003 -> Task 6
-- REQ-004 -> Task 3, Task 6
+- REQ-004 -> Task 3, Task 5, Task 6
 - REQ-005 -> Task 3
 - REQ-006 -> Task 1, Task 5
 - REQ-007 -> Task 6
@@ -97,6 +106,7 @@
 
 ## Execution Strategy
 - Execute Tasks 1, 2, and 3 serially. They define and enforce canonical precedence and terminal-final-review guard semantics across runtime gate surfaces.
+- During Tasks 1 through 3, preserve existing higher-priority non-late-stage routing gates (active work, resume-task blockers, and the full runtime task-boundary blocker family) so precedence reordering applies only in clean late-stage state.
 - After Task 3, create two worktrees and run Tasks 4 and 6 in parallel:
   - Task 4 owns runtime observability and reason-family diagnostics.
   - Task 6 owns skill/template alignment plus canonical precedence reference grounding.
@@ -123,6 +133,7 @@ Task 7 -> Task 8
 **Plan Constraints:**
 - Canonical contract must be code-owned, not prose-owned.
 - Keep fallback behavior fail closed when contract evaluation fails.
+- Resolver evaluation must only run when clean late-stage eligibility is true.
 **Open Questions:** none
 
 **Files:**
@@ -130,15 +141,15 @@ Task 7 -> Task 8
 - Create: `src/workflow/late_stage_precedence.rs`
 - Test: `tests/workflow_runtime.rs`
 
-- [ ] **Step 1: Add failing test for mixed stale release/review state precedence**
-Run: `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_review_resolved_to_document_release_pending --exact`
-Expected: FAIL if old precedence still prefers final review.
+- [ ] **Step 1: Add failing test for dual-unresolved release+review precedence routing**
+Run: `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending --exact`
+Expected: FAIL until dual-unresolved routing prioritizes `document_release_pending` over `final_review_pending`.
 
 - [ ] **Step 2: Implement canonical precedence row type and resolver helper**
-Define explicit mapping entries for release/review/qa readiness outcomes, including reason-family text binding.
+Define explicit mapping entries for release/review/qa readiness outcomes, including reason-family text binding and clean late-stage eligibility gating.
 
 - [ ] **Step 3: Route operator phase/action/skill/reason through resolver**
-Replace ad-hoc branching where needed so outputs are contract-aligned.
+Replace ad-hoc branching where needed so outputs are contract-aligned without bypassing higher-priority non-late-stage blockers.
 
 - [ ] **Step 4: Add fail-closed fallback behavior for malformed/unknown precedence inputs**
 Ensure unknown/malformed states cannot route optimistically to review-ready.
@@ -171,7 +182,7 @@ git commit -m "feat: add canonical late-stage precedence contract"
 - Test: `tests/workflow_runtime.rs`
 
 - [ ] **Step 1: Add failing parity test for authoritative harness-phase vs operator phase outputs**
-Run: `cargo test --test workflow_runtime -- canonical_workflow_operator_surfaces_ --nocapture`
+Run: `cargo test --test workflow_runtime -- canonical_workflow_harness_operator_precedence_parity_dual_unresolved --exact`
 Expected: FAIL if surfaces can diverge on precedence.
 
 - [ ] **Step 2: Wire authoritative phase emission through canonical precedence helper**
@@ -198,10 +209,11 @@ git commit -m "feat: enforce harness/operator precedence parity"
 ## Task 3: Implement Terminal Final-Review Guard and Release-Provenance Fail-Closed Law
 
 **Spec Coverage:** REQ-001, REQ-004, REQ-005, REQ-013, REQ-015, REQ-021, REQ-023
-**Task Outcome:** Workflow-routed terminal final review fails closed to document-release when release readiness is stale/missing or non-authoritative, while preserving intentional non-terminal review checkpoints.
+**Task Outcome:** Workflow-routed terminal final review fails closed to document-release when release readiness is stale/missing or non-authoritative, while preserving intentional non-terminal review checkpoints and the `gate-review-dispatch` vs `gate-review` command boundary.
 **Plan Constraints:**
 - Guard applies only to terminal workflow-routed final-review mode.
 - Do not block ad-hoc/early checkpoint review workflows.
+- Preserve `gate-review-dispatch` as dispatch-proof minting and keep `gate-review` read-only.
 **Open Questions:** none
 
 **Files:**
@@ -210,13 +222,13 @@ git commit -m "feat: enforce harness/operator precedence parity"
 - Test: `tests/workflow_runtime.rs`
 - Test: `tests/workflow_runtime_final_review.rs`
 
-- [ ] **Step 1: Add failing tests for terminal-guard behavior and checkpoint allowance**
+- [ ] **Step 1: Add/refresh tests for terminal-guard behavior, checkpoint allowance, and dispatch-command boundary**
 Run:
 ```bash
 cargo test --test workflow_runtime_final_review -- --nocapture
 cargo test --test workflow_runtime -- canonical_workflow_phase_routes_review_resolved_to_document_release_pending --exact
 ```
-Expected: FAIL until terminal guard semantics are implemented.
+Expected: FAIL if any required guard/boundary behavior is missing; if upstream coverage already passes, add a failing gap case before implementation.
 
 - [ ] **Step 2: Implement terminal final-review mode check for release readiness**
 Require authoritative release-readiness freshness before terminal final-review eligibility.
@@ -224,8 +236,8 @@ Require authoritative release-readiness freshness before terminal final-review e
 - [ ] **Step 3: Enforce release-artifact provenance validation in the same decision path**
 Reject decoy/malformed/non-authoritative artifacts with named reason codes.
 
-- [ ] **Step 4: Preserve non-terminal review path behavior**
-Ensure intentional checkpoint review invocations remain valid.
+- [ ] **Step 4: Preserve non-terminal review path and command-boundary behavior**
+Ensure intentional checkpoint review invocations remain valid and `gate-review` stays read-only while `gate-review-dispatch` remains the dispatch-minting path.
 
 - [ ] **Step 5: Run focused final-review + release-precedence tests**
 Run:
@@ -259,7 +271,7 @@ git commit -m "feat: gate terminal final review on release readiness"
 - Test: `tests/codex-runtime/eval-observability.test.mjs`
 
 - [ ] **Step 1: Add failing diagnostics assertions for precedence reason-family coverage**
-Run: `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_document_release_pending --exact`
+Run: `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_document_release --exact`
 Expected: FAIL if reason-family telemetry/diagnostics are absent.
 
 - [ ] **Step 2: Emit precedence observability counters/diagnostics**
@@ -286,8 +298,8 @@ git commit -m "feat: add late-stage precedence observability diagnostics"
 
 ## Task 5: Build Runtime Matrix and Fail-Closed Regression Coverage
 
-**Spec Coverage:** REQ-006, REQ-009, REQ-012, REQ-015, REQ-018, REQ-019, REQ-022, REQ-023
-**Task Outcome:** Runtime tests pin phase/action/skill/reason parity across mixed stale states, parity between authoritative and fallback routing, and fail-closed error classes.
+**Spec Coverage:** REQ-004, REQ-006, REQ-009, REQ-012, REQ-015, REQ-018, REQ-019, REQ-022, REQ-023
+**Task Outcome:** Runtime tests pin phase/action/skill/reason parity across mixed stale states, parity between authoritative and fallback routing, fail-closed error classes, and the dispatch-command boundary.
 **Plan Constraints:**
 - Matrix tests must assert all four user-visible outputs together.
 - Keep fixtures deterministic and independent of network/external state.
@@ -308,8 +320,8 @@ Cover named failure class/reason-code behavior from spec registry.
 - [ ] **Step 3: Add parity regression tests for harness-phase vs operator fallback**
 Assert identical precedence outcomes for the same gate evidence.
 
-- [ ] **Step 4: Add terminal-vs-checkpoint review mode coverage**
-Prove terminal mode is guarded and checkpoint mode stays available.
+- [ ] **Step 4: Add terminal-vs-checkpoint review mode and dispatch-command boundary coverage**
+Prove terminal mode is guarded, checkpoint mode stays available, and `gate-review` remains read-only while `gate-review-dispatch` remains dispatch-minting.
 
 - [ ] **Step 5: Run runtime test suite slice**
 Run:
@@ -317,6 +329,7 @@ Run:
 cargo test --test workflow_runtime -- --nocapture
 cargo test --test workflow_runtime_final_review -- --nocapture
 cargo test --test execution_harness_state -- --nocapture
+cargo test --test workflow_runtime -- canonical_workflow_gate_review_is_read_only_before_dispatch --exact
 ```
 Expected: PASS.
 
@@ -329,10 +342,11 @@ git commit -m "test: add late-stage precedence matrix regressions"
 
 ## Task 6: Align Skill Templates and Generated Skill Docs to Canonical Precedence (Parallel Lane B)
 
-**Spec Coverage:** REQ-003, REQ-007, REQ-008, REQ-010, REQ-014, REQ-016
+**Spec Coverage:** REQ-003, REQ-004, REQ-007, REQ-008, REQ-010, REQ-014, REQ-016
 **Task Outcome:** Late-stage skills describe the same precedence contract as runtime and reference a canonical precedence artifact rather than carrying divergent logic.
 **Plan Constraints:**
 - Preserve checkpoint/ad-hoc review allowance in `requesting-code-review`.
+- Preserve command-boundary wording (`gate-review-dispatch` dispatch proof vs `gate-review` read-only).
 - Edit `.tmpl` sources first; regenerate `SKILL.md` outputs.
 **Open Questions:** none
 
@@ -348,10 +362,10 @@ git commit -m "test: add late-stage precedence matrix regressions"
 - Modify: `skills/using-featureforge/SKILL.md`
 
 - [ ] **Step 1: Update `.tmpl` guidance for document-release-before-terminal-review sequencing**
-Keep language explicit about terminal guard scope.
+Keep language explicit about terminal guard scope and command-boundary semantics.
 
 - [ ] **Step 2: Add canonical precedence reference artifact**
-Generate or refresh table rows in one shared reference consumed by skills/docs, deriving rows directly from the runtime-owned canonical precedence contract.
+Generate or refresh table rows in one shared reference consumed by skills/docs, deriving rows directly from the runtime-owned canonical precedence contract so agents can cite a shared grounded table.
 
 - [ ] **Step 3: Regenerate skill docs**
 Run: `node scripts/gen-skill-docs.mjs`
@@ -389,7 +403,7 @@ git commit -m "docs: align late-stage skills to canonical precedence"
 Ensure normative sequence reflects document-release before terminal final review.
 
 - [ ] **Step 2: Add contract assertions for precedence grounding**
-Fail when skill/public precedence wording diverges from canonical contract rows and from the runtime-derived precedence reference artifact.
+Fail when skill/public precedence wording diverges from canonical contract rows, dispatch-command boundary semantics, or the runtime-derived precedence reference artifact.
 
 - [ ] **Step 3: Run skill-doc contract suite**
 Run:
@@ -465,6 +479,7 @@ git commit -m "chore: integrate document-release-before-final-review contract up
 - Guard verification:
   - terminal final review blocked when release readiness stale/missing
   - non-terminal checkpoint review remains valid
+  - `gate-review-dispatch` remains dispatch-minting while `gate-review` remains read-only
 - Provenance verification:
   - decoy/non-authoritative release artifacts fail closed
 - Parity verification:
@@ -496,15 +511,17 @@ git commit -m "chore: integrate document-release-before-final-review contract up
   - Mitigation: canonical precedence source + contract tests for wording parity.
 - Risk: over-scoping guard to all reviews.
   - Mitigation: explicit terminal-final-review-only guard tests.
+- Risk: command-boundary drift that treats `gate-review` as dispatch-minting.
+  - Mitigation: dedicated boundary assertions in runtime and doc-contract suites.
 - Risk: harness/operator parity regressions in edge states.
   - Mitigation: dedicated parity matrix tests and fail-closed divergence diagnostics.
 
 ## Engineering Review Summary
 
 **Review Status:** clear
-**Reviewed At:** 2026-03-30T12:42:06Z
+**Reviewed At:** 2026-04-01T09:58:00Z
 **Review Mode:** small_change
-**Reviewed Plan Revision:** 1
+**Reviewed Plan Revision:** 2
 **Critical Gaps:** 0
 **Browser QA Required:** no
 **Test Plan Artifact:** `~/.featureforge/projects/dmulcahey-featureforge/davidmulcahey-current-test-plan-20260330-123721.md`
