@@ -808,8 +808,8 @@
 
 ### Task 7 Step 3
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-04-01T16:56:12.601398Z
+**Status:** Invalidated
+**Recorded At:** 2026-04-01T17:55:01.234943Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 7
 **Step Number:** 3
@@ -826,6 +826,27 @@
 - tests/runtime_instruction_contracts.rs | sha256:ef371a4875955eb5be67c455f89094a869d3e4efc1fd88852755a0247c745331
 **Verify Command:** node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && cargo test --test runtime_instruction_contracts -- --nocapture
 **Verification Summary:** `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && cargo test --test runtime_instruction_contracts -- --nocapture` -> pass
+**Invalidation Reason:** Evidence rebuild: files_proven_drifted
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-04-01T17:55:02.347005Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 7
+**Step Number:** 3
+**Packet Fingerprint:** 15c6f878e5d8f8b8f2a4984dc54039e52b192fa9d39a6c87b30128b40a90eba0
+**Head SHA:** 2ce376d7c7f8332a5c1c7aa325435064924e6af5
+**Base SHA:** 2ce376d7c7f8332a5c1c7aa325435064924e6af5
+**Claim:** Ran Task 7 contract suites for skill-doc generation/runtime instruction parity and confirmed all pass with precedence-grounding assertions in place.
+**Files Proven:**
+- README.md | sha256:f156ddabf34c6aaac50fc24475b5b6a85b99f7d51172441e9a4d56e013379983
+- docs/README.codex.md | sha256:8fbb8b76bd89456888c70dccd619fe9e9eb5296b3fdda2d0d2f6515bb9cd4f52
+- docs/README.copilot.md | sha256:f414c3b77ee91c64c5d8a02697ed35409d09ac74c9bc568e28625e573a97c801
+- tests/codex-runtime/gen-skill-docs.unit.test.mjs | sha256:e55016bab1d9901744191332b88ca4545ed1a7464a944330b4aaebc812e8cc2e
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:a6a754f681c633812c94b054442a85f3f9c2e56cb9cdf76483b9b9ac5715a7d3
+- tests/runtime_instruction_contracts.rs | sha256:a600bb62b179ae087d74fb86c5cdebb660a1d4c7c43cc5764fbc9e8ecfef4a31
+**Verify Command:** node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && cargo test --test runtime_instruction_contracts -- --nocapture
+**Verification Summary:** `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && cargo test --test runtime_instruction_contracts -- --nocapture` -> passed: ✔ insertGeneratedHeader inserts the generated header after YAML frontmatter (0.599208ms) ✔ insertGeneratedHeader throws when YAML frontmatter is unterminated (0.137125ms) ✔ renderTemplateContent throws on unknown placeholders (0.084833ms) ✔ renderTemplateContent throws when resolver output leaves unresolved placeholders behind (0.057417ms) ✔ renderTemplateContent always ends generated files with a trailing newline (0.077875ms) ✔ base and review shell builders include their expected contract lines (0.064167ms) ✔ shared shell builders delegate runtime-root discovery to the helper contract (0.125792ms) ✔ using-featureforge helpers omit the removed bypass gate contract (0.050709ms) ✔ using-featureforge template keeps canonical late-stage precedence wording (0.154667ms) ✔ generated preambles include the shared Search Before Building section for non-router skills only (0.184959ms) ℹ tests 10 ℹ suites 0 ℹ pass 10 ℹ fail 0 ℹ cancelled 0 ℹ skipped 0 ℹ todo 0 ℹ duration_ms 31.495291 ✔ templates declare exactly one base or review preamble placeholder (4.344959ms) ✔ generated preamble bash block includes shared runtime-root, session, and contributor state (4.885708ms) ✔ install docs describe the path-based runtime-root helper contract (0.320167ms) ✔ generated non-router skill docs include the shared Search Before Building section (1.063166ms) ✔ using-featureforge omits the removed bypass-gate contract (0.146792ms) ✔ generated skill docs omit removed session-entry env markers across active surfaces (0.991541ms) ✔ generated skill docs never execute runtime commands through root-selected launchers (2.34075ms) ✔ all shipped runtime docs keep execution pinned to the packaged binary contract (2.527334ms) ✔ upgrade instructions keep runtime command execution separate from companion-file lookup (0.1695ms) ✔ generated preambles capture _BRANCH exactly once and keep helper BRANCH out of grounding (0.97225ms) ✔ generated branch-aware helper loads are guarded through _SLUG_ENV and eval the captured output only (0.266708ms) ✔ branch-aware skill docs consume the slug helper instead of inline sanitization fragments (0.222416ms) ✔ helper BRANCH stays artifact-only in the branch-aware skill consumers (0.112709ms) ✔ review skills include review-only preamble contract (0.663583ms) ✔ interactive question contract appears once per generated skill in normalized form (0.974666ms) ✔ workflow fixture coverage uses local fixtures instead of historical docs paths (0.098792ms) ✔ broad-safe skill descriptions expand discovery language without taking over workflow authority (0.338166ms) ✔ workflow-critical skill descriptions encode approval-stage prerequisites (0.383208ms) ✔ execution and review skill docs keep candidate artifacts and downstream gates explicit (1.552125ms) ✔ late-stage skill descriptions reject generic skip-ahead trigger phrases (0.335125ms) ✔ execution workflow skills reference the plan-execution helper contract (1.122666ms) ✔ task-fidelity workflow docs and prompts require packet-backed plan contracts (1.915083ms) ✔ repo-writing workflow skills document the protected-branch repo-safety gate consistently (0.512667ms) ✔ project-memory workflow hooks stay consult-only and non-gating (10.236875ms) ✔ project-memory skill contract stays narrow, deterministic, and repo-safety-bound (0.12875ms) ✔ generated skills use canonical runtime commands instead of helper executables (0.840791ms) ✔ workflow handoff skills make terminal ownership explicit (0.577541ms) ✔ planning review sync docs describe additive review summaries and richer QA handoff (0.369959ms) ✔ approved workflow-state artifacts document the finalized helper contract (1.257875ms) ✔ workflow docs avoid stale ambiguity, commit-ownership, and review-freshness contradictions (0.285416ms) ✔ late-stage precedence reference rows stay in row-level parity with runtime precedence rows and mapped operator outputs (0.734208ms) ✔ active eval docs use featureforge state roots (0.13225ms) ✔ legacy command shim docs are removed from the active repo (0.04625ms) ✔ repo-owned operator docs move to canonical runtime command vocabulary (0.402625ms) ✔ release-facing docs point at docs/testing.md as the canonical validation entrypoint (0.101667ms) ✔ active docs describe the post-session-entry routing contract (1.284042ms) ℹ tests 36 ℹ suites 0 ℹ pass 36 ℹ fail 0 ℹ cancelled 0 ℹ skipped 0 ℹ todo 0 ℹ duration_ms 76.179417 running 23 tests test repo_checkout_ships_the_canonical_runtime_launcher ... ok test repo_checkout_canonical_launcher_rejects_stale_prebuilt_checksum ... ok test cutover_script_keeps_the_legacy_root_content_scan_repo_bounded_and_single_pass ... ok test repo_checkout_powershell_launcher_rejects_stale_prebuilt_checksum ... ok test repo_checkout_powershell_launcher_uses_manifest_selected_binary_path ... ok test repo_checkout_powershell_launcher_preserves_native_exit_code_with_psnative_preference ... ok test copilot_install_docs_use_the_skills_root_as_the_discovery_link ... ok test repo_checkout_canonical_launcher_avoids_non_binary_repo_fallbacks ... ok test repo_checkout_canonical_launcher_uses_manifest_selected_binary_path ... ok test runtime_instruction_docs_point_at_rust_as_the_primary_oracle ... ok test runtime_docs_and_fixtures_do_not_depend_on_the_removed_differential_shell_harness ... ok test late_stage_precedence_reference_rows_match_runtime_rows_and_operator_phase_mappings ... ok test removed_session_entry_gate_contracts_stay_absent_from_active_runtime_and_eval_surfaces ... ok test workflow_enhancement_contracts_are_documented_consistently ... ok test execution_skill_docs_keep_candidate_artifacts_and_authoritative_mutations_separated ... ok test shipped_runtime_docs_never_reintroduce_runtime_binary_fallbacks ... ok test repo_checkout_canonical_launcher_runs_without_recursive_fallback ... ok test workflow_sequencing_contracts_and_fixtures_are_documented_consistently ... ok test repo_checkout_canonical_launcher_supports_runtime_root_path_contract ... ok test repo_checkout_canonical_launcher_supports_runtime_root_helper_contract ... ok test runtime_instruction_surface_contracts_and_generation_checks_hold ... ok test generated_skill_preamble_never_executes_repo_or_root_selected_launchers ... ok test using_featureforge_preamble_uses_only_the_packaged_runtime_binary ... ok test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
 **Invalidation Reason:** N/A
 
 ### Task 7 Step 4
@@ -851,8 +872,8 @@
 **Invalidation Reason:** Refreshing Task 7 closure against current execution run after execution-record commit.
 
 #### Attempt 2
-**Status:** Completed
-**Recorded At:** 2026-04-01T17:07:05.23616Z
+**Status:** Invalidated
+**Recorded At:** 2026-04-01T17:52:13.258876Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 7
 **Step Number:** 4
@@ -869,6 +890,27 @@
 - tests/runtime_instruction_contracts.rs | sha256:ef371a4875955eb5be67c455f89094a869d3e4efc1fd88852755a0247c745331
 **Verify Command:** git show --stat --oneline -1
 **Verification Summary:** `git show --stat --oneline -1` -> passed: 8fc1c41 chore: refresh task 6/7 execution records ...ment-release-before-final-review-r2-evidence.md | 82 ++++++++++++++++++++-- ...6-03-30-document-release-before-final-review.md | 2 +- 2 files changed, 78 insertions(+), 6 deletions(-)
+**Invalidation Reason:** refresh task 7 closure after row-level parity remediation
+
+#### Attempt 3
+**Status:** Completed
+**Recorded At:** 2026-04-01T17:55:02.388928Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 7
+**Step Number:** 4
+**Packet Fingerprint:** c9830e7a2d76a590f8da24c4a12dd880513c26039019becaebb6216c719d34d9
+**Head SHA:** 2ce376d7c7f8332a5c1c7aa325435064924e6af5
+**Base SHA:** 2ce376d7c7f8332a5c1c7aa325435064924e6af5
+**Claim:** Committed Task 7 precedence wording parity updates across public docs and contract tests.
+**Files Proven:**
+- README.md | sha256:f156ddabf34c6aaac50fc24475b5b6a85b99f7d51172441e9a4d56e013379983
+- docs/README.codex.md | sha256:8fbb8b76bd89456888c70dccd619fe9e9eb5296b3fdda2d0d2f6515bb9cd4f52
+- docs/README.copilot.md | sha256:f414c3b77ee91c64c5d8a02697ed35409d09ac74c9bc568e28625e573a97c801
+- tests/codex-runtime/gen-skill-docs.unit.test.mjs | sha256:e55016bab1d9901744191332b88ca4545ed1a7464a944330b4aaebc812e8cc2e
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:a6a754f681c633812c94b054442a85f3f9c2e56cb9cdf76483b9b9ac5715a7d3
+- tests/runtime_instruction_contracts.rs | sha256:a600bb62b179ae087d74fb86c5cdebb660a1d4c7c43cc5764fbc9e8ecfef4a31
+**Verify Command:** git show --stat --oneline -1
+**Verification Summary:** `git show --stat --oneline -1` -> passed: 2ce376d test: enforce row-level late-stage precedence parity tests/codex-runtime/skill-doc-contracts.test.mjs | 108 +++++++++++++ tests/runtime_instruction_contracts.rs | 193 +++++++++++++++++++++++ tests/workflow_shell_smoke.rs | 1 + 3 files changed, 302 insertions(+)
 **Invalidation Reason:** N/A
 
 ### Task 8 Step 1
@@ -913,8 +955,8 @@
 
 ### Task 8 Step 3
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-04-01T17:09:13.906625Z
+**Status:** Invalidated
+**Recorded At:** 2026-04-01T17:55:02.416989Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 8
 **Step Number:** 3
@@ -929,6 +971,25 @@
 - tests/workflow_runtime_final_review.rs | sha256:97ccc08675b927a0a4724ec020c56265a28803fab0afc9ef08cdf3ce6b54220d
 **Verify Command:** ./bin/featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md --plan docs/featureforge/plans/2026-03-30-document-release-before-final-review.md
 **Verification Summary:** `./bin/featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md --plan docs/featureforge/plans/2026-03-30-document-release-before-final-review.md` -> pass
+**Invalidation Reason:** Evidence rebuild: files_proven_drifted
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-04-01T17:55:02.440013Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 8
+**Step Number:** 3
+**Packet Fingerprint:** 740000cd8c1e35e22e4ace0d1409c548bc31b2657ba03e246b87b08ff10d2bde
+**Head SHA:** 2ce376d7c7f8332a5c1c7aa325435064924e6af5
+**Base SHA:** 2ce376d7c7f8332a5c1c7aa325435064924e6af5
+**Claim:** Re-ran plan contract lint for final spec/plan coherence and confirmed PASS.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:a6a754f681c633812c94b054442a85f3f9c2e56cb9cdf76483b9b9ac5715a7d3
+- tests/execution_harness_state.rs | sha256:6d036a8226f28a6f043afacf41551982898200a5514bc8bc92b3a7991a913fc2
+- tests/workflow_runtime.rs | sha256:43676e40a1487857aa5240ba8c432bdf473e1c7c72b0c3243fe3008b42e9cad8
+- tests/workflow_runtime_final_review.rs | sha256:97ccc08675b927a0a4724ec020c56265a28803fab0afc9ef08cdf3ce6b54220d
+**Verify Command:** ./bin/featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md --plan docs/featureforge/plans/2026-03-30-document-release-before-final-review.md
+**Verification Summary:** `./bin/featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md --plan docs/featureforge/plans/2026-03-30-document-release-before-final-review.md` -> passed: {"status":"ok","errors":[],"warnings":[],"spec_requirement_count":23,"plan_task_count":8,"coverage":{"REQ-001":[1,3],"REQ-002":[1,2],"REQ-003":[6],"REQ-004":[3,5,6],"REQ-005":[3],"REQ-006":[1,5],"REQ-007":[6],"REQ-008":[6,7],"REQ-009":[5,8],"REQ-010":[6,7,8],"REQ-011":[4,5],"REQ-012":[5,8],"REQ-013":[3,5],"REQ-014":[1,2,6],"REQ-015":[3,5],"REQ-016":[1,6],"REQ-017":[7],"REQ-018":[2,5],"REQ-019":[2,5],"REQ-020":[7],"REQ-021":[1,3,4],"REQ-022":[5,8],"REQ-023":[3,5]}}
 **Invalidation Reason:** N/A
 
 ### Task 8 Step 4
