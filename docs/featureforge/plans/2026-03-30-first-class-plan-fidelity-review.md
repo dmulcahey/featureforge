@@ -1,19 +1,19 @@
 # First-Class Plan-Fidelity-Review Implementation Plan
 
-> **For Codex and GitHub Copilot workers:** REQUIRED: Use the execution skill recommended by `featureforge plan execution recommend --plan <approved-plan-path>` after engineering approval; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For Codex and GitHub Copilot workers:** REQUIRED: Use the execution skill recommended by `~/.featureforge/install/bin/featureforge plan execution recommend --plan <approved-plan-path>` after engineering approval; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Workflow State:** Draft
-**Plan Revision:** 1
+**Workflow State:** Engineering Approved
+**Plan Revision:** 7
 **Execution Mode:** none
 **Source Spec:** `docs/featureforge/specs/2026-03-30-first-class-plan-fidelity-review-design.md`
-**Source Spec Revision:** 1
-**Last Reviewed By:** writing-plans
+**Source Spec Revision:** 5
+**Last Reviewed By:** plan-eng-review
 
 **Goal:** Make `featureforge:plan-fidelity-review` a first-class public workflow stage with correct routing, explicit independent-review guidance, and deterministic contract coverage.
 
-**Architecture:** Keep runtime-owned fidelity receipt/schema validation intact while adding a first-class public skill surface and routing ownership. Update status/operator/session-entry and skill/docs surfaces together so runtime truth, workflow guidance, and tests stay in parity. Land test-first changes for routing and instruction contracts, then regenerate skill docs and verify both Rust and Node contract suites.
+**Architecture:** Keep runtime-owned fidelity receipt/schema validation intact while adding a first-class public skill surface and routing ownership. Update status/operator and skill/docs surfaces together while preserving direct artifact-state routing so runtime truth, workflow guidance, and tests stay in parity. Land test-first changes for routing and instruction contracts, then regenerate skill docs and verify both Rust and Node contract suites.
 
-**Tech Stack:** Rust (`src/workflow`, `src/session_entry`), markdown skill templates/docs, Rust integration tests, Node skill-doc contract tests.
+**Tech Stack:** Rust (`src/workflow`), markdown skill templates/docs, Rust integration tests, Node skill-doc contract tests.
 
 ---
 
@@ -25,7 +25,6 @@
 - Routing/runtime surfaces:
   - `src/workflow/status.rs`
   - `src/workflow/operator.rs`
-  - `src/session_entry/mod.rs`
 - Existing skill templates/docs:
   - `skills/using-featureforge/SKILL.md.tmpl`
   - `skills/writing-plans/SKILL.md.tmpl`
@@ -39,13 +38,15 @@
   - `tests/runtime_instruction_plan_review_contracts.rs`
   - `tests/runtime_instruction_contracts.rs`
   - `tests/workflow_runtime.rs`
-  - `tests/session_config_slug.rs`
+  - `tests/cli_parse_boundary.rs`
+  - `tests/workflow_entry_shell_smoke.rs`
+  - `tests/using_featureforge_skill.rs`
   - `tests/codex-runtime/skill-doc-contracts.test.mjs`
 
 ## Preconditions
 - Approved spec headers must remain:
   - `**Workflow State:** CEO Approved`
-  - `**Spec Revision:** 1`
+  - `**Spec Revision:** 5`
   - `**Last Reviewed By:** plan-ceo-review`
 - Spec `## Requirement Index` must remain parseable and unchanged in intent.
 - Work must stay fail-closed for trust-boundary behavior.
@@ -90,7 +91,7 @@
 - Execute Task 3 serially after Task 2. It updates shared workflow docs and skill handoff templates that must stay aligned with the Task 2 stage contract.
 - After Task 3, create two isolated worktrees and run Tasks 4 and 5 in parallel:
   - Task 4 owns workflow routing and operator remediation for draft plans blocked only on fidelity receipt state.
-  - Task 5 owns session-entry explicit skill recognition and its session-key contract tests.
+  - Task 5 owns direct-routing contract guardrails so this slice cannot introduce unrelated pre-routing gate dependencies.
 - Execute Task 6 serially after Tasks 4 and 5 merge. It is the integration seam for regenerated skill docs and cross-surface contract assertions.
 - Execute Task 7 last as strict verification and fidelity-gate readiness proof (`featureforge:verification-before-completion`).
 
@@ -114,7 +115,7 @@ evaluate_plan_fidelity_gate
         |
         +-- pass --------------------------------> next_skill=featureforge:plan-eng-review
         |
-        +-- missing/stale/malformed/non-pass ----> next_skill=featureforge:plan-fidelity-review
+        +-- missing/stale/malformed/non-pass/non-independent ----> next_skill=featureforge:plan-fidelity-review
 
 separate branch:
 plan absent/stale/malformed/contract-invalid ----> next_skill=featureforge:writing-plans
@@ -170,7 +171,7 @@ Require parseable output fields used by runtime validation (`Review Stage`, `Rev
 
 - [ ] **Step 3: Add or update contract assertions proving the new first-class skill directory and fresh-context provenance language**
 Run: `cargo test --test runtime_instruction_plan_review_contracts -- --nocapture`
-Expected: PASS for newly introduced skill-surface checks.
+Expected: new skill-surface assertions are covered; full-suite pass may still wait on Task 3 workflow-string and handoff ownership updates.
 
 ## Task 3: Align Public Docs and Skill Handoffs to First-Class Stage
 
@@ -188,18 +189,22 @@ Expected: PASS for newly introduced skill-surface checks.
 - Modify: `skills/using-featureforge/SKILL.md.tmpl`
 - Modify: `skills/writing-plans/SKILL.md.tmpl`
 - Modify: `skills/plan-eng-review/SKILL.md.tmpl`
+- Modify: `tests/runtime_instruction_plan_review_contracts.rs`
 
 - [ ] **Step 1: Update workflow pipeline text in root and platform docs to include `plan-fidelity-review` stage explicitly**
 Run: `rg -n "brainstorming ->|plan-fidelity-review|plan-eng-review" README.md docs/README.codex.md docs/README.copilot.md`
-Expected: every canonical sequence includes `writing-plans -> plan-fidelity-review -> plan-eng-review`.
+Expected: every canonical sequence includes `writing-plans -> plan-fidelity-review -> plan-eng-review -> execution`.
 
-- [ ] **Step 2: Update `using-featureforge` routing text for draft-plan receipt-state blockers to route to `featureforge:plan-fidelity-review`**
+- [ ] **Step 2: Normalize workflow-facing `using-featureforge` sequence examples to exact hyphenated stage naming (`plan-fidelity-review`) and update matching contract tests**
+Ensure the example pipeline text and test fixtures do not keep alternate spellings that hide first-class stage identity.
+
+- [ ] **Step 3: Update `using-featureforge` routing text for draft-plan receipt-state blockers to route to `featureforge:plan-fidelity-review`**
 Keep `writing-plans` route only for plan-authoring invalidity cases.
 
-- [ ] **Step 3: Update `writing-plans` handoff text to invoke `featureforge:plan-fidelity-review` as first-class stage owner**
-Keep explicit prohibition on jumping directly to `plan-eng-review` before pass receipt.
+- [ ] **Step 4: Update `writing-plans` so it becomes a pure handoff after plan write/lint and no longer owns the hidden numbered post-save review/receipt block**
+Keep explicit prohibition on jumping directly to `plan-eng-review` before pass receipt, and move review/receipt ownership into `plan-fidelity-review`.
 
-- [ ] **Step 4: Update `plan-eng-review` remediation text so missing/stale/malformed/non-pass/non-independent receipts route to `featureforge:plan-fidelity-review`**
+- [ ] **Step 5: Update `plan-eng-review` remediation text so missing/stale/malformed/non-pass/non-independent receipts route to `featureforge:plan-fidelity-review`**
 Retain fail-closed prerequisite before engineering review starts.
 
 ## Task 4: Route Draft Plan Fidelity Gate Failures to First-Class Stage (Parallel Lane A)
@@ -210,6 +215,7 @@ Retain fail-closed prerequisite before engineering review starts.
 - Preserve existing reason-code vocabulary and fail-closed semantics.
 - Do not alter receipt schema or acceptance rules.
 - Keep DEC-002 compatibility boundary explicit: runtime may accept `cross-model`, but first-class route guidance must continue recommending `fresh-context-subagent`.
+- Treat `src/workflow/operator.rs` edits as conditional: verify output after `status.rs` route fix and patch `operator.rs` only if residual remediation wording still points to the wrong stage.
 **Open Questions:** none
 
 **Files:**
@@ -224,34 +230,37 @@ Expected: clean lane worktree created.
 - [ ] **Step 2: Update draft-plan branch in `status.rs` so failed fidelity gates route to `featureforge:plan-fidelity-review` when plan candidate is otherwise current**
 Keep stale/invalid plan-content cases routed to `featureforge:writing-plans`.
 
-- [ ] **Step 3: Update plan-fidelity remediation text and any operator guidance strings to reference `featureforge:plan-fidelity-review` for receipt-state blockers**
+- [ ] **Step 3: Route receipt-state blockers through `status.rs`, then verify operator output follows `route.next_skill`; patch `operator.rs` only if residual remediation wording is still wrong**
 Run: `cargo test --test workflow_runtime -- --nocapture`
 Expected: PASS with route and diagnostics parity.
 Assert `next_skill=featureforge:plan-fidelity-review` for missing, stale, malformed, non-pass, and non-independent receipt states.
 
-## Task 5: Add Session-Entry Recognition for Explicit Plan-Fidelity Requests (Parallel Lane B)
+## Task 5: Lock Direct-Routing Contract Guardrails (Parallel Lane B)
 
 **Spec Coverage:** REQ-010, REQ-011
-**Task Outcome:** Explicit user invocation of `plan-fidelity-review` is treated as FeatureForge re-entry intent.
+**Task Outcome:** Active runtime/docs/skills/CLI surfaces stay aligned with direct routing and do not introduce unrelated pre-routing gate dependencies while this slice lands.
 **Plan Constraints:**
-- Keep existing session-entry gate ownership and fail-closed behavior unchanged.
-- Modify only recognition list/contract tests needed for this stage.
+- Enforce this requirement through active contract tests and generated-doc checks.
 **Open Questions:** none
 
 **Files:**
-- Modify: `src/session_entry/mod.rs`
-- Modify: `tests/session_config_slug.rs`
+- Modify: `tests/cli_parse_boundary.rs`
+- Modify: `tests/workflow_entry_shell_smoke.rs`
+- Modify: `tests/using_featureforge_skill.rs`
+- Modify: `tests/runtime_instruction_contracts.rs`
 
 - [ ] **Step 1: Create isolated worktree for lane B**
-Run: `git worktree add .worktrees/task5-session-entry-recognition -b codex/task5-session-entry-recognition`
+Run: `git worktree add .worktrees/task5-direct-routing-guardrails -b codex/task5-direct-routing-guardrails`
 Expected: clean lane worktree created.
 
-- [ ] **Step 2: Add `plan-fidelity-review` to `FEATUREFORGE_SKILLS` explicit-skill recognition list**
-Ensure no regressions to existing skill recognition behavior.
+- [ ] **Step 2: Add/adjust regression assertions that fail if active surfaces add unrelated pre-routing gate dependencies**
+Ensure coverage spans CLI parse boundary, workflow-entry routing smoke tests, and generated/checked-in skill guidance.
 
-- [ ] **Step 3: Add/adjust session-entry test that verifies explicit skill-name re-entry for `plan-fidelity-review`**
-Run: `cargo test --test session_config_slug -- --nocapture`
-Expected: PASS including new explicit-skill case.
+- [ ] **Step 3: Run lane-B contract tests**
+Run: `cargo test --test cli_parse_boundary -- --nocapture`
+Run: `cargo test --test workflow_entry_shell_smoke -- --nocapture`
+Run: `cargo test --test using_featureforge_skill -- --nocapture`
+Expected: PASS with direct-routing contract preserved across active runtime/docs/skills.
 
 ## Task 6: Regenerate Skill Docs and Lock Cross-Surface Contracts
 
@@ -274,7 +283,7 @@ Expected: PASS including new explicit-skill case.
 
 - [ ] **Step 1: Merge parallel lanes and resolve conflicts without changing approved behavior intent**
 Run: `git merge codex/task4-fidelity-routing`
-Run: `git merge codex/task5-session-entry-recognition`
+Run: `git merge codex/task5-direct-routing-guardrails`
 Expected: clean merge or intentional conflict resolution.
 
 - [ ] **Step 2: Regenerate checked-in skill docs**
@@ -312,28 +321,30 @@ Expected: PASS with zero warnings.
 Run: `cargo test --test runtime_instruction_plan_review_contracts`
 Run: `cargo test --test runtime_instruction_contracts`
 Run: `cargo test --test workflow_runtime`
-Run: `cargo test --test session_config_slug`
+Run: `cargo test --test cli_parse_boundary`
+Run: `cargo test --test workflow_entry_shell_smoke`
+Run: `cargo test --test using_featureforge_skill`
 Expected: PASS.
 
 - [ ] **Step 3: Run plan contract lint for approved spec + draft plan pair**
-Run: `featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-first-class-plan-fidelity-review-design.md --plan docs/featureforge/plans/2026-03-30-first-class-plan-fidelity-review.md`
+Run: `~/.featureforge/install/bin/featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-first-class-plan-fidelity-review-design.md --plan docs/featureforge/plans/2026-03-30-first-class-plan-fidelity-review.md`
 Expected: PASS.
 
 - [ ] **Step 4: Sync plan artifact in workflow state**
-Run: `featureforge workflow sync --artifact plan --path docs/featureforge/plans/2026-03-30-first-class-plan-fidelity-review.md`
+Run: `~/.featureforge/install/bin/featureforge workflow sync --artifact plan --path docs/featureforge/plans/2026-03-30-first-class-plan-fidelity-review.md`
 Expected: workflow status references this plan path (or deterministic ambiguity diagnostics if pre-existing state conflicts remain).
 
 - [ ] **Step 5: Invoke `featureforge:plan-fidelity-review` as the owning stage for independent review artifact generation and receipt recording**
-Run: `featureforge workflow status --refresh`
+Run: `~/.featureforge/install/bin/featureforge workflow status --refresh`
 Expected: route points to `featureforge:plan-fidelity-review` for this draft plan until a matching pass receipt exists.
 If a direct command smoke check is needed, treat it as stage-owned output verification only:
-Run: `featureforge workflow plan-fidelity record --plan docs/featureforge/plans/2026-03-30-first-class-plan-fidelity-review.md --review-artifact .featureforge/reviews/2026-03-30-first-class-plan-fidelity-review-plan-fidelity.md`
+Run: `~/.featureforge/install/bin/featureforge workflow plan-fidelity record --plan docs/featureforge/plans/2026-03-30-first-class-plan-fidelity-review.md --review-artifact .featureforge/reviews/2026-03-30-first-class-plan-fidelity-review-plan-fidelity.md`
 Expected: receipt records only when the independent stage artifact satisfies runtime validation.
 
 ## Evidence Expectations
 - Every route change includes reason-code assertions and next-skill assertions.
 - Every skill-template change includes regenerated `SKILL.md` artifacts.
-- Session-entry recognition changes include explicit skill-name re-entry coverage.
+- Direct-routing contract changes include explicit non-regression coverage for accidental pre-routing gate additions.
 
 ## Validation Strategy
 - Red tests first, then minimal implementation until green.
@@ -347,7 +358,7 @@ Expected: receipt records only when the independent stage artifact satisfies run
 - Receipt-state routing variants (missing/stale/malformed/non-pass/non-independent) all resolve to `featureforge:plan-fidelity-review` with deterministic reason-code parity -> automated (`workflow_runtime`, `contracts_spec_plan` where parser-level invalidity applies).
 - Plan authoring defects still route to `featureforge:writing-plans` -> automated (`workflow_runtime`).
 - `plan-eng-review` still fail-closes without matching pass receipt but remediation points to `plan-fidelity-review` -> automated (`runtime_instruction_plan_review_contracts`, `runtime_instruction_contracts`).
-- Session-entry explicit skill recognition includes `plan-fidelity-review` -> automated (`session_config_slug`).
+- Active surfaces preserve direct artifact-state routing without unrelated pre-routing gate dependencies -> automated (`cli_parse_boundary`, `workflow_entry_shell_smoke`, `using_featureforge_skill`, `runtime_instruction_contracts`, `skill-doc-contracts.test.mjs`).
 - DEC-002 dual contract (runtime compatibility acceptance for `cross-model` plus first-class non-recommendation) -> automated (`runtime_instruction_plan_review_contracts`, `runtime_instruction_contracts`, `skill-doc-contracts.test.mjs`).
 
 ## Documentation Update Expectations
@@ -359,7 +370,7 @@ Expected: receipt records only when the independent stage artifact satisfies run
 - Prefer targeted suites first, then strict lint and broader regression commands.
 
 ## Rollback Plan
-- Revert first-class stage routing changes in `status.rs`/`operator.rs` and session-entry recognition updates together.
+- Revert first-class stage routing changes in `status.rs`/`operator.rs` and direct-routing guardrail updates together.
 - Revert corresponding skill/doc/template and contract-test updates in the same rollback change to maintain parity.
 
 ## Risks and Mitigations
@@ -369,3 +380,29 @@ Expected: receipt records only when the independent stage artifact satisfies run
   - Mitigation: template-first edits plus regeneration and Node/Rust contract tests.
 - Risk: Independence semantics diluted in reviewer prompt.
   - Mitigation: assert `fresh-context-subagent` and `Distinct From Stages` contract fields in tests.
+
+## What already exists
+- Runtime-owned plan-fidelity gate/receipt machinery already exists (`src/contracts/plan.rs`, `src/execution/topology.rs`, `src/workflow/status.rs`).
+- `workflow plan-fidelity record` command already persists authoritative receipt evidence.
+- Existing instruction/runtime test suites already cover the main surfaces this slice modifies.
+
+## NOT in scope
+- Receipt schema redesign or new review artifact format (explicitly deferred).
+- Broader execution-topology redesign beyond first-class stage routing/remediation fixes.
+- Feature implementation work itself; this artifact remains planning/review scope only.
+
+## Failure Modes
+- Missing/stale/malformed/non-pass/non-independent receipt routes incorrectly: covered by `workflow_runtime` assertions and surfaced via deterministic diagnostics; not silent.
+- Skill-doc/routing naming drift regresses first-class stage visibility: covered by runtime instruction and skill-doc contract tests; not silent.
+- Direct-routing contract drift introduces pre-routing gate dependency noise: covered by `cli_parse_boundary`, `workflow_entry_shell_smoke`, and `using_featureforge_skill`; not silent.
+
+## Engineering Review Summary
+
+**Review Status:** clear
+P26-04-01T14:28:24Z
+**Review Mode:** small_change
+**Reviewed Plan Revision:** 7
+**Critical Gaps:** 0
+**Browser QA Required:** no
+**Test Plan Artifact:** `/Users/davidmulcahey/.featureforge/projects/dmulcahey-featureforge/davidmulcahey-codex-plan-fidelity-review-df0ba1c460c5-test-plan-20260401-102506.md`
+**Outside Voice:** fresh-context-subagent
