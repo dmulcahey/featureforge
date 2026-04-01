@@ -12,6 +12,9 @@ use crate::diagnostics::{DiagnosticError, JsonFailure};
 use crate::execution::harness::{EvaluatorKind, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
+use crate::workflow::late_stage_precedence::{
+    GateState, LateStageSignals, resolve as resolve_late_stage_precedence,
+};
 use crate::workflow::status::{WorkflowPhase, WorkflowRoute, WorkflowRuntime};
 
 const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 2;
@@ -405,9 +408,7 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
                     if status.execution_started == "yes" {
                         if !execution_state_has_open_steps(&status) {
                             let review = runtime.gate_review(&status_args)?;
-                            if review.allowed {
-                                gate_finish = Some(runtime.gate_finish(&status_args)?);
-                            }
+                            gate_finish = Some(runtime.gate_finish(&status_args)?);
                             gate_review = Some(review);
                         }
                     } else if !status_has_accepted_preflight(&status) {
@@ -626,12 +627,6 @@ fn derive_phase(
         return String::from("executing");
     }
 
-    if let Some(gate_review) = gate_review
-        && !gate_review.allowed
-    {
-        return String::from("final_review_pending");
-    }
-
     let Some(gate_finish) = gate_finish else {
         return String::from("final_review_pending");
     };
@@ -640,28 +635,16 @@ fn derive_phase(
         return String::from("ready_for_branch_completion");
     }
 
-    if gate_has_any_reason(
-        Some(gate_finish),
-        &[
-            "qa_artifact_authoritative_provenance_invalid",
-            "test_plan_artifact_authoritative_provenance_invalid",
-        ],
-    ) {
-        return String::from("qa_pending");
-    }
-    if gate_has_any_reason(
-        Some(gate_finish),
-        &["release_artifact_authoritative_provenance_invalid"],
-    ) {
-        return String::from("document_release_pending");
-    }
-
-    match gate_finish.failure_class.as_str() {
-        "ReviewArtifactNotFresh" => String::from("final_review_pending"),
-        "QaArtifactNotFresh" => String::from("qa_pending"),
-        "ReleaseArtifactNotFresh" => String::from("document_release_pending"),
-        _ => String::from("final_review_pending"),
-    }
+    let release_blocked = late_stage_release_blocked(gate_finish);
+    let review_blocked =
+        gate_review.is_some_and(|gate| !gate.allowed) || late_stage_review_blocked(gate_finish);
+    let qa_blocked = late_stage_qa_blocked(gate_finish);
+    let decision = resolve_late_stage_precedence(LateStageSignals {
+        release: GateState::from_blocked(release_blocked),
+        review: GateState::from_blocked(review_blocked),
+        qa: GateState::from_blocked(qa_blocked),
+    });
+    decision.phase.to_owned()
 }
 
 fn authoritative_public_phase(status: &PlanExecutionStatus) -> Option<&'static str> {
@@ -669,7 +652,13 @@ fn authoritative_public_phase(status: &PlanExecutionStatus) -> Option<&'static s
         return None;
     }
 
-    Some(status.harness_phase.as_str())
+    match status.harness_phase {
+        HarnessPhase::FinalReviewPending
+        | HarnessPhase::QaPending
+        | HarnessPhase::DocumentReleasePending
+        | HarnessPhase::ReadyForBranchCompletion => None,
+        _ => Some(status.harness_phase.as_str()),
+    }
 }
 
 fn status_has_accepted_preflight(status: &PlanExecutionStatus) -> bool {
@@ -1003,6 +992,46 @@ fn gate_has_any_reason(gate: Option<&GateResult>, expected_codes: &[&str]) -> bo
             .iter()
             .any(|code| expected_codes.contains(&code.as_str()))
     })
+}
+
+fn late_stage_release_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "ReleaseArtifactNotFresh"
+        || gate_has_any_reason(
+            Some(gate_finish),
+            &[
+                "release_artifact_authoritative_provenance_invalid",
+                "release_docs_state_missing",
+                "release_docs_state_stale",
+                "release_docs_state_not_fresh",
+            ],
+        )
+}
+
+fn late_stage_review_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "ReviewArtifactNotFresh"
+        || gate_has_any_reason(
+            Some(gate_finish),
+            &[
+                "review_artifact_authoritative_provenance_invalid",
+                "final_review_state_missing",
+                "final_review_state_stale",
+                "final_review_state_not_fresh",
+            ],
+        )
+}
+
+fn late_stage_qa_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "QaArtifactNotFresh"
+        || gate_has_any_reason(
+            Some(gate_finish),
+            &[
+                "qa_artifact_authoritative_provenance_invalid",
+                "test_plan_artifact_authoritative_provenance_invalid",
+                "browser_qa_state_missing",
+                "browser_qa_state_stale",
+                "browser_qa_state_not_fresh",
+            ],
+        )
 }
 
 fn gate_first_diagnostic_message(gate: Option<&GateResult>) -> Option<String> {

@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 2
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -141,24 +141,26 @@ Task 7 -> Task 8
 - Create: `src/workflow/late_stage_precedence.rs`
 - Test: `tests/workflow_runtime.rs`
 
-- [ ] **Step 1: Add failing test for dual-unresolved release+review precedence routing**
+- [x] **Step 1: Add failing test for dual-unresolved release+review precedence routing**
 Run: `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending --exact`
 Expected: FAIL until dual-unresolved routing prioritizes `document_release_pending` over `final_review_pending`.
 
-- [ ] **Step 2: Implement canonical precedence row type and resolver helper**
+- [x] **Step 2: Implement canonical precedence row type and resolver helper**
 Define explicit mapping entries for release/review/qa readiness outcomes, including reason-family text binding and clean late-stage eligibility gating.
 
-- [ ] **Step 3: Route operator phase/action/skill/reason through resolver**
+- [x] **Step 3: Route operator phase/action/skill/reason through resolver**
 Replace ad-hoc branching where needed so outputs are contract-aligned without bypassing higher-priority non-late-stage blockers.
 
-- [ ] **Step 4: Add fail-closed fallback behavior for malformed/unknown precedence inputs**
+- [x] **Step 4: Add fail-closed fallback behavior for malformed/unknown precedence inputs**
 Ensure unknown/malformed states cannot route optimistically to review-ready.
 
-- [ ] **Step 5: Run targeted runtime routing tests**
+- [x] **Step 5: Run targeted runtime routing tests**
 Run: `cargo test --test workflow_runtime -- workflow_phase_routes_ --nocapture`
 Expected: PASS for existing and new precedence scenarios.
 
 - [ ] **Step 6: Commit Task 1**
+
+  **Execution Note:** Active - Commit Task 1
 Run:
 ```bash
 git add src/workflow/operator.rs src/workflow/late_stage_precedence.rs tests/workflow_runtime.rs
