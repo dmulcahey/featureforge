@@ -45,6 +45,7 @@ use crate::execution::leases::{
     preflight_requires_authoritative_mutation_recovery, preflight_write_authority_state,
     validate_worktree_lease,
 };
+use crate::execution::observability::REASON_CODE_STALE_PROVENANCE;
 use crate::execution::topology::{
     RecommendOutput, default_preflight_chunking_strategy, default_preflight_evaluator_policy,
     default_preflight_reset_policy, default_preflight_review_stack, pending_chunk_id,
@@ -62,6 +63,9 @@ use crate::paths::{
     normalize_whitespace,
 };
 use crate::repo_safety::RepoSafetyRuntime;
+use crate::workflow::late_stage_precedence::{
+    GateState as PrecedenceGateState, LateStageSignals, resolve as resolve_late_stage_precedence,
+};
 use crate::workflow::manifest::{ManifestLoadResult, WorkflowManifest, load_manifest_read_only};
 use crate::workflow::markdown_scan::markdown_files_under;
 
@@ -1136,6 +1140,7 @@ pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionSt
 
     apply_authoritative_status_overlay(context, &mut status)?;
     apply_task_boundary_status_overlay(context, &mut status);
+    apply_late_stage_precedence_status_overlay(context, &mut status);
     Ok(status)
 }
 
@@ -1358,6 +1363,141 @@ fn apply_task_boundary_status_overlay(
         status.reason_codes.push(reason_code.to_owned());
     }
     status.blocking_task = Some(prior_task);
+}
+
+fn apply_late_stage_precedence_status_overlay(
+    context: &ExecutionContext,
+    status: &mut PlanExecutionStatus,
+) {
+    if status.execution_started != "yes" {
+        return;
+    }
+    if status.active_task.is_some()
+        || status.blocking_task.is_some()
+        || status.resume_task.is_some()
+    {
+        return;
+    }
+    if context.steps.iter().any(|step| !step.checked) {
+        return;
+    }
+
+    let authoritative_phase = status.harness_phase;
+    let gate_review = gate_review_from_context_internal(context, true);
+    let gate_finish = gate_finish_from_context(context);
+    let release_blocked = status_release_blocked(&gate_finish);
+    let review_blocked = !gate_review.allowed || status_review_blocked(&gate_finish);
+    let qa_blocked = status_qa_blocked(&gate_finish);
+    let decision = resolve_late_stage_precedence(LateStageSignals {
+        release: PrecedenceGateState::from_blocked(release_blocked),
+        review: PrecedenceGateState::from_blocked(review_blocked),
+        qa: PrecedenceGateState::from_blocked(qa_blocked),
+    });
+    let canonical_phase =
+        parse_harness_phase(decision.phase).unwrap_or(HarnessPhase::FinalReviewPending);
+
+    if !gate_finish.allowed && !(release_blocked || review_blocked || qa_blocked) {
+        push_status_reason_code_once(status, REASON_CODE_STALE_PROVENANCE);
+        status.harness_phase = HarnessPhase::FinalReviewPending;
+        return;
+    }
+
+    if is_late_stage_phase(authoritative_phase) && authoritative_phase != canonical_phase {
+        push_status_reason_code_once(status, REASON_CODE_STALE_PROVENANCE);
+        status.harness_phase = fail_closed_late_stage_phase(authoritative_phase, canonical_phase);
+        return;
+    }
+
+    status.harness_phase = canonical_phase;
+}
+
+fn push_status_reason_code_once(status: &mut PlanExecutionStatus, reason_code: &str) {
+    if !status
+        .reason_codes
+        .iter()
+        .any(|existing| existing == reason_code)
+    {
+        status.reason_codes.push(reason_code.to_owned());
+    }
+}
+
+fn is_late_stage_phase(phase: HarnessPhase) -> bool {
+    matches!(
+        phase,
+        HarnessPhase::FinalReviewPending
+            | HarnessPhase::QaPending
+            | HarnessPhase::DocumentReleasePending
+            | HarnessPhase::ReadyForBranchCompletion
+    )
+}
+
+fn late_stage_phase_rank(phase: HarnessPhase) -> Option<u8> {
+    match phase {
+        HarnessPhase::DocumentReleasePending => Some(0),
+        HarnessPhase::FinalReviewPending => Some(1),
+        HarnessPhase::QaPending => Some(2),
+        HarnessPhase::ReadyForBranchCompletion => Some(3),
+        _ => None,
+    }
+}
+
+fn fail_closed_late_stage_phase(
+    authoritative_phase: HarnessPhase,
+    canonical_phase: HarnessPhase,
+) -> HarnessPhase {
+    match (
+        late_stage_phase_rank(authoritative_phase),
+        late_stage_phase_rank(canonical_phase),
+    ) {
+        (Some(authoritative_rank), Some(canonical_rank)) => {
+            if authoritative_rank <= canonical_rank {
+                authoritative_phase
+            } else {
+                canonical_phase
+            }
+        }
+        _ => canonical_phase,
+    }
+}
+
+fn status_release_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "ReleaseArtifactNotFresh"
+        || gate_finish.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "release_artifact_authoritative_provenance_invalid"
+                    | "release_docs_state_missing"
+                    | "release_docs_state_stale"
+                    | "release_docs_state_not_fresh"
+            )
+        })
+}
+
+fn status_review_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "ReviewArtifactNotFresh"
+        || gate_finish.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "review_artifact_authoritative_provenance_invalid"
+                    | "final_review_state_missing"
+                    | "final_review_state_stale"
+                    | "final_review_state_not_fresh"
+            )
+        })
+}
+
+fn status_qa_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "QaArtifactNotFresh"
+        || gate_finish.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "qa_artifact_authoritative_provenance_invalid"
+                    | "test_plan_artifact_authoritative_provenance_invalid"
+                    | "browser_qa_state_missing"
+                    | "browser_qa_state_stale"
+                    | "browser_qa_state_not_fresh"
+            )
+        })
 }
 
 fn parse_harness_phase(value: &str) -> Option<HarnessPhase> {

@@ -6526,6 +6526,58 @@ fn canonical_workflow_phase_routes_release_and_review_unresolved_to_document_rel
 }
 
 #[test]
+fn canonical_workflow_harness_operator_precedence_parity_dual_unresolved() {
+    let (repo_dir, state_dir) = init_repo("workflow-harness-operator-parity-dual-unresolved");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-harness-operator-parity-dual-unresolved";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let branch = current_branch_name(repo);
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("harness_phase", Value::from("final_review_pending")),
+            ("latest_authoritative_sequence", Value::from(17)),
+            ("dependency_index_state", Value::from("fresh")),
+            ("final_review_state", Value::from("missing")),
+            ("browser_qa_state", Value::from("missing")),
+            ("release_docs_state", Value::from("missing")),
+        ],
+    );
+    enable_session_decision(state, session_key);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for harness/operator parity dual-unresolved fixture",
+        ),
+        "workflow phase for harness/operator parity dual-unresolved fixture",
+    );
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for harness/operator parity dual-unresolved fixture",
+    );
+
+    assert_eq!(phase_json["phase"], "document_release_pending");
+    assert_eq!(
+        status_json["harness_phase"], "document_release_pending",
+        "authoritative harness phase should match operator precedence output for dual-unresolved late-stage state; phase payload: {phase_json:?}; status payload: {status_json:?}"
+    );
+}
+
+#[test]
 fn canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-qa-pending");
     let repo = repo_dir.path();

@@ -158,9 +158,7 @@ Ensure unknown/malformed states cannot route optimistically to review-ready.
 Run: `cargo test --test workflow_runtime -- workflow_phase_routes_ --nocapture`
 Expected: PASS for existing and new precedence scenarios.
 
-- [ ] **Step 6: Commit Task 1**
-
-  **Execution Note:** Active - Commit Task 1
+- [x] **Step 6: Commit Task 1**
 Run:
 ```bash
 git add src/workflow/operator.rs src/workflow/late_stage_precedence.rs tests/workflow_runtime.rs
@@ -183,17 +181,17 @@ git commit -m "feat: add canonical late-stage precedence contract"
 - Test: `tests/execution_harness_state.rs`
 - Test: `tests/workflow_runtime.rs`
 
-- [ ] **Step 1: Add failing parity test for authoritative harness-phase vs operator phase outputs**
+- [x] **Step 1: Add failing parity test for authoritative harness-phase vs operator phase outputs**
 Run: `cargo test --test workflow_runtime -- canonical_workflow_harness_operator_precedence_parity_dual_unresolved --exact`
 Expected: FAIL if surfaces can diverge on precedence.
 
-- [ ] **Step 2: Wire authoritative phase emission through canonical precedence helper**
+- [x] **Step 2: Wire authoritative phase emission through canonical precedence helper**
 Ensure state/harness producers consume the same mapping as operator routing.
 
-- [ ] **Step 3: Add explicit divergence diagnostic path**
+- [x] **Step 3: Add explicit divergence diagnostic path**
 Return reason-coded fail-closed state when parity assumptions are violated.
 
-- [ ] **Step 4: Run targeted parity suites**
+- [x] **Step 4: Run targeted parity suites**
 Run:
 ```bash
 cargo test --test execution_harness_state -- --nocapture
@@ -202,6 +200,8 @@ cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocaptu
 Expected: PASS with parity preserved.
 
 - [ ] **Step 5: Commit Task 2**
+
+  **Execution Note:** Active - Commit Task 2
 Run:
 ```bash
 git add src/execution/state.rs src/execution/harness.rs src/workflow/operator.rs tests/execution_harness_state.rs tests/workflow_runtime.rs

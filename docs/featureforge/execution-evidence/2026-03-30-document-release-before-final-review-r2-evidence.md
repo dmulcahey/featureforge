@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-30-document-release-before-final-review.md
 **Plan Revision:** 2
-**Plan Fingerprint:** 274a9992867db183cba16f8fb27f2264461ef2971304f35c0f0c85b72169712d
+**Plan Fingerprint:** e612a8e846e939d56cd966a31cb59abcb69b5a61153c2805f393c5cf1a1c7688
 **Source Spec Path:** docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** b5b43e0bc28166882583da5bf2fc77399795fee0d1277107851e71986a5de0f4
@@ -22,6 +22,7 @@
 **Claim:** Added dual-unresolved release+review precedence regression test and confirmed expected red failure.
 **Files Proven:**
 - tests/workflow_runtime.rs | sha256:d5acc1b1a5148829233da33a29955975ce236912c2237329fa7560a7a7245efd
+**Verify Command:** cargo test --test workflow_runtime -- canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending --exact
 **Verification Summary:** `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending --exact` -> FAILED as expected (phase routed final_review_pending before implementation)
 **Invalidation Reason:** N/A
 
@@ -39,6 +40,7 @@
 **Files Proven:**
 - src/workflow/late_stage_precedence.rs | sha256:1b21a43704aa503e7551e40e5b67508028eaaa63052c115562328e2bde011240
 - src/workflow/mod.rs | sha256:dc6b402092ba23427bad1473b6f84d02528d35f3323a25bc090368bc79185ba5
+**Verify Command:** cargo test --test workflow_runtime -- canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending --exact
 **Verification Summary:** `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending --exact` -> PASS
 **Invalidation Reason:** N/A
 
@@ -55,6 +57,7 @@
 **Claim:** Routed operator phase derivation through canonical late-stage resolver and updated build context to evaluate finish gate in late-stage routing.
 **Files Proven:**
 - src/workflow/operator.rs | sha256:7f46f6f9f1cb8bae175fa85b7a2a84561d1d6e709df4757f9d3d61552b29fa03
+**Verify Command:** cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocapture
 **Verification Summary:** `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocapture` -> PASS
 **Invalidation Reason:** N/A
 
@@ -72,6 +75,7 @@
 **Files Proven:**
 - src/workflow/late_stage_precedence.rs | sha256:1b21a43704aa503e7551e40e5b67508028eaaa63052c115562328e2bde011240
 - src/workflow/operator.rs | sha256:7f46f6f9f1cb8bae175fa85b7a2a84561d1d6e709df4757f9d3d61552b29fa03
+**Verify Command:** cargo test --test workflow_runtime -- canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending --exact
 **Verification Summary:** `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending --exact` -> PASS
 **Invalidation Reason:** N/A
 
@@ -88,5 +92,97 @@
 **Claim:** Validated Task 1 routing precedence updates across workflow phase routing suite.
 **Files Proven:**
 - tests/workflow_runtime.rs | sha256:1b289135f02f1a8f3e24fbdb938dcb94a0d34e66a7ac79567e4056e3817788fd
+**Verify Command:** cargo test --test workflow_runtime -- workflow_phase_routes_ --nocapture
 **Verification Summary:** `cargo test --test workflow_runtime -- workflow_phase_routes_ --nocapture` -> PASS (13 tests)
+**Invalidation Reason:** N/A
+
+### Task 1 Step 6
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T14:18:14.836312Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 1
+**Step Number:** 6
+**Packet Fingerprint:** 8693b465396c480244411d8a41bc77a7bb10f6b395140f21cb727f62e89ce2ff
+**Head SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Base SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Claim:** Committed Task 1 canonical precedence implementation and routing/test updates.
+**Files Proven:**
+- src/execution/state.rs | sha256:fd9b979eaea2cef96281a9eee045b6c34f3f25279de3d8a6f60c77b9b74dddec
+- src/workflow/late_stage_precedence.rs | sha256:9efadf0b572c5170f81a1652cd2c0b4f0e4bd11366382ec97b11df452455801f
+- src/workflow/operator.rs | sha256:7f46f6f9f1cb8bae175fa85b7a2a84561d1d6e709df4757f9d3d61552b29fa03
+- tests/workflow_runtime.rs | sha256:31e65d8256b8781f6edae64561f8f47249deb3121ea3680c31bf774861eca5bd
+**Verify Command:** git show --stat --oneline -1
+**Verification Summary:** `git show --stat --oneline -1` -> 3d9b577 feat: add canonical late-stage precedence contract
+**Invalidation Reason:** N/A
+
+### Task 2 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T14:30:35.838435Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 1
+**Packet Fingerprint:** c30a5671d9d84853b8b3db728d3b220753fd36b461694c8ddc48850cf0d9665d
+**Head SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Base SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Claim:** Added harness/operator dual-unresolved parity regression test and confirmed expected failure.
+**Files Proven:**
+- tests/workflow_runtime.rs | sha256:4f5708f06b2fcfed91de3b341396ab2cba60d371000e98652b4efd4d47a4c0b9
+**Verify Command:** cargo test --test workflow_runtime -- canonical_workflow_harness_operator_precedence_parity_dual_unresolved --exact
+**Verification Summary:** `cargo test --test workflow_runtime -- canonical_workflow_harness_operator_precedence_parity_dual_unresolved --exact` -> FAILED as expected (harness/operator phase divergence exposed)
+**Invalidation Reason:** N/A
+
+### Task 2 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T14:34:00.269564Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 2
+**Packet Fingerprint:** 24f09224b4395bfaad5a0f6b23d91b542bccd233d5b9b004efb2a68a7a40e509
+**Head SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Base SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Claim:** Wired authoritative status harness-phase emission through canonical late-stage precedence helper so harness/operator routing share the same contract.
+**Files Proven:**
+- src/execution/state.rs | sha256:3cee9a4f4f3a895c40abdaf6b4a226fe827af4aeb07b7fef1726f830e3d89d07
+**Verify Command:** cargo test --test workflow_runtime -- canonical_workflow_harness_operator_precedence_parity_dual_unresolved --exact
+**Verification Summary:** `cargo test --test workflow_runtime -- canonical_workflow_harness_operator_precedence_parity_dual_unresolved --exact` -> pass
+**Invalidation Reason:** N/A
+
+### Task 2 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T14:38:23.968149Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 3
+**Packet Fingerprint:** 50cf4eabd6cc4a8df1d528d14425ddc5753aa62c53b69192e57a3ac243a4db08
+**Head SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Base SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Claim:** Added explicit parity-divergence fail-closed diagnostics for late-stage harness precedence by emitting stale_provenance and selecting the stricter late-stage phase on mismatch.
+**Files Proven:**
+- src/execution/state.rs | sha256:86b50879094a48b603a3f3ef41e3dc43b2412c7117f7073d22b03a004f3ceb75
+- tests/execution_harness_state.rs | sha256:6d036a8226f28a6f043afacf41551982898200a5514bc8bc92b3a7991a913fc2
+**Verify Command:** cargo test --test execution_harness_state -- status_fail_closes_with_reason_code_on_authoritative_late_stage_parity_divergence --exact
+**Verification Summary:** `cargo test --test execution_harness_state -- status_fail_closes_with_reason_code_on_authoritative_late_stage_parity_divergence --exact` -> pass
+**Invalidation Reason:** N/A
+
+### Task 2 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T14:38:51.804538Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 2
+**Step Number:** 4
+**Packet Fingerprint:** ffcd5e6c45fb2b5b8706bf48dfd8e480083651a064933bb3822813717af77a74
+**Head SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Base SHA:** 3d9b577dab2384e4d99920d350d0b15e056071cc
+**Claim:** Validated harness/operator late-stage precedence parity and diagnostics with targeted execution harness and canonical workflow routing suites.
+**Files Proven:**
+- src/execution/state.rs | sha256:86b50879094a48b603a3f3ef41e3dc43b2412c7117f7073d22b03a004f3ceb75
+- tests/execution_harness_state.rs | sha256:6d036a8226f28a6f043afacf41551982898200a5514bc8bc92b3a7991a913fc2
+- tests/workflow_runtime.rs | sha256:4f5708f06b2fcfed91de3b341396ab2cba60d371000e98652b4efd4d47a4c0b9
+**Verify Command:** cargo test --test execution_harness_state -- --nocapture && cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocapture
+**Verification Summary:** `cargo test --test execution_harness_state -- --nocapture && cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocapture` -> pass
 **Invalidation Reason:** N/A
