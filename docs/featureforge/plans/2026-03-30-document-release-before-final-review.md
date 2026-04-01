@@ -247,9 +247,7 @@ cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocaptu
 ```
 Expected: PASS, including new guard and provenance cases.
 
-- [ ] **Step 6: Commit Task 3**
-
-  **Execution Note:** Active - Commit Task 3
+- [x] **Step 6: Commit Task 3**
 Run:
 ```bash
 git add src/workflow/operator.rs src/execution/state.rs tests/workflow_runtime.rs tests/workflow_runtime_final_review.rs
@@ -272,17 +270,17 @@ git commit -m "feat: gate terminal final review on release readiness"
 - Test: `tests/workflow_runtime.rs`
 - Test: `tests/codex-runtime/eval-observability.test.mjs`
 
-- [ ] **Step 1: Add failing diagnostics assertions for precedence reason-family coverage**
+- [x] **Step 1: Add failing diagnostics assertions for precedence reason-family coverage**
 Run: `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_document_release --exact`
 Expected: FAIL if reason-family telemetry/diagnostics are absent.
 
-- [ ] **Step 2: Emit precedence observability counters/diagnostics**
+- [x] **Step 2: Emit precedence observability counters/diagnostics**
 Add deterministic event/reason-code signals for document-release-first routing, post-review freshness invalidation, and authoritative provenance failures.
 
-- [ ] **Step 3: Validate reason-family text parity across phase/handoff surfaces**
+- [x] **Step 3: Validate reason-family text parity across phase/handoff surfaces**
 Ensure operator outputs remain aligned.
 
-- [ ] **Step 4: Run targeted diagnostics tests**
+- [x] **Step 4: Run targeted diagnostics tests**
 Run:
 ```bash
 cargo test --test workflow_runtime -- --nocapture
@@ -291,6 +289,8 @@ node --test tests/codex-runtime/eval-observability.test.mjs
 Expected: PASS for new diagnostics assertions.
 
 - [ ] **Step 5: Commit Task 4**
+
+  **Execution Note:** Active - Commit Task 4
 Run:
 ```bash
 git add src/workflow/operator.rs src/execution/state.rs tests/workflow_runtime.rs

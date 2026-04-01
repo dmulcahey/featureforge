@@ -45,7 +45,9 @@ use crate::execution::leases::{
     preflight_requires_authoritative_mutation_recovery, preflight_write_authority_state,
     validate_worktree_lease,
 };
-use crate::execution::observability::REASON_CODE_STALE_PROVENANCE;
+use crate::execution::observability::{
+    REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
+};
 use crate::execution::topology::{
     RecommendOutput, default_preflight_chunking_strategy, default_preflight_evaluator_policy,
     default_preflight_reset_policy, default_preflight_review_stack, pending_chunk_id,
@@ -1383,6 +1385,11 @@ fn apply_late_stage_precedence_status_overlay(
     }
 
     let authoritative_phase = status.harness_phase;
+    if status.latest_authoritative_sequence != INITIAL_AUTHORITATIVE_SEQUENCE
+        && !is_late_stage_phase(authoritative_phase)
+    {
+        return;
+    }
     let gate_review = gate_review_from_context_internal(context, true);
     let gate_finish = gate_finish_from_context(context);
     let release_blocked = status_release_blocked(&gate_finish);
@@ -4481,6 +4488,12 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
                 FailureClass::ReviewArtifactNotFresh,
                 "review_artifact_worktree_dirty",
                 "Finish readiness is blocked by tracked worktree changes that landed after the last review artifacts were generated.",
+                "Commit or discard tracked worktree changes, then rerun requesting-code-review and downstream finish artifacts.",
+            );
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED,
+                "Tracked repo writes after final review invalidated review freshness for terminal branch completion.",
                 "Commit or discard tracked worktree changes, then rerun requesting-code-review and downstream finish artifacts.",
             );
             return gate.finish();

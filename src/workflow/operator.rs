@@ -56,6 +56,10 @@ pub struct WorkflowHandoff {
     pub plan_path: String,
     pub execution_started: String,
     pub next_action: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub reason_family: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diagnostic_reason_codes: Vec<String>,
     pub recommended_skill: String,
     pub recommendation_reason: String,
     pub route: WorkflowRoute,
@@ -76,6 +80,8 @@ struct OperatorContext {
     gate_finish: Option<GateResult>,
     execution_preflight_block_reason: Option<String>,
     phase: String,
+    reason_family: String,
+    diagnostic_reason_codes: Vec<String>,
 }
 
 pub fn render_next(current_dir: &Path) -> Result<String, JsonFailure> {
@@ -122,6 +128,8 @@ pub fn phase(current_dir: &Path) -> Result<WorkflowPhase, JsonFailure> {
         next_skill: public_next_skill(&context),
         next_step: next_step_text(&context),
         next_action: next_action_for_context(&context).to_owned(),
+        reason_family: context.reason_family.clone(),
+        diagnostic_reason_codes: context.diagnostic_reason_codes.clone(),
         spec_path: context.route.spec_path.clone(),
         plan_path: context.route.plan_path.clone(),
         route: context.route,
@@ -321,6 +329,8 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
         plan_path: context.route.plan_path.clone(),
         execution_started,
         next_action: next_action_for_context(&context).to_owned(),
+        reason_family: context.reason_family.clone(),
+        diagnostic_reason_codes: context.diagnostic_reason_codes.clone(),
         recommended_skill,
         recommendation_reason,
         route: context.route,
@@ -428,6 +438,8 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
         gate_review.as_ref(),
         gate_finish.as_ref(),
     );
+    let (reason_family, diagnostic_reason_codes) =
+        late_stage_observability_for_phase(&phase, gate_review.as_ref(), gate_finish.as_ref());
 
     Ok(OperatorContext {
         route,
@@ -438,6 +450,8 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
         gate_finish,
         execution_preflight_block_reason,
         phase,
+        reason_family,
+        diagnostic_reason_codes,
     })
 }
 
@@ -650,6 +664,56 @@ fn derive_phase(
         qa: GateState::from_blocked(qa_blocked),
     });
     decision.phase.to_owned()
+}
+
+fn late_stage_observability_for_phase(
+    phase: &str,
+    gate_review: Option<&GateResult>,
+    gate_finish: Option<&GateResult>,
+) -> (String, Vec<String>) {
+    if !matches!(
+        phase,
+        "document_release_pending"
+            | "final_review_pending"
+            | "qa_pending"
+            | "ready_for_branch_completion"
+    ) {
+        return (String::new(), Vec::new());
+    }
+
+    let Some(gate_finish) = gate_finish else {
+        return (String::new(), Vec::new());
+    };
+
+    let mut diagnostic_reason_codes = gate_finish.reason_codes.clone();
+    if let Some(gate_review) = gate_review {
+        for reason_code in &gate_review.reason_codes {
+            if !diagnostic_reason_codes
+                .iter()
+                .any(|existing| existing == reason_code)
+            {
+                diagnostic_reason_codes.push(reason_code.clone());
+            }
+        }
+    }
+
+    let release_blocked = late_stage_release_blocked(gate_finish);
+    let review_blocked =
+        gate_review.is_some_and(|gate| !gate.allowed) || late_stage_review_blocked(gate_finish);
+    let qa_blocked = late_stage_qa_blocked(gate_finish);
+    if !gate_finish.allowed && !(release_blocked || review_blocked || qa_blocked) {
+        return (
+            String::from("fallback_fail_closed"),
+            diagnostic_reason_codes,
+        );
+    }
+
+    let decision = resolve_late_stage_precedence(LateStageSignals {
+        release: GateState::from_blocked(release_blocked),
+        review: GateState::from_blocked(review_blocked),
+        qa: GateState::from_blocked(qa_blocked),
+    });
+    (decision.reason_family.to_owned(), diagnostic_reason_codes)
 }
 
 fn authoritative_public_phase(status: &PlanExecutionStatus) -> Option<&'static str> {

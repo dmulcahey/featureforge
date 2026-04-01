@@ -20,6 +20,7 @@ pub const REASON_CODE_PIVOT_THRESHOLD_EXCEEDED: &str = "pivot_threshold_exceeded
 pub const REASON_CODE_BLOCKED_ON_PLAN_REVISION: &str = "blocked_on_plan_revision";
 pub const REASON_CODE_WRITE_AUTHORITY_CONFLICT: &str = "write_authority_conflict";
 pub const REASON_CODE_REPO_STATE_DRIFT: &str = "repo_state_drift";
+pub const REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED: &str = "post_review_repo_write_detected";
 pub const REASON_CODE_STALE_PROVENANCE: &str = "stale_provenance";
 pub const REASON_CODE_RECOVERING_INCOMPLETE_AUTHORITATIVE_MUTATION: &str =
     "recovering_incomplete_authoritative_mutation";
@@ -27,7 +28,7 @@ pub const REASON_CODE_MISSING_REQUIRED_EVIDENCE: &str = "missing_required_eviden
 pub const REASON_CODE_INVALID_EVIDENCE_SATISFACTION_RULE: &str =
     "invalid_evidence_satisfaction_rule";
 
-pub const STABLE_REASON_CODES: [&str; 13] = [
+pub const STABLE_REASON_CODES: [&str; 14] = [
     REASON_CODE_WAITING_ON_REQUIRED_EVALUATOR,
     REASON_CODE_REQUIRED_EVALUATOR_FAILED,
     REASON_CODE_REQUIRED_EVALUATOR_BLOCKED,
@@ -37,6 +38,7 @@ pub const STABLE_REASON_CODES: [&str; 13] = [
     REASON_CODE_BLOCKED_ON_PLAN_REVISION,
     REASON_CODE_WRITE_AUTHORITY_CONFLICT,
     REASON_CODE_REPO_STATE_DRIFT,
+    REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED,
     REASON_CODE_STALE_PROVENANCE,
     REASON_CODE_RECOVERING_INCOMPLETE_AUTHORITATIVE_MUTATION,
     REASON_CODE_MISSING_REQUIRED_EVIDENCE,

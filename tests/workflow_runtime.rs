@@ -6460,6 +6460,23 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
         handoff_json["recommended_skill"],
         "featureforge:document-release"
     );
+    assert_eq!(phase_json["reason_family"], "release_readiness");
+    assert_eq!(handoff_json["reason_family"], "release_readiness");
+    assert!(
+        phase_json["diagnostic_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code == "release_artifact_authoritative_provenance_invalid")
+            }),
+        "phase observability should expose release-provenance diagnostics for release-first routing, got {phase_json:?}"
+    );
+    assert_eq!(
+        phase_json["diagnostic_reason_codes"],
+        handoff_json["diagnostic_reason_codes"],
+        "phase and handoff should expose identical late-stage diagnostic reason codes"
+    );
 }
 
 #[test]
