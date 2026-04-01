@@ -608,6 +608,24 @@ fn run_plan_execution(repo: &Path, state_dir: &Path, args: &[&str], context: &st
     run_featureforge_with_env(repo, state_dir, command_args.as_slice(), &[], context)
 }
 
+fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
+    run_plan_execution(
+        repo,
+        state_dir,
+        &["gate-review-dispatch", "--plan", plan_rel],
+        "record task-boundary review dispatch lineage for final-review fixture",
+    );
+    run_plan_execution(
+        repo,
+        state_dir,
+        &["status", "--plan", plan_rel],
+        "status after task-boundary review dispatch for final-review fixture",
+    )["last_strategy_checkpoint_fingerprint"]
+        .as_str()
+        .expect("status should expose strategy checkpoint fingerprint after review dispatch")
+        .to_owned()
+}
+
 fn write_authoritative_strategy_checkpoint_state(repo: &Path, state: &Path) {
     let branch = branch_name(repo);
     let (execution_run_id, active_contract_path, active_contract_fingerprint) =
@@ -652,22 +670,7 @@ fn write_task_boundary_strategy_checkpoint_state(
         &state_path,
         &serde_json::to_string(&payload).expect("harness state payload should serialize"),
     );
-
-    run_plan_execution(
-        repo,
-        state,
-        &["gate-review", "--plan", PLAN_REL],
-        "record task-boundary review dispatch lineage for final-review fixture",
-    );
-    run_plan_execution(
-        repo,
-        state,
-        &["status", "--plan", PLAN_REL],
-        "status after task-boundary review dispatch for final-review fixture",
-    )["last_strategy_checkpoint_fingerprint"]
-        .as_str()
-        .expect("status should expose strategy checkpoint fingerprint after review dispatch")
-        .to_owned()
+    record_task_boundary_review_dispatch(repo, state, PLAN_REL)
 }
 
 fn replace_in_file(path: &Path, from: &str, to: &str) {
