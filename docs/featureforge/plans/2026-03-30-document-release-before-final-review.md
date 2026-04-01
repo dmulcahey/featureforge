@@ -413,7 +413,7 @@ cargo test --test runtime_instruction_contracts -- --nocapture
 ```
 Expected: PASS.
 
-- [ ] **Step 4: Commit Task 7**
+- [x] **Step 4: Commit Task 7**
 Run:
 ```bash
 git add README.md docs/README.codex.md docs/README.copilot.md tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/runtime_instruction_contracts.rs
