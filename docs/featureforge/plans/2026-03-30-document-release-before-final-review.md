@@ -361,21 +361,23 @@ git commit -m "test: add late-stage precedence matrix regressions"
 - Modify: `skills/requesting-code-review/SKILL.md`
 - Modify: `skills/using-featureforge/SKILL.md`
 
-- [ ] **Step 1: Update `.tmpl` guidance for document-release-before-terminal-review sequencing**
+- [x] **Step 1: Update `.tmpl` guidance for document-release-before-terminal-review sequencing**
 Keep language explicit about terminal guard scope and command-boundary semantics.
 
-- [ ] **Step 2: Add canonical precedence reference artifact**
+- [x] **Step 2: Add canonical precedence reference artifact**
 Generate or refresh table rows in one shared reference consumed by skills/docs, deriving rows directly from the runtime-owned canonical precedence contract so agents can cite a shared grounded table.
 
-- [ ] **Step 3: Regenerate skill docs**
+- [x] **Step 3: Regenerate skill docs**
 Run: `node scripts/gen-skill-docs.mjs`
 Expected: SKILL.md outputs update with template changes.
 
-- [ ] **Step 4: Run skill-doc generation tests**
+- [x] **Step 4: Run skill-doc generation tests**
 Run: `node --test tests/codex-runtime/skill-doc-generation.test.mjs`
 Expected: PASS.
 
 - [ ] **Step 5: Commit Task 6**
+
+  **Execution Note:** Active - Commit Task 6
 Run:
 ```bash
 git add skills/finishing-a-development-branch/SKILL.md.tmpl skills/document-release/SKILL.md.tmpl skills/requesting-code-review/SKILL.md.tmpl skills/using-featureforge/SKILL.md.tmpl review/late-stage-precedence-reference.md skills/finishing-a-development-branch/SKILL.md skills/document-release/SKILL.md skills/requesting-code-review/SKILL.md skills/using-featureforge/SKILL.md

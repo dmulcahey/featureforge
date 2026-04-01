@@ -112,6 +112,12 @@ Audit and update project documentation after implementation work is complete. Th
 
 For workflow-routed implementation work, this is the required `document-release` handoff before branch completion. Treat it as the repo-facing release-readiness pass, not as an optional polish step.
 
+For workflow-routed terminal sequencing, `featureforge:document-release` must run before the terminal `featureforge:requesting-code-review` whole-diff gate.
+
+`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: `gate-review` is read-only, while `gate-review-dispatch` is owned by `featureforge:requesting-code-review`.
+
+When you need explicit late-stage phase/action/skill grounding while updating docs, cite `review/late-stage-precedence-reference.md`.
+
 ## Step 0: Detect base branch
 
 Determine which branch this work targets:

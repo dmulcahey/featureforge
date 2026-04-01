@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-30-document-release-before-final-review.md
 **Plan Revision:** 2
-**Plan Fingerprint:** 55be027874a27174e23d2776a84169a0f7f1958250ee19447de316ecbd05f1f4
+**Plan Fingerprint:** be0d1c1e54a67ac38ace997eaf33c81bff44274466a6922ff8ab7de64607b06c
 **Source Spec Path:** docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** b5b43e0bc28166882583da5bf2fc77399795fee0d1277107851e71986a5de0f4
@@ -484,8 +484,8 @@
 
 ### Task 5 Step 5
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-04-01T15:43:43.232778Z
+**Status:** Invalidated
+**Recorded At:** 2026-04-01T16:24:22.384058Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 5
 **Step Number:** 5
@@ -501,12 +501,32 @@
 - tests/workflow_runtime_final_review.rs | sha256:97ccc08675b927a0a4724ec020c56265a28803fab0afc9ef08cdf3ce6b54220d
 **Verify Command:** cargo test --test workflow_runtime -- --nocapture && cargo test --test workflow_runtime_final_review -- --nocapture && cargo test --test execution_harness_state -- --nocapture && cargo test --test workflow_runtime -- canonical_workflow_gate_review_is_read_only_before_dispatch --exact
 **Verification Summary:** `cargo test --test workflow_runtime -- --nocapture && cargo test --test workflow_runtime_final_review -- --nocapture && cargo test --test execution_harness_state -- --nocapture && cargo test --test workflow_runtime -- canonical_workflow_gate_review_is_read_only_before_dispatch --exact` -> pass
+**Invalidation Reason:** Evidence rebuild: files_proven_drifted
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:24:34.226273Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 5
+**Step Number:** 5
+**Packet Fingerprint:** b3ebb124b19aee899eec1671e5dddcd9aff93c856fc1604184c01ac9e9879654
+**Head SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Base SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Claim:** Executed Task 5 runtime regression slice across workflow runtime, final-review runtime, and execution harness suites with mixed-state matrix, malformed-input fail-closed, and dispatch-boundary coverage all green.
+**Files Proven:**
+- src/execution/state.rs | sha256:6c49fb6dd711d1a54b686a037765e8c61b55027d7d2819659140a0b6b2da5a9f
+- src/workflow/operator.rs | sha256:ceae51ca484e863c1e623dae5d51d4b3afd56c18a240d73809a29e08fdd9eb65
+- tests/execution_harness_state.rs | sha256:6d036a8226f28a6f043afacf41551982898200a5514bc8bc92b3a7991a913fc2
+- tests/workflow_runtime.rs | sha256:43676e40a1487857aa5240ba8c432bdf473e1c7c72b0c3243fe3008b42e9cad8
+- tests/workflow_runtime_final_review.rs | sha256:97ccc08675b927a0a4724ec020c56265a28803fab0afc9ef08cdf3ce6b54220d
+**Verify Command:** cargo test --test workflow_runtime -- --nocapture && cargo test --test workflow_runtime_final_review -- --nocapture && cargo test --test execution_harness_state -- --nocapture && cargo test --test workflow_runtime -- canonical_workflow_gate_review_is_read_only_before_dispatch --exact
+**Verification Summary:** `cargo test --test workflow_runtime -- --nocapture && cargo test --test workflow_runtime_final_review -- --nocapture && cargo test --test execution_harness_state -- --nocapture && cargo test --test workflow_runtime -- canonical_workflow_gate_review_is_read_only_before_dispatch --exact` -> passed: running 88 tests test canonical_manifest_path_distinguishes_exact_branch_names ... ok test canonical_manifest_path_uses_canonical_repo_slug_directory ... ok test canonical_workflow_handoff_rejects_legacy_pre_harness_cutover_state ... ok test canonical_workflow_expect_and_sync_preserve_missing_spec_semantics ... ok test canonical_workflow_operator_ready_plan_pins_observability_seam_corpus ... ok test canonical_workflow_doctor_exposes_harness_state_before_execution_starts ... ok test canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirties ... ok test canonical_workflow_operator_accepts_manifest_selected_ready_route_with_extra_approved_candidates ... ok test canonical_workflow_doctor_shares_authoritative_state_across_same_branch_worktrees ... ok test canonical_workflow_doctor_does_not_adopt_started_status_across_different_branch_worktrees ... ok test canonical_workflow_operator_ignores_spawned_subagent_context_markers ... ok test canonical_workflow_gate_review_fail_closes_on_malformed_authoritative_late_gate_truth_values ... ok test canonical_workflow_gate_review_is_read_only_before_dispatch ... ok test canonical_workflow_operator_ignores_spawned_subagent_opt_in_markers ... ok test canonical_workflow_harness_operator_precedence_parity_dual_unresolved ... ok test canonical_workflow_phase_omits_session_entry_from_public_json ... ok test canonical_workflow_phase_keeps_corrupt_manifest_read_only ... ok test canonical_workflow_operator_surfaces_fail_closed_when_session_entry_is_bypassed ... ok test canonical_workflow_operator_pins_authoritative_contract_drafting_phase_in_public_surfaces ... ok test canonical_workflow_operator_routes_ready_plan_without_session_entry_gate ... ok test canonical_workflow_phase_routes_enabled_stale_plan_to_plan_writing ... ok test canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase_and_next_action ... ok test canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight ... ok test canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth ... ok test canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final_review_over_newer_branch_decoy ... ok test canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_closed ... ok test canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_release_docs_over_newer_branch_decoy ... ok test canonical_workflow_public_json_commands_work_for_ready_plan ... ok test canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending ... ok test canonical_workflow_public_text_commands_work_for_ready_plan ... ok test canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_workspace_becomes_dirty ... ok test canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for_branch_completion ... ok test canonical_workflow_routes_dirty_worktree_back_to_execution_handoff ... ok test canonical_workflow_routes_blocked_preflight_back_to_execution_handoff ... ok test canonical_workflow_status_accepts_manifest_selected_plan_with_legacy_symlink_repo_root ... ok test canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review ... ok test canonical_workflow_status_ambiguous_specs_matches_checked_in_snapshot ... ok test canonical_workflow_status_ignores_manifest_selected_plan_when_repo_root_mismatches ... ok test canonical_workflow_routes_gate_review_evidence_failures_back_to_execution ... ok test canonical_workflow_phase_routes_fully_ready_branch_to_finish ... ok test canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review ... ok test canonical_workflow_phase_routes_review_resolved_to_document_release_pending ... ok test canonical_workflow_status_ignores_manifest_selected_spec_when_branch_mismatches ... ok test canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pending ... ok test canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_document_release ... ok test canonical_workflow_routes_started_execution_back_to_the_current_execution_flow ... ok test canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only ... ok test canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to_plan_eng_review ... ok test canonical_workflow_status_ignores_strict_session_entry_gate_env ... ok test canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review ... ok test canonical_workflow_status_matches_helper_for_manifest_backed_missing_spec ... ok test canonical_workflow_status_matches_helper_for_ambiguous_specs ... ok test shared_markdown_scan_helper_collects_nested_markdown_only ... ok test shell_workflow_resolve_failures_use_runtime_failure_contract ... ok test canonical_workflow_status_refresh_limits_cross_slug_manifest_recovery_scan ... ok test canonical_workflow_status_refresh_recovers_old_manifest_after_slug_change ... ok test canonical_workflow_status_refresh_preserves_route_when_manifest_write_fails ... ok test canonical_workflow_status_normalizes_dot_slash_source_spec_paths ... ok test canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revision_changes ... ok test canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_back_to_writing_plans ... ok test canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_receipt_back_to_writing_plans ... ok test canonical_workflow_status_routes_draft_plan_to_eng_review_after_matching_pass_receipt ... ok test canonical_workflow_status_refresh_recovers_legacy_symlinked_local_repo_manifest ... ok test canonical_workflow_status_routes_lone_stale_approved_plan_as_stale ... ok test canonical_workflow_status_routes_stale_source_revision_as_stale ... ok test canonical_workflow_status_treats_ceo_approved_specs_without_ceo_review_as_draft ... ok test workflow_support::tests::copy_harness_fixture_copies_fixture_contents ... ok test workflow_support::tests::copy_workflow_fixture_copies_fixture_contents ... ok test workflow_support::tests::harness_fixture_path_targets_harness_subdirectory ... ok test shell_workflow_resolve_exposes_wrapper_contract_fields ... ok test workflow_support::tests::read_harness_fixture_text_returns_fixture_contents ... ok test workflow_support::tests::read_harness_json_fixture_rejects_non_json_fixtures - should panic ... ok test workflow_support::tests::workflow_fixture_path_joins_relative_path ... ok test canonical_workflow_status_treats_eng_approved_plans_without_eng_review_as_draft ... ok test workflow_plan_fidelity_record_normalizes_dot_slash_review_targets ... ok test workflow_plan_fidelity_record_rejects_incomplete_verification_artifacts ... ok test workflow_plan_fidelity_record_rejects_invalid_ceo_review_provenance_on_source_spec ... ok test workflow_plan_fidelity_record_rejects_non_pass_verdicts ... ok test workflow_plan_fidelity_record_rejects_malformed_spec_requirement_index ... ok test workflow_plan_fidelity_record_rejects_out_of_repo_source_spec_paths ... ok test workflow_plan_fidelity_record_rejects_stale_review_artifact_fingerprints ... ok test workflow_plan_fidelity_record_resolves_repo_relative_paths_from_subdirectories ... ok test workflow_support::tests::install_full_contract_ready_artifacts_installs_expected_files ... ok test workflow_status_argv0_alias_dispatches_to_canonical_tree ... ok test workflow_next_surfaces_gate_review_command_for_dispatch_block_reason ... ok test workflow_phase_routes_task_boundary_blocked ... ok test workflow_read_commands_do_not_persist_preflight_acceptance ... ok test canonical_workflow_phase_routes_mixed_stale_matrix ... ok test result: ok. 88 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.22s running 6 tests test workflow_phase_routes_missing_final_review_back_to_requesting_code_review ... ok test workflow_phase_routes_stale_review_back_to_requesting_code_review ... ok test workflow_phase_routes_non_independent_reviewer_source_back_to_requesting_code_review ... ok test workflow_phase_routes_unreadable_reviewer_artifact_back_to_requesting_code_review ... ok test task_boundary_final_review_remains_required_after_task_closure_gates ... ok test workflow_phase_routes_all_reviewer_failure_families_back_to_requesting_code_review ... ok test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.19s running 10 tests test diagnostics_exposes_the_minimum_task3_failure_class_taxonomy ... ok test observability_runtime_surface_matches_literal_event_kind_and_field_corpora ... ok test status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_execution_starts ... ok test status_projects_authoritative_state_for_write_repo_dependency_downstream_and_reason_codes ... ok test record_contract_persists_observability_event_and_authoritative_mutation_counter ... ok test record_contract_persists_dependency_index_with_authoritative_contract_node ... ok test status_fails_closed_on_malformed_authoritative_overlay_fields ... ok test status_fail_closes_with_reason_code_on_authoritative_late_stage_parity_divergence ... ok test complete_writes_contract_evaluation_and_repo_state_provenance_into_step_evidence ... ok test reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable ... ok test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s running 1 test test canonical_workflow_gate_review_is_read_only_before_dispatch ... ok test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 87 filtered out; finished in 0.88s
 **Invalidation Reason:** N/A
 
 ### Task 5 Step 6
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-04-01T15:44:24.893359Z
+**Status:** Invalidated
+**Recorded At:** 2026-04-01T16:23:06.985564Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 5
 **Step Number:** 6
@@ -522,4 +542,125 @@
 - tests/workflow_runtime.rs | sha256:7a2ea48fbc869cfbb69ddd1cd4963699c89d8337c3335f490822c68be020d820
 **Verify Command:** git show --stat --oneline -1
 **Verification Summary:** `git show --stat --oneline -1` -> 413a053 test: add late-stage precedence matrix regressions
+**Invalidation Reason:** Task 5 Step 6 proved files changed during review remediation; reopening to rebuild evidence on current head.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:24:34.35113Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 5
+**Step Number:** 6
+**Packet Fingerprint:** 2e40cb3142aae37e86f524d21dd9350b0814245238c1d1e8ffe6a69499553eb4
+**Head SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Base SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Claim:** Committed Task 5 mixed-state precedence matrix regressions, malformed-input fail-closed coverage, dispatch boundary assertions, and release-first parity remediations.
+**Files Proven:**
+- docs/featureforge/execution-evidence/2026-03-30-document-release-before-final-review-r2-evidence.md | sha256:a23b99389c165f7846f15325f4fcf09e7610f6ac4fa5b852a887ea2d82b95fbd
+- docs/featureforge/plans/2026-03-30-document-release-before-final-review.md | sha256:23b9c7dfdc0ea4185f704b5463173fb8b02d78f74e745602a1739299c7def1d6
+- src/execution/state.rs | sha256:6c49fb6dd711d1a54b686a037765e8c61b55027d7d2819659140a0b6b2da5a9f
+- src/workflow/operator.rs | sha256:ceae51ca484e863c1e623dae5d51d4b3afd56c18a240d73809a29e08fdd9eb65
+- tests/workflow_runtime.rs | sha256:43676e40a1487857aa5240ba8c432bdf473e1c7c72b0c3243fe3008b42e9cad8
+**Verify Command:** git show --stat --oneline -1
+**Verification Summary:** `git show --stat --oneline -1` -> passed: c8f0052 fix: harden late-gate readiness and dependency truth ...ment-release-before-final-review-r2-evidence.md | 23 +++++- ...6-03-30-document-release-before-final-review.md | 4 +- src/execution/state.rs | 92 +++++++++++++++++++++- src/workflow/operator.rs | 2 +- tests/workflow_runtime.rs | 90 +++++++++++++++++++++ 5 files changed, 205 insertions(+), 6 deletions(-)
+**Invalidation Reason:** N/A
+
+### Task 6 Step 1
+#### Attempt 1
+**Status:** Invalidated
+**Recorded At:** 2026-04-01T16:29:50.572523Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 1
+**Packet Fingerprint:** e805150ac66c4ab6a175b197e3afdd8766d9255aadd6f3457421178002125139
+**Head SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Base SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Claim:** Updated skill template guidance to enforce document-release-before-terminal-review sequencing and explicit gate-review vs gate-review-dispatch boundary semantics.
+**Files Proven:**
+- skills/document-release/SKILL.md.tmpl | sha256:1dd39b52ce6303d1a97fb711d670933ec50c68eb6db99119d5e5f1d50a07c872
+- skills/finishing-a-development-branch/SKILL.md.tmpl | sha256:1578e03d41666e5e390863122e1cfed997d8a45d681809d4b65f4ccad8dd030a
+- skills/requesting-code-review/SKILL.md.tmpl | sha256:e7e797419aedd595d64b053a5dfc779dcdfd249fc9747891a04800e259cc37aa
+- skills/using-featureforge/SKILL.md.tmpl | sha256:5e7e5d250c9af5e7e5641cfc5ff9131fd881002418dbb59e8f1da93bedf22c92
+**Verify Command:** printf task6-step1-template-review
+**Verification Summary:** Manual inspection only: Reviewed template diffs to confirm terminal sequencing and command-boundary wording align with runtime behavior.
+**Invalidation Reason:** Step 1 templates were updated again while grounding Step 2 reference links; reopening to refresh Step 1 evidence.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:32:48.32554Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 1
+**Packet Fingerprint:** e805150ac66c4ab6a175b197e3afdd8766d9255aadd6f3457421178002125139
+**Head SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Base SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Claim:** Updated skill template guidance to enforce document-release-before-terminal-review sequencing and explicit gate-review vs gate-review-dispatch boundary semantics.
+**Files Proven:**
+- skills/document-release/SKILL.md.tmpl | sha256:2da6b96d77716a5e8ff3257f51d0c01150b2613f8c933da82be29d2b14504d8e
+- skills/finishing-a-development-branch/SKILL.md.tmpl | sha256:f8d388288d170506600cd315da28e8f34de6edf1a68dbd2a13f222b2e35c08d5
+- skills/requesting-code-review/SKILL.md.tmpl | sha256:b09534496c534a81166898c7d48c7f6b17c9af8e5a3ef982fcc3a78d78ed9f67
+- skills/using-featureforge/SKILL.md.tmpl | sha256:2fa14897ec62447b8a25793bf316afb44b028fd107f035d764b62ba05c737c15
+**Verify Command:** printf task6-step1-template-review
+**Verification Summary:** `printf task6-step1-template-review` -> passed: task6-step1-template-review
+**Invalidation Reason:** N/A
+
+### Task 6 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:33:25.940898Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 2
+**Packet Fingerprint:** f43f53142185d8c90290bd3f1961a1788a6d1dc3b8f6912355f57c9f7a73ee0f
+**Head SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Base SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Claim:** Added a runtime-grounded late-stage precedence reference table and linked the active skill templates to that shared table for consistent routing language.
+**Files Proven:**
+- review/late-stage-precedence-reference.md | sha256:8b8cb8b3c9a640462c34417b10689e03922c3d644a6f5277a3d60d41311f30df
+**Verify Command:** rg -n "const PRECEDENCE_ROWS" src/workflow/late_stage_precedence.rs && rg -n "Late-Stage Precedence Reference|document_release_pending|ready_for_branch_completion" review/late-stage-precedence-reference.md
+**Verification Summary:** `rg -n "const PRECEDENCE_ROWS" src/workflow/late_stage_precedence.rs && rg -n "Late-Stage Precedence Reference|document_release_pending|ready_for_branch_completion" review/late-stage-precedence-reference.md` -> pass
+**Invalidation Reason:** N/A
+
+### Task 6 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:34:01.097091Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 3
+**Packet Fingerprint:** 9ba827fe4e5e00e4d0161810ece67539a0ddbb8e326ae2b4308a22418512dfd1
+**Head SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Base SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Claim:** Regenerated skill docs from updated templates so late-stage sequencing and command-boundary guidance propagate to checked-in SKILL.md outputs.
+**Files Proven:**
+- skills/document-release/SKILL.md | sha256:4c4489e525f7495e6a9e772b81923b0e9c3e095f205b42e7b7293386e065eb86
+- skills/finishing-a-development-branch/SKILL.md | sha256:14d8e212f39863e7464b67dcbdf76f360e89193d669b59e784d49937322ab6eb
+- skills/requesting-code-review/SKILL.md | sha256:95fc52d0fe12f3508022705c81bf6196700c06cd492037f8c778759a3604d63e
+- skills/using-featureforge/SKILL.md | sha256:e4066cfa3a7d88900982875162702fc582ece54076af3867fca141d050ec9750
+**Verify Command:** node scripts/gen-skill-docs.mjs
+**Verification Summary:** `node scripts/gen-skill-docs.mjs` -> pass
+**Invalidation Reason:** N/A
+
+### Task 6 Step 4
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:34:30.993419Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 4
+**Packet Fingerprint:** 479484996e8c0a23a5f7a5f4286f41045ce0825dae3b45a583491d2440f55a59
+**Head SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Base SHA:** c8f0052990daba1245219f972aee01e4d79a1726
+**Claim:** Ran the skill-doc generation test suite and confirmed generated docs stay in sync with template/frontmatter contracts.
+**Files Proven:**
+- review/late-stage-precedence-reference.md | sha256:8b8cb8b3c9a640462c34417b10689e03922c3d644a6f5277a3d60d41311f30df
+- skills/document-release/SKILL.md | sha256:4c4489e525f7495e6a9e772b81923b0e9c3e095f205b42e7b7293386e065eb86
+- skills/document-release/SKILL.md.tmpl | sha256:2da6b96d77716a5e8ff3257f51d0c01150b2613f8c933da82be29d2b14504d8e
+- skills/finishing-a-development-branch/SKILL.md | sha256:14d8e212f39863e7464b67dcbdf76f360e89193d669b59e784d49937322ab6eb
+- skills/finishing-a-development-branch/SKILL.md.tmpl | sha256:f8d388288d170506600cd315da28e8f34de6edf1a68dbd2a13f222b2e35c08d5
+- skills/requesting-code-review/SKILL.md | sha256:95fc52d0fe12f3508022705c81bf6196700c06cd492037f8c778759a3604d63e
+- skills/requesting-code-review/SKILL.md.tmpl | sha256:b09534496c534a81166898c7d48c7f6b17c9af8e5a3ef982fcc3a78d78ed9f67
+- skills/using-featureforge/SKILL.md | sha256:e4066cfa3a7d88900982875162702fc582ece54076af3867fca141d050ec9750
+- skills/using-featureforge/SKILL.md.tmpl | sha256:2fa14897ec62447b8a25793bf316afb44b028fd107f035d764b62ba05c737c15
+**Verify Command:** node --test tests/codex-runtime/skill-doc-generation.test.mjs
+**Verification Summary:** `node --test tests/codex-runtime/skill-doc-generation.test.mjs` -> pass
 **Invalidation Reason:** N/A
