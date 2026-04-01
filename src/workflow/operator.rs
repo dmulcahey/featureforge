@@ -639,6 +639,11 @@ fn derive_phase(
     let review_blocked =
         gate_review.is_some_and(|gate| !gate.allowed) || late_stage_review_blocked(gate_finish);
     let qa_blocked = late_stage_qa_blocked(gate_finish);
+
+    if !gate_finish.allowed && !(release_blocked || review_blocked || qa_blocked) {
+        return String::from("final_review_pending");
+    }
+
     let decision = resolve_late_stage_precedence(LateStageSignals {
         release: GateState::from_blocked(release_blocked),
         review: GateState::from_blocked(review_blocked),

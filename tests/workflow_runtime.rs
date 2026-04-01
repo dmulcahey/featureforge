@@ -6578,6 +6578,77 @@ fn canonical_workflow_harness_operator_precedence_parity_dual_unresolved() {
 }
 
 #[test]
+fn canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_closed() {
+    let (repo_dir, state_dir) = init_repo("workflow-harness-operator-parity-unclassified-finish");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-harness-operator-parity-unclassified-finish";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let base_branch = expected_release_base_branch(repo);
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &current_branch_name(repo),
+            "execution-topology-downgrade-malformed.json",
+        ),
+        "{ malformed topology downgrade record",
+    );
+    enable_session_decision(state, session_key);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for unclassified-finish parity fixture",
+        ),
+        "workflow phase for unclassified-finish parity fixture",
+    );
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for unclassified-finish parity fixture",
+    );
+    let gate_finish_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate finish for unclassified-finish parity fixture",
+        ),
+        "workflow gate finish for unclassified-finish parity fixture",
+    );
+
+    assert_eq!(gate_finish_json["allowed"], false, "{gate_finish_json:?}");
+    assert!(
+        gate_finish_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code == "review_receipt_deviation_truth_unavailable")
+            }),
+        "{gate_finish_json:?}"
+    );
+    assert_eq!(
+        status_json["harness_phase"], "final_review_pending",
+        "status should fail closed on unclassified gate-finish failures; status payload: {status_json:?}; gate_finish payload: {gate_finish_json:?}"
+    );
+    assert_eq!(
+        phase_json["phase"], "final_review_pending",
+        "operator phase should preserve parity with status fail-closed behavior for unclassified gate-finish failures; phase payload: {phase_json:?}; status payload: {status_json:?}; gate_finish payload: {gate_finish_json:?}"
+    );
+}
+
+#[test]
 fn canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-qa-pending");
     let repo = repo_dir.path();

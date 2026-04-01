@@ -199,9 +199,7 @@ cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocaptu
 ```
 Expected: PASS with parity preserved.
 
-- [ ] **Step 5: Commit Task 2**
-
-  **Execution Note:** Active - Commit Task 2
+- [x] **Step 5: Commit Task 2**
 Run:
 ```bash
 git add src/execution/state.rs src/execution/harness.rs src/workflow/operator.rs tests/execution_harness_state.rs tests/workflow_runtime.rs
@@ -224,7 +222,7 @@ git commit -m "feat: enforce harness/operator precedence parity"
 - Test: `tests/workflow_runtime.rs`
 - Test: `tests/workflow_runtime_final_review.rs`
 
-- [ ] **Step 1: Add/refresh tests for terminal-guard behavior, checkpoint allowance, and dispatch-command boundary**
+- [x] **Step 1: Add/refresh tests for terminal-guard behavior, checkpoint allowance, and dispatch-command boundary**
 Run:
 ```bash
 cargo test --test workflow_runtime_final_review -- --nocapture
@@ -232,16 +230,16 @@ cargo test --test workflow_runtime -- canonical_workflow_phase_routes_review_res
 ```
 Expected: FAIL if any required guard/boundary behavior is missing; if upstream coverage already passes, add a failing gap case before implementation.
 
-- [ ] **Step 2: Implement terminal final-review mode check for release readiness**
+- [x] **Step 2: Implement terminal final-review mode check for release readiness**
 Require authoritative release-readiness freshness before terminal final-review eligibility.
 
-- [ ] **Step 3: Enforce release-artifact provenance validation in the same decision path**
+- [x] **Step 3: Enforce release-artifact provenance validation in the same decision path**
 Reject decoy/malformed/non-authoritative artifacts with named reason codes.
 
-- [ ] **Step 4: Preserve non-terminal review path and command-boundary behavior**
+- [x] **Step 4: Preserve non-terminal review path and command-boundary behavior**
 Ensure intentional checkpoint review invocations remain valid and `gate-review` stays read-only while `gate-review-dispatch` remains the dispatch-minting path.
 
-- [ ] **Step 5: Run focused final-review + release-precedence tests**
+- [x] **Step 5: Run focused final-review + release-precedence tests**
 Run:
 ```bash
 cargo test --test workflow_runtime_final_review -- --nocapture
@@ -250,6 +248,8 @@ cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocaptu
 Expected: PASS, including new guard and provenance cases.
 
 - [ ] **Step 6: Commit Task 3**
+
+  **Execution Note:** Active - Commit Task 3
 Run:
 ```bash
 git add src/workflow/operator.rs src/execution/state.rs tests/workflow_runtime.rs tests/workflow_runtime_final_review.rs
