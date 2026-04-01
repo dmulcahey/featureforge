@@ -1413,7 +1413,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "plan-ceo-review -> writing-plans -> plan-fidelity review -> plan-eng-review -> execution.",
+        "plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> execution.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1446,7 +1446,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
-        "dispatch or resume a dedicated independent plan-fidelity reviewer before `plan-eng-review` becomes reachable.",
+        "Invoke `featureforge:plan-fidelity-review`.",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
@@ -1792,7 +1792,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
 
     assert_file_contains(
         root.join("README.md"),
-        "brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review -> implementation",
+        "brainstorming -> plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> implementation",
     );
     assert_file_contains(
         root.join("README.md"),

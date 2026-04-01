@@ -1167,7 +1167,7 @@ fn canonical_workflow_status_routes_draft_plan_to_eng_review_after_matching_pass
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -1290,7 +1290,7 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -1324,7 +1324,7 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
 
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 2\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the revised draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The revised draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the revised draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 2\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the revised draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The revised draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the revised draft plan**\n",
     );
 
     let status_json = parse_json(
@@ -1338,7 +1338,7 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
     );
 
     assert_eq!(status_json["status"], "plan_draft");
-    assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
+    assert_eq!(status_json["next_skill"], "featureforge:plan-fidelity-review");
     assert!(
         status_json["reason_codes"]
             .as_array()
@@ -1350,19 +1350,18 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
 }
 
 #[test]
-fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_back_to_writing_plans() {
+fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_to_plan_fidelity_review() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-missing-fidelity");
     let repo = repo_dir.path();
     let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
-    write_minimal_plan_fidelity_spec(
-        repo,
-        "docs/featureforge/specs/2026-01-22-document-review-system-design.md",
-    );
+    write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
-        &repo.join("docs/featureforge/plans/2026-01-22-document-review-system.md"),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        &repo.join(plan_path),
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
 
     let status_json = parse_json(
@@ -1376,7 +1375,7 @@ fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_back_to_
     );
 
     assert_eq!(status_json["status"], "plan_draft");
-    assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
+    assert_eq!(status_json["next_skill"], "featureforge:plan-fidelity-review");
     assert_eq!(
         status_json["reason_codes"][0],
         "missing_plan_fidelity_receipt"
@@ -1388,57 +1387,63 @@ fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_back_to_
 }
 
 #[test]
-fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_receipt_back_to_writing_plans()
- {
+fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_receipt_to_plan_fidelity_review(
+) {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-non-independent-fidelity");
     let repo = repo_dir.path();
     let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
-    write_minimal_plan_fidelity_spec(
-        repo,
-        "docs/featureforge/specs/2026-01-22-document-review-system-design.md",
-    );
+    write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
-        &repo.join("docs/featureforge/plans/2026-01-22-document-review-system.md"),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        &repo.join(plan_path),
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
         PlanFidelityReviewArtifactInput {
             artifact_rel: ".featureforge/reviews/plan-fidelity-non-independent.md",
-            plan_path: "docs/featureforge/plans/2026-01-22-document-review-system.md",
+            plan_path,
             plan_revision: 1,
-            spec_path: "docs/featureforge/specs/2026-01-22-document-review-system-design.md",
+            spec_path,
             spec_revision: 1,
             review_verdict: "pass",
-            reviewer_source: "same-context",
-            reviewer_id: "writer-context",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-independent",
             verified_surfaces: &["requirement_index", "execution_topology"],
         },
     );
-    let output = run_rust_featureforge(
+    let receipt_json = run_workflow_plan_fidelity_json(
         repo,
         state,
         &[
-            "workflow",
-            "plan-fidelity",
             "record",
             "--plan",
-            "docs/featureforge/plans/2026-01-22-document-review-system.md",
+            plan_path,
             "--review-artifact",
             ".featureforge/reviews/plan-fidelity-non-independent.md",
             "--json",
         ],
-        "workflow plan-fidelity record should reject non-independent review artifacts",
+        "workflow plan-fidelity record should succeed before mutating reviewer provenance",
     );
-    assert!(
-        !output.status.success(),
-        "record should fail closed for non-independent plan-fidelity artifacts, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(receipt_json["status"], "ok");
+    let receipt_path = PathBuf::from(
+        receipt_json["receipt_path"]
+            .as_str()
+            .expect("receipt path should be present"),
     );
+    let mut receipt = serde_json::from_str::<Value>(
+        &fs::read_to_string(&receipt_path).expect("recorded receipt should be readable"),
+    )
+    .expect("recorded receipt should parse as json");
+    receipt["reviewer_provenance"]["reviewer_source"] = Value::String(String::from("same-context"));
+    fs::write(
+        &receipt_path,
+        serde_json::to_string_pretty(&receipt).expect("mutated receipt should serialize"),
+    )
+    .expect("mutated receipt should be writable");
 
     let status_json = parse_json(
         &run_rust_featureforge(
@@ -1451,10 +1456,167 @@ fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_rec
     );
 
     assert_eq!(status_json["status"], "plan_draft");
-    assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
-    assert_eq!(
-        status_json["reason_codes"][0],
-        "missing_plan_fidelity_receipt"
+    assert_eq!(status_json["next_skill"], "featureforge:plan-fidelity-review");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "plan_fidelity_receipt_not_independent"),
+        "non-independent reviewer provenance should fail closed with explicit reason code"
+    );
+}
+
+#[test]
+fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_receipt_to_plan_fidelity_review(
+) {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-non-pass-fidelity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_file(
+        &repo.join(plan_path),
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    );
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-non-pass-gate.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-non-pass-gate",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
+    );
+    let receipt_json = run_workflow_plan_fidelity_json(
+        repo,
+        state,
+        &[
+            "record",
+            "--plan",
+            plan_path,
+            "--review-artifact",
+            ".featureforge/reviews/plan-fidelity-non-pass-gate.md",
+            "--json",
+        ],
+        "workflow plan-fidelity record should succeed before mutating verdict",
+    );
+    assert_eq!(receipt_json["status"], "ok");
+    let receipt_path = PathBuf::from(
+        receipt_json["receipt_path"]
+            .as_str()
+            .expect("receipt path should be present"),
+    );
+    let mut receipt = serde_json::from_str::<Value>(
+        &fs::read_to_string(&receipt_path).expect("recorded receipt should be readable"),
+    )
+    .expect("recorded receipt should parse as json");
+    receipt["verdict"] = Value::String(String::from("needs-changes"));
+    fs::write(
+        &receipt_path,
+        serde_json::to_string_pretty(&receipt).expect("mutated receipt should serialize"),
+    )
+    .expect("mutated receipt should be writable");
+
+    let status_json = parse_json(
+        &run_rust_featureforge(
+            repo,
+            state,
+            &["workflow", "status", "--refresh"],
+            "rust canonical workflow status refresh for draft plan non-pass fidelity receipt",
+        ),
+        "rust canonical workflow status refresh for draft plan non-pass fidelity receipt",
+    );
+
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(status_json["next_skill"], "featureforge:plan-fidelity-review");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "plan_fidelity_receipt_not_pass"),
+        "non-pass verdicts should fail closed with explicit reason code"
+    );
+}
+
+#[test]
+fn canonical_workflow_status_routes_draft_plan_with_malformed_fidelity_receipt_to_plan_fidelity_review(
+) {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-malformed-fidelity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
+    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
+
+    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
+    write_minimal_plan_fidelity_spec(repo, spec_path);
+    write_file(
+        &repo.join(plan_path),
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    );
+    write_plan_fidelity_review_artifact(
+        repo,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-malformed-gate.md",
+            plan_path,
+            plan_revision: 1,
+            spec_path,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-malformed-gate",
+            verified_surfaces: &["requirement_index", "execution_topology"],
+        },
+    );
+    let receipt_json = run_workflow_plan_fidelity_json(
+        repo,
+        state,
+        &[
+            "record",
+            "--plan",
+            plan_path,
+            "--review-artifact",
+            ".featureforge/reviews/plan-fidelity-malformed-gate.md",
+            "--json",
+        ],
+        "workflow plan-fidelity record should succeed before corrupting the receipt",
+    );
+    assert_eq!(receipt_json["status"], "ok");
+    let receipt_path = PathBuf::from(
+        receipt_json["receipt_path"]
+            .as_str()
+            .expect("receipt path should be present"),
+    );
+    fs::write(&receipt_path, "{not json").expect("corrupted receipt should be writable");
+
+    let status_json = parse_json(
+        &run_rust_featureforge(
+            repo,
+            state,
+            &["workflow", "status", "--refresh"],
+            "rust canonical workflow status refresh for draft plan malformed fidelity receipt",
+        ),
+        "rust canonical workflow status refresh for draft plan malformed fidelity receipt",
+    );
+
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(status_json["next_skill"], "featureforge:plan-fidelity-review");
+    assert!(
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "malformed_plan_fidelity_receipt"),
+        "malformed receipt payloads should fail closed with explicit reason code"
     );
 }
 

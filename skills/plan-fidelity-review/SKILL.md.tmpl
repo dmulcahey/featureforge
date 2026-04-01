@@ -1,0 +1,55 @@
+---
+name: plan-fidelity-review
+description: Use when a draft FeatureForge implementation plan needs a first-class fidelity review against the CEO-approved spec before engineering review
+---
+
+{{BASE_PREAMBLE}}
+
+
+# FeatureForge Artifact Contract
+
+- Review the current draft plan in `docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md`.
+- Read the plan's `**Source Spec:**` and load that exact spec path.
+- This stage is verification-only. Do not rewrite the plan here.
+- If no draft plan exists, stop and route to `featureforge:writing-plans`.
+- If the source spec is not workflow-valid `CEO Approved` with `**Last Reviewed By:** plan-ceo-review`, stop and route to `featureforge:plan-ceo-review`.
+
+## Independent Reviewer Requirement
+
+- This stage must run with an independent fresh-context subagent.
+- The reviewer must be distinct from both `featureforge:writing-plans` and `featureforge:plan-eng-review`.
+- Use `skills/plan-fidelity-review/reviewer-prompt.md` when briefing the reviewer.
+- The reviewer verifies exact Requirement Index coverage and execution-topology fidelity for the current draft plan revision.
+
+## Review Artifact Contract
+
+- Persist exactly one review artifact at `.featureforge/reviews/YYYY-MM-DD-<feature-name>-plan-fidelity.md`.
+- The artifact must include these parseable fields:
+  - `Review Stage`
+  - `Review Verdict`
+  - `Reviewed Plan`
+  - `Reviewed Plan Revision`
+  - `Reviewed Plan Fingerprint`
+  - `Reviewed Spec`
+  - `Reviewed Spec Revision`
+  - `Reviewed Spec Fingerprint`
+  - `Reviewer Source`
+  - `Reviewer ID`
+  - `Distinct From Stages`
+  - `Verified Surfaces`
+  - `Verified Requirement IDs`
+- `Review Verdict` must be `pass` for this gate to advance.
+
+## Receipt Recording
+
+After the reviewer writes the artifact, record the runtime-owned receipt:
+
+```bash
+"$_FEATUREFORGE_BIN" workflow plan-fidelity record --plan docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md \
+  --review-artifact .featureforge/reviews/YYYY-MM-DD-<feature-name>-plan-fidelity.md
+```
+
+- If receipt recording fails or the review verdict is not pass, return to `featureforge:writing-plans`.
+- If the receipt records successfully in pass state for the current plan/spec revision pair, continue to `featureforge:plan-eng-review`.
+
+**The terminal state is invoking `featureforge:plan-eng-review` only after a matching pass runtime-owned plan-fidelity receipt exists.**

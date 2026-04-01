@@ -4,7 +4,7 @@
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 7
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-30-first-class-plan-fidelity-review-design.md`
 **Source Spec Revision:** 5
 **Last Reviewed By:** plan-eng-review
@@ -334,9 +334,9 @@ Expected: PASS.
 Run: `~/.featureforge/install/bin/featureforge workflow sync --artifact plan --path docs/featureforge/plans/2026-03-30-first-class-plan-fidelity-review.md`
 Expected: workflow status references this plan path (or deterministic ambiguity diagnostics if pre-existing state conflicts remain).
 
-- [ ] **Step 5: Invoke `featureforge:plan-fidelity-review` as the owning stage for independent review artifact generation and receipt recording**
+- [ ] **Step 5: Verify stage ownership semantics via workflow status on this Engineering Approved plan**
 Run: `~/.featureforge/install/bin/featureforge workflow status --refresh`
-Expected: route points to `featureforge:plan-fidelity-review` for this draft plan until a matching pass receipt exists.
+Expected: `implementation_ready` for this Engineering Approved plan revision, with stage ownership still enforced by runtime receipt-state routing tests on draft plans.
 If a direct command smoke check is needed, treat it as stage-owned output verification only:
 Run: `~/.featureforge/install/bin/featureforge workflow plan-fidelity record --plan docs/featureforge/plans/2026-03-30-first-class-plan-fidelity-review.md --review-artifact .featureforge/reviews/2026-03-30-first-class-plan-fidelity-review-plan-fidelity.md`
 Expected: receipt records only when the independent stage artifact satisfies runtime validation.

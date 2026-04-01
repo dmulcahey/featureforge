@@ -179,7 +179,7 @@ Before moving into the review sections:
 4. If the plan's `**Source Spec:**` path or `**Source Spec Revision:**` does not match the latest approved spec, stop and direct the agent back to `featureforge:writing-plans`.
 5. Before starting engineering review, require a matching runtime-owned plan-fidelity receipt in pass state for the current plan revision and approved spec revision.
 6. Do not start engineering review until workflow routing returns the current draft plan to `featureforge:plan-eng-review` with a matching pass plan-fidelity receipt.
-7. If the matching plan-fidelity receipt is missing, stale, malformed, or not pass, stop and hand control back to `featureforge:writing-plans`.
+7. If the matching plan-fidelity receipt is missing, stale, malformed, non-pass, or non-independent, stop and hand control back to `featureforge:plan-fidelity-review`.
 8. Do not look for a markdown `## Plan Fidelity Review Receipt` block in the plan. The authoritative evidence is the runtime-owned receipt surfaced by workflow routing and `plan contract analyze-plan`.
 9. If you make plan edits during this review, keep `**Workflow State:** Draft` until every review issue is resolved.
 
