@@ -246,6 +246,121 @@ fn assert_description_contains(path: impl AsRef<Path>, needle: &str) {
     assert_contains(&first_lines, needle, &path_ref.display().to_string());
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LateStageRuntimeRow {
+    release: String,
+    review: String,
+    qa: String,
+    phase: String,
+    reason_family: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LateStageReferenceRow {
+    release: String,
+    review: String,
+    qa: String,
+    phase: String,
+    next_action: String,
+    recommended_skill: String,
+    reason_family: String,
+}
+
+fn parse_runtime_gate_state(block: &str, field: &str) -> String {
+    let needle = format!("{field}: GateState::");
+    let start = block
+        .find(&needle)
+        .unwrap_or_else(|| panic!("runtime precedence row should contain {needle:?}: {block}"));
+    let rest = &block[start + needle.len()..];
+    if rest.starts_with("Blocked") {
+        String::from("blocked")
+    } else if rest.starts_with("Ready") {
+        String::from("ready")
+    } else {
+        panic!("runtime precedence row should use Ready/Blocked for {field}: {block}");
+    }
+}
+
+fn parse_runtime_quoted_field(block: &str, field: &str) -> String {
+    let needle = format!("{field}: \"");
+    let start = block
+        .find(&needle)
+        .unwrap_or_else(|| panic!("runtime precedence row should contain {needle:?}: {block}"));
+    let rest = &block[start + needle.len()..];
+    let end = rest
+        .find('"')
+        .unwrap_or_else(|| panic!("runtime precedence row should close quoted field {field:?}: {block}"));
+    rest[..end].to_owned()
+}
+
+fn parse_runtime_late_stage_rows(source: &str) -> Vec<LateStageRuntimeRow> {
+    let table_start = source
+        .find("const PRECEDENCE_ROWS")
+        .unwrap_or_else(|| panic!("runtime precedence source should define PRECEDENCE_ROWS"));
+    let table_source = &source[table_start..];
+    let table_end = table_source
+        .find("];")
+        .unwrap_or_else(|| panic!("runtime precedence source should close PRECEDENCE_ROWS with ];"));
+    let table_source = &table_source[..table_end];
+    table_source
+        .split("LateStageRow {")
+        .skip(1)
+        .map(|chunk| chunk.split("},").next().unwrap_or(chunk))
+        .map(|block| LateStageRuntimeRow {
+            release: parse_runtime_gate_state(block, "release"),
+            review: parse_runtime_gate_state(block, "review"),
+            qa: parse_runtime_gate_state(block, "qa"),
+            phase: parse_runtime_quoted_field(block, "phase"),
+            reason_family: parse_runtime_quoted_field(block, "reason_family"),
+        })
+        .collect()
+}
+
+fn strip_inline_code(value: &str) -> String {
+    value.trim().trim_matches('`').to_owned()
+}
+
+fn parse_reference_late_stage_rows(source: &str) -> Vec<LateStageReferenceRow> {
+    source
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("| blocked") || line.starts_with("| ready"))
+        .map(|line| {
+            let columns = line
+                .trim_matches('|')
+                .split('|')
+                .map(str::trim)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                columns.len(),
+                7,
+                "late-stage reference rows should have seven columns: {line}"
+            );
+            LateStageReferenceRow {
+                release: columns[0].to_owned(),
+                review: columns[1].to_owned(),
+                qa: columns[2].to_owned(),
+                phase: strip_inline_code(columns[3]),
+                next_action: strip_inline_code(columns[4]),
+                recommended_skill: strip_inline_code(columns[5]),
+                reason_family: strip_inline_code(columns[6]),
+            }
+        })
+        .collect()
+}
+
+fn expected_phase_action_and_skill(phase: &str) -> (&'static str, &'static str) {
+    match phase {
+        "document_release_pending" => ("run_document_release", "featureforge:document-release"),
+        "final_review_pending" => ("request_code_review", "featureforge:requesting-code-review"),
+        "qa_pending" => ("run_qa_only", "featureforge:qa-only"),
+        "ready_for_branch_completion" => {
+            ("finish_branch", "featureforge:finishing-a-development-branch")
+        }
+        _ => panic!("unexpected late-stage phase in precedence row: {phase}"),
+    }
+}
+
 fn generated_skill_doc_paths() -> Vec<PathBuf> {
     fs::read_dir(repo_root().join("skills"))
         .expect("skills dir should be readable")
@@ -1161,7 +1276,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "Conditional Pre-Landing QA Gate",
                 "Required release-readiness pass for workflow-routed work before completion",
                 "featureforge repo-safety check --intent write",
-                "Run `featureforge plan execution gate-review --plan <approved-plan-path>` before late-stage QA or release routing.",
+                "For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current.",
                 "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, run `featureforge plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.",
                 "If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.",
             ],
@@ -1684,6 +1799,57 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         "execution preflight boundary for the approved plan",
     );
     assert_file_contains(
+        root.join("README.md"),
+        "Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):",
+    );
+    assert_file_contains(
+        root.join("docs/README.codex.md"),
+        "for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`",
+    );
+    assert_file_contains(
+        root.join("docs/README.codex.md"),
+        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof",
+    );
+    assert_file_contains(
+        root.join("docs/README.copilot.md"),
+        "for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`",
+    );
+    assert_file_contains(
+        root.join("docs/README.copilot.md"),
+        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof",
+    );
+    assert_file_contains(
+        root.join("review/late-stage-precedence-reference.md"),
+        "`gate-review` is read-only state evaluation.",
+    );
+    assert_file_contains(
+        root.join("review/late-stage-precedence-reference.md"),
+        "`gate-review-dispatch` is the dispatch-proof minting boundary.",
+    );
+    assert_file_contains(
+        root.join("review/late-stage-precedence-reference.md"),
+        "For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`.",
+    );
+    let readme = read_utf8(root.join("README.md"));
+    let completion_start = readme
+        .find("Completion then flows through")
+        .expect("README completion flow heading should be present");
+    let completion_end = readme[completion_start..]
+        .find("## Project Memory")
+        .map(|offset| completion_start + offset)
+        .expect("README completion flow should end before project memory section");
+    let completion_block = &readme[completion_start..completion_end];
+    let release_index = completion_block
+        .find("featureforge:document-release")
+        .expect("completion flow should mention document-release");
+    let review_index = completion_block
+        .find("featureforge:requesting-code-review")
+        .expect("completion flow should mention requesting-code-review");
+    assert!(
+        release_index < review_index,
+        "README completion flow should list document-release before requesting-code-review"
+    );
+    assert_file_contains(
         root.join("docs/test-suite-enhancement-plan.md"),
         "The active deterministic suite and recommended commands now live in `docs/testing.md`.",
     );
@@ -1738,6 +1904,84 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         fixture_root.join("README.md"),
         "canonical `## Task N:` plus parseable `**Files:**` blocks",
     );
+}
+
+#[test]
+fn late_stage_precedence_reference_rows_match_runtime_rows_and_operator_phase_mappings() {
+    let root = repo_root();
+    let runtime_precedence = read_utf8(root.join("src/workflow/late_stage_precedence.rs"));
+    let operator = read_utf8(root.join("src/workflow/operator.rs"));
+    let reference = read_utf8(root.join("review/late-stage-precedence-reference.md"));
+
+    let runtime_rows = parse_runtime_late_stage_rows(&runtime_precedence);
+    let reference_rows = parse_reference_late_stage_rows(&reference);
+    assert_eq!(
+        runtime_rows.len(),
+        8,
+        "runtime PRECEDENCE_ROWS should define exactly eight late-stage rows"
+    );
+    assert_eq!(
+        reference_rows.len(),
+        runtime_rows.len(),
+        "late-stage reference table should mirror runtime row count"
+    );
+
+    let normalized_operator = operator.chars().filter(|char| !char.is_whitespace()).collect::<String>();
+
+    for (runtime_row, reference_row) in runtime_rows.iter().zip(reference_rows.iter()) {
+        assert_eq!(
+            reference_row.release, runtime_row.release,
+            "late-stage reference release gate should match runtime row: {runtime_row:?}"
+        );
+        assert_eq!(
+            reference_row.review, runtime_row.review,
+            "late-stage reference review gate should match runtime row: {runtime_row:?}"
+        );
+        assert_eq!(
+            reference_row.qa, runtime_row.qa,
+            "late-stage reference QA gate should match runtime row: {runtime_row:?}"
+        );
+        assert_eq!(
+            reference_row.phase, runtime_row.phase,
+            "late-stage reference phase should match runtime row: {runtime_row:?}"
+        );
+        assert_eq!(
+            reference_row.reason_family, runtime_row.reason_family,
+            "late-stage reference reason family should match runtime row: {runtime_row:?}"
+        );
+
+        let (expected_action, expected_skill) =
+            expected_phase_action_and_skill(reference_row.phase.as_str());
+        assert_eq!(
+            reference_row.next_action, expected_action,
+            "late-stage reference next action should match runtime phase mapping for {}",
+            reference_row.phase
+        );
+        assert_eq!(
+            reference_row.recommended_skill, expected_skill,
+            "late-stage reference recommended skill should match runtime phase mapping for {}",
+            reference_row.phase
+        );
+
+        assert!(
+            normalized_operator.contains(&format!(
+                "\"{}\"=>\"{}\"",
+                reference_row.phase, expected_action
+            )),
+            "operator next_action_for_phase should include {} -> {}",
+            reference_row.phase,
+            expected_action
+        );
+        assert!(
+            normalized_operator.contains(&format!(
+                "\"{}\"=>(String::from(\"{}\")",
+                reference_row.phase, expected_skill
+            )),
+            "operator recommended-skill mapping should include {} -> {}",
+            reference_row.phase,
+            expected_skill
+        );
+    }
 }
 
 #[test]

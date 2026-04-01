@@ -114,10 +114,16 @@ In Codex, FeatureForge installs the `code-reviewer` custom agent alongside the s
 
 **Core principle:** Review at the right checkpoints, then fail closed on the final whole-diff gate.
 
+This skill has two valid modes:
+- terminal whole-diff review (workflow-routed final gate after `featureforge:document-release`)
+- non-terminal checkpoint/task-boundary review (targeted dedicated-independent validation before execution continues)
+
+For late-stage phase/action/skill grounding, reference `review/late-stage-precedence-reference.md`.
+
 ## When to Request Review
 
 **Mandatory:**
-- For the final cross-task review gate in workflow-routed work
+- For the final cross-task review gate in workflow-routed work, after `featureforge:document-release` is current for the same `HEAD`
 - After completing major feature
 - Before merge to the target base branch
 
@@ -137,9 +143,11 @@ In Codex, FeatureForge installs the `code-reviewer` custom agent alongside the s
 - If helper status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state.
 - Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON.
 - If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.
+- For non-terminal checkpoint or task-boundary review, do not force terminal-clean execution state; follow the helper-reported blocking reason and review scope for the current task boundary.
 - If `evidence_path` is empty or unreadable, stop and return to the current execution flow instead of reviewing against missing execution evidence.
-- Run `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` before dispatching the reviewer.
-- If the review gate returns `allowed` `false`, stop and return to the current execution flow; do not dispatch review against stale, drifted, or mismatched execution evidence.
+- For terminal whole-diff review, run `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` before dispatching the reviewer.
+- For terminal whole-diff review, if the review gate returns `allowed` `false`, stop and return to the current execution flow; do not dispatch review against stale, drifted, or mismatched execution evidence.
+- For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: `gate-review` is read-only, while `gate-review-dispatch` is the dispatch-proof minting path when the runtime requires it for the current boundary.
 - If the review gate returns warning codes such as `legacy_evidence_format`, keep the warning in the review context but do not treat it as a blocker when `allowed` remains `true`.
 - Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context.
 - Build completed task-packet context from the approved plan and pass that completed task-packet context plus the plan's coverage matrix into the reviewer briefing.
@@ -386,12 +394,13 @@ You: [Fix progress indicators]
 
 **Subagent-Driven Development:**
 - Per-task spec-compliance and code-quality reviews happen inside `subagent-driven-development`
-- Use `requesting-code-review` as the final whole-diff gate after all tasks, or earlier only when you intentionally want an extra checkpoint
+- Use `requesting-code-review` as the final whole-diff gate only after `featureforge:document-release` is current for the same `HEAD`, or earlier when you intentionally want an extra checkpoint
 - Resolve Critical and Important findings before handing off to branch completion
 
 **Executing Plans:**
-- Review after execution is complete and verified
-- Use an earlier review only if you intentionally want an extra checkpoint
+- Use `requesting-code-review` for both terminal whole-diff review and runtime-requested task-boundary dedicated-independent review (`prior_task_review_*` reason families)
+- For terminal whole-diff review, run it after `featureforge:document-release`
+- Use an earlier review only when intentionally checkpointing or when runtime boundary reasons explicitly require it
 
 **Ad-Hoc Development:**
 - Review before merge
@@ -401,7 +410,7 @@ You: [Fix progress indicators]
 
 - rejects final review if the plan has invalid execution state or required unfinished work not truthfully represented
 - treats non-null `active_task`, `blocking_task`, or `resume_task` as execution-dirty and rejects final review until execution returns to a clean state
-- runs `gate-review-dispatch --plan ...` as the helper-owned fail-closed provenance gate before dispatching final review
+- runs `gate-review-dispatch --plan ...` as the helper-owned fail-closed provenance gate before terminal final review dispatch, while preserving task-boundary command semantics
 - consumes the execution evidence artifact for checked-off steps
 - consumes completed task-packet context and the approved plan's coverage matrix for plan-routed review
 - requires the persisted final-review artifact to prove dedicated independent reviewer provenance and, when present, explicit deviation disposition

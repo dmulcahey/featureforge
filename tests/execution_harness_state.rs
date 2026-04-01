@@ -995,6 +995,51 @@ fn status_projects_authoritative_state_for_write_repo_dependency_downstream_and_
 }
 
 #[test]
+fn status_fail_closes_with_reason_code_on_authoritative_late_stage_parity_divergence() {
+    let (repo_dir, state_dir) = init_repo("execution-harness-state-late-stage-parity-divergence");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_plan(repo, "none");
+    accept_execution_preflight(repo, state);
+    begin_and_complete_single_step(
+        repo,
+        state,
+        "Seed completed execution for late-stage parity divergence coverage.",
+    );
+
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "ready_for_branch_completion",
+            "latest_authoritative_sequence": 17
+        }),
+    );
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status for late-stage authoritative/operator parity divergence fixture",
+    );
+
+    assert_eq!(
+        status["harness_phase"], "document_release_pending",
+        "status should fail closed to canonical document-release precedence when authoritative late-stage phase diverges"
+    );
+    assert!(
+        status["reason_codes"]
+            .as_array()
+            .expect("status should expose reason_codes as an array")
+            .iter()
+            .any(|value| value.as_str() == Some("stale_provenance")),
+        "status should emit stale_provenance when authoritative late-stage phase diverges from canonical precedence; status payload: {status:?}"
+    );
+}
+
+#[test]
 fn record_contract_persists_dependency_index_with_authoritative_contract_node() {
     let (repo_dir, state_dir) =
         init_repo("execution-harness-state-dependency-index-record-contract");

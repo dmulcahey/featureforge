@@ -190,6 +190,63 @@ function assertDetectsGateLikeHookSamples(samples, label, description, targetPat
   }
 }
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function stripInlineCode(value) {
+  return value.replace(/^`|`$/g, '');
+}
+
+function parseRuntimeLateStageRows(source) {
+  const rowPattern = /LateStageRow\s*\{\s*release:\s*GateState::(Blocked|Ready),\s*review:\s*GateState::(Blocked|Ready),\s*qa:\s*GateState::(Blocked|Ready),\s*phase:\s*"([^"]+)",\s*reason_family:\s*"([^"]+)",\s*\}/gms;
+  const rows = [];
+  for (const match of source.matchAll(rowPattern)) {
+    rows.push({
+      release: match[1].toLowerCase(),
+      review: match[2].toLowerCase(),
+      qa: match[3].toLowerCase(),
+      phase: match[4],
+      reasonFamily: match[5],
+    });
+  }
+  return rows;
+}
+
+function parseLateStageReferenceRows(markdown) {
+  return markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('| blocked') || line.startsWith('| ready'))
+    .map((line) => {
+      const columns = line.split('|').slice(1, -1).map((cell) => cell.trim());
+      assert.equal(columns.length, 7, `late-stage precedence table row should have 7 columns: ${line}`);
+      return {
+        release: columns[0],
+        review: columns[1],
+        qa: columns[2],
+        phase: stripInlineCode(columns[3]),
+        nextAction: stripInlineCode(columns[4]),
+        recommendedSkill: stripInlineCode(columns[5]),
+        reasonFamily: stripInlineCode(columns[6]),
+      };
+    });
+}
+
+const LATE_STAGE_PHASE_TO_ACTION = new Map([
+  ['document_release_pending', 'run_document_release'],
+  ['final_review_pending', 'request_code_review'],
+  ['qa_pending', 'run_qa_only'],
+  ['ready_for_branch_completion', 'finish_branch'],
+]);
+
+const LATE_STAGE_PHASE_TO_SKILL = new Map([
+  ['document_release_pending', 'featureforge:document-release'],
+  ['final_review_pending', 'featureforge:requesting-code-review'],
+  ['qa_pending', 'featureforge:qa-only'],
+  ['ready_for_branch_completion', 'featureforge:finishing-a-development-branch'],
+]);
+
 test('templates declare exactly one base or review preamble placeholder', () => {
   for (const skill of listGeneratedSkills()) {
     const template = readUtf8(getTemplatePath(skill));
@@ -1173,6 +1230,98 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
 
   const readme = readUtf8(path.join(REPO_ROOT, 'README.md'));
   assert.match(readme, /Six layers matter:/);
+  assert.match(
+    readme,
+    /Completion then flows through \(runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`\):/,
+  );
+  const completionSection = readme.slice(
+    readme.indexOf('Completion then flows through'),
+    readme.indexOf('## Project Memory'),
+  );
+  assert.ok(
+    completionSection.indexOf('featureforge:document-release')
+      < completionSection.indexOf('featureforge:requesting-code-review'),
+    'README completion flow should list document-release before requesting-code-review',
+  );
+
+  const codexReadme = readUtf8(path.join(REPO_ROOT, 'docs/README.codex.md'));
+  assert.match(
+    codexReadme,
+    /for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` \(when required\) and `featureforge:finishing-a-development-branch`/,
+  );
+  assert.match(
+    codexReadme,
+    /`featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof/,
+  );
+
+  const copilotReadme = readUtf8(path.join(REPO_ROOT, 'docs/README.copilot.md'));
+  assert.match(
+    copilotReadme,
+    /for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` \(when required\) and `featureforge:finishing-a-development-branch`/,
+  );
+  assert.match(
+    copilotReadme,
+    /`featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof/,
+  );
+
+  const lateStageReference = readUtf8(path.join(REPO_ROOT, 'review/late-stage-precedence-reference.md'));
+  assert.match(lateStageReference, /`gate-review` is read-only state evaluation\./);
+  assert.match(lateStageReference, /`gate-review-dispatch` is the dispatch-proof minting boundary\./);
+  assert.match(
+    lateStageReference,
+    /For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`\./,
+  );
+});
+
+test('late-stage precedence reference rows stay in row-level parity with runtime precedence rows and mapped operator outputs', () => {
+  const lateStageReference = readUtf8(path.join(REPO_ROOT, 'review/late-stage-precedence-reference.md'));
+  const runtimePrecedence = readUtf8(path.join(REPO_ROOT, 'src/workflow/late_stage_precedence.rs'));
+  const workflowOperator = readUtf8(path.join(REPO_ROOT, 'src/workflow/operator.rs'));
+
+  const runtimeRows = parseRuntimeLateStageRows(runtimePrecedence);
+  const referenceRows = parseLateStageReferenceRows(lateStageReference);
+
+  assert.equal(runtimeRows.length, 8, 'runtime PRECEDENCE_ROWS should define exactly eight late-stage rows');
+  assert.equal(referenceRows.length, runtimeRows.length, 'late-stage reference table should mirror runtime row count');
+
+  assert.deepEqual(
+    referenceRows.map((row) => ({
+      release: row.release,
+      review: row.review,
+      qa: row.qa,
+      phase: row.phase,
+      reasonFamily: row.reasonFamily,
+    })),
+    runtimeRows,
+    'late-stage precedence reference rows should stay aligned with runtime PRECEDENCE_ROWS',
+  );
+
+  for (const row of referenceRows) {
+    const expectedAction = LATE_STAGE_PHASE_TO_ACTION.get(row.phase);
+    const expectedSkill = LATE_STAGE_PHASE_TO_SKILL.get(row.phase);
+    assert.ok(expectedAction, `phase ${row.phase} should have a canonical next action mapping`);
+    assert.ok(expectedSkill, `phase ${row.phase} should have a canonical recommended skill mapping`);
+    assert.equal(
+      row.nextAction,
+      expectedAction,
+      `late-stage reference next action should match runtime mapping for phase ${row.phase}`,
+    );
+    assert.equal(
+      row.recommendedSkill,
+      expectedSkill,
+      `late-stage reference recommended skill should match runtime mapping for phase ${row.phase}`,
+    );
+    assert.match(
+      workflowOperator,
+      new RegExp(`"${escapeRegex(row.phase)}"\\s*=>\\s*"${escapeRegex(expectedAction)}"`),
+      `operator next_action_for_phase should keep ${row.phase} -> ${expectedAction}`,
+    );
+    assert.match(
+      workflowOperator,
+      new RegExp(`"${escapeRegex(row.phase)}"\\s*=>\\s*\\(\\s*String::from\\("${escapeRegex(expectedSkill)}"\\)`, 's'),
+      `operator recommended-skill routing should keep ${row.phase} -> ${expectedSkill}`,
+    );
+  }
 });
 
 test('active eval docs use featureforge state roots', () => {

@@ -35,8 +35,8 @@ use crate::execution::final_review::{
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
     EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
-    INITIAL_AUTHORITATIVE_SEQUENCE, LearnedTopologyGuidance, ResetPolicy, TopologySelectionContext,
-    RunIdentitySnapshot,
+    INITIAL_AUTHORITATIVE_SEQUENCE, LearnedTopologyGuidance, ResetPolicy, RunIdentitySnapshot,
+    TopologySelectionContext,
 };
 use crate::execution::leases::{
     PreflightWriteAuthorityState, StrategyReviewDispatchLineageRecord,
@@ -44,6 +44,9 @@ use crate::execution::leases::{
     load_status_authoritative_overlay_checked, preflight_requires_authoritative_handoff,
     preflight_requires_authoritative_mutation_recovery, preflight_write_authority_state,
     validate_worktree_lease,
+};
+use crate::execution::observability::{
+    REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
 };
 use crate::execution::topology::{
     RecommendOutput, default_preflight_chunking_strategy, default_preflight_evaluator_policy,
@@ -62,6 +65,9 @@ use crate::paths::{
     normalize_whitespace,
 };
 use crate::repo_safety::RepoSafetyRuntime;
+use crate::workflow::late_stage_precedence::{
+    GateState as PrecedenceGateState, LateStageSignals, resolve as resolve_late_stage_precedence,
+};
 use crate::workflow::manifest::{ManifestLoadResult, WorkflowManifest, load_manifest_read_only};
 use crate::workflow::markdown_scan::markdown_files_under;
 
@@ -1136,6 +1142,7 @@ pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionSt
 
     apply_authoritative_status_overlay(context, &mut status)?;
     apply_task_boundary_status_overlay(context, &mut status);
+    apply_late_stage_precedence_status_overlay(context, &mut status);
     Ok(status)
 }
 
@@ -1325,8 +1332,13 @@ fn normalize_optional_overlay_value(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn apply_task_boundary_status_overlay(context: &ExecutionContext, status: &mut PlanExecutionStatus) {
-    if status.active_task.is_some() || status.blocking_task.is_some() || status.resume_task.is_some()
+fn apply_task_boundary_status_overlay(
+    context: &ExecutionContext,
+    status: &mut PlanExecutionStatus,
+) {
+    if status.active_task.is_some()
+        || status.blocking_task.is_some()
+        || status.resume_task.is_some()
     {
         return;
     }
@@ -1353,6 +1365,154 @@ fn apply_task_boundary_status_overlay(context: &ExecutionContext, status: &mut P
         status.reason_codes.push(reason_code.to_owned());
     }
     status.blocking_task = Some(prior_task);
+}
+
+fn apply_late_stage_precedence_status_overlay(
+    context: &ExecutionContext,
+    status: &mut PlanExecutionStatus,
+) {
+    if status.execution_started != "yes" {
+        return;
+    }
+    if status.active_task.is_some()
+        || status.blocking_task.is_some()
+        || status.resume_task.is_some()
+    {
+        return;
+    }
+    if context.steps.iter().any(|step| !step.checked) {
+        return;
+    }
+
+    let authoritative_phase = status.harness_phase;
+    if status.latest_authoritative_sequence != INITIAL_AUTHORITATIVE_SEQUENCE
+        && !is_late_stage_phase(authoritative_phase)
+    {
+        return;
+    }
+    let gate_review = gate_review_from_context_internal(context, true);
+    let gate_finish = gate_finish_from_context(context);
+    let release_blocked = status_release_blocked(&gate_finish)
+        || gate_review.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "release_docs_state_missing"
+                    | "release_docs_state_stale"
+                    | "release_docs_state_not_fresh"
+            )
+        });
+    let review_blocked = !gate_review.allowed || status_review_blocked(&gate_finish);
+    let qa_blocked = status_qa_blocked(&gate_finish);
+    let decision = resolve_late_stage_precedence(LateStageSignals {
+        release: PrecedenceGateState::from_blocked(release_blocked),
+        review: PrecedenceGateState::from_blocked(review_blocked),
+        qa: PrecedenceGateState::from_blocked(qa_blocked),
+    });
+    let canonical_phase =
+        parse_harness_phase(decision.phase).unwrap_or(HarnessPhase::FinalReviewPending);
+
+    if !(gate_finish.allowed || release_blocked || review_blocked || qa_blocked) {
+        push_status_reason_code_once(status, REASON_CODE_STALE_PROVENANCE);
+        status.harness_phase = HarnessPhase::FinalReviewPending;
+        return;
+    }
+
+    if is_late_stage_phase(authoritative_phase) && authoritative_phase != canonical_phase {
+        push_status_reason_code_once(status, REASON_CODE_STALE_PROVENANCE);
+        status.harness_phase = fail_closed_late_stage_phase(authoritative_phase, canonical_phase);
+        return;
+    }
+
+    status.harness_phase = canonical_phase;
+}
+
+fn push_status_reason_code_once(status: &mut PlanExecutionStatus, reason_code: &str) {
+    if !status
+        .reason_codes
+        .iter()
+        .any(|existing| existing == reason_code)
+    {
+        status.reason_codes.push(reason_code.to_owned());
+    }
+}
+
+fn is_late_stage_phase(phase: HarnessPhase) -> bool {
+    matches!(
+        phase,
+        HarnessPhase::FinalReviewPending
+            | HarnessPhase::QaPending
+            | HarnessPhase::DocumentReleasePending
+            | HarnessPhase::ReadyForBranchCompletion
+    )
+}
+
+fn late_stage_phase_rank(phase: HarnessPhase) -> Option<u8> {
+    match phase {
+        HarnessPhase::DocumentReleasePending => Some(0),
+        HarnessPhase::FinalReviewPending => Some(1),
+        HarnessPhase::QaPending => Some(2),
+        HarnessPhase::ReadyForBranchCompletion => Some(3),
+        _ => None,
+    }
+}
+
+fn fail_closed_late_stage_phase(
+    authoritative_phase: HarnessPhase,
+    canonical_phase: HarnessPhase,
+) -> HarnessPhase {
+    match (
+        late_stage_phase_rank(authoritative_phase),
+        late_stage_phase_rank(canonical_phase),
+    ) {
+        (Some(authoritative_rank), Some(canonical_rank)) => {
+            if authoritative_rank <= canonical_rank {
+                authoritative_phase
+            } else {
+                canonical_phase
+            }
+        }
+        _ => canonical_phase,
+    }
+}
+
+fn status_release_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "ReleaseArtifactNotFresh"
+        || gate_finish.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "release_artifact_authoritative_provenance_invalid"
+                    | "release_docs_state_missing"
+                    | "release_docs_state_stale"
+                    | "release_docs_state_not_fresh"
+            )
+        })
+}
+
+fn status_review_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "ReviewArtifactNotFresh"
+        || gate_finish.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "review_artifact_authoritative_provenance_invalid"
+                    | "final_review_state_missing"
+                    | "final_review_state_stale"
+                    | "final_review_state_not_fresh"
+            )
+        })
+}
+
+fn status_qa_blocked(gate_finish: &GateResult) -> bool {
+    gate_finish.failure_class == "QaArtifactNotFresh"
+        || gate_finish.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "qa_artifact_authoritative_provenance_invalid"
+                    | "test_plan_artifact_authoritative_provenance_invalid"
+                    | "browser_qa_state_missing"
+                    | "browser_qa_state_stale"
+                    | "browser_qa_state_not_fresh"
+            )
+        })
 }
 
 fn parse_harness_phase(value: &str) -> Option<HarnessPhase> {
@@ -2050,11 +2210,7 @@ fn enforce_worktree_lease_binding_truth(context: &ExecutionContext, gate: &mut G
             .map(str::trim)
             .filter(|value| !value.is_empty());
         if active_contract_path.is_none() && active_contract_fingerprint.is_none() {
-            enforce_plain_unit_review_truth(
-                context,
-                run_identity.execution_run_id.as_str(),
-                gate,
-            );
+            enforce_plain_unit_review_truth(context, run_identity.execution_run_id.as_str(), gate);
             return;
         }
         let Some((_active_contract_path, active_contract_fingerprint)) =
@@ -3141,7 +3297,8 @@ fn enforce_plain_unit_review_truth(
             );
             return;
         };
-        let Some((task_number, step_number)) = expected_receipt_paths.get(&receipt_file_name).copied()
+        let Some((task_number, step_number)) =
+            expected_receipt_paths.get(&receipt_file_name).copied()
         else {
             gate.fail(
                 FailureClass::MalformedExecutionState,
@@ -4112,10 +4269,11 @@ fn validate_plain_unit_review_receipt(
 
     let expected_file_name = format!(
         "unit-review-{}-{}.md",
-        execution_run_id,
-        expectations.expected_execution_unit_id
+        execution_run_id, expectations.expected_execution_unit_id
     );
-    if receipt_path.file_name().and_then(|value| value.to_str()) != Some(expected_file_name.as_str()) {
+    if receipt_path.file_name().and_then(|value| value.to_str())
+        != Some(expected_file_name.as_str())
+    {
         gate.fail(
             FailureClass::MalformedExecutionState,
             "plain_unit_review_receipt_malformed",
@@ -4160,7 +4318,10 @@ fn validate_plain_unit_review_receipt(
 
     let mut mismatched_fields = Vec::new();
     let mut mismatch_details = Vec::new();
-    if review_document.headers.get("Source Plan").map(String::as_str)
+    if review_document
+        .headers
+        .get("Source Plan")
+        .map(String::as_str)
         != Some(context.plan_rel.as_str())
     {
         mismatched_fields.push("Source Plan");
@@ -4321,21 +4482,31 @@ fn is_ancestor_commit(repo_root: &Path, ancestor: &str, descendant: &str) -> boo
 }
 
 pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
-    let mut gate = GateState::from_result(gate_review_from_context_internal(context, true));
+    let mut gate = GateState::default();
+    enforce_finish_dependency_index_truth(context, &mut gate);
+    merge_gate_result(
+        &mut gate,
+        gate_review_from_context_internal(context, false),
+    );
     if !gate.allowed {
         return gate.finish();
     }
 
     let branch = &context.runtime.branch_name;
     let current_head = current_head_sha(&context.runtime.repo_root).unwrap_or_default();
-    match repo_has_tracked_worktree_changes_excluding_execution_evidence(
-        &context.runtime.repo_root,
-    ) {
+    match repo_has_tracked_worktree_changes_excluding_execution_evidence(&context.runtime.repo_root)
+    {
         Ok(true) => {
             gate.fail(
                 FailureClass::ReviewArtifactNotFresh,
                 "review_artifact_worktree_dirty",
                 "Finish readiness is blocked by tracked worktree changes that landed after the last review artifacts were generated.",
+                "Commit or discard tracked worktree changes, then rerun requesting-code-review and downstream finish artifacts.",
+            );
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED,
+                "Tracked repo writes after final review invalidated review freshness for terminal branch completion.",
                 "Commit or discard tracked worktree changes, then rerun requesting-code-review and downstream finish artifacts.",
             );
             return gate.finish();
@@ -4370,6 +4541,126 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         .state_dir
         .join("projects")
         .join(&context.runtime.repo_slug);
+
+    let authoritative_release_path = match authoritative_release_docs_artifact_path_checked(context)
+    {
+        Ok(path) => path,
+        Err(error) => {
+            let failure_class =
+                if error.error_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
+                    FailureClass::ArtifactIntegrityMismatch
+                } else {
+                    FailureClass::MalformedExecutionState
+                };
+            gate.fail(
+                failure_class,
+                "release_artifact_authoritative_provenance_invalid",
+                error.message,
+                "Restore the authoritative release-doc provenance and retry gate-finish.",
+            );
+            return gate.finish();
+        }
+    };
+    let release_path = authoritative_release_path
+        .or_else(|| latest_branch_artifact_path(&artifact_dir, branch, "release-readiness"));
+    let Some(release_path) = release_path else {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_docs_state_missing",
+            "Finish readiness requires a release-readiness artifact.",
+            "Run document-release and return with a fresh release-readiness artifact.",
+        );
+        return gate.finish();
+    };
+    let release = parse_artifact_document(&release_path);
+    if release.title.as_deref() != Some("# Release Readiness Result") {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_malformed",
+            "The latest release-readiness artifact is malformed.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
+        || release.headers.get("Source Plan Revision")
+            != Some(&context.plan_document.plan_revision.to_string())
+    {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_plan_mismatch",
+            "The latest release-readiness artifact does not match the current approved plan revision.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Branch") != Some(branch) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_branch_mismatch",
+            "The latest release-readiness artifact does not match the current branch.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Head SHA") != Some(&current_head) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_head_mismatch",
+            "The latest release-readiness artifact does not match the current HEAD.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release
+        .headers
+        .get("Base Branch")
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_base_branch_unresolved",
+            "The latest release-readiness artifact is missing its base branch declaration.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Base Branch") != Some(&current_base_branch) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_base_branch_mismatch",
+            "The latest release-readiness artifact does not match the expected base branch.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Result") != Some(&String::from("pass")) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_result_not_pass",
+            "The latest release-readiness artifact is not marked pass.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Generated By") != Some(&String::from("featureforge:document-release")) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_generator_mismatch",
+            "The latest release-readiness artifact was not generated by document-release.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
+    if release.headers.get("Repo") != Some(&context.runtime.repo_slug) {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_artifact_repo_mismatch",
+            "The latest release-readiness artifact does not match the current repo.",
+            "Re-run document-release for the current approved plan revision.",
+        );
+        return gate.finish();
+    }
 
     let authoritative_review_path = match authoritative_final_review_artifact_path_checked(context)
     {
@@ -4714,127 +5005,44 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         }
     }
 
-    let authoritative_release_path = match authoritative_release_docs_artifact_path_checked(context)
-    {
-        Ok(path) => path,
-        Err(error) => {
-            let failure_class =
-                if error.error_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
-                    FailureClass::ArtifactIntegrityMismatch
-                } else {
-                    FailureClass::MalformedExecutionState
-                };
-            gate.fail(
-                failure_class,
-                "release_artifact_authoritative_provenance_invalid",
-                error.message,
-                "Restore the authoritative release-doc provenance and retry gate-finish.",
-            );
-            return gate.finish();
-        }
-    };
-    let release_path = authoritative_release_path
-        .or_else(|| latest_branch_artifact_path(&artifact_dir, branch, "release-readiness"));
-    let Some(release_path) = release_path else {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_missing",
-            "Finish readiness requires a release-readiness artifact.",
-            "Run document-release and return with a fresh release-readiness artifact.",
-        );
-        return gate.finish();
-    };
-    let release = parse_artifact_document(&release_path);
-    if release.title.as_deref() != Some("# Release Readiness Result") {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_malformed",
-            "The latest release-readiness artifact is malformed.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
+    gate.finish()
+}
+
+fn merge_gate_result(target: &mut GateState, incoming: GateResult) {
+    let GateResult {
+        allowed,
+        failure_class,
+        reason_codes,
+        warning_codes,
+        diagnostics,
+    } = incoming;
+
+    if !allowed {
+        target.allowed = false;
     }
-    if release.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
-        || release.headers.get("Source Plan Revision")
-            != Some(&context.plan_document.plan_revision.to_string())
-    {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_plan_mismatch",
-            "The latest release-readiness artifact does not match the current approved plan revision.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if release.headers.get("Branch") != Some(branch) {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_branch_mismatch",
-            "The latest release-readiness artifact does not match the current branch.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if release.headers.get("Head SHA") != Some(&current_head) {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_head_mismatch",
-            "The latest release-readiness artifact does not match the current HEAD.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if release
-        .headers
-        .get("Base Branch")
-        .is_none_or(|value| value.trim().is_empty())
-    {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_base_branch_unresolved",
-            "The latest release-readiness artifact is missing its base branch declaration.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if release.headers.get("Base Branch") != Some(&current_base_branch) {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_base_branch_mismatch",
-            "The latest release-readiness artifact does not match the expected base branch.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if release.headers.get("Result") != Some(&String::from("pass")) {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_result_not_pass",
-            "The latest release-readiness artifact is not marked pass.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if release.headers.get("Generated By") != Some(&String::from("featureforge:document-release")) {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_generator_mismatch",
-            "The latest release-readiness artifact was not generated by document-release.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if release.headers.get("Repo") != Some(&context.runtime.repo_slug) {
-        gate.fail(
-            FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_repo_mismatch",
-            "The latest release-readiness artifact does not match the current repo.",
-            "Re-run document-release for the current approved plan revision.",
-        );
-        return gate.finish();
+    if target.failure_class.is_empty() && !failure_class.is_empty() {
+        target.failure_class = failure_class;
     }
 
-    gate.finish()
+    for code in reason_codes {
+        if !target.reason_codes.iter().any(|existing| existing == &code) {
+            target.reason_codes.push(code);
+        }
+    }
+    for code in warning_codes {
+        if !target.warning_codes.iter().any(|existing| existing == &code) {
+            target.warning_codes.push(code);
+        }
+    }
+    for diagnostic in diagnostics {
+        if !target
+            .diagnostics
+            .iter()
+            .any(|existing| existing.code == diagnostic.code)
+        {
+            target.diagnostics.push(diagnostic);
+        }
+    }
 }
 
 fn enforce_review_authoritative_late_gate_truth(context: &ExecutionContext, gate: &mut GateState) {
@@ -4875,6 +5083,26 @@ fn enforce_review_authoritative_late_gate_truth(context: &ExecutionContext, gate
     );
 }
 
+fn enforce_finish_dependency_index_truth(context: &ExecutionContext, gate: &mut GateState) {
+    let overlay = match load_status_authoritative_overlay_checked(context) {
+        Ok(overlay) => overlay,
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "authoritative_state_unavailable",
+                error.message,
+                "Restore authoritative harness state readability and validity before running gate-finish.",
+            );
+            return;
+        }
+    };
+    let Some(overlay) = overlay else {
+        return;
+    };
+
+    validate_finish_dependency_index_truth(overlay.dependency_index_state.as_deref(), gate);
+}
+
 fn validate_review_dependency_index_truth(raw_state: Option<&str>, gate: &mut GateState) {
     let state = normalize_optional_overlay_value(raw_state).unwrap_or("missing");
     if state == "fresh" {
@@ -4900,6 +5128,34 @@ fn validate_review_dependency_index_truth(raw_state: Option<&str>, gate: &mut Ga
         code,
         message,
         "Refresh authoritative dependency-index truth before running gate-review.",
+    );
+}
+
+fn validate_finish_dependency_index_truth(raw_state: Option<&str>, gate: &mut GateState) {
+    let state = normalize_optional_overlay_value(raw_state).unwrap_or("missing");
+    if state == "fresh" {
+        return;
+    }
+
+    let (code, message) = match state {
+        "missing" => (
+            "dependency_index_state_missing",
+            "Authoritative dependency-index truth is missing for finish readiness.",
+        ),
+        "stale" => (
+            "dependency_index_state_stale",
+            "Authoritative dependency-index truth is stale for finish readiness.",
+        ),
+        _ => (
+            "dependency_index_state_not_fresh",
+            "Authoritative dependency-index truth is not fresh for finish readiness.",
+        ),
+    };
+    gate.fail(
+        FailureClass::DependencyIndexMismatch,
+        code,
+        message,
+        "Refresh authoritative dependency-index truth before running gate-finish.",
     );
 }
 
@@ -5127,22 +5383,22 @@ pub fn discover_rebuild_candidates(
 
     let legacy_plan_fingerprint = sha256_hex(context.plan_source.as_bytes());
     let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
-    let session_provenance_reason = if context.evidence.plan_fingerprint.as_deref()
-        != Some(legacy_plan_fingerprint.as_str())
-    {
-        Some(String::from("plan_fingerprint_mismatch"))
-    } else if context.evidence.source_spec_fingerprint.as_deref()
-        != Some(source_spec_fingerprint.as_str())
-    {
-        Some(String::from("source_spec_fingerprint_mismatch"))
-    } else {
-        None
-    };
+    let session_provenance_reason =
+        if context.evidence.plan_fingerprint.as_deref() != Some(legacy_plan_fingerprint.as_str()) {
+            Some(String::from("plan_fingerprint_mismatch"))
+        } else if context.evidence.source_spec_fingerprint.as_deref()
+            != Some(source_spec_fingerprint.as_str())
+        {
+            Some(String::from("source_spec_fingerprint_mismatch"))
+        } else {
+            None
+        };
 
     let contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
     let latest_attempts = latest_attempt_indices_by_step(&context.evidence);
     let latest_completed = latest_completed_attempts_by_step(&context.evidence);
-    let latest_file_proofs = latest_completed_attempts_by_file(&context.evidence, &latest_completed);
+    let latest_file_proofs =
+        latest_completed_attempts_by_file(&context.evidence, &latest_completed);
     let mut candidates = Vec::new();
 
     for step in matching_steps {
@@ -5168,14 +5424,16 @@ pub fn discover_rebuild_candidates(
         }
 
         if let Some(attempt) = latest_attempt
-            && attempt.status == "Invalidated" && attempt.invalidation_reason != "N/A"
+            && attempt.status == "Invalidated"
+            && attempt.invalidation_reason != "N/A"
         {
             pre_invalidation_reason = Some(attempt.invalidation_reason.clone());
             target_kind = String::from("invalidated_attempt");
             needs_reopen = step.checked;
         }
 
-        if pre_invalidation_reason.is_none() && step.checked
+        if pre_invalidation_reason.is_none()
+            && step.checked
             && let Some(attempt) = latest_completed_attempt
         {
             let expected_packet = compute_packet_fingerprint(PacketFingerprintInput {
@@ -5234,7 +5492,9 @@ pub fn discover_rebuild_candidates(
             }
         }
 
-        if pre_invalidation_reason.is_none() && request.include_open && !step.checked
+        if pre_invalidation_reason.is_none()
+            && request.include_open
+            && !step.checked
             && (step.note_state.is_some() || latest_attempt.is_some())
         {
             pre_invalidation_reason = Some(String::from("open_step_requested"));
@@ -5253,7 +5513,12 @@ pub fn discover_rebuild_candidates(
         };
         let claim = attempt
             .map(|candidate| candidate.claim.clone())
-            .unwrap_or_else(|| format!("Rebuilt evidence for Task {} Step {}.", step.task_number, step.step_number));
+            .unwrap_or_else(|| {
+                format!(
+                    "Rebuilt evidence for Task {} Step {}.",
+                    step.task_number, step.step_number
+                )
+            });
         let files = attempt
             .map(|candidate| candidate.files.clone())
             .unwrap_or_default();
@@ -6299,8 +6564,9 @@ fn parse_evidence_attempts(
                         break;
                     }
                 } else if let Some(value) = line.strip_prefix("**Verify Command:** ") {
-                    verify_command = parse_optional_evidence_scalar(value)
-                        .or_else(|| Some(normalize_whitespace(value)).filter(|candidate| !candidate.is_empty()));
+                    verify_command = parse_optional_evidence_scalar(value).or_else(|| {
+                        Some(normalize_whitespace(value)).filter(|candidate| !candidate.is_empty())
+                    });
                 } else if let Some(value) = line.strip_prefix("**Verification Summary:** ") {
                     verification_summary = normalize_whitespace(value);
                 } else if line == "**Verification:**" {
@@ -6560,7 +6826,8 @@ fn ensure_prior_task_review_closed(
                 ),
             ));
         }
-        let Some(attempt) = latest_attempt_for_step(&context.evidence, prior_task, step.step_number)
+        let Some(attempt) =
+            latest_attempt_for_step(&context.evidence, prior_task, step.step_number)
         else {
             return Err(task_boundary_error(
                 FailureClass::ExecutionStateNotReady,
@@ -6629,7 +6896,10 @@ fn ensure_prior_task_review_closed(
             ),
         )?;
         if receipt_document.title.as_deref() != Some("# Unit Review Result")
-            || receipt_document.headers.get("Review Stage").map(String::as_str)
+            || receipt_document
+                .headers
+                .get("Review Stage")
+                .map(String::as_str)
                 != Some("featureforge:unit-review")
         {
             return Err(task_boundary_error(
@@ -6699,7 +6969,10 @@ fn ensure_prior_task_review_closed(
                 .map(String::as_str)
                 != Some(expected_packet_fingerprint)
             || receipt_document.headers.get("Result").map(String::as_str) != Some("pass")
-            || receipt_document.headers.get("Generated By").map(String::as_str)
+            || receipt_document
+                .headers
+                .get("Generated By")
+                .map(String::as_str)
                 != Some("featureforge:unit-review")
         {
             return Err(task_boundary_error(
@@ -6799,7 +7072,10 @@ fn ensure_prior_task_verification_closed(
             .get("Verification Results")
             .is_none_or(|value| value.trim().is_empty())
         || receipt_document.headers.get("Result").map(String::as_str) != Some("pass")
-        || receipt_document.headers.get("Generated By").map(String::as_str)
+        || receipt_document
+            .headers
+            .get("Generated By")
+            .map(String::as_str)
             != Some("featureforge:verification-before-completion")
     {
         return Err(task_boundary_error(
@@ -6894,13 +7170,7 @@ fn ensure_prior_task_review_dispatch_closed(
         source_step: expected_source_step,
         strategy_checkpoint_fingerprint: &strategy_checkpoint_fingerprint,
     };
-    validate_task_review_dispatch_lineage(
-        context,
-        lineage,
-        prior_task,
-        target_task,
-        expected,
-    )
+    validate_task_review_dispatch_lineage(context, lineage, prior_task, target_task, expected)
 }
 
 struct TaskReviewDispatchExpectation<'a> {
@@ -7022,15 +7292,15 @@ fn prior_task_cycle_break_active(
     if strategy_state != "cycle_breaking" && strategy_checkpoint_kind != "cycle_break" {
         return Ok(false);
     }
-    let prior_task_has_unresolved_work = context.steps.iter().any(|step| {
-        step.task_number == prior_task && (!step.checked || step.note_state.is_some())
-    });
+    let prior_task_has_unresolved_work = context
+        .steps
+        .iter()
+        .any(|step| step.task_number == prior_task && (!step.checked || step.note_state.is_some()));
     Ok(prior_task_has_unresolved_work)
 }
 
 fn current_execution_run_id(context: &ExecutionContext) -> Result<Option<String>, JsonFailure> {
-    Ok(preflight_acceptance_for_context(context)?
-        .map(|acceptance| acceptance.execution_run_id.0))
+    Ok(preflight_acceptance_for_context(context)?.map(|acceptance| acceptance.execution_run_id.0))
 }
 
 fn parse_required_artifact_document(
@@ -7137,10 +7407,9 @@ pub(crate) fn latest_attempted_step_for_task(
 ) -> Option<u32> {
     context.evidence.attempts.iter().rev().find_map(|attempt| {
         (attempt.task_number == task_number
-            && context
-                .steps
-                .iter()
-                .any(|step| step.task_number == task_number && step.step_number == attempt.step_number))
+            && context.steps.iter().any(|step| {
+                step.task_number == task_number && step.step_number == attempt.step_number
+            }))
         .then_some(attempt.step_number)
     })
 }

@@ -92,10 +92,10 @@ Task closure is enforced at task boundaries, not only at the end of the full pla
 - after review passes, task verification is required before the task can close and before next-task advancement
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
 
-Completion then flows through:
+Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):
 
-- `featureforge:requesting-code-review`
 - `featureforge:document-release`
+- `featureforge:requesting-code-review` (terminal final review gate after document release)
 - optional `featureforge:qa-only` when browser-facing work or a test plan requires it
 - `featureforge:finishing-a-development-branch`
 

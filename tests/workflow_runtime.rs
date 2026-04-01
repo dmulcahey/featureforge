@@ -2796,7 +2796,10 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         ),
         "workflow phase should route directly without a session-entry gate",
     );
-    assert_eq!(phase_json["phase"], Value::String(execution_preflight_phase.clone()));
+    assert_eq!(
+        phase_json["phase"],
+        Value::String(execution_preflight_phase.clone())
+    );
     assert_eq!(phase_json["next_action"], "execution_preflight");
     assert!(phase_json.get("session_entry").is_none());
     assert_eq!(phase_json["schema_version"], 2);
@@ -2811,7 +2814,10 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         ),
         "workflow doctor should route directly without a session-entry gate",
     );
-    assert_eq!(doctor_json["phase"], Value::String(execution_preflight_phase.clone()));
+    assert_eq!(
+        doctor_json["phase"],
+        Value::String(execution_preflight_phase.clone())
+    );
     assert_eq!(doctor_json["next_action"], "execution_preflight");
     assert!(doctor_json.get("session_entry").is_none());
     assert_eq!(doctor_json["schema_version"], 2);
@@ -2826,9 +2832,15 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
         ),
         "workflow handoff should route directly without a session-entry gate",
     );
-    assert_eq!(handoff_json["phase"], Value::String(execution_preflight_phase));
+    assert_eq!(
+        handoff_json["phase"],
+        Value::String(execution_preflight_phase)
+    );
     assert_eq!(handoff_json["next_action"], "execution_preflight");
-    assert_eq!(handoff_json["recommended_skill"], "featureforge:executing-plans");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:executing-plans"
+    );
     assert!(handoff_json.get("session_entry").is_none());
     assert_eq!(handoff_json["schema_version"], 2);
     assert_eq!(handoff_json["route"]["schema_version"], 3);
@@ -2861,9 +2873,11 @@ fn canonical_workflow_status_ignores_strict_session_entry_gate_env() {
     assert_eq!(status_json["schema_version"], 3);
     assert_eq!(status_json["status"], "implementation_ready");
     assert!(
-        !status_json["reason_codes"].as_array().is_some_and(|codes| codes.iter().any(|code| {
-            code == "session_entry_unresolved" || code == "session_entry_bypassed"
-        })),
+        !status_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| {
+                code == "session_entry_unresolved" || code == "session_entry_bypassed"
+            })),
         "workflow status should not expose removed strict session-entry reason codes"
     );
 
@@ -2907,9 +2921,11 @@ fn canonical_workflow_status_ignores_strict_session_entry_gate_env() {
     assert_eq!(bypassed_status_json["schema_version"], 3);
     assert_eq!(bypassed_status_json["status"], "implementation_ready");
     assert!(
-        !bypassed_status_json["reason_codes"].as_array().is_some_and(|codes| codes.iter().any(|code| {
-            code == "session_entry_unresolved" || code == "session_entry_bypassed"
-        })),
+        !bypassed_status_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| {
+                code == "session_entry_unresolved" || code == "session_entry_bypassed"
+            })),
         "workflow status should not expose removed strict session-entry reason codes"
     );
     let manifest_after_bypassed_session: WorkflowManifest = serde_json::from_str(
@@ -2979,17 +2995,29 @@ fn canonical_workflow_operator_ignores_spawned_subagent_context_markers() {
         "workflow handoff should bypass session-entry gate for spawned subagents",
     );
 
-    assert_eq!(phase_json["phase"], Value::String(execution_preflight_phase.clone()));
+    assert_eq!(
+        phase_json["phase"],
+        Value::String(execution_preflight_phase.clone())
+    );
     assert_eq!(phase_json["next_action"], "execution_preflight");
     assert!(phase_json.get("session_entry").is_none());
 
-    assert_eq!(doctor_json["phase"], Value::String(execution_preflight_phase.clone()));
+    assert_eq!(
+        doctor_json["phase"],
+        Value::String(execution_preflight_phase.clone())
+    );
     assert_eq!(doctor_json["next_action"], "execution_preflight");
     assert!(doctor_json.get("session_entry").is_none());
 
-    assert_eq!(handoff_json["phase"], Value::String(execution_preflight_phase));
+    assert_eq!(
+        handoff_json["phase"],
+        Value::String(execution_preflight_phase)
+    );
     assert_eq!(handoff_json["next_action"], "execution_preflight");
-    assert_eq!(handoff_json["recommended_skill"], "featureforge:executing-plans");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:executing-plans"
+    );
     assert!(handoff_json.get("session_entry").is_none());
 }
 
@@ -3004,7 +3032,10 @@ fn canonical_workflow_operator_ignores_spawned_subagent_opt_in_markers() {
     git_checkout
         .args(["checkout", "-B", "workflow-spawned-subagent-opt-in"])
         .current_dir(repo);
-    run_checked(git_checkout, "git checkout workflow-spawned-subagent-opt-in");
+    run_checked(
+        git_checkout,
+        "git checkout workflow-spawned-subagent-opt-in",
+    );
 
     install_full_contract_ready_artifacts(repo);
     let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
@@ -3026,7 +3057,10 @@ fn canonical_workflow_operator_ignores_spawned_subagent_opt_in_markers() {
         "workflow phase should honor spawned-subagent opt-in",
     );
 
-    assert_eq!(phase_json["phase"], Value::String(execution_preflight_phase));
+    assert_eq!(
+        phase_json["phase"],
+        Value::String(execution_preflight_phase)
+    );
     assert_eq!(phase_json["route_status"], "implementation_ready");
     assert_eq!(phase_json["next_action"], "execution_preflight");
     assert!(phase_json.get("session_entry").is_none());
@@ -3168,6 +3202,41 @@ fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
     assert!(
         status_after_gate_review["strategy_state"] == status_before_gate_review["strategy_state"],
         "workflow gate-review should not mutate strategy state"
+    );
+
+    let gate_review_dispatch_json = run_plan_execution_json(
+        repo,
+        state,
+        &["gate-review-dispatch", "--plan", plan_rel],
+        "plan execution gate-review-dispatch should mint dispatch lineage even when review is blocked",
+    );
+    assert_eq!(gate_review_dispatch_json["allowed"], false);
+    assert_eq!(
+        gate_review_dispatch_json["failure_class"],
+        "ExecutionStateNotReady"
+    );
+    assert!(
+        gate_review_dispatch_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code == "active_step_in_progress")),
+        "workflow gate-review-dispatch should still report the active-step block reason"
+    );
+
+    let status_after_gate_review_dispatch = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status after workflow gate-review-dispatch mutation check",
+    );
+    assert_ne!(
+        status_after_gate_review_dispatch["last_strategy_checkpoint_fingerprint"],
+        status_after_gate_review["last_strategy_checkpoint_fingerprint"],
+        "workflow gate-review-dispatch should mint a new strategy checkpoint fingerprint"
+    );
+    assert_eq!(
+        status_after_gate_review_dispatch["strategy_checkpoint_kind"],
+        "review_remediation",
+        "workflow gate-review-dispatch should move strategy checkpoint kind to review_remediation"
     );
 }
 
@@ -3477,13 +3546,22 @@ fn canonical_workflow_operator_surfaces_fail_closed_when_session_entry_is_bypass
     );
 
     let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
-    assert_eq!(phase_json["phase"], Value::String(execution_preflight_phase.clone()));
+    assert_eq!(
+        phase_json["phase"],
+        Value::String(execution_preflight_phase.clone())
+    );
     assert_eq!(phase_json["next_action"], "execution_preflight");
     assert!(phase_json.get("session_entry").is_none());
 
-    assert_eq!(handoff_json["phase"], Value::String(execution_preflight_phase));
+    assert_eq!(
+        handoff_json["phase"],
+        Value::String(execution_preflight_phase)
+    );
     assert_eq!(handoff_json["next_action"], "execution_preflight");
-    assert_eq!(handoff_json["recommended_skill"], "featureforge:executing-plans");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:executing-plans"
+    );
     assert!(handoff_json.get("session_entry").is_none());
 
     assert!(next_output.status.success());
@@ -3823,8 +3901,8 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "ExecutionStateNotReady");
     assert_eq!(
-        gate_finish_json["reason_codes"],
-        gate_review_json["reason_codes"]
+        gate_finish_json["reason_codes"][0],
+        "unfinished_steps_remaining"
     );
 }
 
@@ -4842,7 +4920,8 @@ Task 1 -> Task 2
     assert!(
         phase_json["next_step"]
             .as_str()
-            .is_some_and(|next_step| next_step.contains("featureforge plan execution gate-review-dispatch --plan")),
+            .is_some_and(|next_step| next_step
+                .contains("featureforge plan execution gate-review-dispatch --plan")),
         "workflow phase json should expose gate-review command guidance for dispatch-blocked repair flow, got {phase_json:?}"
     );
     assert!(
@@ -4854,7 +4933,8 @@ Task 1 -> Task 2
     assert!(
         doctor_json["next_step"]
             .as_str()
-            .is_some_and(|next_step| next_step.contains("featureforge plan execution gate-review-dispatch --plan")),
+            .is_some_and(|next_step| next_step
+                .contains("featureforge plan execution gate-review-dispatch --plan")),
         "workflow doctor should expose gate-review command guidance for dispatch-blocked repair flow, got {doctor_json:?}"
     );
     assert!(
@@ -4877,7 +4957,10 @@ Task 1 -> Task 2
         doctor_stdout.contains("featureforge plan execution gate-review-dispatch --plan"),
         "workflow doctor text should include gate-review command guidance, got:\n{doctor_stdout}"
     );
-    assert!(doctor_stdout.contains(plan_rel), "doctor stdout:\n{doctor_stdout}");
+    assert!(
+        doctor_stdout.contains(plan_rel),
+        "doctor stdout:\n{doctor_stdout}"
+    );
 
     let handoff_json = parse_json(
         &run_rust_featureforge_with_env(
@@ -4890,9 +4973,9 @@ Task 1 -> Task 2
         "workflow handoff for task-boundary dispatch-blocked fixture",
     );
     assert!(
-        handoff_json["recommendation_reason"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("featureforge plan execution gate-review-dispatch --plan")),
+        handoff_json["recommendation_reason"].as_str().is_some_and(
+            |reason| reason.contains("featureforge plan execution gate-review-dispatch --plan")
+        ),
         "workflow handoff should include gate-review command guidance for dispatch-blocked repair flow, got {handoff_json:?}"
     );
     assert!(
@@ -4915,7 +4998,10 @@ Task 1 -> Task 2
         handoff_stdout.contains("featureforge plan execution gate-review-dispatch --plan"),
         "workflow handoff text should include gate-review command guidance, got:\n{handoff_stdout}"
     );
-    assert!(handoff_stdout.contains(plan_rel), "handoff stdout:\n{handoff_stdout}");
+    assert!(
+        handoff_stdout.contains(plan_rel),
+        "handoff stdout:\n{handoff_stdout}"
+    );
 
     let next_output = run_rust_featureforge_with_env(
         repo,
@@ -4930,7 +5016,10 @@ Task 1 -> Task 2
         next_stdout.contains("featureforge plan execution gate-review-dispatch --plan"),
         "workflow next output should include gate-review command guidance, got:\n{next_stdout}"
     );
-    assert!(next_stdout.contains(plan_rel), "next stdout:\n{next_stdout}");
+    assert!(
+        next_stdout.contains(plan_rel),
+        "next stdout:\n{next_stdout}"
+    );
 }
 
 #[test]
@@ -5440,6 +5529,158 @@ fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() 
 }
 
 #[test]
+fn canonical_workflow_gate_review_fail_closes_on_malformed_authoritative_late_gate_truth_values() {
+    let (repo_dir, state_dir) =
+        init_repo("workflow-phase-gate-review-malformed-authoritative-truth");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-gate-review-malformed-authoritative-truth";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    enable_session_decision(state, session_key);
+
+    let branch = current_branch_name(repo);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("dependency_index_state", Value::from("fresh")),
+            ("final_review_state", Value::from("malformed")),
+            ("browser_qa_state", Value::from("malformed")),
+            ("release_docs_state", Value::from("malformed")),
+        ],
+    );
+
+    let gate_review_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "review", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate review for malformed authoritative late-gate truth",
+        ),
+        "workflow gate review for malformed authoritative late-gate truth",
+    );
+
+    assert_eq!(gate_review_json["allowed"], false, "{gate_review_json:?}");
+    assert_eq!(
+        gate_review_json["failure_class"],
+        "StaleProvenance",
+        "{gate_review_json:?}"
+    );
+    assert!(
+        gate_review_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code == "final_review_state_not_fresh")
+                    && codes
+                        .iter()
+                        .any(|code| code == "browser_qa_state_not_fresh")
+                    && codes
+                        .iter()
+                        .any(|code| code == "release_docs_state_not_fresh")
+            }),
+        "gate-review should fail closed with malformed authoritative late-gate reason codes; got {gate_review_json:?}"
+    );
+}
+
+#[test]
+fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for_branch_completion()
+ {
+    let (repo_dir, state_dir) =
+        init_repo("workflow-phase-ready-guard-stale-authoritative-late-gate-truth");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-ready-guard-stale-authoritative-late-gate-truth";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let base_branch = expected_release_base_branch(repo);
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    let branch = current_branch_name(repo);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("harness_phase", Value::from("final_review_pending")),
+            ("latest_authoritative_sequence", Value::from(17)),
+            ("dependency_index_state", Value::from("fresh")),
+            ("final_review_state", Value::from("stale")),
+            ("browser_qa_state", Value::from("not_required")),
+            ("release_docs_state", Value::from("stale")),
+        ],
+    );
+    enable_session_decision(state, session_key);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for ready guard stale-authoritative late-gate truth fixture",
+        ),
+        "workflow phase for ready guard stale-authoritative late-gate truth fixture",
+    );
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff for ready guard stale-authoritative late-gate truth fixture",
+        ),
+        "workflow handoff for ready guard stale-authoritative late-gate truth fixture",
+    );
+    let gate_review_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "review", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate review for ready guard stale-authoritative late-gate truth fixture",
+        ),
+        "workflow gate review for ready guard stale-authoritative late-gate truth fixture",
+    );
+    let gate_finish_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate finish for ready guard stale-authoritative late-gate truth fixture",
+        ),
+        "workflow gate finish for ready guard stale-authoritative late-gate truth fixture",
+    );
+
+    assert_eq!(gate_review_json["allowed"], false, "{gate_review_json:?}");
+    assert_eq!(
+        gate_finish_json["allowed"], true,
+        "fixture should keep finish gate green so stale authoritative review truth cannot be bypassed by ready routing; got {gate_finish_json:?}"
+    );
+    assert_eq!(
+        phase_json["phase"], "document_release_pending",
+        "stale authoritative late-gate truth must fail closed to release-first precedence, got {phase_json:?}"
+    );
+    assert_eq!(phase_json["next_action"], "run_document_release");
+    assert_eq!(
+        handoff_json["recommended_skill"], "featureforge:document-release",
+        "stale authoritative late-gate truth must not route to branch completion, got {handoff_json:?}"
+    );
+}
+
+#[test]
 fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final_review_over_newer_branch_decoy()
  {
     let (repo_dir, state_dir) = init_repo("workflow-phase-authoritative-final-review-provenance");
@@ -5920,6 +6161,7 @@ fn canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review() {
 
     complete_workflow_fixture_execution(repo, state, plan_rel);
     write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
 
     let phase_json = parse_json(
@@ -5982,6 +6224,7 @@ fn canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review()
     complete_workflow_fixture_execution(repo, state, plan_rel);
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
     replace_in_file(&test_plan_path, "# Test Plan", "# Not A Test Plan");
 
@@ -6046,6 +6289,7 @@ fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
     complete_workflow_fixture_execution(repo, state, plan_rel);
     let test_plan_path = write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
     replace_in_file(
         &test_plan_path,
@@ -6403,6 +6647,396 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
         handoff_json["recommended_skill"],
         "featureforge:document-release"
     );
+    assert_eq!(phase_json["reason_family"], "release_readiness");
+    assert_eq!(handoff_json["reason_family"], "release_readiness");
+    assert!(
+        phase_json["diagnostic_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code == "release_artifact_authoritative_provenance_invalid")
+            }),
+        "phase observability should expose release-provenance diagnostics for release-first routing, got {phase_json:?}"
+    );
+    assert_eq!(
+        phase_json["diagnostic_reason_codes"],
+        handoff_json["diagnostic_reason_codes"],
+        "phase and handoff should expose identical late-stage diagnostic reason codes"
+    );
+}
+
+#[test]
+fn canonical_workflow_phase_routes_release_and_review_unresolved_to_document_release_pending() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-release-and-review-unresolved");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-release-and-review-unresolved";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    enable_session_decision(state, session_key);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for release+review-unresolved routing fixture",
+        ),
+        "workflow phase for release+review-unresolved routing fixture",
+    );
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff for release+review-unresolved routing fixture",
+        ),
+        "workflow handoff for release+review-unresolved routing fixture",
+    );
+    let gate_finish_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate finish for release+review-unresolved routing fixture",
+        ),
+        "workflow gate finish for release+review-unresolved routing fixture",
+    );
+
+    assert_eq!(
+        phase_json["phase"], "document_release_pending",
+        "{gate_finish_json:?}"
+    );
+    assert_eq!(phase_json["next_action"], "run_document_release");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:document-release"
+    );
+    assert_eq!(gate_finish_json["allowed"], false);
+    assert!(
+        gate_finish_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "release_docs_state_missing")),
+        "{gate_finish_json:?}"
+    );
+}
+
+#[test]
+fn canonical_workflow_phase_routes_mixed_stale_matrix() {
+    let cases = [
+        (
+            "all_missing",
+            false,
+            false,
+            true,
+            "document_release_pending",
+            "run_document_release",
+            "featureforge:document-release",
+            "release_readiness",
+        ),
+        (
+            "release_review_missing_qa_fresh",
+            false,
+            false,
+            false,
+            "document_release_pending",
+            "run_document_release",
+            "featureforge:document-release",
+            "release_readiness",
+        ),
+        (
+            "release_missing_review_fresh_qa_missing",
+            false,
+            true,
+            true,
+            "document_release_pending",
+            "run_document_release",
+            "featureforge:document-release",
+            "release_readiness",
+        ),
+        (
+            "release_missing_review_qa_fresh",
+            false,
+            true,
+            false,
+            "document_release_pending",
+            "run_document_release",
+            "featureforge:document-release",
+            "release_readiness",
+        ),
+        (
+            "release_fresh_review_qa_missing",
+            true,
+            false,
+            true,
+            "final_review_pending",
+            "request_code_review",
+            "featureforge:requesting-code-review",
+            "final_review_freshness",
+        ),
+        (
+            "release_qa_fresh_review_missing",
+            true,
+            false,
+            false,
+            "final_review_pending",
+            "request_code_review",
+            "featureforge:requesting-code-review",
+            "final_review_freshness",
+        ),
+        (
+            "release_review_fresh_qa_missing",
+            true,
+            true,
+            true,
+            "qa_pending",
+            "run_qa_only",
+            "featureforge:qa-only",
+            "qa_freshness",
+        ),
+        (
+            "all_fresh",
+            true,
+            true,
+            false,
+            "ready_for_branch_completion",
+            "finish_branch",
+            "featureforge:finishing-a-development-branch",
+            "all_fresh",
+        ),
+    ];
+
+    for (
+        case_id,
+        release_fresh,
+        review_fresh,
+        qa_blocked,
+        expected_phase,
+        expected_next_action,
+        expected_skill,
+        expected_reason_family,
+    ) in cases
+    {
+        let fixture_name = format!("workflow-phase-matrix-{case_id}");
+        let (repo_dir, state_dir) = init_repo(&fixture_name);
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        let session_key = fixture_name.as_str();
+        let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+        let base_branch = expected_release_base_branch(repo);
+
+        complete_workflow_fixture_execution(repo, state, plan_rel);
+        write_branch_test_plan_artifact(repo, state, plan_rel, if qa_blocked { "yes" } else { "no" });
+        if review_fresh {
+            write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+        }
+        if release_fresh {
+            write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+        }
+        let branch = current_branch_name(repo);
+        update_authoritative_harness_state(
+            repo,
+            state,
+            &branch,
+            plan_rel,
+            1,
+            &[
+                ("dependency_index_state", Value::from("fresh")),
+                ("final_review_state", Value::from("not_required")),
+                ("browser_qa_state", Value::from("not_required")),
+                ("release_docs_state", Value::from("not_required")),
+            ],
+        );
+        enable_session_decision(state, session_key);
+
+        let phase_json = parse_json(
+            &run_rust_featureforge_with_env(
+                repo,
+                state,
+                &["workflow", "phase", "--json"],
+                &[("FEATUREFORGE_SESSION_KEY", session_key)],
+                "workflow phase for mixed stale matrix routing fixture",
+            ),
+            "workflow phase for mixed stale matrix routing fixture",
+        );
+        let handoff_json = parse_json(
+            &run_rust_featureforge_with_env(
+                repo,
+                state,
+                &["workflow", "handoff", "--json"],
+                &[("FEATUREFORGE_SESSION_KEY", session_key)],
+                "workflow handoff for mixed stale matrix routing fixture",
+            ),
+            "workflow handoff for mixed stale matrix routing fixture",
+        );
+        let status_json = run_plan_execution_json(
+            repo,
+            state,
+            &["status", "--plan", plan_rel],
+            "plan execution status for mixed stale matrix routing fixture",
+        );
+
+        assert_eq!(
+            phase_json["phase"], expected_phase,
+            "matrix case {case_id} expected phase {expected_phase}, got phase payload: {phase_json:?}; handoff payload: {handoff_json:?}"
+        );
+        assert_eq!(
+            phase_json["next_action"], expected_next_action,
+            "matrix case {case_id} expected next_action {expected_next_action}, got phase payload: {phase_json:?}"
+        );
+        assert_eq!(
+            handoff_json["recommended_skill"], expected_skill,
+            "matrix case {case_id} expected recommended_skill {expected_skill}, got handoff payload: {handoff_json:?}"
+        );
+        assert_eq!(
+            phase_json["reason_family"], expected_reason_family,
+            "matrix case {case_id} expected phase reason_family {expected_reason_family}, got phase payload: {phase_json:?}"
+        );
+        assert_eq!(
+            handoff_json["reason_family"], expected_reason_family,
+            "matrix case {case_id} expected handoff reason_family {expected_reason_family}, got handoff payload: {handoff_json:?}"
+        );
+        assert_eq!(
+            status_json["harness_phase"], expected_phase,
+            "matrix case {case_id} expected harness_phase {expected_phase}, got status payload: {status_json:?}; phase payload: {phase_json:?}"
+        );
+        assert_eq!(
+            phase_json["diagnostic_reason_codes"],
+            handoff_json["diagnostic_reason_codes"],
+            "matrix case {case_id} should preserve phase/handoff diagnostic reason-code parity"
+        );
+    }
+}
+
+#[test]
+fn canonical_workflow_harness_operator_precedence_parity_dual_unresolved() {
+    let (repo_dir, state_dir) = init_repo("workflow-harness-operator-parity-dual-unresolved");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-harness-operator-parity-dual-unresolved";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let branch = current_branch_name(repo);
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("harness_phase", Value::from("final_review_pending")),
+            ("latest_authoritative_sequence", Value::from(17)),
+            ("dependency_index_state", Value::from("fresh")),
+            ("final_review_state", Value::from("missing")),
+            ("browser_qa_state", Value::from("missing")),
+            ("release_docs_state", Value::from("missing")),
+        ],
+    );
+    enable_session_decision(state, session_key);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for harness/operator parity dual-unresolved fixture",
+        ),
+        "workflow phase for harness/operator parity dual-unresolved fixture",
+    );
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for harness/operator parity dual-unresolved fixture",
+    );
+
+    assert_eq!(phase_json["phase"], "document_release_pending");
+    assert_eq!(
+        status_json["harness_phase"], "document_release_pending",
+        "authoritative harness phase should match operator precedence output for dual-unresolved late-stage state; phase payload: {phase_json:?}; status payload: {status_json:?}"
+    );
+}
+
+#[test]
+fn canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_closed() {
+    let (repo_dir, state_dir) = init_repo("workflow-harness-operator-parity-unclassified-finish");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-harness-operator-parity-unclassified-finish";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let base_branch = expected_release_base_branch(repo);
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &current_branch_name(repo),
+            "execution-topology-downgrade-malformed.json",
+        ),
+        "{ malformed topology downgrade record",
+    );
+    enable_session_decision(state, session_key);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for unclassified-finish parity fixture",
+        ),
+        "workflow phase for unclassified-finish parity fixture",
+    );
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for unclassified-finish parity fixture",
+    );
+    let gate_finish_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate finish for unclassified-finish parity fixture",
+        ),
+        "workflow gate finish for unclassified-finish parity fixture",
+    );
+
+    assert_eq!(gate_finish_json["allowed"], false, "{gate_finish_json:?}");
+    assert!(
+        gate_finish_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code == "review_receipt_deviation_truth_unavailable")
+            }),
+        "{gate_finish_json:?}"
+    );
+    assert_eq!(
+        status_json["harness_phase"], "final_review_pending",
+        "status should fail closed on unclassified gate-finish failures; status payload: {status_json:?}; gate_finish payload: {gate_finish_json:?}"
+    );
+    assert_eq!(
+        phase_json["phase"], "final_review_pending",
+        "operator phase should preserve parity with status fail-closed behavior for unclassified gate-finish failures; phase payload: {phase_json:?}; status payload: {status_json:?}; gate_finish payload: {gate_finish_json:?}"
+    );
 }
 
 #[test]
@@ -6417,6 +7051,7 @@ fn canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only() {
     complete_workflow_fixture_execution(repo, state, plan_rel);
     write_branch_test_plan_artifact(repo, state, plan_rel, "yes");
     write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
 
     let phase_json = parse_json(

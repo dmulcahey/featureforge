@@ -37,6 +37,7 @@ const MINIMUM_REASON_CODES = [
   'blocked_on_plan_revision',
   'write_authority_conflict',
   'repo_state_drift',
+  'post_review_repo_write_detected',
   'stale_provenance',
   'recovering_incomplete_authoritative_mutation',
   'missing_required_evidence',

@@ -74,6 +74,10 @@ pub struct WorkflowPhase {
     pub next_skill: String,
     pub next_step: String,
     pub next_action: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub reason_family: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diagnostic_reason_codes: Vec<String>,
     pub spec_path: String,
     pub plan_path: String,
     pub route: WorkflowRoute,
@@ -398,6 +402,8 @@ impl WorkflowRuntime {
             next_skill: route.next_skill.clone(),
             next_step,
             next_action,
+            reason_family: String::new(),
+            diagnostic_reason_codes: Vec::new(),
             spec_path: route.spec_path.clone(),
             plan_path: route.plan_path.clone(),
             route,

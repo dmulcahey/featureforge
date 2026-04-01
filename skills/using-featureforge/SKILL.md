@@ -231,6 +231,9 @@ If `$_FEATUREFORGE_BIN` is available call `$_FEATUREFORGE_BIN workflow status --
 - If the JSON result reports `status` `implementation_ready`, proceed to the normal execution preflight and handoff flow using the exact approved plan path. Treat the public handoff recommendation as a conservative default. When you know isolated-agent availability, session intent, and workspace readiness, call `featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>` before choosing between `featureforge:subagent-driven-development` and `featureforge:executing-plans`.
 - In that helper-backed handoff flow, treat `execution_started` as an executor-resume signal only when the reported `phase` is `executing`.
 - If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.
+- For terminal workflow sequencing, preserve the runtime-owned order: `document_release_pending` before terminal `final_review_pending`, then `qa_pending`, then `ready_for_branch_completion`.
+- Treat helper `request_code_review` routing as context-sensitive: it can represent terminal final review or a non-terminal task-boundary checkpoint when reason codes include `prior_task_review_*`.
+- When documenting or explaining that late-stage order, use `review/late-stage-precedence-reference.md` so routing language stays grounded in the runtime table.
 - Only fall back to manual artifact inspection if the helper itself is unavailable or fails.
 
 When the helper succeeds, route using its JSON result plus the explicit project-memory carveout above, and do not re-derive state manually.

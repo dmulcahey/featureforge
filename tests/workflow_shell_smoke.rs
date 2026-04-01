@@ -652,6 +652,7 @@ fn setup_qa_pending_case(repo: &Path, state_dir: &Path, plan_rel: &str, base_bra
     complete_workflow_fixture_execution(repo, state_dir, plan_rel);
     write_branch_test_plan_artifact(repo, state_dir, plan_rel, "yes");
     write_dispatched_branch_review_artifact(repo, state_dir, plan_rel, base_branch);
+    write_branch_release_artifact(repo, state_dir, plan_rel, base_branch);
 }
 
 fn setup_document_release_pending_case(
