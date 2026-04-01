@@ -61,11 +61,11 @@ The repo-local default config for this checkout lives at `.featureforge/config.y
 
 Default pipeline:
 
-`featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review -> implementation`
+`featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review -> implementation`
 
 Planning chain in plain language:
 
-`brainstorming -> plan-ceo-review -> writing-plans -> plan-eng-review -> implementation`
+`brainstorming -> plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> implementation`
 
 Generated `using-featureforge` preambles call `featureforge workflow status --refresh` before normal planning/spec/plan status work begins.
 

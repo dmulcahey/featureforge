@@ -84,7 +84,7 @@ Review note: this runtime strategy checkpoint layer is intentional contract hard
 
 Default planning pipeline:
 
-`featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-eng-review`
+`featureforge:brainstorming -> featureforge:plan-ceo-review -> featureforge:writing-plans -> featureforge:plan-fidelity-review -> featureforge:plan-eng-review`
 
 ## Updating
 

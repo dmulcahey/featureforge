@@ -2,10 +2,21 @@
 
 ## Unreleased
 
+- No unreleased changes yet.
+
+## v1.7.0 - 2026-04-01
+
+First-class plan-fidelity stage release focused on making `featureforge:plan-fidelity-review` a canonical workflow stage with explicit draft-plan routing ownership, independent-review guidance, and cross-surface contract parity.
+
 - add `featureforge plan execution rebuild-evidence` operator notes covering replayed evidence targets, refreshed helper-owned closure receipts, and the contract-bound versus plain task-boundary unit-review receipt behavior
 - split public `featureforge plan execution gate-review` into a read-only gate check and an explicit dispatch-only mutation path for workflow/runtime review-cycle bookkeeping
 - let `rebuild-evidence` restore authoritative final-review, test-plan, QA, and release-readiness truth after successful replay, including safe no-op rebinding after rebases when execution evidence is already current
 - teach finish readiness to ignore tracked execution-evidence-only writeback so rebuilt evidence does not by itself stale downstream finish gates
+- add a first-class `featureforge:plan-fidelity-review` skill surface and reviewer prompt with explicit fresh-context independence and runtime receipt-recording guidance
+- route draft-plan fidelity receipt-state blockers (missing, stale, malformed, non-pass, non-independent) to `featureforge:plan-fidelity-review`, while preserving `featureforge:writing-plans` for true authoring defects
+- align root/platform docs plus `using-featureforge`, `writing-plans`, and `plan-eng-review` templates/generated docs to the canonical sequence `writing-plans -> plan-fidelity-review -> plan-eng-review`
+- expand runtime and instruction contract coverage for first-class stage routing, direct-routing guardrails, and wording parity across active workflow surfaces
+- refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for `1.7.0`
 
 ## v1.6.0 - 2026-03-30
 
