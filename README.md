@@ -6,9 +6,9 @@ The active runtime package in this repository targets Codex and GitHub Copilot l
 
 ## Provenance
 
-FeatureForge began from upstream Superpowers: https://github.com/obra/superpowers
+FeatureForge began from upstream Superpowers: <https://github.com/obra/superpowers>
 
-This repository keeps the workflow-first core and extends it with additional review, execution, and runtime patterns adapted from gstack: https://github.com/garrytan/gstack
+This repository keeps the workflow-first core and extends it with additional review, execution, and runtime patterns adapted from gstack: <https://github.com/garrytan/gstack>
 
 ## How It Works
 
@@ -77,12 +77,17 @@ Execution starts from an engineering-approved plan and the exact approved plan p
 
 `featureforge plan execution gate-finish --plan <approved-plan-path>` now derives execution-deviation review requirements from authoritative runtime-owned topology downgrade artifacts. Reason-code-only deviation hints are treated as corroborating metadata, not primary truth.
 
+`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state. When an authoritative active contract exists, rebuild refresh also republishes contract-bound serial unit-review receipts for the current run; without an active contract it keeps plain task-boundary unit-review receipts and validates them as non-contract task-boundary provenance instead of silently treating them as finish-gate bindings.
+
+`featureforge plan execution gate-review --plan <approved-plan-path>` is read-only: it reports the current review gate result without recording a new runtime strategy checkpoint. Workflow/operator flows that intentionally dispatch review-remediation tracking use the explicit dispatch path instead of mutating through the public gate command.
+
 `featureforge plan execution` is the execution preflight boundary for the approved plan.
 
 Task closure is enforced at task boundaries, not only at the end of the full plan:
 
-- after implementation steps complete, STOP and run `featureforge plan execution gate-review --plan <approved-plan-path>` to mint task-boundary review-dispatch proof
+- after implementation steps complete, STOP and run `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` to mint task-boundary review-dispatch proof
 - each task runs a fresh-context independent review loop until `gate-review` is green
+- public `plan execution gate-review` checks that loop without mutating runtime strategy state; workflow/operator dispatch records review-remediation checkpoints explicitly when needed
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
@@ -107,7 +112,7 @@ Completion then flows through:
 Execution strategy checkpoints are runtime-owned execution state, not planning-stage transitions.
 
 - `initial_dispatch` is required before repo-writing execution dispatch
-- `review_remediation` is recorded automatically for reviewable `gate-review` dispatches and remediation reopen events
+- `review_remediation` is recorded automatically for reviewable `gate-review-dispatch` calls and remediation reopen events
 - `cycle_break` is recorded automatically when the same task reaches three reviewable dispatch/remediation cycles
 
 The approved plan path/revision remains fixed during execution. Runtime strategy may adjust topology, lane/worktree allocation, and remediation order without sending the workflow back to planning stages.

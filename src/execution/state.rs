@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::{
     BeginArgs, CompleteArgs, GateContractArgs, GateEvaluatorArgs, GateHandoffArgs,
-    IsolatedAgentsArg, NoteArgs, NoteStateArg, RecommendArgs, RecordContractArgs,
-    RecordEvaluationArgs, RecordHandoffArgs, ReopenArgs, StatusArgs, TransferArgs,
+    IsolatedAgentsArg, NoteArgs, NoteStateArg, RebuildEvidenceArgs, RecommendArgs,
+    RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs, ReopenArgs, StatusArgs,
+    TransferArgs,
 };
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
 use crate::contracts::harness::{
@@ -21,6 +22,7 @@ use crate::contracts::harness::{
 use crate::contracts::plan::{PlanDocument, PlanTask, analyze_documents, parse_plan_file};
 use crate::contracts::spec::parse_spec_file;
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::authority::ensure_preflight_authoritative_bootstrap;
 use crate::execution::final_review::{
     FinalReviewReceiptExpectations, authoritative_browser_qa_artifact_path_checked,
     authoritative_final_review_artifact_path_checked,
@@ -34,6 +36,7 @@ use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
     EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
     INITIAL_AUTHORITATIVE_SEQUENCE, LearnedTopologyGuidance, ResetPolicy, TopologySelectionContext,
+    RunIdentitySnapshot,
 };
 use crate::execution::leases::{
     PreflightWriteAuthorityState, StrategyReviewDispatchLineageRecord,
@@ -126,6 +129,105 @@ pub struct PlanExecutionStatus {
     pub blocking_step: Option<u32>,
     pub resume_task: Option<u32>,
     pub resume_step: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RebuildEvidenceCounts {
+    pub planned: u32,
+    pub rebuilt: u32,
+    pub manual: u32,
+    pub failed: u32,
+    pub noop: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RebuildEvidenceFilter {
+    pub all: bool,
+    pub tasks: Vec<u32>,
+    pub steps: Vec<String>,
+    pub include_open: bool,
+    pub skip_manual_fallback: bool,
+    pub continue_on_error: bool,
+    pub max_jobs: u32,
+    pub no_output: bool,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RebuildEvidenceTarget {
+    pub task_id: u32,
+    pub step_id: u32,
+    pub target_kind: String,
+    pub pre_invalidation_reason: String,
+    pub status: String,
+    pub verify_mode: String,
+    pub verify_command: Option<String>,
+    pub attempt_id_before: Option<String>,
+    pub attempt_id_after: Option<String>,
+    pub verification_hash: Option<String>,
+    pub error: Option<String>,
+    pub failure_class: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RebuildEvidenceOutput {
+    pub session_root: String,
+    pub dry_run: bool,
+    pub filter: RebuildEvidenceFilter,
+    pub scope: String,
+    pub counts: RebuildEvidenceCounts,
+    pub duration_ms: u64,
+    pub targets: Vec<RebuildEvidenceTarget>,
+    #[serde(skip_serializing)]
+    pub exit_code: u8,
+}
+
+impl RebuildEvidenceOutput {
+    pub fn exit_code(&self) -> u8 {
+        self.exit_code
+    }
+
+    pub fn render_text(&self) -> String {
+        let mut lines = Vec::with_capacity(self.targets.len() + 1);
+        lines.push(format!(
+            "summary scope={} dry_run={} planned={} rebuilt={} manual={} failed={} noop={}",
+            render_text_value(&self.scope),
+            self.dry_run,
+            self.counts.planned,
+            self.counts.rebuilt,
+            self.counts.manual,
+            self.counts.failed,
+            self.counts.noop,
+        ));
+        for target in &self.targets {
+            lines.push(format!(
+                "target task_id={} step_id={} status={} target_kind={} pre_invalidation_reason={} verify_mode={} verify_command={} attempt_id_before={} attempt_id_after={} verification_hash={} error={} failure_class={}",
+                target.task_id,
+                target.step_id,
+                render_text_value(&target.status),
+                render_text_value(&target.target_kind),
+                render_text_value(&target.pre_invalidation_reason),
+                render_text_value(&target.verify_mode),
+                render_optional_text_value(target.verify_command.as_deref()),
+                render_optional_text_value(target.attempt_id_before.as_deref()),
+                render_optional_text_value(target.attempt_id_after.as_deref()),
+                render_optional_text_value(target.verification_hash.as_deref()),
+                render_optional_text_value(target.error.as_deref()),
+                render_optional_text_value(target.failure_class.as_deref()),
+            ));
+        }
+        lines.join("\n") + "\n"
+    }
+}
+
+fn render_text_value(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| String::from("\"<serialization-error>\""))
+}
+
+fn render_optional_text_value(value: Option<&str>) -> String {
+    value
+        .map(render_text_value)
+        .unwrap_or_else(|| String::from("null"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -250,6 +352,7 @@ pub struct EvidenceAttempt {
     pub claim: String,
     pub files: Vec<String>,
     pub file_proofs: Vec<FileProof>,
+    pub verify_command: Option<String>,
     pub verification_summary: String,
     pub invalidation_reason: String,
     pub packet_fingerprint: Option<String>,
@@ -295,6 +398,38 @@ pub struct ExecutionContext {
     pub execution_fingerprint: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebuildEvidenceRequest {
+    pub plan: PathBuf,
+    pub all: bool,
+    pub tasks: Vec<u32>,
+    pub steps: Vec<(u32, u32)>,
+    pub raw_steps: Vec<String>,
+    pub include_open: bool,
+    pub skip_manual_fallback: bool,
+    pub continue_on_error: bool,
+    pub dry_run: bool,
+    pub max_jobs: u32,
+    pub no_output: bool,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebuildEvidenceCandidate {
+    pub task: u32,
+    pub step: u32,
+    pub order_key: (u32, u32),
+    pub target_kind: String,
+    pub pre_invalidation_reason: String,
+    pub verify_command: Option<String>,
+    pub verify_mode: String,
+    pub claim: String,
+    pub files: Vec<String>,
+    pub attempt_number: Option<u32>,
+    pub artifact_epoch: Option<String>,
+    pub needs_reopen: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct CompleteRequest {
     pub task: u32,
@@ -302,6 +437,7 @@ pub struct CompleteRequest {
     pub source: String,
     pub claim: String,
     pub files: Vec<String>,
+    pub verify_command: Option<String>,
     pub verification_summary: String,
     pub expect_execution_fingerprint: String,
 }
@@ -506,7 +642,16 @@ impl ExecutionRuntime {
         let context = load_execution_context(self, &args.plan)?;
         let gate = preflight_from_context(&context);
         if persist_acceptance && gate.allowed {
-            persist_preflight_acceptance(&context)?;
+            let acceptance = persist_preflight_acceptance(&context)?;
+            ensure_preflight_authoritative_bootstrap(
+                &context.runtime,
+                RunIdentitySnapshot {
+                    execution_run_id: acceptance.execution_run_id.clone(),
+                    source_plan_path: context.plan_rel.clone(),
+                    source_plan_revision: context.plan_document.plan_revision,
+                },
+                acceptance.chunk_id,
+            )?;
         }
         Ok(gate)
     }
@@ -531,8 +676,10 @@ impl ExecutionRuntime {
     pub fn gate_review_dispatch(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
         match load_execution_context(self, &args.plan) {
             Ok(context) => {
+                ensure_review_dispatch_authoritative_bootstrap(&context)?;
                 record_review_dispatch_strategy_checkpoint(&context)?;
-                Ok(gate_review_from_context(&context))
+                let reloaded = load_execution_context(self, &args.plan)?;
+                Ok(gate_review_from_context(&reloaded))
             }
             Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
                 let mut gate = GateState::default();
@@ -540,7 +687,7 @@ impl ExecutionRuntime {
                     FailureClass::PlanNotExecutionReady,
                     "plan_not_execution_ready",
                     error.message,
-                    "Refresh the approved plan/spec pair before running gate-review.",
+                    "Refresh the approved plan/spec pair before running gate-review-dispatch.",
                 );
                 Ok(gate.finish())
             }
@@ -567,7 +714,10 @@ fn record_review_dispatch_strategy_checkpoint(
     let _write_authority = claim_step_write_authority(&context.runtime)?;
     let mut authoritative_state = load_authoritative_transition_state(context)?;
     let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Ok(());
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            "Authoritative harness state is required before gate-review-dispatch can record review-dispatch proof.",
+        ));
     };
     let cycle_target = match review_dispatch_cycle_target(context) {
         ReviewDispatchCycleTarget::Bound(task, step) => Some((task, step)),
@@ -580,6 +730,21 @@ fn record_review_dispatch_strategy_checkpoint(
         cycle_target,
     )?;
     authoritative_state.persist_if_dirty_with_failpoint(None)
+}
+
+fn ensure_review_dispatch_authoritative_bootstrap(
+    context: &ExecutionContext,
+) -> Result<(), JsonFailure> {
+    let acceptance = persist_preflight_acceptance(context)?;
+    ensure_preflight_authoritative_bootstrap(
+        &context.runtime,
+        RunIdentitySnapshot {
+            execution_run_id: acceptance.execution_run_id.clone(),
+            source_plan_path: context.plan_rel.clone(),
+            source_plan_revision: context.plan_document.plan_revision,
+        },
+        acceptance.chunk_id,
+    )
 }
 
 enum ReviewDispatchCycleTarget {
@@ -1861,6 +2026,37 @@ fn enforce_worktree_lease_binding_truth(context: &ExecutionContext, gate: &mut G
         if !context.steps.iter().any(|step| step.checked) {
             return;
         }
+        let active_contract_overlay = match load_status_authoritative_overlay_checked(context) {
+            Ok(Some(overlay)) => overlay,
+            Ok(None) => return,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "worktree_lease_authoritative_state_unavailable",
+                    error.message,
+                    "Restore authoritative harness state readability and retry gate-review or gate-finish.",
+                );
+                return;
+            }
+        };
+        let active_contract_path = active_contract_overlay
+            .active_contract_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let active_contract_fingerprint = active_contract_overlay
+            .active_contract_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if active_contract_path.is_none() && active_contract_fingerprint.is_none() {
+            enforce_plain_unit_review_truth(
+                context,
+                run_identity.execution_run_id.as_str(),
+                gate,
+            );
+            return;
+        }
         let Some((_active_contract_path, active_contract_fingerprint)) =
             load_authoritative_active_contract(context, gate)
         else {
@@ -2822,6 +3018,223 @@ fn current_run_worktree_lease_artifacts_exist(
     Ok(false)
 }
 
+fn current_run_plain_unit_review_receipt_paths(
+    context: &ExecutionContext,
+    execution_run_id: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let artifacts_dir = crate::paths::harness_authoritative_artifacts_dir(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+    );
+    let entries = match fs::read_dir(&artifacts_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect authoritative unit-review receipts in {}: {error}",
+                artifacts_dir.display()
+            ));
+        }
+    };
+    let canonical_prefix = format!("unit-review-{execution_run_id}-task-");
+    let mut receipt_paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Could not inspect authoritative unit-review receipts in {}: {error}",
+                artifacts_dir.display()
+            )
+        })?;
+        let file_path = entry.path();
+        let Some(file_name) = file_path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if file_name.starts_with(&canonical_prefix) && file_name.ends_with(".md") {
+            receipt_paths.push(file_path);
+        }
+    }
+    receipt_paths.sort();
+    Ok(receipt_paths)
+}
+
+fn enforce_plain_unit_review_truth(
+    context: &ExecutionContext,
+    execution_run_id: &str,
+    gate: &mut GateState,
+) {
+    let current_run_receipts = match current_run_plain_unit_review_receipt_paths(
+        context,
+        execution_run_id,
+    ) {
+        Ok(paths) => paths,
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "plain_unit_review_receipts_unreadable",
+                error,
+                "Restore authoritative unit-review receipt readability and retry gate-review or gate-finish.",
+            );
+            return;
+        }
+    };
+    if current_run_receipts.is_empty() {
+        return;
+    }
+
+    let expected_strategy_checkpoint_fingerprint =
+        match authoritative_strategy_checkpoint_fingerprint_checked(context) {
+            Ok(Some(fingerprint)) if !fingerprint.trim().is_empty() => fingerprint,
+            Ok(_) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "plain_unit_review_receipt_strategy_checkpoint_missing",
+                    "Authoritative strategy checkpoint provenance is missing for current-run unit-review receipt validation.",
+                    "Restore authoritative strategy checkpoint provenance and retry gate-review or gate-finish.",
+                );
+                return;
+            }
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "plain_unit_review_receipt_strategy_checkpoint_missing",
+                    error.message,
+                    "Restore authoritative strategy checkpoint provenance and retry gate-review or gate-finish.",
+                );
+                return;
+            }
+        };
+
+    let latest_attempts = latest_completed_attempts_by_step(&context.evidence);
+    let expected_receipt_paths = context
+        .steps
+        .iter()
+        .filter(|step| step.checked)
+        .map(|step| {
+            (
+                authoritative_unit_review_receipt_path(
+                    context,
+                    execution_run_id,
+                    step.task_number,
+                    step.step_number,
+                )
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_owned(),
+                (step.task_number, step.step_number),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for receipt_path in current_run_receipts {
+        let Some(receipt_file_name) = receipt_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_owned)
+        else {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "plain_unit_review_receipt_malformed",
+                "A current-run unit-review receipt has an unreadable filename.",
+                "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            );
+            return;
+        };
+        let Some((task_number, step_number)) = expected_receipt_paths.get(&receipt_file_name).copied()
+        else {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "plain_unit_review_receipt_malformed",
+                format!(
+                    "Current-run unit-review receipt {} does not match any checked plan step.",
+                    receipt_path.display()
+                ),
+                "Remove or repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            );
+            return;
+        };
+        let Some(attempt_index) = latest_attempts.get(&(task_number, step_number)).copied() else {
+            gate.fail(
+                FailureClass::StaleExecutionEvidence,
+                "plain_unit_review_receipt_provenance_mismatch",
+                format!(
+                    "Current-run unit-review receipt {} has no completed evidence attempt to validate against.",
+                    receipt_path.display()
+                ),
+                "Rebuild the execution evidence for the affected step and retry gate-review or gate-finish.",
+            );
+            return;
+        };
+        let attempt = &context.evidence.attempts[attempt_index];
+        let Some(expected_task_packet_fingerprint) = attempt
+            .packet_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "plain_unit_review_receipt_malformed",
+                format!(
+                    "Task {} Step {} is missing packet fingerprint provenance required to validate plain unit-review receipts.",
+                    task_number, step_number
+                ),
+                "Repair the execution evidence for the affected step and retry gate-review or gate-finish.",
+            );
+            return;
+        };
+        let Some(expected_reviewed_checkpoint_sha) = attempt
+            .head_sha
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "plain_unit_review_receipt_malformed",
+                format!(
+                    "Task {} Step {} is missing reviewed checkpoint provenance required to validate plain unit-review receipts.",
+                    task_number, step_number
+                ),
+                "Repair the execution evidence for the affected step and retry gate-review or gate-finish.",
+            );
+            return;
+        };
+        let review_source = match fs::read_to_string(&receipt_path) {
+            Ok(source) => source,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::ExecutionStateNotReady,
+                    "plain_unit_review_receipt_unreadable",
+                    format!(
+                        "Could not read current-run unit-review receipt {}: {error}",
+                        receipt_path.display()
+                    ),
+                    "Restore the authoritative unit-review receipt and retry gate-review or gate-finish.",
+                );
+                return;
+            }
+        };
+        if !validate_plain_unit_review_receipt(
+            context,
+            execution_run_id,
+            &review_source,
+            &receipt_path,
+            PlainUnitReviewReceiptExpectations {
+                expected_strategy_checkpoint_fingerprint: expected_strategy_checkpoint_fingerprint
+                    .as_str(),
+                expected_task_packet_fingerprint,
+                expected_reviewed_checkpoint_sha,
+                expected_execution_unit_id: serial_execution_unit_id(task_number, step_number),
+            },
+            gate,
+        ) {
+            return;
+        }
+    }
+}
+
 fn validate_authoritative_worktree_lease_fingerprint(
     source: &str,
     lease: &WorktreeLease,
@@ -3278,6 +3691,13 @@ struct UnitReviewReceiptExpectations<'a> {
     expected_reconcile_result_commit_sha: &'a str,
 }
 
+struct PlainUnitReviewReceiptExpectations<'a> {
+    expected_strategy_checkpoint_fingerprint: &'a str,
+    expected_task_packet_fingerprint: &'a str,
+    expected_reviewed_checkpoint_sha: &'a str,
+    expected_execution_unit_id: String,
+}
+
 fn validate_authoritative_unit_review_receipt(
     context: &ExecutionContext,
     execution_run_id: &str,
@@ -3619,6 +4039,261 @@ fn validate_authoritative_unit_review_receipt(
     ))
 }
 
+fn validate_plain_unit_review_receipt(
+    context: &ExecutionContext,
+    execution_run_id: &str,
+    source: &str,
+    receipt_path: &Path,
+    expectations: PlainUnitReviewReceiptExpectations<'_>,
+    gate: &mut GateState,
+) -> bool {
+    let review_document = parse_artifact_document(receipt_path);
+    if review_document.title.as_deref() != Some("# Unit Review Result")
+        || review_document
+            .headers
+            .get("Review Stage")
+            .map(String::as_str)
+            != Some("featureforge:unit-review")
+        || review_document
+            .headers
+            .get("Reviewer Provenance")
+            .map(String::as_str)
+            != Some("dedicated-independent")
+        || !matches!(
+            review_document
+                .headers
+                .get("Reviewer Source")
+                .map(String::as_str)
+                .unwrap_or_default(),
+            "fresh-context-subagent" | "cross-model"
+        )
+        || review_document.headers.get("Result").map(String::as_str) != Some("pass")
+        || review_document
+            .headers
+            .get("Generated By")
+            .map(String::as_str)
+            != Some("featureforge:unit-review")
+    {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "plain_unit_review_receipt_malformed",
+            format!(
+                "Current-run unit-review receipt {} is malformed.",
+                receipt_path.display()
+            ),
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return false;
+    }
+
+    for forbidden_header in [
+        "Lease Fingerprint",
+        "Execution Context Key",
+        "Approved Unit Contract Fingerprint",
+        "Reconciled Result SHA",
+        "Reconcile Result Proof Fingerprint",
+        "Reconcile Mode",
+        "Reviewed Worktree",
+    ] {
+        if review_document.headers.contains_key(forbidden_header) {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "plain_unit_review_receipt_malformed",
+                format!(
+                    "Current-run unit-review receipt {} unexpectedly includes {} without an active authoritative contract.",
+                    receipt_path.display(),
+                    forbidden_header
+                ),
+                "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+            );
+            return false;
+        }
+    }
+
+    let expected_file_name = format!(
+        "unit-review-{}-{}.md",
+        execution_run_id,
+        expectations.expected_execution_unit_id
+    );
+    if receipt_path.file_name().and_then(|value| value.to_str()) != Some(expected_file_name.as_str()) {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "plain_unit_review_receipt_malformed",
+            format!(
+                "Current-run unit-review receipt path {} does not match the reviewed execution unit provenance.",
+                receipt_path.display()
+            ),
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return false;
+    }
+
+    let Some(canonical_fingerprint) = canonical_unit_review_receipt_fingerprint(source) else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "plain_unit_review_receipt_fingerprint_unverifiable",
+            format!(
+                "Current-run unit-review receipt fingerprint is unverifiable in {}.",
+                receipt_path.display()
+            ),
+            "Repair the authoritative unit-review receipt and retry gate-review or gate-finish.",
+        );
+        return false;
+    };
+    if review_document
+        .headers
+        .get("Receipt Fingerprint")
+        .map(String::as_str)
+        != Some(canonical_fingerprint.as_str())
+    {
+        gate.fail(
+            FailureClass::ArtifactIntegrityMismatch,
+            "plain_unit_review_receipt_fingerprint_mismatch",
+            format!(
+                "Current-run unit-review receipt fingerprint header does not match canonical content in {}.",
+                receipt_path.display()
+            ),
+            "Regenerate the authoritative unit-review receipt from canonical content and retry gate-review or gate-finish.",
+        );
+        return false;
+    }
+
+    let mut mismatched_fields = Vec::new();
+    let mut mismatch_details = Vec::new();
+    if review_document.headers.get("Source Plan").map(String::as_str)
+        != Some(context.plan_rel.as_str())
+    {
+        mismatched_fields.push("Source Plan");
+        mismatch_details.push(format!(
+            "Source Plan expected={} actual={}",
+            context.plan_rel,
+            review_document
+                .headers
+                .get("Source Plan")
+                .map(String::as_str)
+                .unwrap_or("<missing>")
+        ));
+    }
+    if review_document
+        .headers
+        .get("Source Plan Revision")
+        .and_then(|value| value.parse::<u32>().ok())
+        != Some(context.plan_document.plan_revision)
+    {
+        mismatched_fields.push("Source Plan Revision");
+        mismatch_details.push(format!(
+            "Source Plan Revision expected={} actual={}",
+            context.plan_document.plan_revision,
+            review_document
+                .headers
+                .get("Source Plan Revision")
+                .map(String::as_str)
+                .unwrap_or("<missing>")
+        ));
+    }
+    if review_document
+        .headers
+        .get("Execution Run ID")
+        .map(String::as_str)
+        != Some(execution_run_id)
+    {
+        mismatched_fields.push("Execution Run ID");
+        mismatch_details.push(format!(
+            "Execution Run ID expected={} actual={}",
+            execution_run_id,
+            review_document
+                .headers
+                .get("Execution Run ID")
+                .map(String::as_str)
+                .unwrap_or("<missing>")
+        ));
+    }
+    if review_document
+        .headers
+        .get("Execution Unit ID")
+        .map(String::as_str)
+        != Some(expectations.expected_execution_unit_id.as_str())
+    {
+        mismatched_fields.push("Execution Unit ID");
+        mismatch_details.push(format!(
+            "Execution Unit ID expected={} actual={}",
+            expectations.expected_execution_unit_id,
+            review_document
+                .headers
+                .get("Execution Unit ID")
+                .map(String::as_str)
+                .unwrap_or("<missing>")
+        ));
+    }
+    if review_document
+        .headers
+        .get("Strategy Checkpoint Fingerprint")
+        .map(String::as_str)
+        != Some(expectations.expected_strategy_checkpoint_fingerprint)
+    {
+        mismatched_fields.push("Strategy Checkpoint Fingerprint");
+        mismatch_details.push(format!(
+            "Strategy Checkpoint Fingerprint expected={} actual={}",
+            expectations.expected_strategy_checkpoint_fingerprint,
+            review_document
+                .headers
+                .get("Strategy Checkpoint Fingerprint")
+                .map(String::as_str)
+                .unwrap_or("<missing>")
+        ));
+    }
+    if review_document
+        .headers
+        .get("Approved Task Packet Fingerprint")
+        .map(String::as_str)
+        != Some(expectations.expected_task_packet_fingerprint)
+    {
+        mismatched_fields.push("Approved Task Packet Fingerprint");
+        mismatch_details.push(format!(
+            "Approved Task Packet Fingerprint expected={} actual={}",
+            expectations.expected_task_packet_fingerprint,
+            review_document
+                .headers
+                .get("Approved Task Packet Fingerprint")
+                .map(String::as_str)
+                .unwrap_or("<missing>")
+        ));
+    }
+    if review_document
+        .headers
+        .get("Reviewed Checkpoint SHA")
+        .map(String::as_str)
+        != Some(expectations.expected_reviewed_checkpoint_sha)
+    {
+        mismatched_fields.push("Reviewed Checkpoint SHA");
+        mismatch_details.push(format!(
+            "Reviewed Checkpoint SHA expected={} actual={}",
+            expectations.expected_reviewed_checkpoint_sha,
+            review_document
+                .headers
+                .get("Reviewed Checkpoint SHA")
+                .map(String::as_str)
+                .unwrap_or("<missing>")
+        ));
+    }
+    if !mismatched_fields.is_empty() {
+        gate.fail(
+            FailureClass::StaleProvenance,
+            "plain_unit_review_receipt_provenance_mismatch",
+            format!(
+                "Current-run unit-review receipt {} does not match the active task checkpoint provenance (mismatched fields: {}; details: {}).",
+                receipt_path.display(),
+                mismatched_fields.join(", ")
+                , mismatch_details.join("; ")
+            ),
+            "Regenerate the authoritative unit-review receipt for the completed step and retry gate-review or gate-finish.",
+        );
+        return false;
+    }
+
+    true
+}
+
 fn canonical_unit_review_receipt_fingerprint(source: &str) -> Option<String> {
     let filtered = source
         .lines()
@@ -3653,7 +4328,9 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
 
     let branch = &context.runtime.branch_name;
     let current_head = current_head_sha(&context.runtime.repo_root).unwrap_or_default();
-    match repo_has_tracked_worktree_changes(&context.runtime.repo_root) {
+    match repo_has_tracked_worktree_changes_excluding_execution_evidence(
+        &context.runtime.repo_root,
+    ) {
         Ok(true) => {
             gate.fail(
                 FailureClass::ReviewArtifactNotFresh,
@@ -4337,6 +5014,11 @@ pub fn normalize_complete_request(args: &CompleteArgs) -> Result<CompleteRequest
         source: args.source.as_str().to_owned(),
         claim,
         files: args.files.clone(),
+        verify_command: args
+            .verify_command
+            .as_deref()
+            .map(normalize_whitespace)
+            .filter(|value| !value.is_empty()),
         verification_summary,
         expect_execution_fingerprint: args.expect_execution_fingerprint.clone(),
     })
@@ -4368,6 +5050,235 @@ pub fn normalize_transfer_request(args: &TransferArgs) -> Result<TransferRequest
         )?,
         expect_execution_fingerprint: args.expect_execution_fingerprint.clone(),
     })
+}
+
+pub fn normalize_rebuild_evidence_request(
+    args: &RebuildEvidenceArgs,
+) -> Result<RebuildEvidenceRequest, JsonFailure> {
+    let mut parsed_steps = Vec::with_capacity(args.steps.len());
+    for raw in &args.steps {
+        let (task, step) = raw.split_once(':').ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "--step must use task:step selectors such as 1:2.",
+            )
+        })?;
+        let task = task.parse::<u32>().map_err(|_| {
+            JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "--step must use numeric task:step selectors such as 1:2.",
+            )
+        })?;
+        let step = step.parse::<u32>().map_err(|_| {
+            JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "--step must use numeric task:step selectors such as 1:2.",
+            )
+        })?;
+        parsed_steps.push((task, step));
+    }
+
+    Ok(RebuildEvidenceRequest {
+        plan: args.plan.clone(),
+        all: args.all || (args.tasks.is_empty() && args.steps.is_empty()),
+        tasks: args.tasks.clone(),
+        steps: parsed_steps,
+        raw_steps: args.steps.clone(),
+        include_open: args.include_open,
+        skip_manual_fallback: args.skip_manual_fallback,
+        continue_on_error: args.continue_on_error,
+        dry_run: args.dry_run,
+        max_jobs: args.max_jobs,
+        no_output: args.no_output,
+        json: args.json,
+    })
+}
+
+pub fn parse_command_verification_summary(summary: &str) -> Option<String> {
+    let trimmed = normalize_whitespace(summary);
+    let suffix = trimmed.strip_prefix('`')?;
+    let (command, _) = suffix.split_once("` -> ")?;
+    let command = normalize_whitespace(command);
+    (!command.is_empty()).then_some(command)
+}
+
+pub fn discover_rebuild_candidates(
+    context: &ExecutionContext,
+    request: &RebuildEvidenceRequest,
+) -> Result<Vec<RebuildEvidenceCandidate>, JsonFailure> {
+    let task_filter = request.tasks.iter().copied().collect::<BTreeSet<_>>();
+    let step_filter = request.steps.iter().copied().collect::<BTreeSet<_>>();
+
+    let matching_steps = context
+        .steps
+        .iter()
+        .filter(|step| {
+            (task_filter.is_empty() || task_filter.contains(&step.task_number))
+                && (step_filter.is_empty()
+                    || step_filter.contains(&(step.task_number, step.step_number)))
+        })
+        .collect::<Vec<_>>();
+    if (!request.tasks.is_empty() || !request.steps.is_empty()) && matching_steps.is_empty() {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            "scope_no_matches: no approved plan steps matched the requested filters.",
+        ));
+    }
+
+    let legacy_plan_fingerprint = sha256_hex(context.plan_source.as_bytes());
+    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+    let session_provenance_reason = if context.evidence.plan_fingerprint.as_deref()
+        != Some(legacy_plan_fingerprint.as_str())
+    {
+        Some(String::from("plan_fingerprint_mismatch"))
+    } else if context.evidence.source_spec_fingerprint.as_deref()
+        != Some(source_spec_fingerprint.as_str())
+    {
+        Some(String::from("source_spec_fingerprint_mismatch"))
+    } else {
+        None
+    };
+
+    let contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
+    let latest_attempts = latest_attempt_indices_by_step(&context.evidence);
+    let latest_completed = latest_completed_attempts_by_step(&context.evidence);
+    let latest_file_proofs = latest_completed_attempts_by_file(&context.evidence, &latest_completed);
+    let mut candidates = Vec::new();
+
+    for step in matching_steps {
+        let step_key = (step.task_number, step.step_number);
+        let latest_attempt = latest_attempts
+            .get(&step_key)
+            .map(|index| &context.evidence.attempts[*index]);
+        let latest_completed_attempt = latest_completed
+            .get(&step_key)
+            .map(|index| &context.evidence.attempts[*index]);
+
+        let mut pre_invalidation_reason = None;
+        let mut target_kind = String::new();
+        let mut needs_reopen = false;
+
+        if step.checked
+            && let Some(reason) = session_provenance_reason.as_ref()
+            && latest_completed_attempt.is_some()
+        {
+            pre_invalidation_reason = Some(reason.clone());
+            target_kind = String::from("stale_completed_attempt");
+            needs_reopen = true;
+        }
+
+        if let Some(attempt) = latest_attempt
+            && attempt.status == "Invalidated" && attempt.invalidation_reason != "N/A"
+        {
+            pre_invalidation_reason = Some(attempt.invalidation_reason.clone());
+            target_kind = String::from("invalidated_attempt");
+            needs_reopen = step.checked;
+        }
+
+        if pre_invalidation_reason.is_none() && step.checked
+            && let Some(attempt) = latest_completed_attempt
+        {
+            let expected_packet = compute_packet_fingerprint(PacketFingerprintInput {
+                plan_path: &context.plan_rel,
+                plan_revision: context.plan_document.plan_revision,
+                plan_fingerprint: &contract_plan_fingerprint,
+                source_spec_path: &context.plan_document.source_spec_path,
+                source_spec_revision: context.plan_document.source_spec_revision,
+                source_spec_fingerprint: &source_spec_fingerprint,
+                task: step.task_number,
+                step: step.step_number,
+            });
+            if attempt.packet_fingerprint.as_deref() != Some(expected_packet.as_str()) {
+                pre_invalidation_reason = Some(String::from("packet_fingerprint_mismatch"));
+                target_kind = String::from("stale_completed_attempt");
+                needs_reopen = true;
+            } else {
+                for proof in &attempt.file_proofs {
+                    if proof.path == NO_REPO_FILES_MARKER
+                        || proof.path == context.plan_rel
+                        || proof.path == context.evidence_rel
+                    {
+                        continue;
+                    }
+                    if latest_file_proofs
+                        .get(&proof.path)
+                        .is_some_and(|latest_index| {
+                            latest_completed
+                                .get(&step_key)
+                                .is_some_and(|attempt_index| latest_index != attempt_index)
+                        })
+                    {
+                        continue;
+                    }
+                    match current_file_proof_checked(&context.runtime.repo_root, &proof.path) {
+                        Ok(current_proof) => {
+                            if current_proof != proof.proof {
+                                pre_invalidation_reason =
+                                    Some(String::from("files_proven_drifted"));
+                                target_kind = String::from("stale_completed_attempt");
+                                needs_reopen = true;
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            pre_invalidation_reason = Some(format!(
+                                "artifact_read_error: could not read {} ({error})",
+                                proof.path
+                            ));
+                            target_kind = String::from("artifact_read_error");
+                            needs_reopen = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if pre_invalidation_reason.is_none() && request.include_open && !step.checked
+            && (step.note_state.is_some() || latest_attempt.is_some())
+        {
+            pre_invalidation_reason = Some(String::from("open_step_requested"));
+            target_kind = String::from("open_step");
+        }
+
+        let Some(pre_invalidation_reason) = pre_invalidation_reason else {
+            continue;
+        };
+        let attempt = latest_attempt.or(latest_completed_attempt);
+        let verify_command = attempt.and_then(|candidate| candidate.verify_command.clone());
+        let verify_mode = if verify_command.is_some() {
+            String::from("command")
+        } else {
+            String::from("manual")
+        };
+        let claim = attempt
+            .map(|candidate| candidate.claim.clone())
+            .unwrap_or_else(|| format!("Rebuilt evidence for Task {} Step {}.", step.task_number, step.step_number));
+        let files = attempt
+            .map(|candidate| candidate.files.clone())
+            .unwrap_or_default();
+        let attempt_number = attempt.map(|candidate| candidate.attempt_number);
+        let artifact_epoch = attempt.map(|candidate| candidate.recorded_at.clone());
+
+        candidates.push(RebuildEvidenceCandidate {
+            task: step.task_number,
+            step: step.step_number,
+            order_key: (step.task_number, step.step_number),
+            target_kind,
+            pre_invalidation_reason,
+            verify_command,
+            verify_mode,
+            claim,
+            files,
+            attempt_number,
+            artifact_epoch,
+            needs_reopen,
+        });
+    }
+
+    candidates.sort_by_key(|candidate| candidate.order_key);
+
+    Ok(candidates)
 }
 
 pub fn normalize_source(source: &str, execution_mode: &str) -> Result<(), JsonFailure> {
@@ -4548,6 +5459,37 @@ fn repo_has_tracked_worktree_changes(repo_root: &Path) -> Result<bool, JsonFailu
     })
 }
 
+fn repo_has_tracked_worktree_changes_excluding_execution_evidence(
+    repo_root: &Path,
+) -> Result<bool, JsonFailure> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args([
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+            "--",
+            ".",
+            ":(exclude)docs/featureforge/execution-evidence/**",
+        ])
+        .output()
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::WorkspaceNotSafe,
+                format!(
+                    "Could not determine whether tracked worktree changes remain outside execution evidence: {error}"
+                ),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            "Could not determine whether tracked worktree changes remain outside execution evidence.",
+        ));
+    }
+    Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
 pub fn state_dir() -> PathBuf {
     featureforge_state_dir()
 }
@@ -4560,6 +5502,18 @@ pub fn current_file_proof(repo_root: &Path, path: &str) -> String {
     match fs::read(&abs) {
         Ok(contents) => format!("sha256:{}", sha256_hex(&contents)),
         Err(_) => String::from("sha256:missing"),
+    }
+}
+
+pub fn current_file_proof_checked(repo_root: &Path, path: &str) -> Result<String, String> {
+    if path == NO_REPO_FILES_MARKER {
+        return Ok(String::from("sha256:none"));
+    }
+    let abs = repo_root.join(path);
+    match fs::read(&abs) {
+        Ok(contents) => Ok(format!("sha256:{}", sha256_hex(&contents))),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(String::from("sha256:missing")),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -5208,6 +6162,7 @@ fn parse_evidence_attempts(
             let mut claim = String::new();
             let mut files = Vec::new();
             let mut file_proofs = Vec::new();
+            let mut verify_command = None;
             let mut verification_summary = String::new();
             let mut invalidation_reason = String::new();
             let mut packet_fingerprint = None;
@@ -5343,6 +6298,9 @@ fn parse_evidence_attempts(
                         line_index = line_index.saturating_sub(1);
                         break;
                     }
+                } else if let Some(value) = line.strip_prefix("**Verify Command:** ") {
+                    verify_command = parse_optional_evidence_scalar(value)
+                        .or_else(|| Some(normalize_whitespace(value)).filter(|candidate| !candidate.is_empty()));
                 } else if let Some(value) = line.strip_prefix("**Verification Summary:** ") {
                     verification_summary = normalize_whitespace(value);
                 } else if line == "**Verification:**" {
@@ -5417,6 +6375,9 @@ fn parse_evidence_attempts(
                 ));
             }
 
+            let verify_command = verify_command
+                .or_else(|| parse_command_verification_summary(&verification_summary));
+
             attempts.push(EvidenceAttempt {
                 task_number,
                 step_number,
@@ -5427,6 +6388,7 @@ fn parse_evidence_attempts(
                 claim,
                 files,
                 file_proofs,
+                verify_command,
                 verification_summary,
                 invalidation_reason,
                 packet_fingerprint,
@@ -5910,7 +6872,7 @@ fn ensure_prior_task_review_dispatch_closed(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_missing",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} is missing required post-completion review-dispatch evidence. Run `featureforge plan execution gate-review --plan {}` after Task {prior_task} closes.",
+                "Task {target_task} may not begin because Task {prior_task} is missing required post-completion review-dispatch evidence. Run `featureforge plan execution gate-review-dispatch --plan {}` after Task {prior_task} closes.",
                 context.plan_rel
             ),
         ));
@@ -5921,7 +6883,7 @@ fn ensure_prior_task_review_dispatch_closed(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_missing",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} is missing required post-completion review-dispatch evidence. Run `featureforge plan execution gate-review --plan {}` after Task {prior_task} closes.",
+                "Task {target_task} may not begin because Task {prior_task} is missing required post-completion review-dispatch evidence. Run `featureforge plan execution gate-review-dispatch --plan {}` after Task {prior_task} closes.",
                 context.plan_rel
             ),
         ));
@@ -5965,7 +6927,7 @@ fn validate_task_review_dispatch_lineage(
                 FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
-                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
+                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
                     context.plan_rel
                 ),
             )
@@ -5975,7 +6937,7 @@ fn validate_task_review_dispatch_lineage(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
+                "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
                 context.plan_rel
             ),
         )
@@ -5985,7 +6947,7 @@ fn validate_task_review_dispatch_lineage(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
+                "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
                 context.plan_rel
             ),
         )
@@ -6000,7 +6962,7 @@ fn validate_task_review_dispatch_lineage(
                 FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
-                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
+                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
                     context.plan_rel
                 ),
             )
@@ -6015,7 +6977,7 @@ fn validate_task_review_dispatch_lineage(
                 FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
-                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review --plan {}` for Task {prior_task}.",
+                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
                     context.plan_rel
                 ),
             )
@@ -6031,7 +6993,7 @@ fn validate_task_review_dispatch_lineage(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} review-dispatch evidence is stale against current task/strategy lineage. Re-run `featureforge plan execution gate-review --plan {}` after Task {prior_task} closure.",
+                "Task {target_task} may not begin because Task {prior_task} review-dispatch evidence is stale against current task/strategy lineage. Re-run `featureforge plan execution gate-review-dispatch --plan {}` after Task {prior_task} closure.",
                 context.plan_rel
             ),
         ));
@@ -6169,7 +7131,10 @@ fn latest_attempt_for_step(
         .find(|attempt| attempt.task_number == task_number && attempt.step_number == step_number)
 }
 
-fn latest_attempted_step_for_task(context: &ExecutionContext, task_number: u32) -> Option<u32> {
+pub(crate) fn latest_attempted_step_for_task(
+    context: &ExecutionContext,
+    task_number: u32,
+) -> Option<u32> {
     context.evidence.attempts.iter().rev().find_map(|attempt| {
         (attempt.task_number == task_number
             && context
@@ -6225,6 +7190,14 @@ pub(crate) fn task_completion_lineage_fingerprint(
         ));
     }
     Some(sha256_hex(payload.as_bytes()))
+}
+
+fn latest_attempt_indices_by_step(evidence: &ExecutionEvidence) -> BTreeMap<(u32, u32), usize> {
+    let mut indices = BTreeMap::new();
+    for (index, attempt) in evidence.attempts.iter().enumerate() {
+        indices.insert((attempt.task_number, attempt.step_number), index);
+    }
+    indices
 }
 
 fn latest_completed_attempts_by_step(evidence: &ExecutionEvidence) -> BTreeMap<(u32, u32), usize> {
