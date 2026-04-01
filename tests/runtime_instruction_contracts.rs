@@ -1161,7 +1161,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "Conditional Pre-Landing QA Gate",
                 "Required release-readiness pass for workflow-routed work before completion",
                 "featureforge repo-safety check --intent write",
-                "Run `featureforge plan execution gate-review --plan <approved-plan-path>` before late-stage QA or release routing.",
+                "For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current.",
                 "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, run `featureforge plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.",
                 "If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.",
             ],
@@ -1682,6 +1682,57 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("README.md"),
         "execution preflight boundary for the approved plan",
+    );
+    assert_file_contains(
+        root.join("README.md"),
+        "Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):",
+    );
+    assert_file_contains(
+        root.join("docs/README.codex.md"),
+        "for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`",
+    );
+    assert_file_contains(
+        root.join("docs/README.codex.md"),
+        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof",
+    );
+    assert_file_contains(
+        root.join("docs/README.copilot.md"),
+        "for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`",
+    );
+    assert_file_contains(
+        root.join("docs/README.copilot.md"),
+        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof",
+    );
+    assert_file_contains(
+        root.join("review/late-stage-precedence-reference.md"),
+        "`gate-review` is read-only state evaluation.",
+    );
+    assert_file_contains(
+        root.join("review/late-stage-precedence-reference.md"),
+        "`gate-review-dispatch` is the dispatch-proof minting boundary.",
+    );
+    assert_file_contains(
+        root.join("review/late-stage-precedence-reference.md"),
+        "For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`.",
+    );
+    let readme = read_utf8(root.join("README.md"));
+    let completion_start = readme
+        .find("Completion then flows through")
+        .expect("README completion flow heading should be present");
+    let completion_end = readme[completion_start..]
+        .find("## Project Memory")
+        .map(|offset| completion_start + offset)
+        .expect("README completion flow should end before project memory section");
+    let completion_block = &readme[completion_start..completion_end];
+    let release_index = completion_block
+        .find("featureforge:document-release")
+        .expect("completion flow should mention document-release");
+    let review_index = completion_block
+        .find("featureforge:requesting-code-review")
+        .expect("completion flow should mention requesting-code-review");
+    assert!(
+        release_index < review_index,
+        "README completion flow should list document-release before requesting-code-review"
     );
     assert_file_contains(
         root.join("docs/test-suite-enhancement-plan.md"),

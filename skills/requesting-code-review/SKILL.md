@@ -136,13 +136,13 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 
 **1. If this review is for plan-routed work, capture execution state first:**
 
-- For plan-routed terminal whole-diff review, require the exact approved plan path and exact approved spec path from the current execution preflight handoff or session context.
+- For plan-routed final review, require the exact approved plan path and exact approved spec path from the current execution preflight handoff or session context.
 - Run `featureforge plan contract analyze-plan --spec <approved-spec-path> --plan <approved-plan-path> --format json` before dispatching the reviewer.
 - If `contract_state != valid` or `packet_buildable_tasks != task_count`, stop and return to the current execution flow; do not review stale or malformed approved artifacts.
 - Run `featureforge plan execution status --plan <approved-plan-path>` before dispatching the reviewer.
 - If helper status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state.
 - Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON.
-- For terminal whole-diff review, if any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.
+- If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.
 - For non-terminal checkpoint or task-boundary review, do not force terminal-clean execution state; follow the helper-reported blocking reason and review scope for the current task boundary.
 - If `evidence_path` is empty or unreadable, stop and return to the current execution flow instead of reviewing against missing execution evidence.
 - For terminal whole-diff review, run `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` before dispatching the reviewer.

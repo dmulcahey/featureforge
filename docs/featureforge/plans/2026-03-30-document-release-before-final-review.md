@@ -375,9 +375,7 @@ Expected: SKILL.md outputs update with template changes.
 Run: `node --test tests/codex-runtime/skill-doc-generation.test.mjs`
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 6**
-
-  **Execution Note:** Active - Commit Task 6
+- [x] **Step 5: Commit Task 6**
 Run:
 ```bash
 git add skills/finishing-a-development-branch/SKILL.md.tmpl skills/document-release/SKILL.md.tmpl skills/requesting-code-review/SKILL.md.tmpl skills/using-featureforge/SKILL.md.tmpl review/late-stage-precedence-reference.md skills/finishing-a-development-branch/SKILL.md skills/document-release/SKILL.md skills/requesting-code-review/SKILL.md skills/using-featureforge/SKILL.md
@@ -401,13 +399,13 @@ git commit -m "docs: align late-stage skills to canonical precedence"
 - Modify: `tests/codex-runtime/gen-skill-docs.unit.test.mjs`
 - Modify: `tests/runtime_instruction_contracts.rs`
 
-- [ ] **Step 1: Update public workflow docs to remove review-first wording**
+- [x] **Step 1: Update public workflow docs to remove review-first wording**
 Ensure normative sequence reflects document-release before terminal final review.
 
-- [ ] **Step 2: Add contract assertions for precedence grounding**
+- [x] **Step 2: Add contract assertions for precedence grounding**
 Fail when skill/public precedence wording diverges from canonical contract rows, dispatch-command boundary semantics, or the runtime-derived precedence reference artifact.
 
-- [ ] **Step 3: Run skill-doc contract suite**
+- [x] **Step 3: Run skill-doc contract suite**
 Run:
 ```bash
 node --test tests/codex-runtime/skill-doc-contracts.test.mjs

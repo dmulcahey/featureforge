@@ -67,6 +67,8 @@ Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-re
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is pre-authorized and does not require per-dispatch user-consent prompts
 - `featureforge plan execution gate-finish --plan <approved-plan-path>` requires deviation disposition from authoritative runtime topology-downgrade artifacts, not reason-code hints alone
 - `featureforge plan execution status --plan <approved-plan-path>` surfaces runtime strategy checkpoint state (`strategy_state`, `strategy_checkpoint_kind`, `last_strategy_checkpoint_fingerprint`, `strategy_reset_required`)
+- for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`
+- keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof
 
 Runtime strategy checkpointing is execution-owned, not planning-owned. The runtime records:
 

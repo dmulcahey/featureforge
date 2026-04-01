@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-30-document-release-before-final-review.md
 **Plan Revision:** 2
-**Plan Fingerprint:** be0d1c1e54a67ac38ace997eaf33c81bff44274466a6922ff8ab7de64607b06c
+**Plan Fingerprint:** e1a295f9aec7ade7eefb47bec8b4b3a87d0e9bc2048b9b5d68c83a5663dec803
 **Source Spec Path:** docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** b5b43e0bc28166882583da5bf2fc77399795fee0d1277107851e71986a5de0f4
@@ -663,4 +663,117 @@
 - skills/using-featureforge/SKILL.md.tmpl | sha256:2fa14897ec62447b8a25793bf316afb44b028fd107f035d764b62ba05c737c15
 **Verify Command:** node --test tests/codex-runtime/skill-doc-generation.test.mjs
 **Verification Summary:** `node --test tests/codex-runtime/skill-doc-generation.test.mjs` -> pass
+**Invalidation Reason:** N/A
+
+### Task 6 Step 5
+#### Attempt 1
+**Status:** Invalidated
+**Recorded At:** 2026-04-01T16:50:30.276885Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 5
+**Packet Fingerprint:** 620c45ca1245a2753c4a0fc75e73130058f96192679f85503b566c2976672877
+**Head SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Base SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Claim:** Committed Task 6 late-stage skill/template alignment, runtime-grounded precedence reference, regenerated skill docs, and refreshed execution artifacts.
+**Files Proven:**
+- docs/featureforge/execution-evidence/2026-03-30-document-release-before-final-review-r2-evidence.md | sha256:63025b430e7b6ceff5cb6a3110b6ee36e04b1431287c5023bec9f883588bc95b
+- docs/featureforge/plans/2026-03-30-document-release-before-final-review.md | sha256:7ae2313d1010acc75e08611b269e959cc6b05f68000d3897e98d23662a9fd195
+- review/late-stage-precedence-reference.md | sha256:8b8cb8b3c9a640462c34417b10689e03922c3d644a6f5277a3d60d41311f30df
+- skills/document-release/SKILL.md | sha256:4c4489e525f7495e6a9e772b81923b0e9c3e095f205b42e7b7293386e065eb86
+- skills/document-release/SKILL.md.tmpl | sha256:2da6b96d77716a5e8ff3257f51d0c01150b2613f8c933da82be29d2b14504d8e
+- skills/finishing-a-development-branch/SKILL.md | sha256:14d8e212f39863e7464b67dcbdf76f360e89193d669b59e784d49937322ab6eb
+- skills/finishing-a-development-branch/SKILL.md.tmpl | sha256:f8d388288d170506600cd315da28e8f34de6edf1a68dbd2a13f222b2e35c08d5
+- skills/requesting-code-review/SKILL.md | sha256:95fc52d0fe12f3508022705c81bf6196700c06cd492037f8c778759a3604d63e
+- skills/requesting-code-review/SKILL.md.tmpl | sha256:b09534496c534a81166898c7d48c7f6b17c9af8e5a3ef982fcc3a78d78ed9f67
+- skills/using-featureforge/SKILL.md | sha256:e4066cfa3a7d88900982875162702fc582ece54076af3867fca141d050ec9750
+- skills/using-featureforge/SKILL.md.tmpl | sha256:2fa14897ec62447b8a25793bf316afb44b028fd107f035d764b62ba05c737c15
+**Verify Command:** git show --stat --oneline -1
+**Verification Summary:** `git show --stat --oneline -1` -> pass
+**Invalidation Reason:** Evidence rebuild: files_proven_drifted
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:50:30.318778Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 6
+**Step Number:** 5
+**Packet Fingerprint:** 620c45ca1245a2753c4a0fc75e73130058f96192679f85503b566c2976672877
+**Head SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Base SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Claim:** Committed Task 6 late-stage skill/template alignment, runtime-grounded precedence reference, regenerated skill docs, and refreshed execution artifacts.
+**Files Proven:**
+- docs/featureforge/execution-evidence/2026-03-30-document-release-before-final-review-r2-evidence.md | sha256:e223dabd18ca79990025d632e68b98bdf042dd718c74d784043407d3b1466c2a
+- docs/featureforge/plans/2026-03-30-document-release-before-final-review.md | sha256:7ae2313d1010acc75e08611b269e959cc6b05f68000d3897e98d23662a9fd195
+- review/late-stage-precedence-reference.md | sha256:8b8cb8b3c9a640462c34417b10689e03922c3d644a6f5277a3d60d41311f30df
+- skills/document-release/SKILL.md | sha256:4c4489e525f7495e6a9e772b81923b0e9c3e095f205b42e7b7293386e065eb86
+- skills/document-release/SKILL.md.tmpl | sha256:2da6b96d77716a5e8ff3257f51d0c01150b2613f8c933da82be29d2b14504d8e
+- skills/finishing-a-development-branch/SKILL.md | sha256:14d8e212f39863e7464b67dcbdf76f360e89193d669b59e784d49937322ab6eb
+- skills/finishing-a-development-branch/SKILL.md.tmpl | sha256:f8d388288d170506600cd315da28e8f34de6edf1a68dbd2a13f222b2e35c08d5
+- skills/requesting-code-review/SKILL.md | sha256:43a09bf45684284f96afc94eb5e6c1a7ed395a0d592d3884ccab68325adbd16c
+- skills/requesting-code-review/SKILL.md.tmpl | sha256:059cfd125e13216971d9e127893c163eb8bedbee6265d8c1c045a74c0106346c
+- skills/using-featureforge/SKILL.md | sha256:0a4c7b8760d815b58e8b29deddfb961491595e30bcce422d6c711dafbd34514c
+- skills/using-featureforge/SKILL.md.tmpl | sha256:63bc52406f9534ac6654d39ac354020de2de1470a7b4b4bee2a6bda6a497452d
+**Verify Command:** git show --stat --oneline -1
+**Verification Summary:** `git show --stat --oneline -1` -> passed: 960aa6b docs: align late-stage skills to canonical precedence ...ment-release-before-final-review-r2-evidence.md | 151 ++++++++++++++++++++- ...6-03-30-document-release-before-final-review.md | 10 +- review/late-stage-precedence-reference.md | 31 +++++ skills/document-release/SKILL.md | 6 + skills/document-release/SKILL.md.tmpl | 6 + skills/finishing-a-development-branch/SKILL.md | 17 ++- .../finishing-a-development-branch/SKILL.md.tmpl | 17 ++- skills/requesting-code-review/SKILL.md | 27 ++-- skills/requesting-code-review/SKILL.md.tmpl | 27 ++-- skills/using-featureforge/SKILL.md | 5 +- skills/using-featureforge/SKILL.md.tmpl | 5 +- 11 files changed, 265 insertions(+), 37 deletions(-)
+**Invalidation Reason:** N/A
+
+### Task 7 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:55:47.894607Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 7
+**Step Number:** 1
+**Packet Fingerprint:** c17523428fcb93a384706c512de197bb41a70f3d9359860759d6500b29e8cb1e
+**Head SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Base SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Claim:** Updated public workflow docs to remove review-first wording and encode document-release-before-terminal-review sequencing with explicit gate-review/gate-review-dispatch boundary semantics.
+**Files Proven:**
+- README.md | sha256:f156ddabf34c6aaac50fc24475b5b6a85b99f7d51172441e9a4d56e013379983
+- docs/README.codex.md | sha256:8fbb8b76bd89456888c70dccd619fe9e9eb5296b3fdda2d0d2f6515bb9cd4f52
+- docs/README.copilot.md | sha256:f414c3b77ee91c64c5d8a02697ed35409d09ac74c9bc568e28625e573a97c801
+**Verify Command:** rg -n 'Completion then flows through|workflow-routed terminal sequencing|gate-review-dispatch' README.md docs/README.codex.md docs/README.copilot.md
+**Verification Summary:** `rg -n 'Completion then flows through|workflow-routed terminal sequencing|gate-review-dispatch' README.md docs/README.codex.md docs/README.copilot.md` -> pass
+**Invalidation Reason:** N/A
+
+### Task 7 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:55:58.677124Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 7
+**Step Number:** 2
+**Packet Fingerprint:** 669b361b6b886d7c9246778f27d910785ccf8ad74a4fe61716b501a8586fc5b9
+**Head SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Base SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Claim:** Added precedence-grounding contract assertions across skill-doc, generator unit, and runtime instruction suites so public/skill wording stays aligned with the runtime-derived late-stage precedence reference and gate-review command boundaries.
+**Files Proven:**
+- tests/codex-runtime/gen-skill-docs.unit.test.mjs | sha256:e55016bab1d9901744191332b88ca4545ed1a7464a944330b4aaebc812e8cc2e
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:b95ac4193bcbc04c3976ca2c9fca6b25eea8eb53ea2000ffc539c02e6cb46472
+- tests/runtime_instruction_contracts.rs | sha256:ef371a4875955eb5be67c455f89094a869d3e4efc1fd88852755a0247c745331
+**Verify Command:** rg -n 'late-stage precedence|document-release|gate-review-dispatch|review/late-stage-precedence-reference' tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/runtime_instruction_contracts.rs
+**Verification Summary:** `rg -n 'late-stage precedence|document-release|gate-review-dispatch|review/late-stage-precedence-reference' tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/runtime_instruction_contracts.rs` -> pass
+**Invalidation Reason:** N/A
+
+### Task 7 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T16:56:12.601398Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 7
+**Step Number:** 3
+**Packet Fingerprint:** 15c6f878e5d8f8b8f2a4984dc54039e52b192fa9d39a6c87b30128b40a90eba0
+**Head SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Base SHA:** 960aa6bccdc905a21cf61876ebb357b59a15c56e
+**Claim:** Ran Task 7 contract suites for skill-doc generation/runtime instruction parity and confirmed all pass with precedence-grounding assertions in place.
+**Files Proven:**
+- README.md | sha256:f156ddabf34c6aaac50fc24475b5b6a85b99f7d51172441e9a4d56e013379983
+- docs/README.codex.md | sha256:8fbb8b76bd89456888c70dccd619fe9e9eb5296b3fdda2d0d2f6515bb9cd4f52
+- docs/README.copilot.md | sha256:f414c3b77ee91c64c5d8a02697ed35409d09ac74c9bc568e28625e573a97c801
+- tests/codex-runtime/gen-skill-docs.unit.test.mjs | sha256:e55016bab1d9901744191332b88ca4545ed1a7464a944330b4aaebc812e8cc2e
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:b95ac4193bcbc04c3976ca2c9fca6b25eea8eb53ea2000ffc539c02e6cb46472
+- tests/runtime_instruction_contracts.rs | sha256:ef371a4875955eb5be67c455f89094a869d3e4efc1fd88852755a0247c745331
+**Verify Command:** node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && cargo test --test runtime_instruction_contracts -- --nocapture
+**Verification Summary:** `node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && cargo test --test runtime_instruction_contracts -- --nocapture` -> pass
 **Invalidation Reason:** N/A

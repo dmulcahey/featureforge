@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   insertGeneratedHeader,
   renderTemplateContent,
@@ -107,6 +108,26 @@ test('using-featureforge helpers omit the removed bypass gate contract', () => {
 
   const normalStack = buildUsingFeatureForgeNormalStackSection();
   assert.equal(normalStack.trim(), '');
+});
+
+test('using-featureforge template keeps canonical late-stage precedence wording', () => {
+  const usingFeatureForgeTemplate = fs.readFileSync(
+    new URL('../../skills/using-featureforge/SKILL.md.tmpl', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    usingFeatureForgeTemplate,
+    /If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`\./,
+  );
+
+  const lateStageReference = fs.readFileSync(
+    new URL('../../review/late-stage-precedence-reference.md', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    lateStageReference,
+    /For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`\./,
+  );
 });
 
 test('generated preambles include the shared Search Before Building section for non-router skills only', () => {

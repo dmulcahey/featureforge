@@ -1173,6 +1173,47 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
 
   const readme = readUtf8(path.join(REPO_ROOT, 'README.md'));
   assert.match(readme, /Six layers matter:/);
+  assert.match(
+    readme,
+    /Completion then flows through \(runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`\):/,
+  );
+  const completionSection = readme.slice(
+    readme.indexOf('Completion then flows through'),
+    readme.indexOf('## Project Memory'),
+  );
+  assert.ok(
+    completionSection.indexOf('featureforge:document-release')
+      < completionSection.indexOf('featureforge:requesting-code-review'),
+    'README completion flow should list document-release before requesting-code-review',
+  );
+
+  const codexReadme = readUtf8(path.join(REPO_ROOT, 'docs/README.codex.md'));
+  assert.match(
+    codexReadme,
+    /for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` \(when required\) and `featureforge:finishing-a-development-branch`/,
+  );
+  assert.match(
+    codexReadme,
+    /`featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof/,
+  );
+
+  const copilotReadme = readUtf8(path.join(REPO_ROOT, 'docs/README.copilot.md'));
+  assert.match(
+    copilotReadme,
+    /for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` \(when required\) and `featureforge:finishing-a-development-branch`/,
+  );
+  assert.match(
+    copilotReadme,
+    /`featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof/,
+  );
+
+  const lateStageReference = readUtf8(path.join(REPO_ROOT, 'review/late-stage-precedence-reference.md'));
+  assert.match(lateStageReference, /`gate-review` is read-only state evaluation\./);
+  assert.match(lateStageReference, /`gate-review-dispatch` is the dispatch-proof minting boundary\./);
+  assert.match(
+    lateStageReference,
+    /For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`\./,
+  );
 });
 
 test('active eval docs use featureforge state roots', () => {
