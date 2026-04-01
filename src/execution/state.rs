@@ -1411,7 +1411,7 @@ fn apply_late_stage_precedence_status_overlay(
     let canonical_phase =
         parse_harness_phase(decision.phase).unwrap_or(HarnessPhase::FinalReviewPending);
 
-    if !gate_finish.allowed && !(release_blocked || review_blocked || qa_blocked) {
+    if !(gate_finish.allowed || release_blocked || review_blocked || qa_blocked) {
         push_status_reason_code_once(status, REASON_CODE_STALE_PROVENANCE);
         status.harness_phase = HarnessPhase::FinalReviewPending;
         return;

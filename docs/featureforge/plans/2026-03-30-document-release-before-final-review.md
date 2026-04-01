@@ -436,7 +436,7 @@ git commit -m "test: enforce canonical late-stage precedence wording parity"
 - Test: `tests/execution_harness_state.rs`
 - Test: `tests/codex-runtime/skill-doc-contracts.test.mjs`
 
-- [ ] **Step 1: Run Rust lint and targeted runtime suites**
+- [x] **Step 1: Run Rust lint and targeted runtime suites**
 Run:
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
@@ -446,7 +446,7 @@ cargo test --test execution_harness_state -- --nocapture
 ```
 Expected: PASS.
 
-- [ ] **Step 2: Run skill-doc generation and contract suites**
+- [x] **Step 2: Run skill-doc generation and contract suites**
 Run:
 ```bash
 node scripts/gen-skill-docs.mjs
@@ -456,7 +456,7 @@ node --test tests/codex-runtime/skill-doc-generation.test.mjs
 ```
 Expected: PASS.
 
-- [ ] **Step 3: Re-run plan contract lint for final plan coherence**
+- [x] **Step 3: Re-run plan contract lint for final plan coherence**
 Run:
 ```bash
 featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md --plan docs/featureforge/plans/2026-03-30-document-release-before-final-review.md
@@ -464,6 +464,8 @@ featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-docume
 Expected: PASS.
 
 - [ ] **Step 4: Commit integration verification updates**
+
+  **Execution Note:** Active - Commit integration verification updates
 Run:
 ```bash
 git add -A

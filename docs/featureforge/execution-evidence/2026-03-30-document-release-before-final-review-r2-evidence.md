@@ -2,7 +2,7 @@
 
 **Plan Path:** docs/featureforge/plans/2026-03-30-document-release-before-final-review.md
 **Plan Revision:** 2
-**Plan Fingerprint:** 8a1cd02a48b86dac2183624b4757cdfb8d605f429a44630a3e8a48099b47b1a9
+**Plan Fingerprint:** 02f274dea6c5e645a7e9caa09edbeac163fcb1204c36674d15c8ca669a3b1644
 **Source Spec Path:** docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md
 **Source Spec Revision:** 1
 **Source Spec Fingerprint:** b5b43e0bc28166882583da5bf2fc77399795fee0d1277107851e71986a5de0f4
@@ -830,8 +830,8 @@
 
 ### Task 7 Step 4
 #### Attempt 1
-**Status:** Completed
-**Recorded At:** 2026-04-01T17:02:00.585604Z
+**Status:** Invalidated
+**Recorded At:** 2026-04-01T17:06:40.806669Z
 **Execution Source:** featureforge:executing-plans
 **Task Number:** 7
 **Step Number:** 4
@@ -848,4 +848,85 @@
 - tests/runtime_instruction_contracts.rs | sha256:ef371a4875955eb5be67c455f89094a869d3e4efc1fd88852755a0247c745331
 **Verify Command:** git show --stat --oneline -1
 **Verification Summary:** `git show --stat --oneline -1` -> pass
+**Invalidation Reason:** Refreshing Task 7 closure against current execution run after execution-record commit.
+
+#### Attempt 2
+**Status:** Completed
+**Recorded At:** 2026-04-01T17:07:05.23616Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 7
+**Step Number:** 4
+**Packet Fingerprint:** c9830e7a2d76a590f8da24c4a12dd880513c26039019becaebb6216c719d34d9
+**Head SHA:** 8fc1c41c7e5c96c5b6a03526ebedce4c585423a7
+**Base SHA:** 8fc1c41c7e5c96c5b6a03526ebedce4c585423a7
+**Claim:** Committed Task 7 precedence wording parity updates across public docs and contract tests.
+**Files Proven:**
+- README.md | sha256:f156ddabf34c6aaac50fc24475b5b6a85b99f7d51172441e9a4d56e013379983
+- docs/README.codex.md | sha256:8fbb8b76bd89456888c70dccd619fe9e9eb5296b3fdda2d0d2f6515bb9cd4f52
+- docs/README.copilot.md | sha256:f414c3b77ee91c64c5d8a02697ed35409d09ac74c9bc568e28625e573a97c801
+- tests/codex-runtime/gen-skill-docs.unit.test.mjs | sha256:e55016bab1d9901744191332b88ca4545ed1a7464a944330b4aaebc812e8cc2e
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:b95ac4193bcbc04c3976ca2c9fca6b25eea8eb53ea2000ffc539c02e6cb46472
+- tests/runtime_instruction_contracts.rs | sha256:ef371a4875955eb5be67c455f89094a869d3e4efc1fd88852755a0247c745331
+**Verify Command:** git show --stat --oneline -1
+**Verification Summary:** `git show --stat --oneline -1` -> passed: 8fc1c41 chore: refresh task 6/7 execution records ...ment-release-before-final-review-r2-evidence.md | 82 ++++++++++++++++++++-- ...6-03-30-document-release-before-final-review.md | 2 +- 2 files changed, 78 insertions(+), 6 deletions(-)
+**Invalidation Reason:** N/A
+
+### Task 8 Step 1
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T17:08:50.434335Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 8
+**Step Number:** 1
+**Packet Fingerprint:** 524e64597dbb19a25f32e5874bb5161fa13fe8317747e2ed2dc5f3e3d4521394
+**Head SHA:** 8fc1c41c7e5c96c5b6a03526ebedce4c585423a7
+**Base SHA:** 8fc1c41c7e5c96c5b6a03526ebedce4c585423a7
+**Claim:** Ran clippy plus targeted runtime regression suites for workflow_runtime, workflow_runtime_final_review, and execution_harness_state with all checks passing.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:b95ac4193bcbc04c3976ca2c9fca6b25eea8eb53ea2000ffc539c02e6cb46472
+- tests/execution_harness_state.rs | sha256:6d036a8226f28a6f043afacf41551982898200a5514bc8bc92b3a7991a913fc2
+- tests/workflow_runtime.rs | sha256:43676e40a1487857aa5240ba8c432bdf473e1c7c72b0c3243fe3008b42e9cad8
+- tests/workflow_runtime_final_review.rs | sha256:97ccc08675b927a0a4724ec020c56265a28803fab0afc9ef08cdf3ce6b54220d
+**Verify Command:** cargo clippy --all-targets --all-features -- -D warnings && cargo test --test workflow_runtime -- --nocapture && cargo test --test workflow_runtime_final_review -- --nocapture && cargo test --test execution_harness_state -- --nocapture
+**Verification Summary:** `cargo clippy --all-targets --all-features -- -D warnings && cargo test --test workflow_runtime -- --nocapture && cargo test --test workflow_runtime_final_review -- --nocapture && cargo test --test execution_harness_state -- --nocapture` -> pass
+**Invalidation Reason:** N/A
+
+### Task 8 Step 2
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T17:09:02.794999Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 8
+**Step Number:** 2
+**Packet Fingerprint:** 2b3326727bf8c784181f020e945d8e56e310188533bcbe026a6d56648090b9ae
+**Head SHA:** 8fc1c41c7e5c96c5b6a03526ebedce4c585423a7
+**Base SHA:** 8fc1c41c7e5c96c5b6a03526ebedce4c585423a7
+**Claim:** Regenerated skill docs and ran generation/unit/contract suites with all checks passing.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:b95ac4193bcbc04c3976ca2c9fca6b25eea8eb53ea2000ffc539c02e6cb46472
+- tests/execution_harness_state.rs | sha256:6d036a8226f28a6f043afacf41551982898200a5514bc8bc92b3a7991a913fc2
+- tests/workflow_runtime.rs | sha256:43676e40a1487857aa5240ba8c432bdf473e1c7c72b0c3243fe3008b42e9cad8
+- tests/workflow_runtime_final_review.rs | sha256:97ccc08675b927a0a4724ec020c56265a28803fab0afc9ef08cdf3ce6b54220d
+**Verify Command:** node scripts/gen-skill-docs.mjs && node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && node --test tests/codex-runtime/skill-doc-generation.test.mjs
+**Verification Summary:** `node scripts/gen-skill-docs.mjs && node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs && node --test tests/codex-runtime/skill-doc-contracts.test.mjs && node --test tests/codex-runtime/skill-doc-generation.test.mjs` -> pass
+**Invalidation Reason:** N/A
+
+### Task 8 Step 3
+#### Attempt 1
+**Status:** Completed
+**Recorded At:** 2026-04-01T17:09:13.906625Z
+**Execution Source:** featureforge:executing-plans
+**Task Number:** 8
+**Step Number:** 3
+**Packet Fingerprint:** 740000cd8c1e35e22e4ace0d1409c548bc31b2657ba03e246b87b08ff10d2bde
+**Head SHA:** 8fc1c41c7e5c96c5b6a03526ebedce4c585423a7
+**Base SHA:** 8fc1c41c7e5c96c5b6a03526ebedce4c585423a7
+**Claim:** Re-ran plan contract lint for final spec/plan coherence and confirmed PASS.
+**Files Proven:**
+- tests/codex-runtime/skill-doc-contracts.test.mjs | sha256:b95ac4193bcbc04c3976ca2c9fca6b25eea8eb53ea2000ffc539c02e6cb46472
+- tests/execution_harness_state.rs | sha256:6d036a8226f28a6f043afacf41551982898200a5514bc8bc92b3a7991a913fc2
+- tests/workflow_runtime.rs | sha256:43676e40a1487857aa5240ba8c432bdf473e1c7c72b0c3243fe3008b42e9cad8
+- tests/workflow_runtime_final_review.rs | sha256:97ccc08675b927a0a4724ec020c56265a28803fab0afc9ef08cdf3ce6b54220d
+**Verify Command:** ./bin/featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md --plan docs/featureforge/plans/2026-03-30-document-release-before-final-review.md
+**Verification Summary:** `./bin/featureforge plan contract lint --spec docs/featureforge/specs/2026-03-30-document-release-before-final-review-design.md --plan docs/featureforge/plans/2026-03-30-document-release-before-final-review.md` -> pass
 **Invalidation Reason:** N/A
