@@ -288,9 +288,7 @@ node --test tests/codex-runtime/eval-observability.test.mjs
 ```
 Expected: PASS for new diagnostics assertions.
 
-- [ ] **Step 5: Commit Task 4**
-
-  **Execution Note:** Active - Commit Task 4
+- [x] **Step 5: Commit Task 4**
 Run:
 ```bash
 git add src/workflow/operator.rs src/execution/state.rs tests/workflow_runtime.rs
@@ -312,20 +310,20 @@ git commit -m "feat: add late-stage precedence observability diagnostics"
 - Modify: `tests/workflow_runtime_final_review.rs`
 - Modify: `tests/execution_harness_state.rs`
 
-- [ ] **Step 1: Add matrix test table for mixed release/review/qa stale combinations**
+- [x] **Step 1: Add matrix test table for mixed release/review/qa stale combinations**
 Run: `cargo test --test workflow_runtime -- canonical_workflow_phase_routes_ --nocapture`
 Expected: FAIL until matrix parity is fully implemented.
 
-- [ ] **Step 2: Add fail-closed tests for malformed precedence inputs**
+- [x] **Step 2: Add fail-closed tests for malformed precedence inputs**
 Cover named failure class/reason-code behavior from spec registry.
 
-- [ ] **Step 3: Add parity regression tests for harness-phase vs operator fallback**
+- [x] **Step 3: Add parity regression tests for harness-phase vs operator fallback**
 Assert identical precedence outcomes for the same gate evidence.
 
-- [ ] **Step 4: Add terminal-vs-checkpoint review mode and dispatch-command boundary coverage**
+- [x] **Step 4: Add terminal-vs-checkpoint review mode and dispatch-command boundary coverage**
 Prove terminal mode is guarded, checkpoint mode stays available, and `gate-review` remains read-only while `gate-review-dispatch` remains dispatch-minting.
 
-- [ ] **Step 5: Run runtime test suite slice**
+- [x] **Step 5: Run runtime test suite slice**
 Run:
 ```bash
 cargo test --test workflow_runtime -- --nocapture
@@ -336,6 +334,8 @@ cargo test --test workflow_runtime -- canonical_workflow_gate_review_is_read_onl
 Expected: PASS.
 
 - [ ] **Step 6: Commit Task 5**
+
+  **Execution Note:** Active - Commit Task 5
 Run:
 ```bash
 git add tests/workflow_runtime.rs tests/workflow_runtime_final_review.rs tests/execution_harness_state.rs

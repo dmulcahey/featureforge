@@ -1392,7 +1392,15 @@ fn apply_late_stage_precedence_status_overlay(
     }
     let gate_review = gate_review_from_context_internal(context, true);
     let gate_finish = gate_finish_from_context(context);
-    let release_blocked = status_release_blocked(&gate_finish);
+    let release_blocked = status_release_blocked(&gate_finish)
+        || gate_review.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "release_docs_state_missing"
+                    | "release_docs_state_stale"
+                    | "release_docs_state_not_fresh"
+            )
+        });
     let review_blocked = !gate_review.allowed || status_review_blocked(&gate_finish);
     let qa_blocked = status_qa_blocked(&gate_finish);
     let decision = resolve_late_stage_precedence(LateStageSignals {
@@ -4474,7 +4482,7 @@ fn is_ancestor_commit(repo_root: &Path, ancestor: &str, descendant: &str) -> boo
 }
 
 pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
-    let mut gate = GateState::from_result(gate_review_from_context_internal(context, true));
+    let mut gate = GateState::from_result(gate_review_from_context_internal(context, false));
     if !gate.allowed {
         return gate.finish();
     }
@@ -4553,7 +4561,7 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
     let Some(release_path) = release_path else {
         gate.fail(
             FailureClass::ReleaseArtifactNotFresh,
-            "release_artifact_missing",
+            "release_docs_state_missing",
             "Finish readiness requires a release-readiness artifact.",
             "Run document-release and return with a fresh release-readiness artifact.",
         );

@@ -649,7 +649,8 @@ fn derive_phase(
         return String::from("ready_for_branch_completion");
     }
 
-    let release_blocked = late_stage_release_blocked(gate_finish);
+    let release_blocked =
+        late_stage_release_blocked(gate_finish) || late_stage_release_truth_blocked(gate_review);
     let review_blocked =
         gate_review.is_some_and(|gate| !gate.allowed) || late_stage_review_blocked(gate_finish);
     let qa_blocked = late_stage_qa_blocked(gate_finish);
@@ -697,7 +698,8 @@ fn late_stage_observability_for_phase(
         }
     }
 
-    let release_blocked = late_stage_release_blocked(gate_finish);
+    let release_blocked =
+        late_stage_release_blocked(gate_finish) || late_stage_release_truth_blocked(gate_review);
     let review_blocked =
         gate_review.is_some_and(|gate| !gate.allowed) || late_stage_review_blocked(gate_finish);
     let qa_blocked = late_stage_qa_blocked(gate_finish);
@@ -1074,6 +1076,17 @@ fn late_stage_release_blocked(gate_finish: &GateResult) -> bool {
                 "release_docs_state_not_fresh",
             ],
         )
+}
+
+fn late_stage_release_truth_blocked(gate_review: Option<&GateResult>) -> bool {
+    gate_has_any_reason(
+        gate_review,
+        &[
+            "release_docs_state_missing",
+            "release_docs_state_stale",
+            "release_docs_state_not_fresh",
+        ],
+    )
 }
 
 fn late_stage_review_blocked(gate_finish: &GateResult) -> bool {
