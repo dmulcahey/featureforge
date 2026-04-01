@@ -645,7 +645,7 @@ fn derive_phase(
         return String::from("final_review_pending");
     };
 
-    if gate_finish.allowed {
+    if gate_finish.allowed && gate_review.is_some_and(|gate| gate.allowed) {
         return String::from("ready_for_branch_completion");
     }
 

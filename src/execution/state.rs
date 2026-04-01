@@ -4482,7 +4482,12 @@ fn is_ancestor_commit(repo_root: &Path, ancestor: &str, descendant: &str) -> boo
 }
 
 pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
-    let mut gate = GateState::from_result(gate_review_from_context_internal(context, false));
+    let mut gate = GateState::default();
+    enforce_finish_dependency_index_truth(context, &mut gate);
+    merge_gate_result(
+        &mut gate,
+        gate_review_from_context_internal(context, false),
+    );
     if !gate.allowed {
         return gate.finish();
     }
@@ -5003,6 +5008,43 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
     gate.finish()
 }
 
+fn merge_gate_result(target: &mut GateState, incoming: GateResult) {
+    let GateResult {
+        allowed,
+        failure_class,
+        reason_codes,
+        warning_codes,
+        diagnostics,
+    } = incoming;
+
+    if !allowed {
+        target.allowed = false;
+    }
+    if target.failure_class.is_empty() && !failure_class.is_empty() {
+        target.failure_class = failure_class;
+    }
+
+    for code in reason_codes {
+        if !target.reason_codes.iter().any(|existing| existing == &code) {
+            target.reason_codes.push(code);
+        }
+    }
+    for code in warning_codes {
+        if !target.warning_codes.iter().any(|existing| existing == &code) {
+            target.warning_codes.push(code);
+        }
+    }
+    for diagnostic in diagnostics {
+        if !target
+            .diagnostics
+            .iter()
+            .any(|existing| existing.code == diagnostic.code)
+        {
+            target.diagnostics.push(diagnostic);
+        }
+    }
+}
+
 fn enforce_review_authoritative_late_gate_truth(context: &ExecutionContext, gate: &mut GateState) {
     let overlay = match load_status_authoritative_overlay_checked(context) {
         Ok(overlay) => overlay,
@@ -5041,6 +5083,26 @@ fn enforce_review_authoritative_late_gate_truth(context: &ExecutionContext, gate
     );
 }
 
+fn enforce_finish_dependency_index_truth(context: &ExecutionContext, gate: &mut GateState) {
+    let overlay = match load_status_authoritative_overlay_checked(context) {
+        Ok(overlay) => overlay,
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "authoritative_state_unavailable",
+                error.message,
+                "Restore authoritative harness state readability and validity before running gate-finish.",
+            );
+            return;
+        }
+    };
+    let Some(overlay) = overlay else {
+        return;
+    };
+
+    validate_finish_dependency_index_truth(overlay.dependency_index_state.as_deref(), gate);
+}
+
 fn validate_review_dependency_index_truth(raw_state: Option<&str>, gate: &mut GateState) {
     let state = normalize_optional_overlay_value(raw_state).unwrap_or("missing");
     if state == "fresh" {
@@ -5066,6 +5128,34 @@ fn validate_review_dependency_index_truth(raw_state: Option<&str>, gate: &mut Ga
         code,
         message,
         "Refresh authoritative dependency-index truth before running gate-review.",
+    );
+}
+
+fn validate_finish_dependency_index_truth(raw_state: Option<&str>, gate: &mut GateState) {
+    let state = normalize_optional_overlay_value(raw_state).unwrap_or("missing");
+    if state == "fresh" {
+        return;
+    }
+
+    let (code, message) = match state {
+        "missing" => (
+            "dependency_index_state_missing",
+            "Authoritative dependency-index truth is missing for finish readiness.",
+        ),
+        "stale" => (
+            "dependency_index_state_stale",
+            "Authoritative dependency-index truth is stale for finish readiness.",
+        ),
+        _ => (
+            "dependency_index_state_not_fresh",
+            "Authoritative dependency-index truth is not fresh for finish readiness.",
+        ),
+    };
+    gate.fail(
+        FailureClass::DependencyIndexMismatch,
+        code,
+        message,
+        "Refresh authoritative dependency-index truth before running gate-finish.",
     );
 }
 

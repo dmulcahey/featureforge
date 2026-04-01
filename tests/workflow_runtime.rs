@@ -5591,6 +5591,96 @@ fn canonical_workflow_gate_review_fail_closes_on_malformed_authoritative_late_ga
 }
 
 #[test]
+fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for_branch_completion()
+ {
+    let (repo_dir, state_dir) =
+        init_repo("workflow-phase-ready-guard-stale-authoritative-late-gate-truth");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-ready-guard-stale-authoritative-late-gate-truth";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let base_branch = expected_release_base_branch(repo);
+
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    let branch = current_branch_name(repo);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("harness_phase", Value::from("final_review_pending")),
+            ("latest_authoritative_sequence", Value::from(17)),
+            ("dependency_index_state", Value::from("fresh")),
+            ("final_review_state", Value::from("stale")),
+            ("browser_qa_state", Value::from("not_required")),
+            ("release_docs_state", Value::from("stale")),
+        ],
+    );
+    enable_session_decision(state, session_key);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for ready guard stale-authoritative late-gate truth fixture",
+        ),
+        "workflow phase for ready guard stale-authoritative late-gate truth fixture",
+    );
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff for ready guard stale-authoritative late-gate truth fixture",
+        ),
+        "workflow handoff for ready guard stale-authoritative late-gate truth fixture",
+    );
+    let gate_review_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "review", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate review for ready guard stale-authoritative late-gate truth fixture",
+        ),
+        "workflow gate review for ready guard stale-authoritative late-gate truth fixture",
+    );
+    let gate_finish_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "gate", "finish", "--plan", plan_rel, "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow gate finish for ready guard stale-authoritative late-gate truth fixture",
+        ),
+        "workflow gate finish for ready guard stale-authoritative late-gate truth fixture",
+    );
+
+    assert_eq!(gate_review_json["allowed"], false, "{gate_review_json:?}");
+    assert_eq!(
+        gate_finish_json["allowed"], true,
+        "fixture should keep finish gate green so stale authoritative review truth cannot be bypassed by ready routing; got {gate_finish_json:?}"
+    );
+    assert_eq!(
+        phase_json["phase"], "document_release_pending",
+        "stale authoritative late-gate truth must fail closed to release-first precedence, got {phase_json:?}"
+    );
+    assert_eq!(phase_json["next_action"], "run_document_release");
+    assert_eq!(
+        handoff_json["recommended_skill"], "featureforge:document-release",
+        "stale authoritative late-gate truth must not route to branch completion, got {handoff_json:?}"
+    );
+}
+
+#[test]
 fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final_review_over_newer_branch_decoy()
  {
     let (repo_dir, state_dir) = init_repo("workflow-phase-authoritative-final-review-provenance");

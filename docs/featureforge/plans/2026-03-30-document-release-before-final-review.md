@@ -333,9 +333,7 @@ cargo test --test workflow_runtime -- canonical_workflow_gate_review_is_read_onl
 ```
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 5**
-
-  **Execution Note:** Active - Commit Task 5
+- [x] **Step 6: Commit Task 5**
 Run:
 ```bash
 git add tests/workflow_runtime.rs tests/workflow_runtime_final_review.rs tests/execution_harness_state.rs
