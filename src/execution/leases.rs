@@ -21,6 +21,8 @@ pub(crate) struct StrategyReviewDispatchLineageRecord {
     #[serde(default)]
     pub(crate) dispatch_id: Option<String>,
     #[serde(default)]
+    pub(crate) reviewed_state_id: Option<String>,
+    #[serde(default)]
     pub(crate) source_task: Option<u32>,
     #[serde(default)]
     pub(crate) source_step: Option<u32>,

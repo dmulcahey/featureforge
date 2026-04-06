@@ -142,6 +142,7 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
 **Source Spec:** `{SPEC_REL}`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
+**QA Requirement:** not-required
 
 ## Requirement Coverage Matrix
 

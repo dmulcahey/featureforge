@@ -2047,8 +2047,16 @@ impl WriteAuthorityLock {
                     if process_is_running(holder_pid) {
                         return Err(AuthorityLockAcquireError::Conflict);
                     }
-                    remove_stale_write_authority_lock(&lock_path)?;
-                    continue;
+                    match fs::remove_file(&lock_path) {
+                        Ok(()) => continue,
+                        Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => continue,
+                        Err(remove_error) => {
+                            return Err(AuthorityLockAcquireError::Io(format!(
+                                "Could not reclaim stale write-authority lock {}: {remove_error}",
+                                lock_path.display()
+                            )));
+                        }
+                    }
                 }
                 Err(error) => {
                     return Err(AuthorityLockAcquireError::Io(format!(
@@ -2073,16 +2081,5 @@ impl WriteAuthorityLock {
 impl Drop for WriteAuthorityLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn remove_stale_write_authority_lock(lock_path: &Path) -> Result<(), AuthorityLockAcquireError> {
-    match fs::remove_file(lock_path) {
-        Ok(()) => Ok(()),
-        Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => Ok(()),
-        Err(remove_error) => Err(AuthorityLockAcquireError::Io(format!(
-            "A stale write-authority lock was found at {}, but it could not be removed: {remove_error}",
-            lock_path.display()
-        ))),
     }
 }

@@ -726,28 +726,58 @@ impl ExecutionRuntime {
         &self,
         args: &RecordReviewDispatchArgs,
     ) -> Result<RecordReviewDispatchOutput, JsonFailure> {
-        let initial_context = load_execution_context(self, &args.plan)?;
+        let initial_context = match load_execution_context(self, &args.plan) {
+            Ok(context) => context,
+            Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
+                return Ok(record_review_dispatch_blocked_output(
+                    args,
+                    String::from(FailureClass::PlanNotExecutionReady.as_str()),
+                    vec![String::from("plan_not_execution_ready")],
+                    Vec::new(),
+                    vec![GateDiagnostic {
+                        code: String::from("plan_not_execution_ready"),
+                        severity: String::from("error"),
+                        message: error.message,
+                        remediation: String::from(
+                            "Refresh the approved plan/spec pair before running record-review-dispatch.",
+                        ),
+                    }],
+                ));
+            }
+            Err(error) => return Err(error),
+        };
         ensure_review_dispatch_authoritative_bootstrap(&initial_context)?;
-        let context = load_execution_context(self, &args.plan)?;
+        let context = match load_execution_context(self, &args.plan) {
+            Ok(context) => context,
+            Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
+                return Ok(record_review_dispatch_blocked_output(
+                    args,
+                    String::from(FailureClass::PlanNotExecutionReady.as_str()),
+                    vec![String::from("plan_not_execution_ready")],
+                    Vec::new(),
+                    vec![GateDiagnostic {
+                        code: String::from("plan_not_execution_ready"),
+                        severity: String::from("error"),
+                        message: error.message,
+                        remediation: String::from(
+                            "Refresh the approved plan/spec pair before running record-review-dispatch.",
+                        ),
+                    }],
+                ));
+            }
+            Err(error) => return Err(error),
+        };
         let cycle_target = review_dispatch_cycle_target(&context);
         validate_review_dispatch_request(&context, args, cycle_target)?;
         let gate = review_dispatch_gate_from_context(&context, args, cycle_target);
         if !gate.allowed {
-            return Ok(RecordReviewDispatchOutput {
-                allowed: false,
-                failure_class: gate.failure_class.clone(),
-                reason_codes: gate.reason_codes.clone(),
-                warning_codes: gate.warning_codes.clone(),
-                diagnostics: gate.diagnostics.clone(),
-                scope: match args.scope {
-                    Some(ReviewDispatchScopeArg::Task) => String::from("task"),
-                    Some(ReviewDispatchScopeArg::FinalReview) => String::from("final-review"),
-                    None => String::new(),
-                },
-                action: String::from("blocked"),
-                dispatch_id: None,
-                recorded_at: None,
-            });
+            return Ok(record_review_dispatch_blocked_output(
+                args,
+                gate.failure_class.clone(),
+                gate.reason_codes.clone(),
+                gate.warning_codes.clone(),
+                gate.diagnostics.clone(),
+            ));
         }
         let action =
             record_review_dispatch_strategy_checkpoint(&context, args, cycle_target)?;
@@ -784,6 +814,30 @@ impl ExecutionRuntime {
     pub fn gate_finish(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
         let context = load_execution_context(self, &args.plan)?;
         Ok(gate_finish_from_context(&context))
+    }
+}
+
+fn record_review_dispatch_blocked_output(
+    args: &RecordReviewDispatchArgs,
+    failure_class: String,
+    reason_codes: Vec<String>,
+    warning_codes: Vec<String>,
+    diagnostics: Vec<GateDiagnostic>,
+) -> RecordReviewDispatchOutput {
+    RecordReviewDispatchOutput {
+        allowed: false,
+        failure_class,
+        reason_codes,
+        warning_codes,
+        diagnostics,
+        scope: match args.scope {
+            Some(ReviewDispatchScopeArg::Task) => String::from("task"),
+            Some(ReviewDispatchScopeArg::FinalReview) => String::from("final-review"),
+            None => String::new(),
+        },
+        action: String::from("blocked"),
+        dispatch_id: None,
+        recorded_at: None,
     }
 }
 
@@ -853,6 +907,12 @@ fn record_review_dispatch_strategy_checkpoint(
         ));
     };
     let cycle_target = match cycle_target {
+        ReviewDispatchCycleTarget::Bound(_, _)
+            if matches!(args.scope, Some(ReviewDispatchScopeArg::FinalReview))
+                && context.steps.iter().all(|step| step.checked) =>
+        {
+            None
+        }
         ReviewDispatchCycleTarget::Bound(task, step) => Some((task, step)),
         ReviewDispatchCycleTarget::UnboundCompletedPlan => None,
         ReviewDispatchCycleTarget::None => return Ok(ReviewDispatchMutationAction::AlreadyCurrent),
@@ -935,16 +995,17 @@ fn validate_review_dispatch_request(
         }
         Some(ReviewDispatchScopeArg::FinalReview) => match cycle_target {
             ReviewDispatchCycleTarget::UnboundCompletedPlan => Ok(()),
-            ReviewDispatchCycleTarget::Bound(task, _) => Err(JsonFailure::new(
-                FailureClass::InvalidCommandInput,
-                format!(
-                    "record-review-dispatch --scope final-review is invalid because Task {task} still requires task-scope review dispatch first."
-                ),
-            )),
-            ReviewDispatchCycleTarget::None => Err(JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                "record-review-dispatch --scope final-review requires a completed-plan final-review dispatch target.",
-            )),
+            ReviewDispatchCycleTarget::Bound(_, _)
+                if context.steps.iter().all(|step| step.checked) =>
+            {
+                Ok(())
+            }
+            ReviewDispatchCycleTarget::Bound(_, _) | ReviewDispatchCycleTarget::None => {
+                Err(JsonFailure::new(
+                    FailureClass::ExecutionStateNotReady,
+                    "record-review-dispatch --scope final-review requires a completed-plan final-review dispatch target.",
+                ))
+            }
         },
     }
 }
@@ -1032,9 +1093,76 @@ fn review_dispatch_gate_from_context(
                 return task_review_dispatch_gate_from_context(context, task_number);
             }
         }
-        Some(ReviewDispatchScopeArg::FinalReview) | None => {}
+        Some(ReviewDispatchScopeArg::FinalReview) => {
+            return final_review_dispatch_gate_from_context(context);
+        }
+        None => {}
     }
     gate_review_from_context_internal(context, false)
+}
+
+fn final_review_dispatch_gate_from_context(context: &ExecutionContext) -> GateResult {
+    let mut gate = GateState::from_result(gate_review_from_context_internal(context, false));
+    if !gate.allowed {
+        return gate.finish();
+    }
+
+    let overlay = match load_status_authoritative_overlay_checked(context) {
+        Ok(overlay) => overlay,
+        Err(error) => {
+            gate.fail(
+                FailureClass::MalformedExecutionState,
+                "authoritative_status_unreadable",
+                error.message,
+                "Restore authoritative harness state readability and retry final-review dispatch.",
+            );
+            return gate.finish();
+        }
+    };
+
+    let current_branch_closure_id = overlay.as_ref().and_then(|overlay| {
+        normalize_optional_overlay_value(overlay.current_branch_closure_id.as_deref())
+    });
+    if current_branch_closure_id.is_none() {
+        gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "branch_closure_recording_required_for_release_readiness",
+            "Final-review dispatch is blocked because no current reviewed branch closure exists.",
+            format!(
+                "Run `featureforge plan execution record-branch-closure --plan {}` before dispatching final review.",
+                context.plan_rel
+            ),
+        );
+        return gate.finish();
+    }
+
+    let release_readiness_result = overlay.as_ref().and_then(|overlay| {
+        normalize_optional_overlay_value(overlay.current_release_readiness_result.as_deref())
+    });
+    if release_readiness_result == Some("blocked") {
+        gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "release_blocker_resolution_required",
+            "Final-review dispatch is blocked because the current branch closure still has a blocked release-readiness result.",
+            format!(
+                "Run `featureforge plan execution advance-late-stage --plan {} --result ready|blocked --summary-file <path>` after resolving the release blocker.",
+                context.plan_rel
+            ),
+        );
+        return gate.finish();
+    }
+    if release_readiness_result != Some("ready") {
+        gate.fail(
+            FailureClass::ExecutionStateNotReady,
+            "release_readiness_recording_ready",
+            "Final-review dispatch is blocked because the current branch closure does not yet have a current release-readiness result `ready`.",
+            format!(
+                "Run `featureforge plan execution advance-late-stage --plan {} --result ready|blocked --summary-file <path>` before dispatching final review.",
+                context.plan_rel
+            ),
+        );
+    }
+    gate.finish()
 }
 
 fn task_review_dispatch_gate_from_context(
@@ -7154,6 +7282,37 @@ pub(crate) fn require_prior_task_closure_for_begin(
     ensure_prior_task_review_dispatch_closed(context, prior_task, target_task)?;
     ensure_prior_task_review_closed(context, prior_task, target_task)?;
     ensure_prior_task_verification_closed(context, prior_task, target_task)?;
+    ensure_prior_task_current_closure_record(context, prior_task, target_task)?;
+    Ok(())
+}
+
+fn ensure_prior_task_current_closure_record(
+    context: &ExecutionContext,
+    prior_task: u32,
+    target_task: u32,
+) -> Result<(), JsonFailure> {
+    let authoritative_state = load_authoritative_transition_state(context)?.ok_or_else(|| {
+        task_boundary_error(
+            FailureClass::MalformedExecutionState,
+            "prior_task_review_not_green",
+            format!(
+                "Task {target_task} may not begin because Task {prior_task} current task closure state is unavailable."
+            ),
+        )
+    })?;
+    let current_record = authoritative_state
+        .current_task_closure_result(prior_task)
+        .ok_or_else(|| {
+            task_boundary_error(
+                FailureClass::ExecutionStateNotReady,
+                "prior_task_review_not_green",
+                format!(
+                    "Task {target_task} may not begin because Task {prior_task} does not yet have a current task closure. Run `featureforge plan execution close-current-task --plan {} --task {prior_task} --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before starting Task {target_task}.",
+                    context.plan_rel
+                ),
+            )
+        })?;
+    let _ = current_record;
     Ok(())
 }
 

@@ -661,6 +661,44 @@ pub fn close_current_task(
     let reviewed_state_id = current_task_reviewed_state_id(&context, args.task)?;
     let contract_identity = current_task_contract_identity(&context, args.task);
     let closure_record_id = current_task_closure_record_id(&context, args.task)?;
+    match task_dispatch_reviewed_state_status(
+        &context,
+        args.task,
+        &args.dispatch_id,
+        &reviewed_state_id,
+    )? {
+        TaskDispatchReviewedStateStatus::Current => {}
+        TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
+            return Ok(CloseCurrentTaskOutput {
+                action: String::from("blocked"),
+                task_number: args.task,
+                dispatch_validation_action: String::from("blocked"),
+                closure_action: String::from("blocked"),
+                task_closure_status: String::from("not_current"),
+                superseded_task_closure_ids: Vec::new(),
+                closure_record_id: None,
+                required_follow_up: Some(String::from("record_review_dispatch")),
+                trace_summary: String::from(
+                    "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
+                ),
+            });
+        }
+        TaskDispatchReviewedStateStatus::StaleReviewedState => {
+            return Ok(CloseCurrentTaskOutput {
+                action: String::from("blocked"),
+                task_number: args.task,
+                dispatch_validation_action: String::from("blocked"),
+                closure_action: String::from("blocked"),
+                task_closure_status: String::from("not_current"),
+                superseded_task_closure_ids: Vec::new(),
+                closure_record_id: None,
+                required_follow_up: Some(String::from("execution_reentry")),
+                trace_summary: String::from(
+                    "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
+                ),
+            });
+        }
+    }
     let current_task_recording_ready = |operator: &WorkflowOperator| {
         operator.phase == "task_closure_pending"
             && operator.phase_detail == "task_closure_recording_ready"
@@ -1072,6 +1110,19 @@ pub fn record_branch_closure(
         }
         reviewed_state.provenance_basis =
             String::from("task_closure_lineage_plus_late_stage_surface_exemption");
+        if reviewed_state.source_task_closure_ids.is_empty() {
+            reviewed_state.effective_reviewed_branch_surface =
+                late_stage_surface_only_branch_surface(&late_stage_surface);
+        }
+    }
+    if reviewed_state.source_task_closure_ids.is_empty()
+        && reviewed_state.provenance_basis
+            != "task_closure_lineage_plus_late_stage_surface_exemption"
+    {
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            "record-branch-closure requires at least one still-current task closure contributing authoritative reviewed surface unless the recreated branch surface is covered solely by the approved Late-Stage Surface.",
+        ));
     }
 
     let branch_closure_id = deterministic_record_id(
@@ -1984,6 +2035,22 @@ fn execute_rebuild_candidate(
             expected_attempt_number,
             expected_artifact_epoch.as_deref(),
         )? {
+            let current_identity =
+                current_attempt_identity(runtime, plan, current_candidate.task, current_candidate.step)?;
+            if replay_attempt > 0
+                && let Some((current_attempt, _)) = current_identity.as_ref()
+                && expected_attempt_number.is_some_and(|expected| *current_attempt > expected)
+            {
+                let refreshed_status = refresh_rebuild_status(runtime, plan)?;
+                target.status = String::from("rebuilt");
+                target.failure_class = None;
+                target.error = None;
+                target.attempt_id_after = Some(format!(
+                    "{}:{}:{}",
+                    current_candidate.task, current_candidate.step, current_attempt
+                ));
+                return Ok((refreshed_status, target));
+            }
             if replay_attempt == 0 {
                 sleep(Duration::from_millis(10));
                 status = refresh_rebuild_status(runtime, plan)?;
@@ -2035,6 +2102,24 @@ fn execute_rebuild_candidate(
                     current_candidate.step,
                 )? {
                     current_candidate = refreshed_candidate;
+                    expected_attempt_number = current_candidate.attempt_number;
+                    expected_artifact_epoch = current_candidate.artifact_epoch.clone();
+                    target = planned_rebuild_target(&current_candidate);
+                } else if status.active_task == Some(current_candidate.task)
+                    && status.active_step == Some(current_candidate.step)
+                    || status.resume_task == Some(current_candidate.task)
+                        && status.resume_step == Some(current_candidate.step)
+                {
+                    let current_identity =
+                        current_attempt_identity(runtime, plan, current_candidate.task, current_candidate.step)?;
+                    current_candidate.target_kind = String::from("open_step");
+                    current_candidate.pre_invalidation_reason =
+                        String::from("open_step_requested");
+                    current_candidate.attempt_number =
+                        current_identity.as_ref().map(|(attempt, _)| *attempt);
+                    current_candidate.artifact_epoch =
+                        current_identity.map(|(_, recorded_at)| recorded_at);
+                    current_candidate.needs_reopen = false;
                     expected_attempt_number = current_candidate.attempt_number;
                     expected_artifact_epoch = current_candidate.artifact_epoch.clone();
                     target = planned_rebuild_target(&current_candidate);
@@ -2208,7 +2293,13 @@ fn execute_rebuild_candidate_once(
             },
         );
         match begin_result {
-            Ok(next_status) => status = next_status,
+            Ok(next_status) => {
+                status = next_status;
+                let current_identity =
+                    current_attempt_identity(runtime, plan, candidate.task, candidate.step)?;
+                expected_attempt_number = current_identity.as_ref().map(|(attempt, _)| *attempt);
+                expected_artifact_epoch = current_identity.map(|(_, recorded_at)| recorded_at);
+            }
             Err(error) => {
                 if candidate.task > 1 && is_rebuild_task_boundary_receipt_failure(&error.message) {
                     let refreshed_status = refresh_rebuild_status(runtime, plan)?;
@@ -2233,7 +2324,19 @@ fn execute_rebuild_candidate_once(
                                 },
                             );
                             match retry_begin {
-                                Ok(next_status) => status = next_status,
+                                Ok(next_status) => {
+                                    status = next_status;
+                                    let current_identity = current_attempt_identity(
+                                        runtime,
+                                        plan,
+                                        candidate.task,
+                                        candidate.step,
+                                    )?;
+                                    expected_attempt_number =
+                                        current_identity.as_ref().map(|(attempt, _)| *attempt);
+                                    expected_artifact_epoch =
+                                        current_identity.map(|(_, recorded_at)| recorded_at);
+                                }
                                 Err(error) => {
                                     target.status = String::from("failed");
                                     target.failure_class = Some(String::from("state_transition_blocked"));
@@ -2990,6 +3093,35 @@ fn ensure_task_dispatch_id_matches(
     Ok(())
 }
 
+fn task_dispatch_reviewed_state_status(
+    context: &ExecutionContext,
+    task: u32,
+    dispatch_id: &str,
+    reviewed_state_id: &str,
+) -> Result<TaskDispatchReviewedStateStatus, JsonFailure> {
+    ensure_task_dispatch_id_matches(context, task, dispatch_id)?;
+    let overlay = load_status_authoritative_overlay_checked(context)?.ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            "close-current-task requires authoritative review-dispatch lineage state.",
+        )
+    })?;
+    let lineage_key = format!("task-{task}");
+    let recorded_reviewed_state_id = overlay
+        .strategy_review_dispatch_lineage
+        .get(&lineage_key)
+        .and_then(|record| record.reviewed_state_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    Ok(match recorded_reviewed_state_id {
+        Some(recorded) if recorded == reviewed_state_id.trim() => {
+            TaskDispatchReviewedStateStatus::Current
+        }
+        Some(_) => TaskDispatchReviewedStateStatus::StaleReviewedState,
+        None => TaskDispatchReviewedStateStatus::MissingReviewedStateBinding,
+    })
+}
+
 fn ensure_final_review_dispatch_id_matches(
     context: &ExecutionContext,
     dispatch_id: &str,
@@ -3198,6 +3330,13 @@ struct TaskClosureReceiptRefresh<'a> {
     claim_write_authority: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskDispatchReviewedStateStatus {
+    Current,
+    MissingReviewedStateBinding,
+    StaleReviewedState,
+}
+
 fn current_branch_reviewed_state(
     context: &ExecutionContext,
 ) -> Result<BranchReviewedState, JsonFailure> {
@@ -3392,6 +3531,10 @@ pub(crate) fn normalized_late_stage_surface(plan_source: &str) -> Result<Vec<Str
         .collect()
 }
 
+fn late_stage_surface_only_branch_surface(surface_entries: &[String]) -> String {
+    format!("late_stage_surface_only:{}", surface_entries.join(","))
+}
+
 fn normalize_late_stage_surface_entry(entry: &str) -> Result<String, JsonFailure> {
     let mut normalized = entry.trim().replace('\\', "/");
     while let Some(stripped) = normalized.strip_prefix("./") {
@@ -3464,12 +3607,6 @@ fn current_branch_source_task_closure_ids(
         })
         .map(|record| record.closure_record_id)
         .collect::<Vec<_>>();
-    if source_task_closure_ids.is_empty() {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "record-branch-closure requires at least one still-current task closure contributing authoritative reviewed surface.",
-        ));
-    }
     Ok(source_task_closure_ids)
 }
 
@@ -3953,10 +4090,38 @@ fn refresh_rebuild_task_closure_receipts_with_context(
         .transpose()?;
     let mut authoritative_state = load_authoritative_transition_state(context)?;
     if let Some(authoritative_state) = authoritative_state.as_mut() {
+        let current_task_closure = authoritative_state.current_task_closure_result(refresh.task);
         if refresh.restore_missing_dispatch_lineage {
             authoritative_state.ensure_task_review_dispatch_lineage(context, refresh.task)?;
         } else {
             authoritative_state.refresh_task_review_dispatch_lineage(context, refresh.task)?;
+        }
+        let dispatch_id = current_task_closure
+            .as_ref()
+            .map(|record| record.dispatch_id.clone())
+            .or_else(|| authoritative_state.task_review_dispatch_id(refresh.task));
+        if let (Some(dispatch_id), Some(current_task_closure)) = (dispatch_id, current_task_closure) {
+            let closure_record_id = current_task_closure_record_id(context, refresh.task)?;
+            let reviewed_state_id = current_task_reviewed_state_id(context, refresh.task)?;
+            let contract_identity = current_task_contract_identity(context, refresh.task);
+            let effective_reviewed_surface_paths =
+                current_task_effective_reviewed_surface_paths(context, refresh.task)?;
+            let review_result = current_task_closure.review_result;
+            let review_summary_hash = current_task_closure.review_summary_hash;
+            let verification_result = current_task_closure.verification_result;
+            let verification_summary_hash = current_task_closure.verification_summary_hash;
+            authoritative_state.record_task_closure_result(TaskClosureResultRecord {
+                task: refresh.task,
+                dispatch_id: &dispatch_id,
+                closure_record_id: &closure_record_id,
+                reviewed_state_id: &reviewed_state_id,
+                contract_identity: &contract_identity,
+                effective_reviewed_surface_paths: &effective_reviewed_surface_paths,
+                review_result: &review_result,
+                review_summary_hash: &review_summary_hash,
+                verification_result: &verification_result,
+                verification_summary_hash: &verification_summary_hash,
+            })?;
         }
         authoritative_state.persist_if_dirty_with_failpoint(None)?;
     }

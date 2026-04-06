@@ -1119,7 +1119,7 @@ fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
         .expect("blocked task 2 begin should emit json failure on stderr");
     assert_eq!(
         begin_task2["error_class"],
-        Value::from("MalformedExecutionState"),
+        Value::from("ExecutionStateNotReady"),
         "task 2 begin should stay blocked until task closure is recorded, got {begin_task2:?}"
     );
 }

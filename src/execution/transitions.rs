@@ -15,6 +15,7 @@ use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, GateState, NoteState, latest_attempted_step_for_task,
     task_completion_lineage_fingerprint,
 };
+use crate::execution::mutate::current_repo_tracked_tree_sha;
 use crate::git::sha256_hex;
 use crate::paths::{harness_branch_root, harness_state_path, write_atomic as write_atomic_file};
 
@@ -361,9 +362,7 @@ impl AuthoritativeTransitionState {
             return Ok(());
         }
         let stale_bound_dispatch_tasks = self.clear_task_dispatch_credits()?;
-        for stale_task in stale_bound_dispatch_tasks {
-            self.decrement_task_cycle_count(stale_task)?;
-        }
+        let _ = stale_bound_dispatch_tasks;
         let bound_unbound_dispatch = self.consume_unbound_dispatch_credit()?;
         let cycle_count = self.increment_task_cycle_count(task)?;
         let trigger = if bound_unbound_dispatch {
@@ -463,12 +462,17 @@ impl AuthoritativeTransitionState {
             if let Some((task, step)) = cycle_target {
                 if let Some(task_completion_lineage) = task_completion_lineage_fingerprint(context, task)
                 {
+                    let reviewed_state_id = format!(
+                        "git_tree:{}",
+                        current_repo_tracked_tree_sha(&context.runtime.repo_root)?
+                    );
                     self.upsert_task_dispatch_lineage(
                         task,
                         &execution_run_id,
                         step,
                         &strategy_checkpoint_fingerprint,
                         &task_completion_lineage,
+                        &reviewed_state_id,
                     )?;
                 }
             } else {
@@ -634,14 +638,6 @@ impl AuthoritativeTransitionState {
             .unwrap_or(0))
     }
 
-    fn decrement_task_cycle_count(&mut self, task: u32) -> Result<(), JsonFailure> {
-        let current = self.current_task_cycle_count(task)?;
-        if current == 0 {
-            return Ok(());
-        }
-        self.set_task_cycle_count(task, current.saturating_sub(1))
-    }
-
     fn set_task_cycle_count(&mut self, task: u32, value: u64) -> Result<(), JsonFailure> {
         let root = self.root_object_mut()?;
         let cycle_counts = root
@@ -725,6 +721,7 @@ impl AuthoritativeTransitionState {
         source_step: u32,
         strategy_checkpoint_fingerprint: &str,
         task_completion_lineage_fingerprint: &str,
+        reviewed_state_id: &str,
     ) -> Result<(), JsonFailure> {
         let lineage = self.dispatch_lineage_records_mut()?;
         lineage.insert(
@@ -732,6 +729,7 @@ impl AuthoritativeTransitionState {
             serde_json::json!({
                 "execution_run_id": execution_run_id,
                 "dispatch_id": strategy_checkpoint_fingerprint,
+                "reviewed_state_id": reviewed_state_id,
                 "source_task": task,
                 "source_step": source_step,
                 "strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
@@ -794,6 +792,10 @@ impl AuthoritativeTransitionState {
         let Some(source_step) = latest_attempted_step_for_task(context, task) else {
             return Ok(());
         };
+        let reviewed_state_id = format!(
+            "git_tree:{}",
+            current_repo_tracked_tree_sha(&context.runtime.repo_root)?
+        );
         let execution_run_id = self.current_execution_run_id();
         self.upsert_task_dispatch_lineage(
             task,
@@ -801,6 +803,7 @@ impl AuthoritativeTransitionState {
             source_step,
             &strategy_checkpoint_fingerprint,
             &task_completion_lineage_fingerprint,
+            &reviewed_state_id,
         )
     }
 
@@ -1255,6 +1258,15 @@ impl AuthoritativeTransitionState {
                     .collect::<BTreeMap<_, _>>()
             })
             .unwrap_or_default()
+    }
+
+    pub(crate) fn task_review_dispatch_id(&self, task: u32) -> Option<String> {
+        let payload = self
+            .state_payload
+            .get("strategy_review_dispatch_lineage")
+            .and_then(Value::as_object)?
+            .get(&format!("task-{task}"))?;
+        json_string(payload, "dispatch_id")
     }
 
     pub(crate) fn append_superseded_task_closure_ids<'a>(

@@ -969,7 +969,10 @@ fn write_dispatched_branch_review_artifact(
         &current_branch_name(repo),
         plan_rel,
         1,
-        &[("current_branch_closure_id", Value::from("branch-release-closure"))],
+        &[
+            ("current_branch_closure_id", Value::from("branch-release-closure")),
+            ("current_release_readiness_result", Value::from("ready")),
+        ],
     );
     let gate_review = run_plan_execution_json(
         repo,

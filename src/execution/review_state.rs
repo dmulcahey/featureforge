@@ -178,6 +178,38 @@ pub fn repair_review_state(
         snapshot = query_review_state(runtime, args)?;
     }
     if !snapshot.missing_derived_overlays.is_empty() {
+        if !snapshot.stale_unreviewed_closures.is_empty() {
+            let (required_follow_up, recommended_command, trace_summary) =
+                if snapshot.branch_drift_confined_to_late_stage_surface {
+                    (
+                        Some(String::from("record_branch_closure")),
+                        recommended_branch_closure_command(args),
+                        String::from(
+                            "Repair review state could not restore every derived overlay, but the remaining stale_unreviewed drift is confined to the trusted Late-Stage Surface, so branch closure re-recording is still the next safe step.",
+                        ),
+                    )
+                } else {
+                    (
+                        Some(String::from("execution_reentry")),
+                        recommended_operator_command(args),
+                        String::from(
+                            "Repair review state could not restore every derived overlay, and the reviewed state remains stale_unreviewed, so execution reentry is still required before any new closure or milestone can be recorded.",
+                        ),
+                    )
+                };
+            return Ok(RepairReviewStateOutput {
+                action: String::from("blocked"),
+                current_task_closures: snapshot.current_task_closures,
+                current_branch_closure: snapshot.current_branch_closure,
+                superseded_closures: snapshot.superseded_closures,
+                stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
+                missing_derived_overlays: snapshot.missing_derived_overlays,
+                actions_performed,
+                required_follow_up,
+                recommended_command,
+                trace_summary,
+            });
+        }
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -186,10 +218,10 @@ pub fn repair_review_state(
             stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
-            required_follow_up: None,
-            recommended_command: recommended_operator_command(args),
+            required_follow_up: Some(String::from("record_branch_closure")),
+            recommended_command: recommended_branch_closure_command(args),
             trace_summary: String::from(
-                "Repair review state could not derive the missing overlays from authoritative closure records.",
+                "Repair review state could not derive the missing overlays from authoritative closure records, so branch closure must be re-recorded to restore the missing derived state.",
             ),
         });
     }
