@@ -1240,6 +1240,20 @@ pub fn advance_late_stage(
                 ),
             });
         }
+        if overlay.current_release_readiness_result.as_deref() != Some("ready") {
+            return Ok(AdvanceLateStageOutput {
+                action: String::from("blocked"),
+                stage_path: String::from("final_review"),
+                delegated_primitive: String::from("record-final-review"),
+                branch_closure_id: Some(branch_closure_id.clone()),
+                dispatch_id: Some(dispatch_id.clone()),
+                result: args.result.trim().to_owned(),
+                required_follow_up: blocked_follow_up_for_operator(&operator),
+                trace_summary: String::from(
+                    "advance-late-stage failed closed because the current branch closure does not yet have a current release-readiness result `ready`.",
+                ),
+            });
+        }
         {
             let mut authoritative_state = load_authoritative_transition_state(&context)?;
             let Some(authoritative_state) = authoritative_state.as_mut() else {
@@ -1277,7 +1291,9 @@ pub fn advance_late_stage(
                         branch_closure_id: Some(branch_closure_id),
                         dispatch_id: Some(dispatch_id.clone()),
                         result: result.to_owned(),
-                        required_follow_up: None,
+                        required_follow_up: (current_result == "fail")
+                            .then(|| negative_result_follow_up(&operator))
+                            .flatten(),
                         trace_summary: String::from(
                             "Current branch closure already has an equivalent recorded final-review outcome.",
                         ),

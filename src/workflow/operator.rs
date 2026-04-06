@@ -493,6 +493,39 @@ pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOpera
                     )),
                 )
             } else if context.phase == "final_review_pending"
+                && context.current_release_readiness_result.as_deref() != Some("ready")
+            {
+                (
+                    String::from("document_release_pending"),
+                    String::from(
+                        if context.current_release_readiness_result.as_deref() == Some("blocked") {
+                            "release_blocker_resolution_required"
+                        } else {
+                            "release_readiness_recording_ready"
+                        },
+                    ),
+                    String::from("clean"),
+                    None,
+                    context.current_branch_closure_id.as_ref().map(|branch_closure_id| {
+                        WorkflowOperatorRecordingContext {
+                            task_number: None,
+                            dispatch_id: None,
+                            branch_closure_id: Some(branch_closure_id.clone()),
+                        }
+                    }),
+                    None,
+                    String::from(
+                        if context.current_release_readiness_result.as_deref() == Some("blocked") {
+                            "resolve release blocker"
+                        } else {
+                            "advance late stage"
+                        },
+                    ),
+                    Some(format!(
+                        "featureforge plan execution advance-late-stage --plan {plan_path} --result ready|blocked --summary-file <path>"
+                    )),
+                )
+            } else if context.phase == "final_review_pending"
                 && context.final_review_dispatch_id.is_none()
             {
                 (
