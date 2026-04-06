@@ -392,6 +392,7 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 **Source Spec:** `{SPEC_REL}`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
+**QA Requirement:** not-required
 
 ## Requirement Coverage Matrix
 
@@ -448,6 +449,7 @@ fn write_second_approved_plan_same_spec(repo: &Path, execution_mode: &str) {
 **Source Spec:** `{SPEC_REL}`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
+**QA Requirement:** not-required
 
 ## Requirement Coverage Matrix
 
@@ -559,6 +561,33 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
 "#
         ),
     );
+}
+
+fn set_plan_qa_requirement(repo: &Path, qa_requirement: &str) {
+    let plan_path = repo.join(PLAN_REL);
+    let source = fs::read_to_string(&plan_path).expect("plan fixture should be readable");
+    let updated = if let Some(current_line) = source
+        .lines()
+        .find(|line| line.starts_with("**QA Requirement:**"))
+    {
+        source.replace(
+            current_line,
+            &format!("**QA Requirement:** {qa_requirement}"),
+        )
+    } else {
+        source.replace(
+            "**Last Reviewed By:** plan-eng-review\n",
+            &format!(
+                "**Last Reviewed By:** plan-eng-review\n**QA Requirement:** {qa_requirement}\n"
+            ),
+        )
+    };
+    assert_ne!(
+        source,
+        updated,
+        "plan QA requirement rewrite should change the fixture contents"
+    );
+    fs::write(&plan_path, updated).expect("plan fixture should be writable");
 }
 
 fn write_two_step_shared_file_plan(repo: &Path, execution_mode: &str) {
@@ -2794,7 +2823,15 @@ fn setup_task_boundary_prior_task_fixture(
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
         "record task-boundary review dispatch lineage for fixture setup",
     );
     let status_after_review_dispatch = run_rust_json(
@@ -3103,6 +3140,15 @@ fn rewrite_source_test_plan_header(source: &str, source_test_plan: &Path) -> Str
     format!("{rewritten}\n")
 }
 
+fn remove_branch_test_plan_artifact(repo: &Path, state: &Path) {
+    let safe_branch = normalize_identifier(&branch_name(repo));
+    let path = project_artifact_dir(repo, state)
+        .join(format!("tester-{safe_branch}-test-plan-20260322-170500.md"));
+    if path.exists() {
+        fs::remove_file(&path).expect("branch test-plan artifact should be removable");
+    }
+}
+
 fn rewrite_qa_source_test_plan(path: &Path, source_test_plan: &Path) {
     let source = fs::read_to_string(path).unwrap_or_else(|error| {
         panic!("QA artifact {} should be readable: {error}", path.display())
@@ -3120,8 +3166,31 @@ fn prepare_finished_single_step_finish_gate_fixture(
     include_qa: bool,
     base_branch: &str,
 ) -> (PathBuf, Option<PathBuf>, PathBuf, PathBuf) {
+    prepare_finished_single_step_finish_gate_fixture_with_plan_qa_requirement(
+        repo,
+        state,
+        browser_required,
+        include_qa,
+        base_branch,
+        if browser_required == "yes" {
+            "required"
+        } else {
+            "not-required"
+        },
+    )
+}
+
+fn prepare_finished_single_step_finish_gate_fixture_with_plan_qa_requirement(
+    repo: &Path,
+    state: &Path,
+    browser_required: &str,
+    include_qa: bool,
+    base_branch: &str,
+    qa_requirement: &str,
+) -> (PathBuf, Option<PathBuf>, PathBuf, PathBuf) {
     write_approved_spec(repo);
     write_single_step_plan(repo, "featureforge:executing-plans");
+    set_plan_qa_requirement(repo, qa_requirement);
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
     let branch_test_plan = write_test_plan_artifact(repo, state, browser_required);
@@ -3776,7 +3845,7 @@ fn canonical_gate_review_returns_blocking_result_for_newer_sibling_spec() {
 
 #[test]
 fn canonical_gate_review_dispatch_returns_dispatch_specific_plan_not_ready_remediation() {
-    let (repo_dir, state_dir) = init_repo("plan-execution-gate-review-dispatch-stale-sibling-spec");
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-review-dispatch-stale-sibling-spec");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -3789,7 +3858,13 @@ fn canonical_gate_review_dispatch_returns_dispatch_specific_plan_not_ready_remed
     let gate_review_dispatch = run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "final-review",
+        ],
         "gate review dispatch with newer sibling approved spec",
     );
 
@@ -3802,9 +3877,9 @@ fn canonical_gate_review_dispatch_returns_dispatch_specific_plan_not_ready_remed
             .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
                 diagnostic["remediation"]
                     .as_str()
-                    .is_some_and(|remediation| remediation.contains("gate-review-dispatch"))
+                    .is_some_and(|remediation| remediation.contains("record-review-dispatch"))
             })),
-        "gate-review-dispatch should surface dispatch-specific remediation text when the approved plan/spec pair is stale: {gate_review_dispatch}"
+        "record-review-dispatch should surface dispatch-specific remediation text when the approved plan/spec pair is stale: {gate_review_dispatch}"
     );
 }
 
@@ -4396,7 +4471,15 @@ fn task_boundary_status_reports_prior_task_review_not_green_before_task2() {
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
         "record task-boundary review dispatch before review-not-green status test",
     );
 
@@ -4556,7 +4639,15 @@ fn task_boundary_begin_reports_prior_task_verification_missing_after_review_clos
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
         "record task-boundary review dispatch before verification-missing begin test",
     );
 
@@ -4925,7 +5016,15 @@ fn begin_blocks_cross_task_when_legacy_run_is_missing_task_verification_receipt(
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
         "record task-boundary review dispatch before legacy verification-missing begin test",
     );
 
@@ -5191,7 +5290,15 @@ fn task_boundary_status_reports_prior_task_verification_missing_after_review_clo
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
         "record task-boundary review dispatch before verification-missing status test",
     );
 
@@ -6753,6 +6860,7 @@ fn canonical_gate_review_and_finish_match_helper() {
     let state = state_dir.path();
     write_approved_spec(repo);
     write_plan(repo, "featureforge:executing-plans");
+    set_plan_qa_requirement(repo, "required");
     mark_all_plan_steps_checked(repo);
     write_v2_completed_attempts_for_finished_plan(repo);
     let test_plan = write_test_plan_artifact(repo, state, "yes");
@@ -6797,6 +6905,7 @@ fn gate_finish_accepts_richer_additive_test_plan_sections() {
     let state = state_dir.path();
     write_approved_spec(repo);
     write_plan(repo, "featureforge:executing-plans");
+    set_plan_qa_requirement(repo, "required");
     mark_all_plan_steps_checked(repo);
     write_v2_completed_attempts_for_finished_plan(repo);
     let test_plan = write_rich_test_plan_artifact(repo, state, "yes");
@@ -7023,6 +7132,7 @@ fn gate_finish_requires_qa_result_when_browser_qa_is_required() {
     let state = state_dir.path();
     write_approved_spec(repo);
     write_single_step_plan(repo, "featureforge:executing-plans");
+    set_plan_qa_requirement(repo, "required");
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
     write_test_plan_artifact(repo, state, "yes");
@@ -7045,6 +7155,81 @@ fn gate_finish_requires_qa_result_when_browser_qa_is_required() {
             .as_str()
             .unwrap_or_default()
             .contains("Run qa-only")
+    );
+}
+
+#[test]
+fn gate_finish_uses_plan_qa_requirement_before_loading_optional_qa_provenance() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-not-required-skips-broken-qa-provenance");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (_test_plan_path, _qa_path, _review_path, _release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "browser_qa_state": "fresh",
+            "last_browser_qa_artifact_fingerprint": "not-a-canonical-fingerprint",
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should ignore broken qa provenance when approved-plan qa is not required",
+    );
+
+    assert_eq!(gate_finish["allowed"], true, "json: {gate_finish}");
+    assert_eq!(gate_finish["failure_class"], "", "json: {gate_finish}");
+    assert_eq!(gate_finish["reason_codes"], json!([]), "json: {gate_finish}");
+}
+
+#[test]
+fn gate_finish_reports_invalid_plan_qa_requirement_before_qa_provenance_failures() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-finish-invalid-plan-qa-before-qa-provenance");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (_test_plan_path, _qa_path, _review_path, _release_path) =
+        prepare_finished_single_step_finish_gate_fixture_with_plan_qa_requirement(
+            repo,
+            state,
+            "no",
+            false,
+            &base_branch,
+            "maybe",
+        );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "browser_qa_state": "fresh",
+            "last_browser_qa_artifact_fingerprint": "not-a-canonical-fingerprint",
+        }),
+    );
+
+    let gate_finish = run_rust_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate finish should fail closed on invalid approved-plan qa requirement before qa provenance",
+    );
+
+    assert_eq!(gate_finish["allowed"], false, "json: {gate_finish}");
+    assert_eq!(
+        gate_finish["failure_class"],
+        "ExecutionStateNotReady",
+        "json: {gate_finish}"
+    );
+    assert_eq!(
+        gate_finish["reason_codes"],
+        json!(["qa_requirement_missing_or_invalid"]),
+        "json: {gate_finish}"
     );
 }
 
@@ -12466,8 +12651,8 @@ fn gate_review_is_read_only_before_dispatch() {
 }
 
 #[test]
-fn gate_review_dispatch_records_review_cycles_before_steps_complete() {
-    let (repo_dir, state_dir) = init_repo("plan-execution-gate-review-dispatch-cycles");
+fn gate_review_dispatch_does_not_mutate_strategy_state_when_validation_is_blocked() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-review-dispatch-cycles");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -12514,11 +12699,26 @@ fn gate_review_dispatch_records_review_cycles_before_steps_complete() {
         "begin active work before gate-review dispatch cycle tracking",
     );
 
+    let status_before_dispatch = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before blocked gate-review dispatch cycle tracking",
+    );
+
     for cycle in 1..=3 {
         let gate = run_rust_json(
             repo,
             state,
-            &["gate-review-dispatch", "--plan", PLAN_REL],
+            &[
+                "record-review-dispatch",
+                "--plan",
+                PLAN_REL,
+                "--scope",
+                "task",
+                "--task",
+                "1",
+            ],
             "gate-review dispatch cycle tracking",
         );
         assert_eq!(gate["allowed"], Value::Bool(false));
@@ -12536,30 +12736,82 @@ fn gate_review_dispatch_records_review_cycles_before_steps_complete() {
             "status after gate-review dispatch cycle tracking",
         );
         assert!(
-            status["last_strategy_checkpoint_fingerprint"]
-                .as_str()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
-            "gate-review cycle {cycle} should record a strategy checkpoint fingerprint"
+            gate["reason_codes"]
+                .as_array()
+                .is_some_and(|codes| codes.iter().any(|code| code == "active_step_in_progress")),
+            "gate-review dispatch cycle {cycle} should stay blocked while active work remains in progress"
         );
-        if cycle < 3 {
-            assert_eq!(status["strategy_checkpoint_kind"], "review_remediation");
-            assert_eq!(status["strategy_state"], "ready");
-        } else {
-            assert_eq!(status["strategy_checkpoint_kind"], "cycle_break");
-            assert_eq!(status["strategy_state"], "cycle_breaking");
-        }
         assert_eq!(
-            status["strategy_reset_required"],
-            Value::Bool(false),
-            "runtime should auto-record cycle-break strategy for review dispatch without human loopback"
+            status["strategy_checkpoint_kind"], status_before_dispatch["strategy_checkpoint_kind"],
+            "blocked record-review-dispatch cycle {cycle} must not mutate strategy checkpoint kind"
+        );
+        assert_eq!(
+            status["strategy_state"], status_before_dispatch["strategy_state"],
+            "blocked record-review-dispatch cycle {cycle} must not mutate strategy state"
+        );
+        assert_eq!(
+            status["last_strategy_checkpoint_fingerprint"],
+            status_before_dispatch["last_strategy_checkpoint_fingerprint"],
+            "blocked record-review-dispatch cycle {cycle} must not mutate strategy checkpoint fingerprint"
         );
     }
 }
 
 #[test]
-fn gate_review_dispatch_skips_cycle_tracking_without_reviewable_work() {
-    let (repo_dir, state_dir) = init_repo("plan-execution-gate-review-dispatch-no-reviewable-work");
+fn record_review_dispatch_requires_explicit_scope() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-review-dispatch-requires-scope");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    accept_execution_preflight(repo, state, PLAN_REL);
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before record-review-dispatch missing scope validation",
+    );
+    run_rust_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status["execution_fingerprint"]
+                .as_str()
+                .expect("status should include execution_fingerprint before begin"),
+        ],
+        "begin active work before record-review-dispatch missing scope validation",
+    );
+
+    let output = run_rust(
+        repo,
+        state,
+        &["record-review-dispatch", "--plan", PLAN_REL],
+        "record-review-dispatch missing scope validation",
+    );
+    let failure = parse_failure_json(&output, "record-review-dispatch missing scope validation");
+    assert_eq!(failure["error_class"], "InvalidCommandInput");
+    assert!(
+        failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("--scope")),
+        "missing-scope failure should explain the required --scope contract: {failure}"
+    );
+}
+
+#[test]
+fn record_review_dispatch_task_scope_requires_current_target_when_no_reviewable_work_exists() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-review-dispatch-no-reviewable-work");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -12586,40 +12838,49 @@ fn gate_review_dispatch_skips_cycle_tracking_without_reviewable_work() {
         "status before gate-review dispatch without reviewable work",
     );
 
-    let gate = run_rust_json(
+    let output = run_rust(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
-        "gate-review dispatch without reviewable work",
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
+        "record-review-dispatch without current task target",
     );
-    assert_eq!(gate["allowed"], Value::Bool(false));
+    let failure = parse_failure_json(&output, "record-review-dispatch without current task target");
+    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
     assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .any(|code| code == "unfinished_steps_remaining")),
-        "gate-review should fail closed while unfinished steps remain when no reviewable work exists"
+        failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("requires a current task review-dispatch target")),
+        "task-scoped dispatch without a current target should fail closed before mutation: {failure}"
     );
 
     let status = run_rust_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status after gate-review dispatch without reviewable work",
+        "status after record-review-dispatch without current task target",
     );
     assert_eq!(
         status["strategy_checkpoint_kind"], status_before["strategy_checkpoint_kind"],
-        "gate-review dispatch should not alter strategy checkpoint kind when no reviewable work exists"
+        "record-review-dispatch should not alter strategy checkpoint kind when no current task target exists"
     );
     assert_eq!(
         status["last_strategy_checkpoint_fingerprint"],
         status_before["last_strategy_checkpoint_fingerprint"],
-        "gate-review dispatch should not alter strategy checkpoint fingerprint when no reviewable work exists"
+        "record-review-dispatch should not alter strategy checkpoint fingerprint when no current task target exists"
     );
 }
 
 #[test]
 fn gate_review_dispatch_backfills_initial_dispatch_before_review_remediation() {
-    let (repo_dir, state_dir) = init_repo("plan-execution-gate-review-dispatch-backfills-initial");
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-review-dispatch-backfills-initial");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -12689,7 +12950,15 @@ fn gate_review_dispatch_backfills_initial_dispatch_before_review_remediation() {
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
         "gate-review dispatch should backfill initial-dispatch checkpoint before review remediation",
     );
 
@@ -12702,23 +12971,15 @@ fn gate_review_dispatch_backfills_initial_dispatch_before_review_remediation() {
         .as_array()
         .expect("strategy checkpoints should be a json array");
     assert!(
-        checkpoints.len() >= 2,
-        "gate-review dispatch should append both initial_dispatch and review_remediation checkpoints when lineage is missing"
+        checkpoints.is_empty(),
+        "blocked record-review-dispatch must not append initial_dispatch or review_remediation checkpoints: {harness_state}"
     );
-    let first = checkpoints[checkpoints.len() - 2]["checkpoint_kind"]
-        .as_str()
-        .expect("penultimate checkpoint kind should be present");
-    let second = checkpoints[checkpoints.len() - 1]["checkpoint_kind"]
-        .as_str()
-        .expect("last checkpoint kind should be present");
-    assert_eq!(first, "initial_dispatch");
-    assert_eq!(second, "review_remediation");
 }
 
 #[test]
 fn gate_review_dispatch_bootstraps_missing_authoritative_state_before_recording() {
     let (repo_dir, state_dir) =
-        init_repo("plan-execution-gate-review-dispatch-missing-state-bootstrap");
+        init_repo("plan-execution-record-review-dispatch-missing-state-bootstrap");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -12731,7 +12992,7 @@ fn gate_review_dispatch_bootstraps_missing_authoritative_state_before_recording(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status before begin for missing-state gate-review-dispatch bootstrap test",
+        "status before begin for missing-state record-review-dispatch bootstrap test",
     );
     run_rust_json(
         repo,
@@ -12751,18 +13012,26 @@ fn gate_review_dispatch_bootstraps_missing_authoritative_state_before_recording(
                 .as_str()
                 .expect("status should include execution fingerprint before begin"),
         ],
-        "begin active work before missing-state gate-review-dispatch bootstrap",
+        "begin active work before missing-state record-review-dispatch bootstrap",
     );
 
     let gate_review_dispatch = run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
-        "gate-review-dispatch should bootstrap missing authoritative state before recording",
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
+        "record-review-dispatch should bootstrap missing authoritative state before recording",
     );
     let harness_state: Value = serde_json::from_str(
         &fs::read_to_string(harness_state_file_path(repo, state))
-            .expect("gate-review-dispatch should recreate authoritative harness state"),
+            .expect("record-review-dispatch should recreate authoritative harness state"),
     )
     .expect("recreated authoritative harness state should remain valid json");
     let checkpoints = harness_state["strategy_checkpoints"]
@@ -12770,29 +13039,19 @@ fn gate_review_dispatch_bootstraps_missing_authoritative_state_before_recording(
         .expect("strategy checkpoints should be a json array after bootstrap");
 
     assert!(
-        checkpoints.len() >= 2,
-        "gate-review-dispatch should record initial_dispatch and review_remediation after bootstrapping missing state: {harness_state}"
-    );
-    assert_eq!(
-        checkpoints[checkpoints.len() - 2]["checkpoint_kind"],
-        Value::from("initial_dispatch"),
-        "harness_state: {harness_state}"
-    );
-    assert_eq!(
-        checkpoints[checkpoints.len() - 1]["checkpoint_kind"],
-        Value::from("review_remediation"),
-        "harness_state: {harness_state}"
+        checkpoints.is_empty(),
+        "blocked record-review-dispatch may bootstrap missing state for inspection, but it must not record initial_dispatch or review_remediation checkpoints: {harness_state}"
     );
     assert!(
         gate_review_dispatch["failure_class"].as_str().is_some(),
-        "gate-review-dispatch should still return a gate payload after bootstrapping: {gate_review_dispatch}"
+        "record-review-dispatch should still return a gate payload after bootstrapping: {gate_review_dispatch}"
     );
 }
 
 #[test]
 fn gate_review_dispatch_bound_credit_does_not_accumulate_or_leak_across_tasks() {
     let (repo_dir, state_dir) =
-        init_repo("plan-execution-gate-review-dispatch-credit-task-leakage");
+        init_repo("plan-execution-record-review-dispatch-credit-task-leakage");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -12831,17 +13090,32 @@ fn gate_review_dispatch_bound_credit_does_not_accumulate_or_leak_across_tasks() 
             "active_contract_fingerprint": Value::Null
         }),
     );
-
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "2",
+        ],
         "first gate-review dispatch should record a bound dispatch credit",
     );
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "2",
+        ],
         "second gate-review dispatch should overwrite rather than accumulate bound dispatch credits",
     );
 
@@ -12948,8 +13222,8 @@ fn gate_review_dispatch_bound_credit_does_not_accumulate_or_leak_across_tasks() 
 }
 
 #[test]
-fn gate_review_dispatch_on_completed_plan_binds_unbound_cycles_on_reopen_target_task() {
-    let (repo_dir, state_dir) = init_repo("plan-execution-gate-review-dispatch-unbound-binding");
+fn gate_review_dispatch_on_completed_plan_without_started_execution_stays_unrecorded() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-review-dispatch-unbound-binding");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -12971,140 +13245,35 @@ fn gate_review_dispatch_on_completed_plan_binds_unbound_cycles_on_reopen_target_
         false,
     );
 
-    for cycle in 1..=3 {
-        let gate = run_rust_json(
-            repo,
-            state,
-            &["gate-review-dispatch", "--plan", PLAN_REL],
-            "gate-review dispatch cycle tracking with completed plan",
-        );
-        assert!(
-            gate.get("allowed").is_some(),
-            "gate-review should return an allow/deny decision"
-        );
+    let gate = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "final-review",
+        ],
+        "final-review dispatch on completed plan without started execution",
+    );
+    assert_eq!(gate["allowed"], Value::Bool(false));
 
-        let harness_state: Value = serde_json::from_str(
-            &fs::read_to_string(harness_state_file_path(repo, state))
-                .expect("harness state should be readable after gate-review"),
-        )
-        .expect("harness state should be valid json after gate-review");
-        let dispatch_trigger = harness_state["strategy_checkpoints"]
+    let harness_state: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("harness state should be readable after blocked final-review dispatch"),
+    )
+    .expect("harness state should be valid json after blocked final-review dispatch");
+    assert!(
+        harness_state["final_review_dispatch_lineage"].is_null(),
+        "blocked final-review dispatch should not persist unbound lineage before execution has started: {harness_state}"
+    );
+    assert!(
+        harness_state["strategy_checkpoints"]
             .as_array()
-            .and_then(|checkpoints| checkpoints.last())
-            .and_then(|checkpoint| checkpoint["trigger_fingerprints"].as_array())
-            .and_then(|triggers| triggers.first())
-            .and_then(Value::as_str)
-            .expect("gate-review dispatch should record a strategy trigger");
-        assert!(
-            dispatch_trigger.starts_with("task-unbound:step-unbound:pending-review-dispatch-"),
-            "completed-plan gate-review dispatch should stay unbound until reopen selects a task"
-        );
-
-        let status = run_rust_json(
-            repo,
-            state,
-            &["status", "--plan", PLAN_REL],
-            "status before reopen after completed-plan gate-review dispatch",
-        );
-        let reason = format!("Review reopened binding cycle {cycle}");
-        let reopened = run_rust_json(
-            repo,
-            state,
-            &[
-                "reopen",
-                "--plan",
-                PLAN_REL,
-                "--task",
-                "1",
-                "--step",
-                "1",
-                "--source",
-                "featureforge:executing-plans",
-                "--reason",
-                &reason,
-                "--expect-execution-fingerprint",
-                status["execution_fingerprint"]
-                    .as_str()
-                    .expect("execution fingerprint should be present"),
-            ],
-            "reopen after completed-plan gate-review dispatch",
-        );
-        if cycle < 3 {
-            assert_eq!(reopened["strategy_checkpoint_kind"], "review_remediation");
-            assert_eq!(reopened["strategy_state"], "ready");
-        } else {
-            assert_eq!(reopened["strategy_checkpoint_kind"], "cycle_break");
-            assert_eq!(reopened["strategy_state"], "cycle_breaking");
-        }
-
-        let harness_state: Value = serde_json::from_str(
-            &fs::read_to_string(harness_state_file_path(repo, state))
-                .expect("harness state should be readable after reopen"),
-        )
-        .expect("harness state should be valid json after reopen");
-        let reopen_trigger = harness_state["strategy_checkpoints"]
-            .as_array()
-            .and_then(|checkpoints| checkpoints.last())
-            .and_then(|checkpoint| checkpoint["trigger_fingerprints"].as_array())
-            .and_then(|triggers| triggers.first())
-            .and_then(Value::as_str)
-            .expect("reopen should record a strategy trigger");
-        assert!(
-            reopen_trigger.starts_with("task-1:step-1:cycle-"),
-            "reopen should bind the pending dispatch cycle to Task 1 Step 1"
-        );
-        assert!(
-            reopen_trigger.contains("bound-from-unbound-review-dispatch"),
-            "reopen should explicitly declare that it bound an unbound review dispatch cycle"
-        );
-
-        if cycle < 3 {
-            let resumed = run_rust_json(
-                repo,
-                state,
-                &[
-                    "begin",
-                    "--plan",
-                    PLAN_REL,
-                    "--task",
-                    "1",
-                    "--step",
-                    "1",
-                    "--execution-mode",
-                    "featureforge:executing-plans",
-                    "--expect-execution-fingerprint",
-                    reopened["execution_fingerprint"]
-                        .as_str()
-                        .expect("execution fingerprint should be present after reopen"),
-                ],
-                "resume work after reopen binding cycle",
-            );
-            run_rust_json(
-                repo,
-                state,
-                &[
-                    "complete",
-                    "--plan",
-                    PLAN_REL,
-                    "--task",
-                    "1",
-                    "--step",
-                    "1",
-                    "--source",
-                    "featureforge:executing-plans",
-                    "--claim",
-                    "Repaired after completed-plan review dispatch.",
-                    "--manual-verify-summary",
-                    "Verified by cycle-binding test.",
-                    "--expect-execution-fingerprint",
-                    resumed["execution_fingerprint"]
-                        .as_str()
-                        .expect("execution fingerprint should be present after begin"),
-                ],
-                "re-complete work before next completed-plan review dispatch",
-            );
-        }
-    }
+            .is_some_and(|checkpoints| checkpoints.is_empty()),
+        "blocked final-review dispatch should not append strategy checkpoints before execution has started: {harness_state}"
+    );
 }
 
 #[test]
@@ -13760,7 +13929,7 @@ fn task4_note_rolls_back_plan_when_authoritative_state_publish_fails() {
 #[test]
 fn reopen_after_same_task_bound_dispatch_records_refresh_checkpoint() {
     let (repo_dir, state_dir) =
-        init_repo("plan-execution-gate-review-dispatch-same-task-reopen-refresh");
+        init_repo("plan-execution-record-review-dispatch-same-task-reopen-refresh");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
@@ -13799,11 +13968,18 @@ fn reopen_after_same_task_bound_dispatch_records_refresh_checkpoint() {
             "active_contract_fingerprint": Value::Null
         }),
     );
-
     run_rust_json(
         repo,
         state,
-        &["gate-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "2",
+        ],
         "gate-review dispatch should produce a bound dispatch credit before same-task reopen",
     );
     let harness_state: Value = serde_json::from_str(
@@ -14299,7 +14475,7 @@ fn canonical_status_rejects_non_sequential_evidence_attempt_numbers() {
 }
 
 #[test]
-fn canonical_status_uses_the_freshest_completed_attempt_metadata() {
+fn canonical_status_omits_legacy_latest_attempt_metadata_fields() {
     let (repo_dir, state_dir) = init_repo("plan-execution-latest-completed-by-recorded-at");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -14327,18 +14503,24 @@ fn canonical_status_uses_the_freshest_completed_attempt_metadata() {
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status should prefer freshest completed attempt metadata",
+        "status should omit legacy freshest completed attempt metadata fields",
     );
 
-    assert_eq!(
-        status["latest_head_sha"],
-        "1111111111111111111111111111111111111111"
+    let status_object = status
+        .as_object()
+        .expect("status should serialize as a JSON object");
+    assert!(
+        !status_object.contains_key("latest_head_sha"),
+        "status should omit legacy latest_head_sha field"
     );
-    assert_eq!(
-        status["latest_base_sha"],
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert!(
+        !status_object.contains_key("latest_base_sha"),
+        "status should omit legacy latest_base_sha field"
     );
-    assert_eq!(status["latest_packet_fingerprint"], newer_packet);
+    assert!(
+        !status_object.contains_key("latest_packet_fingerprint"),
+        "status should omit legacy latest_packet_fingerprint field"
+    );
 }
 
 #[test]
@@ -16554,6 +16736,11 @@ fn rebuild_evidence_restores_post_execution_state_when_prior_task_review_dispatc
             .is_some(),
         "harness_state: {harness_state}"
     );
+    assert_eq!(
+        harness_state["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"],
+        harness_state["strategy_review_dispatch_lineage"]["task-1"]["strategy_checkpoint_fingerprint"],
+        "task-scope review-dispatch lineage should expose a stable dispatch_id for later task-closure recording: {harness_state}"
+    );
 
     let gate_review = run_rust_json(
         repo,
@@ -16582,7 +16769,7 @@ fn rebuild_evidence_restores_post_execution_state_when_prior_task_review_dispatc
 }
 
 #[test]
-fn rebuild_evidence_restores_authoritative_late_gate_truth_after_successful_rebuild() {
+fn rebuild_evidence_refuses_historical_late_gate_truth_refresh_after_successful_rebuild() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-rebuild-evidence-restores-late-gate-truth");
     let repo = repo_dir.path();
@@ -16612,52 +16799,45 @@ fn rebuild_evidence_restores_authoritative_late_gate_truth_after_successful_rebu
         repo,
         state,
         &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
-        "rebuild-evidence should restore authoritative downstream truth after reopening a finished step",
+        "rebuild-evidence should fail closed instead of refreshing historical downstream truth after reopening a finished step",
     );
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .expect("late-gate rebuild output should be json");
-
-    assert_eq!(output.status.code(), Some(0), "json: {json}");
-    assert_eq!(json["counts"]["planned"], Value::from(1), "json: {json}");
-    assert_eq!(json["counts"]["rebuilt"], Value::from(1), "json: {json}");
-    assert_eq!(json["counts"]["failed"], Value::from(0), "json: {json}");
-    assert_eq!(json["targets"][0]["status"], Value::from("rebuilt"), "json: {json}");
+    assert!(
+        !output.status.success(),
+        "rebuild-evidence must fail closed instead of rewriting historical late-stage proof in place\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let error: Value = serde_json::from_slice(&output.stderr)
+        .expect("late-gate rebuild failure should be json on stderr");
+    assert_eq!(
+        error["error_class"],
+        Value::from("StaleProvenance"),
+        "json: {error}"
+    );
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("append_only_repair_required")),
+        "json: {error}"
+    );
 
     let status_after = run_rust_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status after rebuild should republish authoritative downstream truth",
+        "status after blocked late-gate refresh should preserve stale downstream truth",
     );
-    assert_eq!(status_after["final_review_state"], Value::from("fresh"), "json: {status_after}");
-    assert_eq!(status_after["browser_qa_state"], Value::from("fresh"), "json: {status_after}");
-    assert_eq!(status_after["release_docs_state"], Value::from("fresh"), "json: {status_after}");
-    assert!(
-        status_after["last_final_review_artifact_fingerprint"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty()),
-        "json: {status_after}"
-    );
-    assert!(
-        status_after["last_browser_qa_artifact_fingerprint"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty()),
-        "json: {status_after}"
-    );
-    assert!(
-        status_after["last_release_docs_artifact_fingerprint"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty()),
-        "json: {status_after}"
-    );
+    assert_eq!(status_after["final_review_state"], Value::from("stale"), "json: {status_after}");
+    assert_eq!(status_after["browser_qa_state"], Value::from("stale"), "json: {status_after}");
+    assert_eq!(status_after["release_docs_state"], Value::from("stale"), "json: {status_after}");
 
     let gate_review_after = run_rust_json(
         repo,
         state,
         &["gate-review", "--plan", PLAN_REL],
-        "gate-review after rebuild should stay fresh once authoritative downstream truth is rebound",
+        "gate-review after blocked late-gate refresh should remain blocked",
     );
-    assert_eq!(gate_review_after["allowed"], Value::Bool(true), "json: {gate_review_after}");
+    assert_eq!(gate_review_after["allowed"], Value::Bool(false), "json: {gate_review_after}");
 }
 
 #[test]
@@ -17771,7 +17951,7 @@ fn rebuild_evidence_noop_refreshes_receipt_only_strategy_checkpoint_drift() {
 }
 
 #[test]
-fn rebuild_evidence_noop_restores_authoritative_late_gate_truth() {
+fn rebuild_evidence_noop_refuses_historical_late_gate_truth_refresh() {
     let (repo_dir, state_dir) = init_repo("plan-execution-rebuild-evidence-noop-late-gate-refresh");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -17813,24 +17993,31 @@ fn rebuild_evidence_noop_restores_authoritative_late_gate_truth() {
         );
     }
 
-    let rebuild = run_rust_json(
+    let rebuild = run_rust(
         repo,
         state,
         &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
-        "rebuild-evidence noop should restore authoritative late-gate truth from valid branch artifacts",
+        "rebuild-evidence noop should fail closed instead of refreshing historical late-gate truth from valid branch artifacts",
     );
-    assert_eq!(rebuild["counts"]["planned"], Value::from(0), "json: {rebuild}");
-    assert_eq!(rebuild["counts"]["noop"], Value::from(1), "json: {rebuild}");
+    assert!(
+        !rebuild.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&rebuild.stdout),
+        String::from_utf8_lossy(&rebuild.stderr)
+    );
+    let error: Value = serde_json::from_slice(&rebuild.stderr)
+        .expect("noop late-gate refresh failure should be json on stderr");
+    assert_eq!(error["error_class"], Value::from("StaleProvenance"), "json: {error}");
 
     let status_after = run_rust_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status after noop late-gate refresh",
+        "status after blocked noop late-gate refresh",
     );
-    assert_eq!(status_after["final_review_state"], Value::from("fresh"), "json: {status_after}");
-    assert_eq!(status_after["browser_qa_state"], Value::from("fresh"), "json: {status_after}");
-    assert_eq!(status_after["release_docs_state"], Value::from("fresh"), "json: {status_after}");
+    assert_eq!(status_after["final_review_state"], Value::from("stale"), "json: {status_after}");
+    assert_eq!(status_after["browser_qa_state"], Value::from("stale"), "json: {status_after}");
+    assert_eq!(status_after["release_docs_state"], Value::from("stale"), "json: {status_after}");
 
     let gate_after = run_rust_json(
         repo,
@@ -17838,7 +18025,7 @@ fn rebuild_evidence_noop_restores_authoritative_late_gate_truth() {
         &["gate-review", "--plan", PLAN_REL],
         "gate-review after noop late-gate refresh",
     );
-    assert_eq!(gate_after["allowed"], Value::Bool(true), "json: {gate_after}");
+    assert_eq!(gate_after["allowed"], Value::Bool(false), "json: {gate_after}");
 }
 
 #[test]
@@ -17865,7 +18052,7 @@ fn rebuild_evidence_noop_allows_intermediate_test_plan_only_state() {
 }
 
 #[test]
-fn rebuild_evidence_noop_refreshes_final_review_without_requiring_release_readiness() {
+fn rebuild_evidence_noop_refuses_historical_final_review_refresh_without_release_readiness() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-rebuild-evidence-noop-review-without-release");
     let repo = repo_dir.path();
@@ -17892,35 +18079,74 @@ fn rebuild_evidence_noop_refreshes_final_review_without_requiring_release_readin
         }),
     );
 
-    let rebuild = run_rust_json(
+    let rebuild = run_rust(
         repo,
         state,
         &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
-        "rebuild-evidence noop should refresh final review without requiring release-readiness artifacts",
+        "rebuild-evidence noop should fail closed instead of refreshing historical final review without release-readiness artifacts",
     );
-
-    assert_eq!(rebuild["counts"]["planned"], Value::from(0), "json: {rebuild}");
-    assert_eq!(rebuild["counts"]["noop"], Value::from(1), "json: {rebuild}");
+    assert!(
+        !rebuild.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&rebuild.stdout),
+        String::from_utf8_lossy(&rebuild.stderr)
+    );
+    let error: Value = serde_json::from_slice(&rebuild.stderr)
+        .expect("final-review refresh refusal should be json on stderr");
+    assert_eq!(error["error_class"], Value::from("StaleProvenance"), "json: {error}");
 
     let status_after = run_rust_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status after noop refresh with final review but no release-readiness artifact",
+        "status after blocked noop refresh with final review but no release-readiness artifact",
     );
-    assert_eq!(status_after["final_review_state"], Value::from("fresh"), "json: {status_after}");
+    assert_eq!(status_after["final_review_state"], Value::from("stale"), "json: {status_after}");
     assert_eq!(status_after["release_docs_state"], Value::from("stale"), "json: {status_after}");
-    assert!(
-        status_after["last_final_review_artifact_fingerprint"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty()),
-        "json: {status_after}"
-    );
+    assert!(status_after["last_final_review_artifact_fingerprint"].is_null(), "json: {status_after}");
     assert!(status_after["last_release_docs_artifact_fingerprint"].is_null(), "json: {status_after}");
 }
 
 #[test]
-fn rebuild_evidence_noop_rebinds_late_gate_artifacts_after_rebase_only_head_drift() {
+fn rebuild_evidence_noop_not_required_without_branch_test_plan_skips_missing_test_plan_precondition() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-rebuild-evidence-noop-not-required-no-test-plan");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+
+    let (_authoritative_test_plan_path, _qa_path, _authoritative_review_path, _authoritative_release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    remove_branch_test_plan_artifact(repo, state);
+
+    let rebuild = run_rust(
+        repo,
+        state,
+        &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
+        "rebuild-evidence noop should not fail on missing test-plan when approved-plan QA is not required",
+    );
+    assert!(
+        !rebuild.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&rebuild.stdout),
+        String::from_utf8_lossy(&rebuild.stderr)
+    );
+    let error: Value = serde_json::from_slice(&rebuild.stderr)
+        .expect("late-gate append-only refusal should be json on stderr");
+    assert_eq!(error["error_class"], Value::from("StaleProvenance"), "json: {error}");
+    let message = error["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("append_only_repair_required"),
+        "json: {error}"
+    );
+    assert!(
+        !message.contains("missing a test-plan artifact"),
+        "json: {error}"
+    );
+}
+
+#[test]
+fn rebuild_evidence_noop_refuses_late_gate_artifact_rebinding_after_rebase_only_head_drift() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-rebuild-evidence-noop-rebase-only-late-gate-repair");
     let repo = repo_dir.path();
@@ -17949,42 +18175,49 @@ fn rebuild_evidence_noop_rebinds_late_gate_artifacts_after_rebase_only_head_drif
     );
     assert_eq!(gate_finish_before["allowed"], Value::Bool(false), "json: {gate_finish_before}");
 
-    let rebuild = run_rust_json(
+    let rebuild = run_rust(
         repo,
         state,
         &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
-        "rebuild-evidence noop should rebind late-gate artifacts after rebase-only head drift",
+        "rebuild-evidence noop should refuse late-gate artifact rebinding after rebase-only head drift",
     );
-    assert_eq!(rebuild["counts"]["planned"], Value::from(0), "json: {rebuild}");
-    assert_eq!(rebuild["counts"]["noop"], Value::from(1), "json: {rebuild}");
+    assert!(
+        !rebuild.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&rebuild.stdout),
+        String::from_utf8_lossy(&rebuild.stderr)
+    );
+    let error: Value = serde_json::from_slice(&rebuild.stderr)
+        .expect("late-gate rebind refusal should be json on stderr");
+    assert_eq!(error["error_class"], Value::from("StaleProvenance"), "json: {error}");
 
     let gate_finish_after = run_rust_json(
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish after noop rebase-only late-gate repair",
+        "gate-finish after blocked rebase-only late-gate repair",
     );
-    assert_eq!(gate_finish_after["allowed"], Value::Bool(true), "json: {gate_finish_after}");
+    assert_eq!(gate_finish_after["allowed"], Value::Bool(false), "json: {gate_finish_after}");
 
     let review_source = fs::read_to_string(&review_path)
         .expect("branch review artifact should be readable after late-gate repair");
-    assert!(review_source.contains(&format!("**Head SHA:** {current_head}")), "review:\n{review_source}");
+    assert!(!review_source.contains(&format!("**Head SHA:** {current_head}")), "review:\n{review_source}");
     let test_plan_source = fs::read_to_string(&test_plan_path)
         .expect("branch test-plan artifact should be readable after late-gate repair");
     assert!(
-        test_plan_source.contains(&format!("**Head SHA:** {current_head}")),
+        !test_plan_source.contains(&format!("**Head SHA:** {current_head}")),
         "test-plan:\n{test_plan_source}"
     );
     let release_source = fs::read_to_string(&release_path)
         .expect("branch release artifact should be readable after late-gate repair");
     assert!(
-        release_source.contains(&format!("**Head SHA:** {current_head}")),
+        !release_source.contains(&format!("**Head SHA:** {current_head}")),
         "release:\n{release_source}"
     );
 }
 
 #[test]
-fn rebuild_evidence_noop_rebinds_late_gate_artifacts_after_replayed_rebase_changes() {
+fn rebuild_evidence_noop_refuses_late_gate_artifact_rebinding_after_replayed_rebase_changes() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-rebuild-evidence-noop-replayed-rebase-change-repair");
     let repo = repo_dir.path();
@@ -18017,30 +18250,37 @@ fn rebuild_evidence_noop_rebinds_late_gate_artifacts_after_replayed_rebase_chang
     );
     assert_eq!(gate_finish_before["allowed"], Value::Bool(false), "json: {gate_finish_before}");
 
-    let rebuild = run_rust_json(
+    let rebuild = run_rust(
         repo,
         state,
         &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
-        "rebuild-evidence noop should rebind late-gate artifacts after replayed rebase changes",
+        "rebuild-evidence noop should refuse late-gate artifact rebinding after replayed rebase changes",
     );
-    assert_eq!(rebuild["counts"]["planned"], Value::from(0), "json: {rebuild}");
-    assert_eq!(rebuild["counts"]["noop"], Value::from(1), "json: {rebuild}");
+    assert!(
+        !rebuild.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&rebuild.stdout),
+        String::from_utf8_lossy(&rebuild.stderr)
+    );
+    let error: Value = serde_json::from_slice(&rebuild.stderr)
+        .expect("replayed rebase refusal should be json on stderr");
+    assert_eq!(error["error_class"], Value::from("StaleProvenance"), "json: {error}");
 
     let gate_finish_after = run_rust_json(
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish after noop late-gate repair following replayed rebase changes",
+        "gate-finish after blocked late-gate repair following replayed rebase changes",
     );
-    assert_eq!(gate_finish_after["allowed"], Value::Bool(true), "json: {gate_finish_after}");
+    assert_eq!(gate_finish_after["allowed"], Value::Bool(false), "json: {gate_finish_after}");
 
     let review_source = fs::read_to_string(&review_path)
         .expect("branch review artifact should be readable after replayed rebase repair");
-    assert!(review_source.contains(&format!("**Head SHA:** {current_head}")), "review:\n{review_source}");
+    assert!(!review_source.contains(&format!("**Head SHA:** {current_head}")), "review:\n{review_source}");
     let release_source = fs::read_to_string(&release_path)
         .expect("branch release artifact should be readable after replayed rebase repair");
     assert!(
-        release_source.contains(&format!("**Head SHA:** {current_head}")),
+        !release_source.contains(&format!("**Head SHA:** {current_head}")),
         "release:\n{release_source}"
     );
 }

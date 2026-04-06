@@ -26,7 +26,7 @@ use crate::execution::harness::{
     ChunkId, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE, RunIdentitySnapshot,
     WorktreeLeaseBindingSnapshot,
 };
-use crate::execution::leases::validate_worktree_lease;
+use crate::execution::leases::{process_is_running, validate_worktree_lease};
 use crate::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters,
 };
@@ -422,6 +422,9 @@ impl MutableHarnessState {
         if self.strategy_checkpoint_kind.is_none() {
             self.strategy_checkpoint_kind = Some(String::from("none"));
         }
+        self.extra
+            .entry(String::from("strategy_checkpoints"))
+            .or_insert_with(|| Value::Array(Vec::new()));
     }
 }
 
@@ -2019,20 +2022,40 @@ impl WriteAuthorityLock {
             })?;
         }
 
-        let mut file = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(file) => file,
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                return Err(AuthorityLockAcquireError::Conflict);
-            }
-            Err(error) => {
-                return Err(AuthorityLockAcquireError::Io(format!(
-                    "Could not acquire write-authority lock {}: {error}",
-                    lock_path.display()
-                )));
+        let mut file = loop {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(file) => break file,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    let source = fs::read_to_string(&lock_path).map_err(|read_error| {
+                        AuthorityLockAcquireError::Io(format!(
+                            "Another runtime writer currently holds authoritative mutation authority, and the lock {} could not be inspected: {read_error}",
+                            lock_path.display()
+                        ))
+                    })?;
+                    let holder_pid = source.lines().find_map(|line| {
+                        line.trim()
+                            .strip_prefix("pid=")
+                            .and_then(|value| value.trim().parse::<u32>().ok())
+                    });
+                    let Some(holder_pid) = holder_pid else {
+                        return Err(AuthorityLockAcquireError::Conflict);
+                    };
+                    if process_is_running(holder_pid) {
+                        return Err(AuthorityLockAcquireError::Conflict);
+                    }
+                    remove_stale_write_authority_lock(&lock_path)?;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(AuthorityLockAcquireError::Io(format!(
+                        "Could not acquire write-authority lock {}: {error}",
+                        lock_path.display()
+                    )));
+                }
             }
         };
 
@@ -2050,5 +2073,16 @@ impl WriteAuthorityLock {
 impl Drop for WriteAuthorityLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn remove_stale_write_authority_lock(lock_path: &Path) -> Result<(), AuthorityLockAcquireError> {
+    match fs::remove_file(lock_path) {
+        Ok(()) => Ok(()),
+        Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(remove_error) => Err(AuthorityLockAcquireError::Io(format!(
+            "A stale write-authority lock was found at {}, but it could not be removed: {remove_error}",
+            lock_path.display()
+        ))),
     }
 }

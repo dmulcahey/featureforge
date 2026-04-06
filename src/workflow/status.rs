@@ -33,6 +33,8 @@ use crate::workflow::markdown_scan::markdown_files_under;
 
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
 const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
+const ACTIVE_IMPLEMENTATION_TARGET_INDEX: &str =
+    "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md";
 const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 2;
 
@@ -967,7 +969,9 @@ fn normalize_repo_path(path: &Path) -> Result<String, DiagnosticError> {
 fn scan_specs(repo_root: &Path) -> (Vec<WorkflowSpecCandidate>, Vec<WorkflowSpecCandidate>) {
     let mut candidates = Vec::new();
     let mut malformed = Vec::new();
-    for path in markdown_files_under(&repo_root.join(ACTIVE_SPEC_ROOT)) {
+    let active_target_paths = active_implementation_target_spec_paths(repo_root)
+        .unwrap_or_else(|| markdown_files_under(&repo_root.join(ACTIVE_SPEC_ROOT)));
+    for path in active_target_paths {
         if let Ok(document) = parse_workflow_spec_candidate(&path) {
             if document.malformed_headers {
                 malformed.push(document);
@@ -977,6 +981,44 @@ fn scan_specs(repo_root: &Path) -> (Vec<WorkflowSpecCandidate>, Vec<WorkflowSpec
         }
     }
     (candidates, malformed)
+}
+
+fn active_implementation_target_spec_paths(repo_root: &Path) -> Option<Vec<PathBuf>> {
+    let index_path = repo_root.join(ACTIVE_IMPLEMENTATION_TARGET_INDEX);
+    let source = fs::read_to_string(index_path).ok()?;
+    let mut in_normative_section = false;
+    let mut paths = Vec::new();
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed == "## Active Normative Specs" {
+            in_normative_section = true;
+            continue;
+        }
+        if in_normative_section && trimmed.starts_with("## ") {
+            break;
+        }
+        if !in_normative_section {
+            continue;
+        }
+        let Some(entry) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let relative = entry.trim().trim_matches('`');
+        if relative.is_empty() {
+            continue;
+        }
+        let path = if relative.starts_with("docs/") {
+            repo_root.join(relative)
+        } else {
+            repo_root.join(ACTIVE_SPEC_ROOT).join(relative)
+        };
+        if path.is_file() {
+            paths.push(path);
+        }
+    }
+
+    (!paths.is_empty()).then_some(paths)
 }
 
 fn scan_plans(repo_root: &Path) -> Vec<WorkflowPlanCandidate> {
@@ -1160,7 +1202,10 @@ fn parse_workflow_spec_candidate(path: &Path) -> Result<WorkflowSpecCandidate, D
         )
     })?;
     let workflow_state = parse_header_value(&source, "Workflow State").unwrap_or_default();
-    let workflow_state_valid = matches!(workflow_state.as_str(), "Draft" | "CEO Approved");
+    let workflow_state_valid = matches!(
+        workflow_state.as_str(),
+        "Draft" | "CEO Approved" | "Implementation Target"
+    );
     let spec_revision_valid = parse_header_value(&source, "Spec Revision")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
@@ -1174,6 +1219,7 @@ fn parse_workflow_spec_candidate(path: &Path) -> Result<WorkflowSpecCandidate, D
         ),
         ("Draft", Some("brainstorming" | "plan-ceo-review"))
             | ("CEO Approved", Some("plan-ceo-review"))
+            | ("Implementation Target", Some("clean-context review loop"))
     );
     Ok(WorkflowSpecCandidate {
         path: repo_relative_path(path),

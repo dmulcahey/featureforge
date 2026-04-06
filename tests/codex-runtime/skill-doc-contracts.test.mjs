@@ -589,7 +589,7 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /CONTRACT_STATE=\$\(printf '%s\\n' "\$ANALYZE_JSON" \| node -e 'const fs = require\("fs"\); const parsed = JSON\.parse\(fs\.readFileSync\(0, "utf8"\)\); process\.stdout\.write\(parsed\.contract_state \|\| ""\)'/);
   assert.match(reviewSkill, /if \[ "\$CONTRACT_STATE" != "valid" \] \|\| \[ "\$PACKET_BUILDABLE_TASKS" != "\$TASK_COUNT" \]; then/);
   assert.match(reviewSkill, /if \[ -n "\$ACTIVE_TASK\$BLOCKING_TASK\$RESUME_TASK" \]; then/);
-  assert.match(reviewSkill, /REVIEW_GATE_JSON=\$\("\$_FEATUREFORGE_BIN" plan execution gate-review-dispatch --plan "\$APPROVED_PLAN_PATH"\)/);
+  assert.match(reviewSkill, /REVIEW_GATE_JSON=\$\("\$_FEATUREFORGE_BIN" plan execution record-review-dispatch --plan "\$APPROVED_PLAN_PATH" --scope final-review\)/);
   assert.match(reviewSkill, /if \[ "\$REVIEW_ALLOWED" != "true" \]; then/);
 
   const finishSkill = readUtf8(getSkillPath('finishing-a-development-branch'));
@@ -600,13 +600,15 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(finishSkill, /If the exact approved plan path is unavailable or helper status fails, stop and return to the current execution flow instead of guessing\./);
   assert.match(finishSkill, /Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON\./);
   assert.match(finishSkill, /If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; branch completion is only valid when all three are `null`\./);
-  assert.match(finishSkill, /Treat the current-branch test-plan artifact as authoritative only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context\./);
+  assert.match(finishSkill, /If the current work is governed by an approved FeatureForge plan, treat the approved plan's normalized `\*\*QA Requirement:\*\* required\|not-required` metadata as authoritative for workflow-routed finish gating\./);
+  assert.match(finishSkill, /Treat the current-branch test-plan artifact as a QA scope\/provenance input only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context\./);
   assert.match(finishSkill, /Match current-branch artifacts by their `\*\*Branch:\*\*` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`\./);
   assert.doesNotMatch(finishSkill, /\*-"?\$BRANCH"?-test-plan-\*/);
   assert.match(finishSkill, /For plan-routed completion, use the exact `Base Branch` from the fresh release-readiness artifact instead of redetecting the target branch\./);
   assert.match(finishSkill, /The Step 2 `<base-branch>` value stays authoritative for Options A, B, and D\./);
   assert.match(finishSkill, /Use the exact `<base-branch>` resolved in Step 2\. Do not redetect it during PR creation\./);
-  assert.match(finishSkill, /If `gate-finish` fails with `test_plan_artifact_missing` or `test_plan_artifact_stale`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion\./);
+  assert.match(finishSkill, /If `gate-finish` fails with `qa_requirement_missing_or_invalid`, hand control back to `featureforge workflow record-pivot --plan <path> --reason <reason>` so the approved plan metadata can be corrected before QA or branch completion\./);
+  assert.match(finishSkill, /If approved-plan `QA Requirement` is `required` and `gate-finish` fails with `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion\./);
   assert.match(finishSkill, /gh pr create --base "<base-branch>"/);
 
   const reviewPrompt = readUtf8(path.join(REPO_ROOT, 'skills/requesting-code-review/code-reviewer.md'));
@@ -633,6 +635,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(writingPlans, /Requirement Coverage Matrix/);
   assert.match(writingPlans, /## Execution Strategy/);
   assert.match(writingPlans, /## Dependency Diagram/);
+  assert.match(writingPlans, /\*\*QA Requirement:\*\* required \| not-required/);
   assert.match(writingPlans, /\*\*Spec Coverage:\*\*/);
   assert.match(writingPlans, /\*\*Task Outcome:\*\*/);
   assert.match(writingPlans, /\*\*Plan Constraints:\*\*/);
@@ -668,7 +671,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(executingPlans, /build the canonical task packet/);
   assert.match(executingPlans, /treat it as the exact task contract for that execution segment/);
   assert.match(executingPlans, /mandatory task-boundary closure loop/i);
-  assert.match(executingPlans, /STOP and run `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` immediately after task completion/i);
+  assert.match(executingPlans, /STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` immediately after task completion/i);
   assert.match(executingPlans, /does not require per-dispatch user-consent prompts/);
   assert.match(executingPlans, /Non-execution ad-hoc delegation still follows normal user-consent policy/);
 
@@ -676,7 +679,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(subagentSkill, /pass the packet verbatim to implementer and reviewers/);
   assert.match(subagentSkill, /If the packet does not answer it, the task is ambiguous and execution must stop or route back to review\./);
   assert.match(subagentSkill, /The coordinator owns every `git commit`, `git merge`, and `git push` for this workflow/);
-  assert.match(subagentSkill, /STOP and run `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` immediately after task completion/i);
+  assert.match(subagentSkill, /STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` immediately after task completion/i);
   assert.match(subagentSkill, /run `verification-before-completion` and persist the task verification receipt/i);
   assert.match(subagentSkill, /does not require per-dispatch user-consent prompts/);
   assert.match(subagentSkill, /Non-execution ad-hoc delegation still follows normal user-consent policy/);
@@ -1085,8 +1088,10 @@ test('workflow handoff skills make terminal ownership explicit', () => {
 
   const engReview = readUtf8(getSkillPath('plan-eng-review'));
   assert.match(engReview, /\*\*The terminal state is presenting the execution preflight handoff with the approved plan path\.\*\*/);
-  assert.match(engReview, /plan-eng-review also owns the late refresh-test-plan lane when finish readiness reports `test_plan_artifact_missing` or `test_plan_artifact_stale` for the current approved plan revision\./);
+  assert.match(engReview, /plan-eng-review also owns the late refresh-test-plan lane when approved-plan `QA Requirement` is `required` and finish readiness reports `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch` for the current approved plan revision\./);
+  assert.match(engReview, /\*\*QA Requirement:\*\* required \| not-required/);
   assert.match(engReview, /\*\*Head SHA:\*\* \{current-head\}/);
+  assert.match(engReview, /This field scopes the QA artifact for testers; it is not the authoritative finish-gate policy source\./);
   assert.match(engReview, /Set `\*\*Head SHA:\*\*` to the current `git rev-parse HEAD` for the branch state that this test-plan artifact covers\./);
   assert.match(engReview, /In that late-stage lane, the terminal state is returning to the finish-gate flow with a regenerated current-branch test-plan artifact, not reopening execution preflight\./);
   assert.match(engReview, /If the helper returns `status` `implementation_ready`, immediately call `\$_FEATUREFORGE_BIN workflow handoff` before presenting any handoff text\./);
@@ -1251,7 +1256,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     codexReadme,
-    /`featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof/,
+    /`featureforge plan execution gate-review` is read-only while `featureforge plan execution record-review-dispatch` mints review-dispatch proof/,
   );
 
   const copilotReadme = readUtf8(path.join(REPO_ROOT, 'docs/README.copilot.md'));
@@ -1261,12 +1266,12 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     copilotReadme,
-    /`featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof/,
+    /`featureforge plan execution gate-review` is read-only while `featureforge plan execution record-review-dispatch` mints review-dispatch proof/,
   );
 
   const lateStageReference = readUtf8(path.join(REPO_ROOT, 'review/late-stage-precedence-reference.md'));
   assert.match(lateStageReference, /`gate-review` is read-only state evaluation\./);
-  assert.match(lateStageReference, /`gate-review-dispatch` is the dispatch-proof minting boundary\./);
+  assert.match(lateStageReference, /`record-review-dispatch` is the dispatch-proof minting boundary\./);
   assert.match(
     lateStageReference,
     /For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`\./,

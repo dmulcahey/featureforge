@@ -612,7 +612,15 @@ fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel:
     run_plan_execution(
         repo,
         state_dir,
-        &["gate-review-dispatch", "--plan", plan_rel],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
         "record task-boundary review dispatch lineage for final-review fixture",
     );
     run_plan_execution(
@@ -976,7 +984,7 @@ fn workflow_phase_routes_missing_final_review_back_to_requesting_code_review() {
 }
 
 #[test]
-fn task_boundary_final_review_remains_required_after_task_closure_gates() {
+fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-task-boundary-final-review-required");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1060,6 +1068,20 @@ fn task_boundary_final_review_remains_required_after_task_closure_gates() {
         1,
         &strategy_checkpoint_fingerprint,
     );
+    run_plan_execution(
+        repo,
+        state,
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
+        "record task review dispatch before task 2 begin for task-boundary final-review fixture",
+    );
 
     let status_before_task2 = run_plan_execution(
         repo,
@@ -1067,11 +1089,14 @@ fn task_boundary_final_review_remains_required_after_task_closure_gates() {
         &["status", "--plan", PLAN_REL],
         "status before task 2 begin for task-boundary final-review fixture execution",
     );
-    assert_eq!(status_before_task2["blocking_task"], Value::Null);
-    let begin_task2 = run_plan_execution(
-        repo,
-        state,
-        &[
+    assert_eq!(status_before_task2["blocking_task"], Value::from(1));
+    let mut begin_task2_command = Command::new(compiled_featureforge_path());
+    begin_task2_command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args([
+            "plan",
+            "execution",
             "begin",
             "--plan",
             PLAN_REL,
@@ -1085,58 +1110,18 @@ fn task_boundary_final_review_remains_required_after_task_closure_gates() {
             status_before_task2["execution_fingerprint"]
                 .as_str()
                 .expect("status should expose execution fingerprint before task 2 begin"),
-        ],
+        ]);
+    let begin_task2_output = run(
+        begin_task2_command,
         "begin task 2 for task-boundary final-review fixture execution",
     );
-    run_plan_execution(
-        repo,
-        state,
-        &[
-            "complete",
-            "--plan",
-            PLAN_REL,
-            "--task",
-            "2",
-            "--step",
-            "1",
-            "--source",
-            "featureforge:executing-plans",
-            "--claim",
-            "Completed task 2 step 1 for task-boundary final-review fixture.",
-            "--manual-verify-summary",
-            "Verified by task-boundary final-review fixture setup.",
-            "--file",
-            "docs/example-output.md",
-            "--expect-execution-fingerprint",
-            begin_task2["execution_fingerprint"]
-                .as_str()
-                .expect("begin should expose execution fingerprint for complete"),
-        ],
-        "complete task 2 for task-boundary final-review fixture execution",
-    );
-
-    write_test_plan_artifact(repo, state, "no");
-    write_release_readiness_artifact(repo, state, &expected_base_branch(repo));
-
-    let phase_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "phase", "--json"],
-        &[],
-        "workflow phase for task-boundary final-review-required shard",
-    );
-    let handoff_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "handoff", "--json"],
-        &[],
-        "workflow handoff for task-boundary final-review-required shard",
-    );
+    let begin_task2 = serde_json::from_slice::<Value>(&begin_task2_output.stderr)
+        .expect("blocked task 2 begin should emit json failure on stderr");
     assert_eq!(
-        phase_json["phase"], "final_review_pending",
-        "task-boundary final-review fixture should route to final_review_pending; phase payload: {phase_json:?}; handoff payload: {handoff_json:?}"
+        begin_task2["error_class"],
+        Value::from("MalformedExecutionState"),
+        "task 2 begin should stay blocked until task closure is recorded, got {begin_task2:?}"
     );
-    assert_eq!(handoff_json["phase"], "final_review_pending");
 }
 
 #[test]

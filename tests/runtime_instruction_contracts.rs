@@ -1453,6 +1453,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         "**Last Reviewed By:** plan-ceo-review",
     );
     assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "**QA Requirement:** required | not-required",
+    );
+    assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "For the final cross-task review gate in workflow-routed work",
     );
@@ -1462,7 +1466,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "STOP and run `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` immediately after task completion to record authoritative review-dispatch proof before any next-task begin",
+        "STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` immediately after task completion to record authoritative review-dispatch proof before any next-task begin",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1482,7 +1486,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "STOP and run `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` immediately after task completion so authoritative review-dispatch proof exists before any next-task begin.",
+        "STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` immediately after task completion so authoritative review-dispatch proof exists before any next-task begin.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1506,11 +1510,19 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "If `gate-finish` fails with `test_plan_artifact_missing` or `test_plan_artifact_stale`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.",
+        "If `gate-finish` fails with `qa_requirement_missing_or_invalid`, hand control back to `featureforge workflow record-pivot --plan <path> --reason <reason>` so the approved plan metadata can be corrected before QA or branch completion.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "Treat the current-branch test-plan artifact as authoritative only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context.",
+        "If approved-plan `QA Requirement` is `required` and `gate-finish` fails with `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.",
+    );
+    assert_file_contains(
+        root.join("skills/finishing-a-development-branch/SKILL.md"),
+        "If the current work is governed by an approved FeatureForge plan, treat the approved plan's normalized `**QA Requirement:** required|not-required` metadata as authoritative for workflow-routed finish gating.",
+    );
+    assert_file_contains(
+        root.join("skills/finishing-a-development-branch/SKILL.md"),
+        "Treat the current-branch test-plan artifact as a QA scope/provenance input only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -1547,11 +1559,19 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "plan-eng-review also owns the late refresh-test-plan lane when finish readiness reports `test_plan_artifact_missing` or `test_plan_artifact_stale` for the current approved plan revision.",
+        "plan-eng-review also owns the late refresh-test-plan lane when approved-plan `QA Requirement` is `required` and finish readiness reports `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch` for the current approved plan revision.",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "**QA Requirement:** required | not-required",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
         "**Head SHA:** {current-head}",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "This field scopes the QA artifact for testers; it is not the authoritative finish-gate policy source.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -1751,7 +1771,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "REVIEW_GATE_JSON=$(\"$_FEATUREFORGE_BIN\" plan execution gate-review-dispatch --plan \"$APPROVED_PLAN_PATH\")",
+        "REVIEW_GATE_JSON=$(\"$_FEATUREFORGE_BIN\" plan execution record-review-dispatch --plan \"$APPROVED_PLAN_PATH\" --scope final-review)",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -1808,7 +1828,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
-        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof",
+        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution record-review-dispatch` mints review-dispatch proof",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
@@ -1816,7 +1836,15 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
-        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution gate-review-dispatch` mints review-dispatch proof",
+        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution record-review-dispatch` mints review-dispatch proof",
+    );
+    assert_file_not_contains(
+        root.join("README.md"),
+        "featureforge plan execution gate-review-dispatch",
+    );
+    assert_file_not_contains(
+        root.join("RELEASE-NOTES.md"),
+        "featureforge plan execution gate-review-dispatch",
     );
     assert_file_contains(
         root.join("review/late-stage-precedence-reference.md"),
@@ -1824,7 +1852,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("review/late-stage-precedence-reference.md"),
-        "`gate-review-dispatch` is the dispatch-proof minting boundary.",
+        "`record-review-dispatch` is the dispatch-proof minting boundary.",
     );
     assert_file_contains(
         root.join("review/late-stage-precedence-reference.md"),

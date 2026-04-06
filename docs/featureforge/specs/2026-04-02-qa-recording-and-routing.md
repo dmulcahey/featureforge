@@ -96,6 +96,7 @@ Repo/branch/base-branch bindings must come from the runtime-owned `RepositoryCon
 Chosen routing rule:
 
 - `qa_pending` is emitted only when authoritative approved-plan metadata says `QA Requirement: required` and current branch closure, current release-readiness result `ready`, and current final-review result `pass` already exist for the same branch closure
+- when the same `qa_pending` lane lacks an authoritative current-branch test plan or the authoritative QA -> test-plan provenance is missing, blank, malformed, stale, or otherwise invalid, workflow/operator must emit `phase_detail=test_plan_refresh_required`, `next_action=refresh test plan`, and omit `recommended_command` so the branch reroutes through `featureforge:plan-eng-review` before direct `record-qa`
 - `ready_for_branch_completion` is emitted directly when that same authoritative policy says `QA Requirement: not-required` and the same current branch closure already has current release-readiness result `ready` and current final-review result `pass`
 - if authoritative approved-plan metadata for `QA Requirement` is missing or invalid when workflow/operator must choose between `qa_pending` and `ready_for_branch_completion`, workflow/operator must fail closed to `phase=pivot_required` with `phase_detail=planning_reentry_required` and recommended command `featureforge workflow record-pivot --plan <path> --reason <reason>`
 - workflow/operator must consume that policy through the runtime query layer rather than inferring it from prose or external convention
@@ -116,6 +117,7 @@ It must fail closed unless all of these are true:
 3. `phase_detail=qa_recording_required`
 4. a current release-readiness milestone with result `ready` exists for the same still-current branch closure
 5. a current final-review milestone with result `pass` exists for the same still-current branch closure
+6. authoritative current-branch test-plan provenance is valid, so workflow/operator is not rerouting to `phase_detail=test_plan_refresh_required`
 
 The authoritative QA output contains at least:
 

@@ -214,23 +214,23 @@ done
 printf '%s\n' "$PLAN_ARTIFACT"
 ```
 
-If `PLAN_ARTIFACT` exists, read it before deciding whether browser QA applies.
-
-If a current-branch test-plan artifact exists, treat its `**Browser QA Required:** yes|no` header as authoritative for workflow-routed finish gating.
+If the current work is governed by an approved FeatureForge plan, treat the approved plan's normalized `**QA Requirement:** required|not-required` metadata as authoritative for workflow-routed finish gating.
 
 Match current-branch artifacts by their `**Branch:**` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`.
 
-Treat the current-branch test-plan artifact as authoritative only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context.
+Treat the current-branch test-plan artifact as a QA scope/provenance input only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context.
 
-If that artifact names pages, routes, or browser interactions, use it to scope the required QA handoff.
+If that artifact names pages, routes, or browser interactions, use it to scope the required QA handoff when QA is required or when the user explicitly wants extra browser validation.
 
-A project-wide or generic test-plan artifact may help scope ad-hoc QA, but it does not satisfy branch-finish freshness checks. Only the current-branch artifact counts for helper-backed finish readiness.
+A project-wide or generic test-plan artifact may help scope ad-hoc QA, but it does not satisfy helper-backed finish readiness when approved-plan `QA Requirement` is `required`. Only the current-branch artifact counts for that freshness check.
 
-If no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before deciding whether QA is required or before invoking `gate-finish`.
+If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge workflow record-pivot --plan <path> --reason <reason>`; do not guess from test-plan prose.
+
+If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or `gate-finish`.
 
 Recommendation logic:
-- Recommend `A)` when the current-branch test-plan artifact sets `**Browser QA Required:** yes`
-- If the current-branch test-plan artifact sets `**Browser QA Required:** no`, QA remains optional unless the user explicitly wants extra browser validation
+- Recommend `A)` when approved-plan `QA Requirement` is `required`
+- If approved-plan `QA Requirement` is `not-required`, QA remains optional unless the user explicitly wants extra browser validation
 - For ad-hoc non-workflow work without a current-branch test-plan artifact, QA remains optional for clearly non-browser work
 
 When browser QA is clearly warranted, do not present a skip option.
@@ -244,9 +244,9 @@ Possible options when browser QA is optional:
 
 If a fresh `qa-only` report already happened in the current workflow, continue silently.
 
-If the current-branch test-plan artifact sets `**Browser QA Required:** yes`, require the existing QA handoff before presenting completion options.
+If approved-plan `QA Requirement` is `required`, require the existing QA handoff before presenting completion options.
 
-If no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before presenting completion options or invoking `gate-finish`.
+If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before presenting completion options or invoking `gate-finish`.
 
 ### Step 1.9: Finish Gate
 
@@ -254,11 +254,13 @@ If the current work is governed by an approved FeatureForge plan, after `feature
 
 For workflow-routed terminal completion, if no fresh post-document-release dedicated-independent review exists for the current `HEAD`, invoke `featureforge:requesting-code-review` before `gate-finish`.
 
-Treat `gate-review` as read-only state inspection and `gate-review-dispatch` as the dispatch-proof minting boundary. Do not substitute one for the other in terminal completion flow.
+Treat `gate-review` as read-only state inspection and `record-review-dispatch` as the dispatch-proof minting boundary. Do not substitute one for the other in terminal completion flow.
 
 If the current work is governed by an approved FeatureForge plan and the finish gate returns `allowed` `false`, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
 
-If `gate-finish` fails with `test_plan_artifact_missing` or `test_plan_artifact_stale`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
+If `gate-finish` fails with `qa_requirement_missing_or_invalid`, hand control back to `featureforge workflow record-pivot --plan <path> --reason <reason>` so the approved plan metadata can be corrected before QA or branch completion.
+
+If approved-plan `QA Requirement` is `required` and `gate-finish` fails with `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
 
 If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.
 

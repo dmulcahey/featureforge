@@ -118,6 +118,7 @@ Allowed `phase_detail` values:
 - `final_review_outcome_pending`
 - `final_review_recording_ready`
 - `qa_recording_required`
+- `test_plan_refresh_required`
 - `finish_review_gate_ready`
 - `finish_completion_gate_ready`
 - `handoff_recording_required`
@@ -168,8 +169,9 @@ Authoritative-source rule:
 - it must not be a conjunction, disjunction, or prose bundle
 - multi-step flows are represented by phase transitions and `phase_detail`, not by compound command strings
 - when `next_action` includes non-runtime work such as resolving a blocker, `recommended_command` names the next runtime command to run after that prerequisite is satisfied
-- `recommended_command` may be omitted only when `next_action=wait for external review result`, because no runtime mutation is actionable until the external reviewer returns
+- `recommended_command` may be omitted only when `next_action=wait for external review result` or `next_action=refresh test plan`, because no runtime mutation is actionable until the external reviewer returns or a refreshed test plan exists
 - `task_review_result_pending` and `final_review_outcome_pending` are external-input wait states. While the external reviewer result is not yet available to the caller, `recommended_command` remains omitted.
+- `test_plan_refresh_required` is a plan-eng-review reroute state. While the current test-plan artifact is missing, malformed, stale, or otherwise fails authoritative provenance checks, `recommended_command` remains omitted and the operator is expected to refresh the plan through that workflow lane before direct QA recording can resume.
 - when the caller reruns workflow/operator with `--external-review-result-ready`, the runtime must expose the matching recording-ready substate instead of inventing hidden stored reviewer-result state: `task_closure_recording_ready` for task scope and `final_review_recording_ready` for final-review scope
 
 Allowed `next_action` families:
@@ -185,6 +187,7 @@ Allowed `next_action` families:
 - `resolve release blocker`
 - `dispatch final review`
 - `run QA`
+- `refresh test plan`
 - `run finish review gate`
 - `run finish completion gate`
 - `hand off`
@@ -233,6 +236,7 @@ The routing layer must derive `phase_detail` deterministically from authoritativ
 | `final_review_outcome_pending` | the workflow is in `final_review_pending`, the current reviewed branch closure and a current release-readiness result `ready` already exist for the same branch closure, a valid final-review dispatch exists, and workflow/operator is waiting for the external reviewer result before final-review recording can run |
 | `final_review_recording_ready` | the workflow is in `final_review_pending`, a valid final-review dispatch exists, and the caller supplied `--external-review-result-ready` to indicate the independent reviewer result is already available for final-review recording |
 | `qa_recording_required` | the workflow is in `qa_pending`, authoritative QA policy says QA is required for the current branch, and the current reviewed branch closure, current release-readiness result `ready`, and current final-review result `pass` all already exist for that same branch closure |
+| `test_plan_refresh_required` | the workflow is in `qa_pending`, authoritative QA policy says QA is required, but the current test-plan artifact is missing, malformed, stale, or fails authoritative provenance/generator validation so QA must reroute through test-plan refresh before direct recording can continue |
 | `finish_review_gate_ready` | late-stage milestones are satisfied and the next finish command is `gate-review` |
 | `finish_completion_gate_ready` | `gate-review` already passed for the same current branch closure surfaced by workflow/operator, as proven by `finish_review_gate_pass_branch_closure_id`, and the next finish command is `gate-finish` |
 | `handoff_recording_required` | a transfer to another owner or lane is the next safe action and has not been recorded yet |
@@ -317,6 +321,7 @@ That means:
 | `final_review_pending` | `final_review_outcome_pending` | `clean` | final-review dispatch exists and workflow/operator is waiting for the external reviewer result before final-review recording can run | wait for external review result | omitted until reviewer result is available |
 | `final_review_pending` | `final_review_recording_ready` | `clean` | the caller has the independent reviewer result in hand and final-review recording can now run against the existing dispatch lineage | advance late stage | `featureforge plan execution advance-late-stage --plan <path> --dispatch-id <id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>` |
 | `qa_pending` | `qa_recording_required` | `clean` | QA evidence must be recorded only after current branch closure, current release-readiness result `ready`, and current final-review result `pass` all exist for that same branch closure | run QA | `featureforge plan execution record-qa --plan <path> --result pass|fail --summary-file <path>` |
+| `qa_pending` | `test_plan_refresh_required` | `clean` | QA policy requires QA, but the current authoritative test-plan artifact must be refreshed before direct QA recording can continue | refresh test plan | omitted until the refreshed plan is recorded through the plan-eng-review lane |
 | `pivot_required` | `planning_reentry_required` | `clean` | approved-plan QA policy metadata is missing or invalid, so late-stage routing cannot safely decide between QA and branch completion | pivot / return to planning | `featureforge workflow record-pivot --plan <path> --reason <reason>` |
 | `ready_for_branch_completion` | `finish_review_gate_ready` | `clean` | current state is healthy and the next finish command is `gate-review` | run finish review gate | `featureforge plan execution gate-review --plan <path>` |
 | `ready_for_branch_completion` | `finish_completion_gate_ready` | `clean` | `gate-review` already passed for the same current branch closure and the next finish command is `gate-finish` | run finish completion gate | `featureforge plan execution gate-finish --plan <path>` |

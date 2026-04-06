@@ -5,14 +5,15 @@ use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+use jiff::Timestamp;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::{
     BeginArgs, CompleteArgs, GateContractArgs, GateEvaluatorArgs, GateHandoffArgs,
     IsolatedAgentsArg, NoteArgs, NoteStateArg, RebuildEvidenceArgs, RecommendArgs,
-    RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs, ReopenArgs, StatusArgs,
-    TransferArgs,
+    RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs, RecordReviewDispatchArgs,
+    ReopenArgs, ReviewDispatchScopeArg, StatusArgs, TransferArgs,
 };
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
 use crate::contracts::harness::{
@@ -39,7 +40,7 @@ use crate::execution::harness::{
     TopologySelectionContext,
 };
 use crate::execution::leases::{
-    PreflightWriteAuthorityState, StrategyReviewDispatchLineageRecord,
+    PreflightWriteAuthorityState, StatusAuthoritativeOverlay, StrategyReviewDispatchLineageRecord,
     authoritative_matching_execution_topology_downgrade_records_checked, authoritative_state_path,
     load_status_authoritative_overlay_checked, preflight_requires_authoritative_handoff,
     preflight_requires_authoritative_mutation_recovery, preflight_write_authority_state,
@@ -126,9 +127,6 @@ pub struct PlanExecutionStatus {
     pub evidence_path: String,
     pub execution_started: String,
     pub warning_codes: Vec<String>,
-    pub latest_packet_fingerprint: Option<String>,
-    pub latest_head_sha: Option<String>,
-    pub latest_base_sha: Option<String>,
     pub active_task: Option<u32>,
     pub active_step: Option<u32>,
     pub blocking_task: Option<u32>,
@@ -295,6 +293,21 @@ pub struct GateResult {
     pub reason_codes: Vec<String>,
     pub warning_codes: Vec<String>,
     pub diagnostics: Vec<GateDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RecordReviewDispatchOutput {
+    pub allowed: bool,
+    pub failure_class: String,
+    pub reason_codes: Vec<String>,
+    pub warning_codes: Vec<String>,
+    pub diagnostics: Vec<GateDiagnostic>,
+    pub scope: String,
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -679,13 +692,21 @@ impl ExecutionRuntime {
         }
     }
 
-    pub fn gate_review_dispatch(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
+    pub fn gate_review_dispatch(&self, args: &RecordReviewDispatchArgs) -> Result<GateResult, JsonFailure> {
         match load_execution_context(self, &args.plan) {
             Ok(context) => {
                 ensure_review_dispatch_authoritative_bootstrap(&context)?;
-                record_review_dispatch_strategy_checkpoint(&context)?;
                 let reloaded = load_execution_context(self, &args.plan)?;
-                Ok(gate_review_from_context(&reloaded))
+                let cycle_target = review_dispatch_cycle_target(&reloaded);
+                validate_review_dispatch_request(&reloaded, args, cycle_target)?;
+                let gate = review_dispatch_gate_from_context(&reloaded, args, cycle_target);
+                if gate_review_dispatch_should_fail_before_mutation(&gate) {
+                    return Ok(gate);
+                }
+                let _ =
+                    record_review_dispatch_strategy_checkpoint(&reloaded, args, cycle_target)?;
+                let refreshed = load_execution_context(self, &args.plan)?;
+                Ok(review_dispatch_gate_from_context(&refreshed, args, cycle_target))
             }
             Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
                 let mut gate = GateState::default();
@@ -693,7 +714,7 @@ impl ExecutionRuntime {
                     FailureClass::PlanNotExecutionReady,
                     "plan_not_execution_ready",
                     error.message,
-                    "Refresh the approved plan/spec pair before running gate-review-dispatch.",
+                    "Refresh the approved plan/spec pair before running record-review-dispatch.",
                 );
                 Ok(gate.finish())
             }
@@ -701,10 +722,111 @@ impl ExecutionRuntime {
         }
     }
 
+    pub fn record_review_dispatch(
+        &self,
+        args: &RecordReviewDispatchArgs,
+    ) -> Result<RecordReviewDispatchOutput, JsonFailure> {
+        let initial_context = load_execution_context(self, &args.plan)?;
+        ensure_review_dispatch_authoritative_bootstrap(&initial_context)?;
+        let context = load_execution_context(self, &args.plan)?;
+        let cycle_target = review_dispatch_cycle_target(&context);
+        validate_review_dispatch_request(&context, args, cycle_target)?;
+        let gate = review_dispatch_gate_from_context(&context, args, cycle_target);
+        if !gate.allowed {
+            return Ok(RecordReviewDispatchOutput {
+                allowed: false,
+                failure_class: gate.failure_class.clone(),
+                reason_codes: gate.reason_codes.clone(),
+                warning_codes: gate.warning_codes.clone(),
+                diagnostics: gate.diagnostics.clone(),
+                scope: match args.scope {
+                    Some(ReviewDispatchScopeArg::Task) => String::from("task"),
+                    Some(ReviewDispatchScopeArg::FinalReview) => String::from("final-review"),
+                    None => String::new(),
+                },
+                action: String::from("blocked"),
+                dispatch_id: None,
+                recorded_at: None,
+            });
+        }
+        let action =
+            record_review_dispatch_strategy_checkpoint(&context, args, cycle_target)?;
+        let refreshed = load_execution_context(self, &args.plan)?;
+        let gate = review_dispatch_gate_from_context(&refreshed, args, cycle_target);
+        let dispatch_id = current_review_dispatch_id_if_still_current(&refreshed, args)?;
+        if args.scope.is_some() && dispatch_id.is_none() {
+            return Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                "record-review-dispatch recorded lineage but could not reload the current dispatch id.",
+            ));
+        }
+        Ok(RecordReviewDispatchOutput {
+            allowed: gate.allowed,
+            failure_class: gate.failure_class.clone(),
+            reason_codes: gate.reason_codes.clone(),
+            warning_codes: gate.warning_codes.clone(),
+            diagnostics: gate.diagnostics.clone(),
+            scope: match args.scope {
+                Some(ReviewDispatchScopeArg::Task) => String::from("task"),
+                Some(ReviewDispatchScopeArg::FinalReview) => String::from("final-review"),
+                None => String::new(),
+            },
+            action: match action {
+                ReviewDispatchMutationAction::Recorded => String::from("recorded"),
+                ReviewDispatchMutationAction::AlreadyCurrent => String::from("already_current"),
+            },
+            dispatch_id,
+            recorded_at: matches!(action, ReviewDispatchMutationAction::Recorded)
+                .then(|| Timestamp::now().to_string()),
+        })
+    }
+
     pub fn gate_finish(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
         let context = load_execution_context(self, &args.plan)?;
         Ok(gate_finish_from_context(&context))
     }
+}
+
+fn gate_review_dispatch_should_fail_before_mutation(gate: &GateResult) -> bool {
+    !gate.allowed
+}
+
+enum ReviewDispatchMutationAction {
+    Recorded,
+    AlreadyCurrent,
+}
+
+fn current_review_dispatch_id_if_still_current(
+    context: &ExecutionContext,
+    args: &RecordReviewDispatchArgs,
+) -> Result<Option<String>, JsonFailure> {
+    let overlay = load_status_authoritative_overlay_checked(context)?;
+    let Some(overlay) = overlay else {
+        return Ok(None);
+    };
+    Ok(match args.scope {
+        Some(ReviewDispatchScopeArg::Task) => args.task.and_then(|task| {
+            let current_lineage = task_completion_lineage_fingerprint(context, task)?;
+            let record = overlay.strategy_review_dispatch_lineage.get(&format!("task-{task}"))?;
+            if record.task_completion_lineage_fingerprint.as_deref() == Some(current_lineage.as_str()) {
+                record.dispatch_id.clone()
+            } else {
+                None
+            }
+        }),
+        Some(ReviewDispatchScopeArg::FinalReview) => overlay
+            .final_review_dispatch_lineage
+            .as_ref()
+            .and_then(|record| {
+                let branch_closure_id = record.branch_closure_id.as_deref()?;
+                if overlay.current_branch_closure_id.as_deref()? == branch_closure_id {
+                    record.dispatch_id.clone()
+                } else {
+                    None
+                }
+            }),
+        None => None,
+    })
 }
 
 fn recommendation_execution_context_key(context: &ExecutionContext) -> String {
@@ -716,26 +838,32 @@ fn recommendation_execution_context_key(context: &ExecutionContext) -> String {
 
 fn record_review_dispatch_strategy_checkpoint(
     context: &ExecutionContext,
-) -> Result<(), JsonFailure> {
+    args: &RecordReviewDispatchArgs,
+    cycle_target: ReviewDispatchCycleTarget,
+) -> Result<ReviewDispatchMutationAction, JsonFailure> {
     let _write_authority = claim_step_write_authority(&context.runtime)?;
+    if current_review_dispatch_id_if_still_current(context, args)?.is_some() {
+        return Ok(ReviewDispatchMutationAction::AlreadyCurrent);
+    }
     let mut authoritative_state = load_authoritative_transition_state(context)?;
     let Some(authoritative_state) = authoritative_state.as_mut() else {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
-            "Authoritative harness state is required before gate-review-dispatch can record review-dispatch proof.",
+            "Authoritative harness state is required before record-review-dispatch can record review-dispatch proof.",
         ));
     };
-    let cycle_target = match review_dispatch_cycle_target(context) {
+    let cycle_target = match cycle_target {
         ReviewDispatchCycleTarget::Bound(task, step) => Some((task, step)),
         ReviewDispatchCycleTarget::UnboundCompletedPlan => None,
-        ReviewDispatchCycleTarget::None => return Ok(()),
+        ReviewDispatchCycleTarget::None => return Ok(ReviewDispatchMutationAction::AlreadyCurrent),
     };
     authoritative_state.record_review_dispatch_strategy_checkpoint(
         context,
         &context.plan_document.execution_mode,
         cycle_target,
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(ReviewDispatchMutationAction::Recorded)
 }
 
 fn ensure_review_dispatch_authoritative_bootstrap(
@@ -753,10 +881,72 @@ fn ensure_review_dispatch_authoritative_bootstrap(
     )
 }
 
+#[derive(Clone, Copy)]
 enum ReviewDispatchCycleTarget {
     Bound(u32, u32),
     UnboundCompletedPlan,
     None,
+}
+
+fn validate_review_dispatch_request(
+    context: &ExecutionContext,
+    args: &RecordReviewDispatchArgs,
+    cycle_target: ReviewDispatchCycleTarget,
+) -> Result<(), JsonFailure> {
+    match args.scope {
+        None => Err(JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            "record-review-dispatch requires --scope task|final-review.",
+        )),
+        Some(ReviewDispatchScopeArg::Task) => {
+            let requested_task = args.task.ok_or_else(|| {
+                JsonFailure::new(
+                    FailureClass::InvalidCommandInput,
+                    "record-review-dispatch --scope task requires --task <n>.",
+                )
+            })?;
+            let observed_task = match cycle_target {
+                ReviewDispatchCycleTarget::Bound(task, _) => task,
+                ReviewDispatchCycleTarget::UnboundCompletedPlan => {
+                    return Err(JsonFailure::new(
+                        FailureClass::InvalidCommandInput,
+                        format!(
+                            "record-review-dispatch --scope task --task {requested_task} is invalid because the approved plan is already at final-review dispatch scope."
+                        ),
+                    ));
+                }
+                ReviewDispatchCycleTarget::None => {
+                    return Err(JsonFailure::new(
+                        FailureClass::ExecutionStateNotReady,
+                        "record-review-dispatch --scope task requires a current task review-dispatch target.",
+                    ));
+                }
+            };
+            if requested_task != observed_task {
+                return Err(JsonFailure::new(
+                    FailureClass::InvalidCommandInput,
+                    format!(
+                        "record-review-dispatch --scope task --task {requested_task} does not match the current task review-dispatch target Task {observed_task} for plan {}.",
+                        context.plan_rel
+                    ),
+                ));
+            }
+            Ok(())
+        }
+        Some(ReviewDispatchScopeArg::FinalReview) => match cycle_target {
+            ReviewDispatchCycleTarget::UnboundCompletedPlan => Ok(()),
+            ReviewDispatchCycleTarget::Bound(task, _) => Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                format!(
+                    "record-review-dispatch --scope final-review is invalid because Task {task} still requires task-scope review dispatch first."
+                ),
+            )),
+            ReviewDispatchCycleTarget::None => Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                "record-review-dispatch --scope final-review requires a completed-plan final-review dispatch target.",
+            )),
+        },
+    }
 }
 
 fn review_dispatch_cycle_target(context: &ExecutionContext) -> ReviewDispatchCycleTarget {
@@ -770,6 +960,36 @@ fn review_dispatch_cycle_target(context: &ExecutionContext) -> ReviewDispatchCyc
         }
     }
     if context.steps.iter().all(|step| step.checked) {
+        let overlay = load_status_authoritative_overlay_checked(context)
+            .ok()
+            .and_then(|overlay| overlay);
+        let authoritative_phase = overlay.as_ref().and_then(|overlay| {
+            normalize_optional_overlay_value(overlay.harness_phase.as_deref()).and_then(parse_harness_phase)
+        });
+        if authoritative_phase.is_some_and(is_late_stage_phase)
+            || overlay
+                .as_ref()
+                .is_some_and(has_authoritative_late_stage_progress)
+        {
+            return ReviewDispatchCycleTarget::UnboundCompletedPlan;
+        }
+        if let Some(final_task) = context.tasks_by_number.keys().copied().max() {
+            let final_task_closure_missing = load_authoritative_transition_state(context)
+                .ok()
+                .and_then(|state| state)
+                .and_then(|state| state.current_task_closure_result(final_task))
+                .is_none();
+            if final_task_closure_missing
+                && let Some(final_step) = context
+                    .steps
+                    .iter()
+                    .filter(|step| step.task_number == final_task)
+                    .map(|step| step.step_number)
+                    .max()
+            {
+                return ReviewDispatchCycleTarget::Bound(final_task, final_step);
+            }
+        }
         return ReviewDispatchCycleTarget::UnboundCompletedPlan;
     }
     if let Some(attempt) = context.evidence.attempts.iter().rev().find(|attempt| {
@@ -795,6 +1015,121 @@ fn review_dispatch_cycle_target(context: &ExecutionContext) -> ReviewDispatchCyc
         return ReviewDispatchCycleTarget::Bound(attempt.task_number, attempt.step_number);
     }
     ReviewDispatchCycleTarget::None
+}
+
+fn review_dispatch_gate_from_context(
+    context: &ExecutionContext,
+    args: &RecordReviewDispatchArgs,
+    cycle_target: ReviewDispatchCycleTarget,
+) -> GateResult {
+    match args.scope {
+        Some(ReviewDispatchScopeArg::Task) => {
+            let task_number = args.task.or(match cycle_target {
+                ReviewDispatchCycleTarget::Bound(task_number, _) => Some(task_number),
+                _ => None,
+            });
+            if let Some(task_number) = task_number {
+                return task_review_dispatch_gate_from_context(context, task_number);
+            }
+        }
+        Some(ReviewDispatchScopeArg::FinalReview) | None => {}
+    }
+    gate_review_from_context_internal(context, false)
+}
+
+fn task_review_dispatch_gate_from_context(
+    context: &ExecutionContext,
+    task_number: u32,
+) -> GateResult {
+    let mut gate = GateState::default();
+    let task_steps: Vec<_> = context
+        .steps
+        .iter()
+        .filter(|step| step.task_number == task_number)
+        .collect();
+    if task_steps.is_empty() {
+        gate.fail(
+            FailureClass::InvalidCommandInput,
+            "task_not_found",
+            format!(
+                "Task {task_number} does not exist in the approved plan and cannot be used for record-review-dispatch."
+            ),
+            "Choose a valid task number from the approved plan.",
+        );
+        return gate.finish();
+    }
+
+    for state in [NoteState::Active, NoteState::Blocked, NoteState::Interrupted] {
+        if let Some(step) = active_step(context, state).filter(|step| step.task_number == task_number) {
+            let (reason_code, message, remediation) = match state {
+                NoteState::Active => (
+                    "active_step_in_progress",
+                    format!(
+                        "Task {task_number} review dispatch is blocked while Step {} remains active.",
+                        step.step_number
+                    ),
+                    "Complete, interrupt, or resolve the active step before dispatching task review.",
+                ),
+                NoteState::Blocked => (
+                    "blocked_step",
+                    format!(
+                        "Task {task_number} review dispatch is blocked while Step {} remains blocked.",
+                        step.step_number
+                    ),
+                    "Resolve the blocked step before dispatching task review.",
+                ),
+                NoteState::Interrupted => (
+                    "interrupted_work_unresolved",
+                    format!(
+                        "Task {task_number} review dispatch is blocked while Step {} remains interrupted.",
+                        step.step_number
+                    ),
+                    "Resume or explicitly resolve the interrupted step before dispatching task review.",
+                ),
+            };
+            gate.fail(FailureClass::ExecutionStateNotReady, reason_code, message, remediation);
+        }
+    }
+
+    for step in task_steps {
+        if !step.checked {
+            gate.fail(
+                FailureClass::ExecutionStateNotReady,
+                "unfinished_task_steps_remaining",
+                format!(
+                    "Task {task_number} review dispatch is blocked while Step {} remains unchecked.",
+                    step.step_number
+                ),
+                "Finish all steps in the task before dispatching task review.",
+            );
+            continue;
+        }
+        let Some(attempt) = latest_attempt_for_step(&context.evidence, step.task_number, step.step_number) else {
+            gate.fail(
+                FailureClass::StaleExecutionEvidence,
+                "checked_step_missing_evidence",
+                format!(
+                    "Task {task_number} Step {} is checked but missing execution evidence.",
+                    step.step_number
+                ),
+                "Reopen the step or record matching execution evidence before dispatching task review.",
+            );
+            continue;
+        };
+        if attempt.status != "Completed" {
+            gate.fail(
+                FailureClass::StaleExecutionEvidence,
+                "checked_step_missing_evidence",
+                format!(
+                    "Task {task_number} Step {} no longer has a completed evidence attempt.",
+                    step.step_number
+                ),
+                "Reopen the step or complete it again with fresh evidence before dispatching task review.",
+            );
+        }
+    }
+
+    gate.finish()
 }
 
 fn select_active_learned_topology_guidance(
@@ -1047,7 +1382,6 @@ pub fn validate_expected_fingerprint(
 pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionStatus, JsonFailure> {
     let preflight_acceptance = preflight_acceptance_for_context(context)?;
     let started = execution_started(context);
-    let latest_completed = latest_completed_attempt(&context.evidence);
     let warning_codes = Vec::new();
     let execution_run_id = preflight_acceptance
         .as_ref()
@@ -1128,10 +1462,6 @@ pub fn status_from_context(context: &ExecutionContext) -> Result<PlanExecutionSt
             String::from("no")
         },
         warning_codes,
-        latest_packet_fingerprint: latest_completed
-            .and_then(|attempt| attempt.packet_fingerprint.clone()),
-        latest_head_sha: latest_completed.and_then(|attempt| attempt.head_sha.clone()),
-        latest_base_sha: latest_completed.and_then(|attempt| attempt.base_sha.clone()),
         active_task: active_step(context, NoteState::Active).map(|step| step.task_number),
         active_step: active_step(context, NoteState::Active).map(|step| step.step_number),
         blocking_task: active_step(context, NoteState::Blocked).map(|step| step.task_number),
@@ -1348,23 +1678,69 @@ fn apply_task_boundary_status_overlay(
         .find(|step| !step.checked)
         .map(|step| step.task_number)
     else {
+        let overlay = load_status_authoritative_overlay_checked(context)
+            .ok()
+            .and_then(|overlay| overlay);
+        if (status.latest_authoritative_sequence != INITIAL_AUTHORITATIVE_SEQUENCE
+            && status.harness_phase != HarnessPhase::Executing)
+            || is_late_stage_phase(status.harness_phase)
+            || overlay
+                .as_ref()
+                .is_some_and(has_authoritative_late_stage_progress)
+        {
+            return;
+        }
+        let Some(final_task) = context.tasks_by_number.keys().copied().max() else {
+            return;
+        };
+        let Ok(Some(authoritative_state)) = load_authoritative_transition_state(context) else {
+            return;
+        };
+        if authoritative_state.current_task_closure_result(final_task).is_some() {
+            return;
+        }
+        let dispatch_args = RecordReviewDispatchArgs {
+            plan: context.plan_abs.clone(),
+            scope: Some(ReviewDispatchScopeArg::Task),
+            task: Some(final_task),
+        };
+        if current_review_dispatch_id_if_still_current(context, &dispatch_args)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            push_status_reason_code_once(status, "prior_task_review_not_green");
+            status.blocking_task = Some(final_task);
+        }
         return;
     };
-    let Some(prior_task) = prior_task_number_for_begin(context, next_unchecked_task) else {
-        return;
-    };
-    let Err(error) = require_prior_task_closure_for_begin(context, next_unchecked_task) else {
-        return;
-    };
-    if let Some(reason_code) = task_boundary_reason_code_from_message(&error.message)
-        && !status
-            .reason_codes
-            .iter()
-            .any(|existing| existing == reason_code)
     {
-        status.reason_codes.push(reason_code.to_owned());
+        let Some(prior_task) = prior_task_number_for_begin(context, next_unchecked_task) else {
+            return;
+        };
+        let Err(error) = require_prior_task_closure_for_begin(context, next_unchecked_task) else {
+            return;
+        };
+        if let Some(reason_code) = task_boundary_reason_code_from_message(&error.message)
+            && !status
+                .reason_codes
+                .iter()
+                .any(|existing| existing == reason_code)
+        {
+            status.reason_codes.push(reason_code.to_owned());
+        }
+        status.blocking_task = Some(prior_task);
     }
-    status.blocking_task = Some(prior_task);
+}
+
+fn has_authoritative_late_stage_progress(overlay: &StatusAuthoritativeOverlay) -> bool {
+    normalize_optional_overlay_value(overlay.current_branch_closure_id.as_deref()).is_some()
+        || overlay.final_review_dispatch_lineage.is_some()
+        || normalize_optional_overlay_value(overlay.current_release_readiness_result.as_deref())
+            .is_some()
+        || normalize_optional_overlay_value(overlay.final_review_state.as_deref()).is_some()
+        || normalize_optional_overlay_value(overlay.browser_qa_state.as_deref()).is_some()
+        || normalize_optional_overlay_value(overlay.release_docs_state.as_deref()).is_some()
 }
 
 fn apply_late_stage_precedence_status_overlay(
@@ -4486,7 +4862,7 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
     enforce_finish_dependency_index_truth(context, &mut gate);
     merge_gate_result(
         &mut gate,
-        gate_review_from_context_internal(context, false),
+        gate_review_from_context_internal(context, true),
     );
     if !gate.allowed {
         return gate.finish();
@@ -4793,26 +5169,21 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
         return gate.finish();
     }
 
-    let authoritative_qa_path = match authoritative_browser_qa_artifact_path_checked(context) {
-        Ok(path) => path,
-        Err(error) => {
-            let failure_class =
-                if error.error_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
-                    FailureClass::ArtifactIntegrityMismatch
-                } else {
-                    FailureClass::MalformedExecutionState
-                };
+    let browser_qa_required = match context.plan_document.qa_requirement.as_deref() {
+        Some("required") => true,
+        Some("not-required") => false,
+        _ => {
             gate.fail(
-                failure_class,
-                "qa_artifact_authoritative_provenance_invalid",
-                error.message,
-                "Restore the authoritative browser-QA provenance and retry gate-finish.",
+                FailureClass::ExecutionStateNotReady,
+                "qa_requirement_missing_or_invalid",
+                "Finish readiness requires approved-plan QA Requirement metadata to be present and valid.",
+                "Record a workflow pivot so the approved plan can be corrected, then rerun the late-stage flow.",
             );
             return gate.finish();
         }
     };
-    let authoritative_test_plan_path = match authoritative_qa_path.as_deref() {
-        Some(qa_path) => match authoritative_test_plan_artifact_path_from_qa_checked(qa_path) {
+    if browser_qa_required {
+        let authoritative_qa_path = match authoritative_browser_qa_artifact_path_checked(context) {
             Ok(path) => path,
             Err(error) => {
                 let failure_class =
@@ -4823,76 +5194,90 @@ pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
                     };
                 gate.fail(
                     failure_class,
-                    "test_plan_artifact_authoritative_provenance_invalid",
+                    "qa_artifact_authoritative_provenance_invalid",
                     error.message,
-                    "Restore the authoritative browser-QA to test-plan provenance and retry gate-finish.",
+                    "Restore the authoritative browser-QA provenance and retry gate-finish.",
                 );
                 return gate.finish();
             }
-        },
-        None => None,
-    };
-    let test_plan_path = authoritative_test_plan_path
-        .or_else(|| latest_branch_artifact_path(&artifact_dir, branch, "test-plan"));
-    let Some(test_plan_path) = test_plan_path else {
-        gate.fail(
-            FailureClass::QaArtifactNotFresh,
-            "test_plan_artifact_missing",
-            "Finish readiness requires a current branch test-plan artifact.",
-            "Regenerate the test-plan artifact for the current approved plan revision.",
-        );
-        return gate.finish();
-    };
+        };
+        let authoritative_test_plan_path = match authoritative_qa_path.as_deref() {
+            Some(qa_path) => match authoritative_test_plan_artifact_path_from_qa_checked(qa_path) {
+                Ok(path) => path,
+                Err(error) => {
+                    let failure_class =
+                        if error.error_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
+                            FailureClass::ArtifactIntegrityMismatch
+                        } else {
+                            FailureClass::MalformedExecutionState
+                        };
+                    gate.fail(
+                        failure_class,
+                        "test_plan_artifact_authoritative_provenance_invalid",
+                        error.message,
+                        "Restore the authoritative browser-QA to test-plan provenance and retry gate-finish.",
+                    );
+                    return gate.finish();
+                }
+            },
+            None => None,
+        };
+        let test_plan_path = authoritative_test_plan_path
+            .or_else(|| latest_branch_artifact_path(&artifact_dir, branch, "test-plan"));
+        let Some(test_plan_path) = test_plan_path else {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "test_plan_artifact_missing",
+                "Finish readiness requires a current branch test-plan artifact.",
+                "Regenerate the test-plan artifact for the current approved plan revision.",
+            );
+            return gate.finish();
+        };
 
-    let test_plan = parse_artifact_document(&test_plan_path);
-    if test_plan.title.as_deref() != Some("# Test Plan") {
-        gate.fail(
-            FailureClass::QaArtifactNotFresh,
-            "test_plan_artifact_malformed",
-            "The latest test-plan artifact is malformed.",
-            "Regenerate the test-plan artifact for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if test_plan.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
-        || test_plan.headers.get("Source Plan Revision")
-            != Some(&context.plan_document.plan_revision.to_string())
-        || test_plan.headers.get("Branch") != Some(branch)
-        || test_plan.headers.get("Repo") != Some(&context.runtime.repo_slug)
-    {
-        gate.fail(
-            FailureClass::QaArtifactNotFresh,
-            "test_plan_artifact_stale",
-            "The latest test-plan artifact does not match the current approved plan, repo, or branch.",
-            "Regenerate the test-plan artifact for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if test_plan.headers.get("Head SHA") != Some(&current_head) {
-        gate.fail(
-            FailureClass::QaArtifactNotFresh,
-            "test_plan_artifact_stale",
-            "The latest test-plan artifact does not match the current HEAD.",
-            "Regenerate the test-plan artifact for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-    if test_plan.headers.get("Generated By") != Some(&String::from("featureforge:plan-eng-review"))
-    {
-        gate.fail(
-            FailureClass::QaArtifactNotFresh,
-            "test_plan_artifact_generator_mismatch",
-            "The latest test-plan artifact was not generated by plan-eng-review.",
-            "Regenerate the test-plan artifact for the current approved plan revision.",
-        );
-        return gate.finish();
-    }
-
-    if test_plan
-        .headers
-        .get("Browser QA Required")
-        .is_some_and(|value| value == "yes")
-    {
+        let test_plan = parse_artifact_document(&test_plan_path);
+        if test_plan.title.as_deref() != Some("# Test Plan") {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "test_plan_artifact_malformed",
+                "The latest test-plan artifact is malformed.",
+                "Regenerate the test-plan artifact for the current approved plan revision.",
+            );
+            return gate.finish();
+        }
+        if test_plan.headers.get("Source Plan") != Some(&format!("`{}`", context.plan_rel))
+            || test_plan.headers.get("Source Plan Revision")
+                != Some(&context.plan_document.plan_revision.to_string())
+            || test_plan.headers.get("Branch") != Some(branch)
+            || test_plan.headers.get("Repo") != Some(&context.runtime.repo_slug)
+        {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "test_plan_artifact_stale",
+                "The latest test-plan artifact does not match the current approved plan, repo, or branch.",
+                "Regenerate the test-plan artifact for the current approved plan revision.",
+            );
+            return gate.finish();
+        }
+        if test_plan.headers.get("Head SHA") != Some(&current_head) {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "test_plan_artifact_stale",
+                "The latest test-plan artifact does not match the current HEAD.",
+                "Regenerate the test-plan artifact for the current approved plan revision.",
+            );
+            return gate.finish();
+        }
+        if test_plan.headers.get("Generated By")
+            != Some(&String::from("featureforge:plan-eng-review"))
+        {
+            gate.fail(
+                FailureClass::QaArtifactNotFresh,
+                "test_plan_artifact_generator_mismatch",
+                "The latest test-plan artifact was not generated by plan-eng-review.",
+                "Regenerate the test-plan artifact for the current approved plan revision.",
+            );
+            return gate.finish();
+        }
         let qa_path = authoritative_qa_path
             .or_else(|| latest_branch_artifact_path(&artifact_dir, branch, "test-outcome"));
         let Some(qa_path) = qa_path else {
@@ -6736,21 +7121,6 @@ fn parse_contract_render(source: &str) -> String {
     format!("{}\n", rendered.join("\n"))
 }
 
-fn latest_completed_attempt(evidence: &ExecutionEvidence) -> Option<&EvidenceAttempt> {
-    evidence
-        .attempts
-        .iter()
-        .enumerate()
-        .filter(|(_, attempt)| attempt.status == "Completed")
-        .max_by(|(left_index, left_attempt), (right_index, right_attempt)| {
-            left_attempt
-                .recorded_at
-                .cmp(&right_attempt.recorded_at)
-                .then_with(|| left_index.cmp(right_index))
-        })
-        .map(|(_, attempt)| attempt)
-}
-
 pub(crate) fn prior_task_number_for_begin(
     context: &ExecutionContext,
     target_task: u32,
@@ -7148,7 +7518,7 @@ fn ensure_prior_task_review_dispatch_closed(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_missing",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} is missing required post-completion review-dispatch evidence. Run `featureforge plan execution gate-review-dispatch --plan {}` after Task {prior_task} closes.",
+                "Task {target_task} may not begin because Task {prior_task} is missing required post-completion review-dispatch evidence. Run `featureforge plan execution record-review-dispatch --plan {} --scope task --task {prior_task}` after Task {prior_task} closes.",
                 context.plan_rel
             ),
         ));
@@ -7159,7 +7529,7 @@ fn ensure_prior_task_review_dispatch_closed(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_missing",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} is missing required post-completion review-dispatch evidence. Run `featureforge plan execution gate-review-dispatch --plan {}` after Task {prior_task} closes.",
+                "Task {target_task} may not begin because Task {prior_task} is missing required post-completion review-dispatch evidence. Run `featureforge plan execution record-review-dispatch --plan {} --scope task --task {prior_task}` after Task {prior_task} closes.",
                 context.plan_rel
             ),
         ));
@@ -7197,7 +7567,7 @@ fn validate_task_review_dispatch_lineage(
                 FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
-                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
+                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution record-review-dispatch --plan {} --scope task --task {prior_task}` for Task {prior_task}.",
                     context.plan_rel
                 ),
             )
@@ -7207,7 +7577,7 @@ fn validate_task_review_dispatch_lineage(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
+                "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution record-review-dispatch --plan {} --scope task --task {prior_task}` for Task {prior_task}.",
                 context.plan_rel
             ),
         )
@@ -7217,7 +7587,7 @@ fn validate_task_review_dispatch_lineage(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
+                "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution record-review-dispatch --plan {} --scope task --task {prior_task}` for Task {prior_task}.",
                 context.plan_rel
             ),
         )
@@ -7232,7 +7602,7 @@ fn validate_task_review_dispatch_lineage(
                 FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
-                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
+                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution record-review-dispatch --plan {} --scope task --task {prior_task}` for Task {prior_task}.",
                     context.plan_rel
                 ),
             )
@@ -7247,7 +7617,7 @@ fn validate_task_review_dispatch_lineage(
                 FailureClass::ExecutionStateNotReady,
                 "prior_task_review_dispatch_stale",
                 format!(
-                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution gate-review-dispatch --plan {}` for Task {prior_task}.",
+                    "Task {target_task} may not begin because Task {prior_task} review-dispatch lineage is malformed. Re-run `featureforge plan execution record-review-dispatch --plan {} --scope task --task {prior_task}` for Task {prior_task}.",
                     context.plan_rel
                 ),
             )
@@ -7263,7 +7633,7 @@ fn validate_task_review_dispatch_lineage(
             FailureClass::ExecutionStateNotReady,
             "prior_task_review_dispatch_stale",
             format!(
-                "Task {target_task} may not begin because Task {prior_task} review-dispatch evidence is stale against current task/strategy lineage. Re-run `featureforge plan execution gate-review-dispatch --plan {}` after Task {prior_task} closure.",
+                "Task {target_task} may not begin because Task {prior_task} review-dispatch evidence is stale against current task/strategy lineage. Re-run `featureforge plan execution record-review-dispatch --plan {} --scope task --task {prior_task}` after Task {prior_task} closure.",
                 context.plan_rel
             ),
         ));

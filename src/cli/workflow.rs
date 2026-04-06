@@ -21,6 +21,9 @@ pub enum WorkflowCommand {
     Phase(PhaseArgs),
     Doctor(JsonModeArgs),
     Handoff(JsonModeArgs),
+    Operator(OperatorArgs),
+    #[command(name = "record-pivot")]
+    RecordPivot(RecordPivotArgs),
     Preflight(PlanArgs),
     Gate(WorkflowGateCli),
 }
@@ -71,6 +74,26 @@ pub struct JsonModeArgs {
 pub struct PlanArgs {
     #[arg(long)]
     pub plan: PathBuf,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct OperatorArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long = "external-review-result-ready", default_value_t = false)]
+    pub external_review_result_ready: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RecordPivotArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long)]
+    pub reason: String,
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }

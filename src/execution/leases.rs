@@ -19,6 +19,8 @@ pub(crate) struct StrategyReviewDispatchLineageRecord {
     #[serde(default)]
     pub(crate) execution_run_id: Option<String>,
     #[serde(default)]
+    pub(crate) dispatch_id: Option<String>,
+    #[serde(default)]
     pub(crate) source_task: Option<u32>,
     #[serde(default)]
     pub(crate) source_step: Option<u32>,
@@ -26,6 +28,16 @@ pub(crate) struct StrategyReviewDispatchLineageRecord {
     pub(crate) strategy_checkpoint_fingerprint: Option<String>,
     #[serde(default)]
     pub(crate) task_completion_lineage_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct FinalReviewDispatchLineageRecord {
+    #[serde(default)]
+    pub(crate) execution_run_id: Option<String>,
+    #[serde(default)]
+    pub(crate) dispatch_id: Option<String>,
+    #[serde(default)]
+    pub(crate) branch_closure_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -107,6 +119,16 @@ pub(crate) struct StatusAuthoritativeOverlay {
     #[serde(default)]
     pub(crate) strategy_review_dispatch_lineage:
         BTreeMap<String, StrategyReviewDispatchLineageRecord>,
+    #[serde(default)]
+    pub(crate) final_review_dispatch_lineage: Option<FinalReviewDispatchLineageRecord>,
+    #[serde(default)]
+    pub(crate) current_branch_closure_id: Option<String>,
+    #[serde(default)]
+    pub(crate) current_branch_closure_reviewed_state_id: Option<String>,
+    #[serde(default)]
+    pub(crate) current_branch_closure_contract_identity: Option<String>,
+    #[serde(default)]
+    pub(crate) current_release_readiness_result: Option<String>,
     #[serde(default)]
     pub(crate) reason_codes: Vec<String>,
 }

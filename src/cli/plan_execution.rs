@@ -41,10 +41,24 @@ pub enum PlanExecutionCommand {
     RecordHandoff(RecordHandoffArgs),
     #[command(name = "gate-review")]
     GateReview(StatusArgs),
-    #[command(name = "gate-review-dispatch")]
-    GateReviewDispatch(StatusArgs),
+    #[command(name = "record-review-dispatch")]
+    RecordReviewDispatch(RecordReviewDispatchArgs),
+    #[command(name = "repair-review-state")]
+    RepairReviewState(StatusArgs),
+    #[command(name = "explain-review-state")]
+    ExplainReviewState(StatusArgs),
+    #[command(name = "reconcile-review-state")]
+    ReconcileReviewState(StatusArgs),
     #[command(name = "gate-finish")]
     GateFinish(StatusArgs),
+    #[command(name = "close-current-task")]
+    CloseCurrentTask(CloseCurrentTaskArgs),
+    #[command(name = "record-branch-closure")]
+    RecordBranchClosure(RecordBranchClosureArgs),
+    #[command(name = "advance-late-stage")]
+    AdvanceLateStage(AdvanceLateStageArgs),
+    #[command(name = "record-qa")]
+    RecordQa(RecordQaArgs),
     Begin(BeginArgs),
     Note(NoteArgs),
     Complete(CompleteArgs),
@@ -56,6 +70,126 @@ pub enum PlanExecutionCommand {
 pub struct StatusArgs {
     #[arg(long)]
     pub plan: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReviewDispatchScopeArg {
+    Task,
+    FinalReview,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RecordReviewDispatchArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long, value_enum)]
+    pub scope: Option<ReviewDispatchScopeArg>,
+    #[arg(long)]
+    pub task: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReviewOutcomeArg {
+    Pass,
+    Fail,
+}
+
+impl ReviewOutcomeArg {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum VerificationOutcomeArg {
+    Pass,
+    Fail,
+    #[value(name = "not-run")]
+    NotRun,
+}
+
+impl VerificationOutcomeArg {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::NotRun => "not-run",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReleaseReadinessOutcomeArg {
+    Ready,
+    Blocked,
+}
+
+impl ReleaseReadinessOutcomeArg {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct CloseCurrentTaskArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long)]
+    pub task: u32,
+    #[arg(long = "dispatch-id")]
+    pub dispatch_id: String,
+    #[arg(long = "review-result", value_enum)]
+    pub review_result: ReviewOutcomeArg,
+    #[arg(long = "review-summary-file")]
+    pub review_summary_file: PathBuf,
+    #[arg(long = "verification-result", value_enum)]
+    pub verification_result: VerificationOutcomeArg,
+    #[arg(long = "verification-summary-file")]
+    pub verification_summary_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RecordBranchClosureArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct AdvanceLateStageArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long = "dispatch-id")]
+    pub dispatch_id: Option<String>,
+    #[arg(long = "branch-closure-id")]
+    pub branch_closure_id: Option<String>,
+    #[arg(long = "reviewer-source")]
+    pub reviewer_source: Option<String>,
+    #[arg(long = "reviewer-id")]
+    pub reviewer_id: Option<String>,
+    #[arg(long)]
+    pub result: String,
+    #[arg(long = "summary-file")]
+    pub summary_file: PathBuf,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RecordQaArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long = "result", value_enum)]
+    pub result: ReviewOutcomeArg,
+    #[arg(long = "summary-file")]
+    pub summary_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Args)]

@@ -279,7 +279,10 @@ pub fn validate_final_review_receipt(
     if reviewer_source.is_empty() || reviewer_id.is_empty() {
         return Err(FinalReviewReceiptIssue::ReviewerIdentityMissing);
     }
-    if !matches!(reviewer_source, "fresh-context-subagent" | "cross-model") {
+    if !matches!(
+        reviewer_source,
+        "fresh-context-subagent" | "cross-model" | "human-independent-reviewer"
+    ) {
         return Err(FinalReviewReceiptIssue::ReviewerSourceNotIndependent);
     }
     let reviewer_artifact_fingerprint = receipt
@@ -510,7 +513,7 @@ pub(crate) fn authoritative_test_plan_artifact_path_from_qa_checked(
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
             format!(
-                "Authoritative browser QA artifact {} is missing Source Test Plan provenance.",
+                "Authoritative QA artifact {} is missing the Source Test Plan header.",
                 qa_artifact_path.display()
             ),
         ));
@@ -521,7 +524,7 @@ pub(crate) fn authoritative_test_plan_artifact_path_from_qa_checked(
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
             format!(
-                "Authoritative browser QA artifact {} has an empty Source Test Plan provenance.",
+                "Authoritative QA artifact {} has a blank Source Test Plan header.",
                 qa_artifact_path.display()
             ),
         ));

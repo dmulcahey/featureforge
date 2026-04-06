@@ -21,6 +21,7 @@ description: Use when a written FeatureForge implementation plan from a CEO-appr
 **Source Spec:** <path>
 **Source Spec Revision:** <integer>
 **Last Reviewed By:** writing-plans | plan-eng-review
+**QA Requirement:** required | not-required
 ```
 
 - If any header line is missing or malformed, normalize the plan to this contract before continuing and treat it as `Draft`.
@@ -52,7 +53,7 @@ featureforge repo-safety check --intent write --stage featureforge:plan-eng-revi
 
 **The terminal state is presenting the execution preflight handoff with the approved plan path.**
 
-plan-eng-review also owns the late refresh-test-plan lane when finish readiness reports `test_plan_artifact_missing` or `test_plan_artifact_stale` for the current approved plan revision.
+plan-eng-review also owns the late refresh-test-plan lane when approved-plan `QA Requirement` is `required` and finish readiness reports `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch` for the current approved plan revision.
 
 In that late-stage lane, the terminal state is returning to the finish-gate flow with a regenerated current-branch test-plan artifact, not reopening execution preflight.
 
@@ -369,7 +370,7 @@ Write to `$_SP_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-test-plan-{datetime
 
 This file is consumed by `featureforge:qa-only` as the primary QA handoff. Include only tester-facing guidance: what to test, where to test it, and why it matters. Preserve the current core sections (`Affected Pages / Routes`, `Key Interactions`, `Edge Cases`, `Critical Paths`) and treat the richer sections as additive context; finish-gate freshness still depends on the existing required headers.
 
-Set `**Browser QA Required:** yes` when the approved plan, branch-specific routes, or interaction surface make browser QA part of the normal finish gate. Otherwise write `no`.
+Set `**Browser QA Required:** yes` when approved-plan `**QA Requirement:** required` and the branch-specific routes or interactions define the tester-facing browser QA handoff. Otherwise write `no`. This field scopes the QA artifact for testers; it is not the authoritative finish-gate policy source.
 Set `**Head SHA:**` to the current `git rev-parse HEAD` for the branch state that this test-plan artifact covers.
 
 ### 4. Performance review
@@ -418,7 +419,7 @@ After review decisions are applied to the authoritative plan body, write or repl
 **Review Mode:** big_change | small_change | scope_reduction
 **Reviewed Plan Revision:** <integer>
 **Critical Gaps:** <integer>
-**Browser QA Required:** yes | no
+**QA Requirement:** required | not-required
 **Test Plan Artifact:** `<artifact path>`
 **Outside Voice:** skipped | unavailable | cross-model | fresh-context-subagent
 ```

@@ -556,9 +556,6 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_array_items!("reason_codes", ["string"]);
     check_types!("warning_codes", ["array"], required);
     check_array_items!("warning_codes", ["string"]);
-    check_types!("latest_packet_fingerprint", ["string", "null"], optional);
-    check_types!("latest_head_sha", ["string", "null"], optional);
-    check_types!("latest_base_sha", ["string", "null"], optional);
     check_types!("active_task", ["integer", "null"], optional);
     check_types!("active_step", ["integer", "null"], optional);
     check_types!("blocking_task", ["integer", "null"], optional);

@@ -45,6 +45,8 @@ pub struct PlanDocument {
     pub source_spec_path: String,
     pub source_spec_revision: u32,
     pub last_reviewed_by: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qa_requirement: Option<String>,
     pub coverage_matrix: BTreeMap<String, Vec<u32>>,
     pub tasks: Vec<PlanTask>,
     #[serde(skip)]
@@ -592,6 +594,8 @@ pub fn parse_plan_source(path: &Path, source: String) -> Result<PlanDocument, Di
         .map_err(|_| missing_header("Source Spec Revision"))?;
     let last_reviewed_by = parse_required_header(&source, "Last Reviewed By")?;
     validate_plan_last_reviewed_by(&last_reviewed_by)?;
+    let qa_requirement = headers::parse_required_header(&source, "QA Requirement")
+        .and_then(|value| normalize_plan_qa_requirement(&value));
     let coverage_matrix = parse_coverage_matrix(&source)?;
     let tasks = parse_tasks(&source)?;
 
@@ -603,6 +607,7 @@ pub fn parse_plan_source(path: &Path, source: String) -> Result<PlanDocument, Di
         source_spec_path,
         source_spec_revision,
         last_reviewed_by,
+        qa_requirement,
         coverage_matrix,
         tasks,
         source,
@@ -633,6 +638,14 @@ fn validate_plan_last_reviewed_by(last_reviewed_by: &str) -> Result<(), Diagnost
     match last_reviewed_by {
         "writing-plans" | "plan-eng-review" => Ok(()),
         _ => Err(malformed_header("Last Reviewed By")),
+    }
+}
+
+fn normalize_plan_qa_requirement(value: &str) -> Option<String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "required" => Some(String::from("required")),
+        "not-required" => Some(String::from("not-required")),
+        _ => None,
     }
 }
 

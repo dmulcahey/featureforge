@@ -127,11 +127,32 @@ pub fn run() -> std::process::ExitCode {
                         cli::plan_execution::PlanExecutionCommand::GateReview(args) => {
                             emit_json(runtime.gate_review(&args))
                         }
-                        cli::plan_execution::PlanExecutionCommand::GateReviewDispatch(args) => {
-                            emit_json(runtime.gate_review_dispatch(&args))
+                        cli::plan_execution::PlanExecutionCommand::RecordReviewDispatch(args) => {
+                            emit_json(runtime.record_review_dispatch(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RepairReviewState(args) => {
+                            emit_json(execution::review_state::repair_review_state(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::ExplainReviewState(args) => {
+                            emit_json(execution::review_state::explain_review_state(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::ReconcileReviewState(args) => {
+                            emit_json(execution::review_state::reconcile_review_state(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::GateFinish(args) => {
                             emit_json(runtime.gate_finish(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::CloseCurrentTask(args) => {
+                            emit_json(execution::mutate::close_current_task(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RecordBranchClosure(args) => {
+                            emit_json(execution::mutate::record_branch_closure(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::AdvanceLateStage(args) => {
+                            emit_json(execution::mutate::advance_late_stage(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RecordQa(args) => {
+                            emit_json(execution::mutate::record_qa(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::Begin(args) => {
                             emit_json(execution::mutate::begin(&runtime, &args))
@@ -299,6 +320,22 @@ pub fn run() -> std::process::ExitCode {
                             workflow::operator::render_handoff(&current_dir)
                                 .map_err(map_read_only_workflow_failure),
                         )
+                    }
+                }
+                cli::workflow::WorkflowCommand::Operator(args) => {
+                    let result = workflow::operator::operator(&current_dir, &args);
+                    if args.json {
+                        emit_json(result.map_err(map_read_only_workflow_failure))
+                    } else {
+                        emit_text(result.map(workflow::operator::render_operator))
+                    }
+                }
+                cli::workflow::WorkflowCommand::RecordPivot(args) => {
+                    let result = workflow::pivot::record_pivot(&current_dir, &args);
+                    if args.json {
+                        emit_json(result)
+                    } else {
+                        emit_text(result.map(workflow::pivot::render_pivot_record))
                     }
                 }
                 cli::workflow::WorkflowCommand::Preflight(args) => {

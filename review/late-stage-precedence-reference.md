@@ -21,11 +21,13 @@ Use this table when skill/docs wording needs an explicit late-stage routing sour
 ## Command-Boundary Semantics
 
 - `gate-review` is read-only state evaluation.
-- `gate-review-dispatch` is the dispatch-proof minting boundary.
+- `record-review-dispatch` is the dispatch-proof minting boundary.
 - For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`.
 - `requesting-code-review` also supports non-terminal checkpoint/task-boundary reviews when runtime reason codes require it (for example `prior_task_review_*`).
 
 ## Notes
 
-- `qa_pending` routing can be preempted by helper-owned test-plan refresh requirements (`featureforge:plan-eng-review`) when `gate-finish` reports stale or missing current-branch test-plan artifacts.
+- `review_state_status=missing_current_closure` preempts the normal late-stage table and reroutes back to `document_release_pending` with `record branch closure`; late-stage work must not remain in `final_review_pending` or `qa_pending` once the current branch closure is gone.
+- `review_state_status=stale_unreviewed` preempts the normal late-stage table and reroutes first to `executing` with `repair review state / reenter execution` so runtime-owned repair can re-establish current reviewed truth before any more late-stage recording.
+- `qa_pending` routing can be preempted by helper-owned test-plan refresh requirements (`featureforge:plan-eng-review`) when workflow/operator sees gate-finish context for stale, missing, malformed, or provenance-invalid current-branch test-plan artifacts; the user sees this directly as `phase_detail=test_plan_refresh_required` before invoking `gate-finish`.
 - If runtime guards detect malformed or unknown late-stage inputs, helper outputs fail closed.

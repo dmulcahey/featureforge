@@ -192,24 +192,6 @@
       "format": "uint64",
       "minimum": 0
     },
-    "latest_base_sha": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "latest_head_sha": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "latest_packet_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "non_passing_evaluator_kinds": {
       "type": "array",
       "items": {
