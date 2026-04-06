@@ -252,9 +252,9 @@ test('public workflow rust smoke coverage exercises the canonical featureforge C
   assert.match(content, /workflow_status_summary_matches_json_semantics_for_ready_plans/);
 });
 
-test('workflow runtime coverage retains argv0 alias and public operator parity', () => {
+test('workflow runtime coverage rejects argv0 alias shims and retains public operator parity', () => {
   const content = readUtf8(path.join(REPO_ROOT, 'tests/workflow_runtime.rs'));
-  assert.match(content, /workflow_status_argv0_alias_dispatches_to_canonical_tree/);
+  assert.match(content, /workflow_status_argv0_alias_no_longer_dispatches_to_canonical_tree/);
   assert.match(content, /canonical_workflow_public_json_commands_work_for_ready_plan/);
 });
 

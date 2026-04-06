@@ -2362,7 +2362,7 @@ fn canonical_workflow_status_routes_stale_source_revision_as_stale() {
 
 #[cfg(unix)]
 #[test]
-fn workflow_status_argv0_alias_dispatches_to_canonical_tree() {
+fn workflow_status_argv0_alias_no_longer_dispatches_to_canonical_tree() {
     use std::os::unix::fs::symlink;
 
     let (repo_dir, state_dir) = init_repo("workflow-runtime-argv0");
@@ -2372,13 +2372,6 @@ fn workflow_status_argv0_alias_dispatches_to_canonical_tree() {
     write_file(
         &repo.join("docs/featureforge/specs/2026-03-24-draft-spec-design.md"),
         "# Draft Spec\n\n**Workflow State:** Draft\n**Spec Revision:** 1\n**Last Reviewed By:** brainstorming\n",
-    );
-
-    let helper_json = run_shell_status_json(
-        repo,
-        state,
-        &["status", "--refresh"],
-        "shell helper status refresh for argv0 alias parity",
     );
 
     let alias_dir = TempDir::new().expect("alias tempdir should be available");
@@ -2397,9 +2390,18 @@ fn workflow_status_argv0_alias_dispatches_to_canonical_tree() {
         },
         "rust argv0 workflow-status alias",
     );
-    let alias_json = parse_json(&alias_output, "rust argv0 workflow-status alias");
-
-    assert_eq!(alias_json, helper_json);
+    assert!(
+        !alias_output.status.success(),
+        "argv0 alias should no longer dispatch successfully\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&alias_output.stdout),
+        String::from_utf8_lossy(&alias_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&alias_output.stderr).contains("featureforge-workflow-status"),
+        "stderr should mention the rejected legacy alias entrypoint\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&alias_output.stdout),
+        String::from_utf8_lossy(&alias_output.stderr)
+    );
 }
 
 #[test]

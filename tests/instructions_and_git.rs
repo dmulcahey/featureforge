@@ -125,7 +125,7 @@ fn source_files_reject_git_cli_and_shell_eval_shortcuts() {
     for relative in [
         "src/git/mod.rs",
         "src/instructions/mod.rs",
-        "src/compat/argv0.rs",
+        "src/lib.rs",
     ] {
         let contents = fs::read_to_string(manifest_dir.join(relative))
             .expect("foundation source file should exist");

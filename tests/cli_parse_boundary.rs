@@ -432,15 +432,15 @@ fn session_entry_argv0_alias_is_removed_from_active_cli_surface() {
         },
         "session-entry argv0 alias removed",
     );
+    let json = parse_failure_json(&output, "session-entry argv0 alias removed");
 
-    assert!(
-        output.status.success(),
-        "removed argv0 alias should fall back to bare help, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
     );
-    let stdout = String::from_utf8(output.stdout).expect("help stdout should be utf-8");
-    assert!(stdout.contains("Usage:"));
-    assert!(stdout.contains("featureforge"));
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+    assert!(message.contains("featureforge-session-entry"));
+    assert!(message.contains("invoke `featureforge <subcommand>` instead"));
 }
