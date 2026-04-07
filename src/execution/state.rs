@@ -86,6 +86,68 @@ enum ReviewStateStatusSchema {
     MissingCurrentClosure,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum PhaseDetailSchema {
+    BranchClosureRecordingRequiredForReleaseReadiness,
+    ExecutionInProgress,
+    ExecutionReentryRequired,
+    FinalReviewDispatchRequired,
+    FinalReviewOutcomePending,
+    FinishCompletionGateReady,
+    FinishReviewGateReady,
+    HandoffRecordingRequired,
+    PlanningReentryRequired,
+    QaRecordingRequired,
+    ReleaseBlockerResolutionRequired,
+    ReleaseReadinessRecordingReady,
+    TaskReviewDispatchRequired,
+    TaskReviewResultPending,
+    TestPlanRefreshRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum FollowUpOverrideSchema {
+    None,
+    RecordHandoff,
+    RecordPivot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+enum NextActionSchema {
+    #[serde(rename = "advance late stage")]
+    AdvanceLateStage,
+    #[serde(rename = "close current task")]
+    CloseCurrentTask,
+    #[serde(rename = "continue execution")]
+    ContinueExecution,
+    #[serde(rename = "dispatch review")]
+    DispatchReview,
+    #[serde(rename = "execution reentry required")]
+    ExecutionReentryRequired,
+    #[serde(rename = "hand off")]
+    HandOff,
+    #[serde(rename = "pivot / return to planning")]
+    PivotReturnToPlanning,
+    #[serde(rename = "record branch closure")]
+    RecordBranchClosure,
+    #[serde(rename = "refresh test plan")]
+    RefreshTestPlan,
+    #[serde(rename = "repair review state / reenter execution")]
+    RepairReviewStateReenterExecution,
+    #[serde(rename = "resolve release blocker")]
+    ResolveReleaseBlocker,
+    #[serde(rename = "run QA")]
+    RunQa,
+    #[serde(rename = "run finish completion gate")]
+    RunFinishCompletionGate,
+    #[serde(rename = "run finish review gate")]
+    RunFinishReviewGate,
+    #[serde(rename = "wait for external review result")]
+    WaitForExternalReviewResult,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanExecutionStatus {
     pub plan_revision: u32,
@@ -108,6 +170,7 @@ pub struct PlanExecutionStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_qa_result: Option<String>,
     pub qa_requirement: Option<String>,
+    #[schemars(with = "FollowUpOverrideSchema")]
     pub follow_up_override: String,
     pub latest_authoritative_sequence: u64,
     pub harness_phase: HarnessPhase,
@@ -149,14 +212,18 @@ pub struct PlanExecutionStatus {
     pub last_strategy_checkpoint_fingerprint: Option<String>,
     pub strategy_checkpoint_kind: String,
     pub strategy_reset_required: bool,
+    #[schemars(with = "PhaseDetailSchema")]
     pub phase_detail: String,
     #[schemars(with = "ReviewStateStatusSchema")]
     pub review_state_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "PublicRecordingContext")]
     pub recording_context: Option<PublicRecordingContext>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "PublicExecutionCommandContext")]
     pub execution_command_context: Option<PublicExecutionCommandContext>,
     pub blocking_records: Vec<StatusBlockingRecord>,
+    #[schemars(with = "NextActionSchema")]
     pub next_action: String,
     pub recommended_command: Option<String>,
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
@@ -900,7 +967,7 @@ impl ExecutionRuntime {
         let refreshed = load_execution_context(self, &args.plan)?;
         let gate = review_dispatch_gate_from_context(&refreshed, args, cycle_target);
         let dispatch_id = current_review_dispatch_id_if_still_current(&refreshed, args)?;
-        if args.scope.is_some() && dispatch_id.is_none() {
+        if dispatch_id.is_none() {
             return Err(JsonFailure::new(
                 FailureClass::ExecutionStateNotReady,
                 "record-review-dispatch recorded lineage but could not reload the current dispatch id.",
@@ -912,11 +979,7 @@ impl ExecutionRuntime {
             reason_codes: gate.reason_codes.clone(),
             warning_codes: gate.warning_codes.clone(),
             diagnostics: gate.diagnostics.clone(),
-            scope: match args.scope {
-                Some(ReviewDispatchScopeArg::Task) => String::from("task"),
-                Some(ReviewDispatchScopeArg::FinalReview) => String::from("final-review"),
-                None => String::new(),
-            },
+            scope: review_dispatch_scope_label(args.scope),
             action: match action {
                 ReviewDispatchMutationAction::Recorded => String::from("recorded"),
                 ReviewDispatchMutationAction::AlreadyCurrent => String::from("already_current"),
@@ -1017,14 +1080,17 @@ fn record_review_dispatch_blocked_output(
         reason_codes,
         warning_codes,
         diagnostics,
-        scope: match args.scope {
-            Some(ReviewDispatchScopeArg::Task) => String::from("task"),
-            Some(ReviewDispatchScopeArg::FinalReview) => String::from("final-review"),
-            None => String::new(),
-        },
+        scope: review_dispatch_scope_label(args.scope),
         action: String::from("blocked"),
         dispatch_id: None,
         recorded_at: None,
+    }
+}
+
+fn review_dispatch_scope_label(scope: ReviewDispatchScopeArg) -> String {
+    match scope {
+        ReviewDispatchScopeArg::Task => String::from("task"),
+        ReviewDispatchScopeArg::FinalReview => String::from("final-review"),
     }
 }
 
@@ -1046,7 +1112,7 @@ fn current_review_dispatch_id_if_still_current(
         return Ok(None);
     };
     Ok(match args.scope {
-        Some(ReviewDispatchScopeArg::Task) => args.task.and_then(|task| {
+        ReviewDispatchScopeArg::Task => args.task.and_then(|task| {
             let current_lineage = task_completion_lineage_fingerprint(context, task)?;
             let current_reviewed_state_id = format!(
                 "git_tree:{}",
@@ -1064,7 +1130,7 @@ fn current_review_dispatch_id_if_still_current(
                 None
             }
         }),
-        Some(ReviewDispatchScopeArg::FinalReview) => overlay
+        ReviewDispatchScopeArg::FinalReview => overlay
             .final_review_dispatch_lineage
             .as_ref()
             .and_then(|record| {
@@ -1075,7 +1141,6 @@ fn current_review_dispatch_id_if_still_current(
                     None
                 }
             }),
-        None => None,
     })
 }
 
@@ -1104,7 +1169,7 @@ fn record_review_dispatch_strategy_checkpoint(
     };
     let cycle_target = match cycle_target {
         ReviewDispatchCycleTarget::Bound(_, _)
-            if matches!(args.scope, Some(ReviewDispatchScopeArg::FinalReview))
+            if matches!(args.scope, ReviewDispatchScopeArg::FinalReview)
                 && context.steps.iter().all(|step| step.checked) =>
         {
             None
@@ -1150,11 +1215,7 @@ fn validate_review_dispatch_request(
     cycle_target: ReviewDispatchCycleTarget,
 ) -> Result<(), JsonFailure> {
     match args.scope {
-        None => Err(JsonFailure::new(
-            FailureClass::InvalidCommandInput,
-            "record-review-dispatch requires --scope task|final-review.",
-        )),
-        Some(ReviewDispatchScopeArg::Task) => {
+        ReviewDispatchScopeArg::Task => {
             let requested_task = args.task.ok_or_else(|| {
                 JsonFailure::new(
                     FailureClass::InvalidCommandInput,
@@ -1189,7 +1250,7 @@ fn validate_review_dispatch_request(
             }
             Ok(())
         }
-        Some(ReviewDispatchScopeArg::FinalReview) => match cycle_target {
+        ReviewDispatchScopeArg::FinalReview => match cycle_target {
             ReviewDispatchCycleTarget::UnboundCompletedPlan => Ok(()),
             ReviewDispatchCycleTarget::Bound(_, _)
                 if context.steps.iter().all(|step| step.checked) =>
@@ -1281,7 +1342,7 @@ fn review_dispatch_gate_from_context(
     cycle_target: ReviewDispatchCycleTarget,
 ) -> GateResult {
     match args.scope {
-        Some(ReviewDispatchScopeArg::Task) => {
+        ReviewDispatchScopeArg::Task => {
             let task_number = args.task.or(match cycle_target {
                 ReviewDispatchCycleTarget::Bound(task_number, _) => Some(task_number),
                 _ => None,
@@ -1290,10 +1351,9 @@ fn review_dispatch_gate_from_context(
                 return task_review_dispatch_gate_from_context(context, task_number);
             }
         }
-        Some(ReviewDispatchScopeArg::FinalReview) => {
+        ReviewDispatchScopeArg::FinalReview => {
             return final_review_dispatch_gate_from_context(context);
         }
-        None => {}
     }
     gate_review_from_context_internal(context, false)
 }
@@ -1501,7 +1561,24 @@ pub fn write_plan_execution_schema(output_dir: &Path) -> Result<(), JsonFailure>
         )
     })?;
     let schema = schema_for!(PlanExecutionStatus);
-    let payload = serde_json::to_string_pretty(&schema).map_err(|error| {
+    let mut schema_json = serde_json::to_value(&schema).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            format!("Could not serialize plan execution schema value: {error}"),
+        )
+    })?;
+    if let Some(required) = schema_json
+        .get_mut("required")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        required.retain(|field| {
+            !matches!(
+                field.as_str(),
+                Some("recording_context" | "execution_command_context")
+            )
+        });
+    }
+    let payload = serde_json::to_string_pretty(&schema_json).map_err(|error| {
         JsonFailure::new(
             FailureClass::EvidenceWriteFailed,
             format!("Could not serialize plan execution schema: {error}"),
@@ -2044,14 +2121,69 @@ pub(crate) fn missing_derived_review_state_fields(
     authoritative_state: Option<&AuthoritativeTransitionState>,
     overlay: Option<&StatusAuthoritativeOverlay>,
 ) -> Vec<String> {
+    let mut missing = Vec::new();
+    if let Some(authoritative_state) = authoritative_state {
+        if authoritative_state.current_task_closure_overlay_needs_restore() {
+            push_missing_derived_field(&mut missing, "current_task_closure_records");
+        }
+        if authoritative_state.task_closure_negative_result_overlay_needs_restore() {
+            push_missing_derived_field(&mut missing, "task_closure_negative_result_records");
+        }
+    }
+
     let Some(overlay) = overlay else {
-        return Vec::new();
+        return missing;
+    };
+    let overlay_current_branch_closure_id =
+        normalize_optional_overlay_value(overlay.current_branch_closure_id.as_deref());
+
+    let Some(authoritative_state) = authoritative_state else {
+        if overlay_current_branch_closure_id.is_some() {
+            if normalize_optional_overlay_value(
+                overlay.current_branch_closure_reviewed_state_id.as_deref(),
+            )
+            .is_none()
+            {
+                push_missing_derived_field(
+                    &mut missing,
+                    "current_branch_closure_reviewed_state_id",
+                );
+            }
+            if normalize_optional_overlay_value(
+                overlay.current_branch_closure_contract_identity.as_deref(),
+            )
+            .is_none()
+            {
+                push_missing_derived_field(
+                    &mut missing,
+                    "current_branch_closure_contract_identity",
+                );
+            }
+        }
+        return missing;
     };
 
-    let current_branch_closure_id =
-        normalize_optional_overlay_value(overlay.current_branch_closure_id.as_deref());
-    let mut missing = Vec::new();
-    if current_branch_closure_id.is_some() {
+    let recoverable_current_branch_closure =
+        authoritative_state.recoverable_current_branch_closure_identity();
+    let current_branch_closure_id = recoverable_current_branch_closure
+        .as_ref()
+        .map(|identity| identity.branch_closure_id.as_str())
+        .or(overlay_current_branch_closure_id);
+    if let Some(current_identity) = recoverable_current_branch_closure.as_ref() {
+        if overlay_current_branch_closure_id != Some(current_identity.branch_closure_id.as_str()) {
+            push_missing_derived_field(&mut missing, "current_branch_closure_id");
+        }
+        if normalize_optional_overlay_value(overlay.current_branch_closure_reviewed_state_id.as_deref())
+            != Some(current_identity.reviewed_state_id.as_str())
+        {
+            push_missing_derived_field(&mut missing, "current_branch_closure_reviewed_state_id");
+        }
+        if normalize_optional_overlay_value(overlay.current_branch_closure_contract_identity.as_deref())
+            != Some(current_identity.contract_identity.as_str())
+        {
+            push_missing_derived_field(&mut missing, "current_branch_closure_contract_identity");
+        }
+    } else if overlay_current_branch_closure_id.is_some() {
         if normalize_optional_overlay_value(
             overlay.current_branch_closure_reviewed_state_id.as_deref(),
         )
@@ -2067,10 +2199,6 @@ pub(crate) fn missing_derived_review_state_fields(
             push_missing_derived_field(&mut missing, "current_branch_closure_contract_identity");
         }
     }
-
-    let Some(authoritative_state) = authoritative_state else {
-        return missing;
-    };
 
     if let Some(record) = authoritative_state.current_release_readiness_record()
         && current_branch_closure_id == Some(record.branch_closure_id.as_str())
@@ -2239,7 +2367,7 @@ fn apply_task_boundary_status_overlay(
         }
         let dispatch_args = RecordReviewDispatchArgs {
             plan: context.plan_abs.clone(),
-            scope: Some(ReviewDispatchScopeArg::Task),
+            scope: ReviewDispatchScopeArg::Task,
             task: Some(final_task),
         };
         if current_review_dispatch_id_if_still_current(context, &dispatch_args)
@@ -2388,6 +2516,13 @@ fn populate_public_status_contract_fields(
 
     let overlay = load_status_authoritative_overlay_checked(context)?;
     let authoritative_state = load_authoritative_transition_state(context)?;
+    if let Some(current_identity) = authoritative_state
+        .as_ref()
+        .and_then(|state| state.recoverable_current_branch_closure_identity())
+    {
+        status.current_branch_closure_id = Some(current_identity.branch_closure_id);
+        status.current_branch_reviewed_state_id = Some(current_identity.reviewed_state_id);
+    }
     status.current_final_review_branch_closure_id = authoritative_state
         .as_ref()
         .and_then(|state| state.current_final_review_branch_closure_id())
@@ -2498,14 +2633,24 @@ fn populate_public_status_contract_fields(
         task_review_dispatch_id.as_deref(),
         final_review_dispatch_id.as_deref(),
     );
-    let (execution_command_context, execution_command) = if status.harness_phase
-        == HarnessPhase::Executing
+    let (execution_command_context, execution_command) = if status.execution_started == "yes"
         && status.review_state_status == "clean"
         && matches!(
             status.phase_detail.as_str(),
             "execution_in_progress" | "execution_reentry_required"
         ) {
-        derive_public_execution_command(status, &context.plan_rel)?
+        if let Some(resolved) = resolve_exact_execution_command(status, &context.plan_rel) {
+            (
+                Some(PublicExecutionCommandContext {
+                    command_kind: String::from(resolved.command_kind),
+                    task_number: Some(resolved.task_number),
+                    step_id: resolved.step_id,
+                }),
+                Some(resolved.recommended_command),
+            )
+        } else {
+            (None, None)
+        }
     } else {
         (None, None)
     };
@@ -2840,48 +2985,49 @@ fn derive_public_recording_context(
     }
 }
 
-fn derive_public_execution_command(
+pub(crate) struct ExactExecutionCommand {
+    pub command_kind: &'static str,
+    pub task_number: u32,
+    pub step_id: Option<u32>,
+    pub recommended_command: String,
+}
+
+pub(crate) fn resolve_exact_execution_command(
     status: &PlanExecutionStatus,
     plan_path: &str,
-) -> Result<(Option<PublicExecutionCommandContext>, Option<String>), JsonFailure> {
+) -> Option<ExactExecutionCommand> {
     if let Some((task_number, step_id)) = status.active_task.zip(status.active_step) {
-        return Ok((
-            Some(PublicExecutionCommandContext {
-                command_kind: String::from("complete"),
-                task_number: Some(task_number),
-                step_id: Some(step_id),
-            }),
-            Some(format!(
+        return Some(ExactExecutionCommand {
+            command_kind: "complete",
+            task_number,
+            step_id: Some(step_id),
+            recommended_command: format!(
                 "featureforge plan execution complete --plan {plan_path} --task {task_number} --step {step_id} --source {} --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint {}",
                 status.execution_mode, status.execution_fingerprint
-            )),
-        ));
+            ),
+        });
     }
     if let Some((task_number, step_id)) = status.resume_task.zip(status.resume_step) {
-        return Ok((
-            Some(PublicExecutionCommandContext {
-                command_kind: String::from("begin"),
-                task_number: Some(task_number),
-                step_id: Some(step_id),
-            }),
-            Some(format!(
+        return Some(ExactExecutionCommand {
+            command_kind: "begin",
+            task_number,
+            step_id: Some(step_id),
+            recommended_command: format!(
                 "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id} --expect-execution-fingerprint {}",
                 status.execution_fingerprint
-            )),
-        ));
+            ),
+        });
     }
     if let Some((task_number, step_id)) = status.blocking_task.zip(status.blocking_step) {
-        return Ok((
-            Some(PublicExecutionCommandContext {
-                command_kind: String::from("begin"),
-                task_number: Some(task_number),
-                step_id: Some(step_id),
-            }),
-            Some(format!(
+        return Some(ExactExecutionCommand {
+            command_kind: "begin",
+            task_number,
+            step_id: Some(step_id),
+            recommended_command: format!(
                 "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id} --expect-execution-fingerprint {}",
                 status.execution_fingerprint
-            )),
-        ));
+            ),
+        });
     }
     if let Some(task_number) = status
         .blocking_task
@@ -2894,18 +3040,16 @@ fn derive_public_execution_command(
                 .max()
         })
     {
-        return Ok((
-            Some(PublicExecutionCommandContext {
-                command_kind: String::from("reopen"),
-                task_number: Some(task_number),
-                step_id: None,
-            }),
-            Some(format!(
+        return Some(ExactExecutionCommand {
+            command_kind: "reopen",
+            task_number,
+            step_id: None,
+            recommended_command: format!(
                 "featureforge plan execution reopen --plan {plan_path} --task {task_number} --reason <reason>"
-            )),
-        ));
+            ),
+        });
     }
-    Ok((None, None))
+    None
 }
 
 fn derive_public_recommended_command(
@@ -2959,11 +3103,7 @@ fn derive_public_recommended_command(
             "featureforge plan execution transfer --plan {plan} --scope task|branch --to <owner> --reason <reason>"
         )),
         "execution_in_progress" => {
-            if status.active_task.is_some() || status.resume_task.is_some() || status.blocking_task.is_some() {
-                None
-            } else {
-                Some(format!("featureforge workflow operator --plan {plan}"))
-            }
+            execution_command.or_else(|| Some(format!("featureforge workflow operator --plan {plan}")))
         }
         _ => None,
     }
@@ -3054,24 +3194,38 @@ fn status_workspace_state_id(context: &ExecutionContext) -> Result<String, JsonF
 }
 
 fn current_branch_reviewed_state_id(context: &ExecutionContext) -> Option<String> {
-    load_status_authoritative_overlay_checked(context)
+    load_authoritative_transition_state(context)
         .ok()
-        .and_then(|overlay| overlay)
-        .and_then(|overlay| {
-            normalize_optional_overlay_value(
-                overlay.current_branch_closure_reviewed_state_id.as_deref(),
-            )
-            .map(str::to_owned)
+        .and_then(|state| state)
+        .and_then(|state| state.recoverable_current_branch_closure_identity())
+        .map(|identity| identity.reviewed_state_id)
+        .or_else(|| {
+            load_status_authoritative_overlay_checked(context)
+                .ok()
+                .and_then(|overlay| overlay)
+                .and_then(|overlay| {
+                    normalize_optional_overlay_value(
+                        overlay.current_branch_closure_reviewed_state_id.as_deref(),
+                    )
+                    .map(str::to_owned)
+                })
         })
 }
 
 fn current_branch_closure_id(context: &ExecutionContext) -> Option<String> {
-    load_status_authoritative_overlay_checked(context)
+    load_authoritative_transition_state(context)
         .ok()
-        .and_then(|overlay| overlay)
-        .and_then(|overlay| {
-            normalize_optional_overlay_value(overlay.current_branch_closure_id.as_deref())
-                .map(str::to_owned)
+        .and_then(|state| state)
+        .and_then(|state| state.recoverable_current_branch_closure_identity())
+        .map(|identity| identity.branch_closure_id)
+        .or_else(|| {
+            load_status_authoritative_overlay_checked(context)
+                .ok()
+                .and_then(|overlay| overlay)
+                .and_then(|overlay| {
+                    normalize_optional_overlay_value(overlay.current_branch_closure_id.as_deref())
+                        .map(str::to_owned)
+                })
         })
 }
 

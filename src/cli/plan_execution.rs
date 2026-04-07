@@ -84,7 +84,7 @@ pub struct RecordReviewDispatchArgs {
     #[arg(long)]
     pub plan: PathBuf,
     #[arg(long, value_enum)]
-    pub scope: Option<ReviewDispatchScopeArg>,
+    pub scope: ReviewDispatchScopeArg,
     #[arg(long)]
     pub task: Option<u32>,
 }
@@ -140,6 +140,26 @@ impl ReleaseReadinessOutcomeArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum AdvanceLateStageResultArg {
+    Ready,
+    Blocked,
+    Pass,
+    Fail,
+}
+
+impl AdvanceLateStageResultArg {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Blocked => "blocked",
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct CloseCurrentTaskArgs {
     #[arg(long)]
@@ -176,8 +196,8 @@ pub struct AdvanceLateStageArgs {
     pub reviewer_source: Option<String>,
     #[arg(long = "reviewer-id")]
     pub reviewer_id: Option<String>,
-    #[arg(long)]
-    pub result: String,
+    #[arg(long, value_enum)]
+    pub result: AdvanceLateStageResultArg,
     #[arg(long = "summary-file")]
     pub summary_file: PathBuf,
 }

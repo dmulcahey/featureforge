@@ -577,6 +577,26 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_types!("strategy_checkpoint_kind", ["string"], required);
     check_types!("strategy_reset_required", ["boolean"], required);
     check_types!("phase_detail", ["string"], required);
+    check_enum!(
+        "phase_detail",
+        [
+            "branch_closure_recording_required_for_release_readiness",
+            "execution_in_progress",
+            "execution_reentry_required",
+            "final_review_dispatch_required",
+            "final_review_outcome_pending",
+            "finish_completion_gate_ready",
+            "finish_review_gate_ready",
+            "handoff_recording_required",
+            "planning_reentry_required",
+            "qa_recording_required",
+            "release_blocker_resolution_required",
+            "release_readiness_recording_ready",
+            "task_review_dispatch_required",
+            "task_review_result_pending",
+            "test_plan_refresh_required"
+        ]
+    );
     check_types!("review_state_status", ["string"], required);
     check_enum!(
         "review_state_status",
@@ -585,7 +605,30 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_types!("blocking_records", ["array"], required);
     check_array_items!("blocking_records", ["object"]);
     check_types!("next_action", ["string"], required);
+    check_enum!(
+        "next_action",
+        [
+            "advance late stage",
+            "close current task",
+            "continue execution",
+            "dispatch review",
+            "execution reentry required",
+            "hand off",
+            "pivot / return to planning",
+            "record branch closure",
+            "refresh test plan",
+            "repair review state / reenter execution",
+            "resolve release blocker",
+            "run QA",
+            "run finish completion gate",
+            "run finish review gate",
+            "wait for external review result"
+        ]
+    );
     check_types!("recommended_command", ["string", "null"], optional);
+    check_enum!("follow_up_override", ["none", "record_handoff", "record_pivot"]);
+    check_types!("recording_context", ["object"], optional);
+    check_types!("execution_command_context", ["object"], optional);
     check_types!(
         "finish_review_gate_pass_branch_closure_id",
         ["string", "null"],

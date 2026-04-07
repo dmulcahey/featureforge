@@ -332,6 +332,75 @@ fn plan_execution_task3_commands_require_their_artifact_flags_at_parse_boundary(
 }
 
 #[test]
+fn plan_execution_record_review_dispatch_requires_scope_at_parse_boundary() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-review-dispatch-scope");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge(
+        repo,
+        state,
+        &["plan", "execution", "record-review-dispatch", "--plan", PLAN_REL],
+        "plan execution record-review-dispatch missing scope",
+    );
+    let json = parse_failure_json(
+        &output,
+        "plan execution record-review-dispatch missing scope",
+    );
+
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+    assert!(message.contains("required arguments were not provided"));
+    assert!(message.contains("--scope"));
+}
+
+#[test]
+fn plan_execution_advance_late_stage_rejects_unknown_results_at_parse_boundary() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-advance-late-stage-result");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "advance-late-stage",
+            "--plan",
+            PLAN_REL,
+            "--result",
+            "maybe",
+            "--summary-file",
+            "summary.md",
+        ],
+        "plan execution advance-late-stage invalid result",
+    );
+    let json = parse_failure_json(
+        &output,
+        "plan execution advance-late-stage invalid result",
+    );
+
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+    assert!(message.contains("possible values"));
+    assert!(message.contains("ready"));
+    assert!(message.contains("blocked"));
+    assert!(message.contains("pass"));
+    assert!(message.contains("fail"));
+}
+
+#[test]
 fn repo_safety_check_rejects_unknown_bounded_values_at_parse_boundary() {
     let (repo_dir, state_dir) = init_repo("cli-boundary-repo-safety");
     let repo = repo_dir.path();

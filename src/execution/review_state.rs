@@ -12,9 +12,8 @@ use crate::execution::query::{
     ReviewStateBranchClosure, ReviewStateTaskClosure, query_review_state,
 };
 use crate::execution::recording::{
-    resolve_branch_closure_identity,
     restore_current_branch_closure_overlay as persist_current_branch_closure_overlay,
-    restore_current_late_stage_overlays,
+    restore_current_late_stage_overlays, restore_current_task_closure_overlays,
 };
 use crate::execution::state::{ExecutionRuntime, load_execution_context};
 
@@ -97,10 +96,12 @@ pub fn reconcile_review_state(
     let actions_performed = if snapshot.missing_derived_overlays.is_empty() {
         Vec::new()
     } else {
-        let mut actions_performed = restore_current_branch_closure_overlay(runtime, args)?;
+        let context = load_execution_context(runtime, &args.plan)?;
+        let mut actions_performed = restore_current_task_closure_overlays(runtime, &context)?;
+        actions_performed.extend(restore_current_branch_closure_overlay(runtime, args)?);
         actions_performed.extend(restore_current_late_stage_overlays(
             runtime,
-            &load_execution_context(runtime, &args.plan)?,
+            &context,
         )?);
         actions_performed
     };
@@ -284,28 +285,35 @@ fn restore_current_branch_closure_overlay(
     args: &StatusArgs,
 ) -> Result<Vec<String>, JsonFailure> {
     let context = load_execution_context(runtime, &args.plan)?;
+    let snapshot = query_review_state(runtime, args)?;
     let overlay = load_status_authoritative_overlay_checked(&context)?;
-    let Some(branch_closure_id) = overlay
-        .as_ref()
-        .and_then(|overlay| overlay.current_branch_closure_id.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+    let Some(current_branch_closure) = snapshot.current_branch_closure
     else {
         return Ok(Vec::new());
     };
-    let Some((reviewed_state_id, contract_identity)) =
-        resolve_branch_closure_identity(runtime, &context, &branch_closure_id)?
-    else {
+    let branch_closure_id = current_branch_closure.branch_closure_id;
+    let Some(reviewed_state_id) = current_branch_closure.reviewed_state_id else {
+        return Ok(Vec::new());
+    };
+    let Some(contract_identity) = current_branch_closure.contract_identity else {
         return Ok(Vec::new());
     };
     let mut actions_performed = Vec::new();
     if overlay
         .as_ref()
+        .and_then(|overlay| overlay.current_branch_closure_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        != Some(branch_closure_id.as_str())
+    {
+        actions_performed.push(String::from("restored_current_branch_closure_id"));
+    }
+    if overlay
+        .as_ref()
         .and_then(|overlay| overlay.current_branch_closure_reviewed_state_id.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .is_none()
+        != Some(reviewed_state_id.as_str())
     {
         actions_performed.push(String::from(
             "restored_current_branch_closure_reviewed_state",
@@ -316,7 +324,7 @@ fn restore_current_branch_closure_overlay(
         .and_then(|overlay| overlay.current_branch_closure_contract_identity.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .is_none()
+        != Some(contract_identity.as_str())
     {
         actions_performed.push(String::from(
             "restored_current_branch_closure_contract_identity",

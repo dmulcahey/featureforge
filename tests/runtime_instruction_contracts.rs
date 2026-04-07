@@ -1758,6 +1758,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
+        "Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching the reviewer.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "If workflow/operator fails, stop and return to the current execution flow; do not guess the public late-stage route from raw execution state.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
         "plan contract analyze-plan --spec \"$SOURCE_SPEC_PATH\" --plan \"$APPROVED_PLAN_PATH\" --format json",
     );
     assert_file_contains(
@@ -1806,11 +1814,31 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
+        "treat workflow/operator as authoritative for the public late-stage route; `featureforge plan execution status --plan <approved-plan-path>` remains supporting diagnostic detail.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "only dispatch a fresh final review when workflow/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`.",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
         "REVIEW_GATE_JSON=$(\"$_FEATUREFORGE_BIN\" plan execution record-review-dispatch --plan \"$APPROVED_PLAN_PATH\" --scope final-review)",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "if [ \"$REVIEW_ALLOWED\" != \"true\" ]; then",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "RECORDING_READY_JSON=$(\"$_FEATUREFORGE_BIN\" workflow operator --plan \"$APPROVED_PLAN_PATH\" --external-review-result-ready --json)",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "if [ \"$RECORDING_PHASE_DETAIL\" != \"final_review_recording_ready\" ]; then",
+    );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "\"$_FEATUREFORGE_BIN\" plan execution advance-late-stage --plan \"$APPROVED_PLAN_PATH\" --dispatch-id \"$DISPATCH_ID\" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary.md",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1859,11 +1887,19 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
+        "`featureforge workflow operator --plan <approved-plan-path>` remains authoritative for execution, QA, and late-stage routing after handoff; `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail",
+    );
+    assert_file_contains(
+        root.join("docs/README.codex.md"),
         "for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`",
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
         "keep command boundaries explicit: `featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint while `featureforge plan execution record-review-dispatch` mints review-dispatch proof",
+    );
+    assert_file_contains(
+        root.join("docs/README.copilot.md"),
+        "`featureforge workflow operator --plan <approved-plan-path>` remains authoritative for execution, QA, and late-stage routing after handoff; `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),

@@ -244,6 +244,36 @@ pub(crate) fn record_browser_qa(
     authoritative_state.persist_if_dirty_with_failpoint(None)
 }
 
+pub(crate) fn restore_current_task_closure_overlays(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+) -> Result<Vec<String>, JsonFailure> {
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            "reconcile-review-state requires authoritative harness state.",
+        ));
+    };
+
+    let mut actions_performed = Vec::new();
+    if authoritative_state.restore_current_task_closure_records_from_history()? {
+        actions_performed.push(String::from("restored_current_task_closure_records"));
+    }
+    if authoritative_state.restore_task_closure_negative_result_records_from_history()? {
+        actions_performed.push(String::from(
+            "restored_task_closure_negative_result_records",
+        ));
+    }
+    if actions_performed.is_empty() {
+        return Ok(actions_performed);
+    }
+
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(actions_performed)
+}
+
 pub(crate) fn restore_current_branch_closure_overlay(
     runtime: &ExecutionRuntime,
     context: &ExecutionContext,
@@ -259,14 +289,21 @@ pub(crate) fn restore_current_branch_closure_overlay(
             "reconcile-review-state requires authoritative harness state.",
         ));
     };
-    let restored = authoritative_state.restore_current_branch_closure_overlay_fields_if_current(
+    let Some(current_identity) = authoritative_state.recoverable_current_branch_closure_identity()
+    else {
+        return Ok(false);
+    };
+    if current_identity.branch_closure_id != branch_closure_id
+        || current_identity.reviewed_state_id != reviewed_state_id
+        || current_identity.contract_identity != contract_identity
+    {
+        return Ok(false);
+    }
+    authoritative_state.restore_current_branch_closure_overlay_fields(
         branch_closure_id,
         reviewed_state_id,
         contract_identity,
     )?;
-    if !restored {
-        return Ok(false);
-    }
     authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(true)
 }
@@ -300,18 +337,4 @@ pub(crate) fn restore_current_late_stage_overlays(
 
     authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(actions_performed)
-}
-
-pub(crate) fn resolve_branch_closure_identity(
-    runtime: &ExecutionRuntime,
-    context: &ExecutionContext,
-    branch_closure_id: &str,
-) -> Result<Option<(String, String)>, JsonFailure> {
-    if let Some(authoritative_state) = load_authoritative_transition_state(context)?
-        && let Some(record) = authoritative_state.branch_closure_record(branch_closure_id)
-    {
-        return Ok(Some((record.reviewed_state_id, record.contract_identity)));
-    }
-    let _ = runtime;
-    Ok(None)
 }

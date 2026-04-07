@@ -22,7 +22,7 @@ use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, GateResult, PlanExecutionStatus, gate_finish_from_context,
     gate_review_from_context, load_execution_context, missing_derived_review_state_fields,
-    status_from_context,
+    resolve_exact_execution_command, status_from_context,
 };
 use crate::execution::transitions::load_authoritative_transition_state_relaxed;
 use crate::workflow::late_stage_precedence::{
@@ -142,28 +142,38 @@ pub fn query_review_state(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let current_branch_closure = overlay.as_ref().and_then(|overlay| {
-        overlay
-            .current_branch_closure_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|branch_closure_id| ReviewStateBranchClosure {
-                branch_closure_id: branch_closure_id.to_owned(),
-                reviewed_state_id: overlay
-                    .current_branch_closure_reviewed_state_id
+    let current_branch_closure = authoritative_state
+        .as_ref()
+        .and_then(|state| state.recoverable_current_branch_closure_identity())
+        .map(|identity| ReviewStateBranchClosure {
+            branch_closure_id: identity.branch_closure_id,
+            reviewed_state_id: Some(identity.reviewed_state_id),
+            contract_identity: Some(identity.contract_identity),
+        })
+        .or_else(|| {
+            overlay.as_ref().and_then(|overlay| {
+                overlay
+                    .current_branch_closure_id
                     .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
-                contract_identity: overlay
-                    .current_branch_closure_contract_identity
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
+                    .map(|branch_closure_id| ReviewStateBranchClosure {
+                        branch_closure_id: branch_closure_id.to_owned(),
+                        reviewed_state_id: overlay
+                            .current_branch_closure_reviewed_state_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_owned),
+                        contract_identity: overlay
+                            .current_branch_closure_contract_identity
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_owned),
+                    })
             })
-    });
+        });
     let superseded_closures = authoritative_state
         .as_ref()
         .map(|state| {
@@ -426,17 +436,31 @@ pub fn query_workflow_routing_state(
                         "workflow/operator could not derive the execution reentry command required after a negative review outcome.",
                     )
                 })?;
-                let (resolved_context, resolved_command) =
-                    resolve_execution_command(status, &plan_path)?;
-                (
-                    String::from("executing"),
-                    String::from("execution_reentry_required"),
-                    String::from("clean"),
-                    None,
-                    Some(resolved_context),
-                    String::from("execution reentry required"),
-                    Some(resolved_command),
-                )
+                if let Some(resolved) = resolve_exact_execution_command(status, &plan_path) {
+                    (
+                        String::from("executing"),
+                        String::from("execution_reentry_required"),
+                        String::from("clean"),
+                        None,
+                        Some(ExecutionRoutingExecutionCommandContext {
+                            command_kind: String::from(resolved.command_kind),
+                            task_number: Some(resolved.task_number),
+                            step_id: resolved.step_id,
+                        }),
+                        String::from("execution reentry required"),
+                        Some(resolved.recommended_command),
+                    )
+                } else {
+                    (
+                        String::from("executing"),
+                        String::from("execution_reentry_required"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        String::from("execution reentry required"),
+                        None,
+                    )
+                }
             }
         }
     } else if matches!(
@@ -755,17 +779,31 @@ pub fn query_workflow_routing_state(
         } else {
             match workflow_phase.as_str() {
                 "executing" => {
-                    let (execution_command_context, recommended_command) =
-                        resolve_execution_command(status, &plan_path)?;
-                    (
-                        String::from("executing"),
-                        String::from("execution_in_progress"),
-                        String::from("clean"),
-                        None,
-                        Some(execution_command_context),
-                        String::from("continue execution"),
-                        Some(recommended_command),
-                    )
+                    if let Some(resolved) = resolve_exact_execution_command(status, &plan_path) {
+                        (
+                            String::from("executing"),
+                            String::from("execution_in_progress"),
+                            String::from("clean"),
+                            None,
+                            Some(ExecutionRoutingExecutionCommandContext {
+                                command_kind: String::from(resolved.command_kind),
+                                task_number: Some(resolved.task_number),
+                                step_id: resolved.step_id,
+                            }),
+                            String::from("continue execution"),
+                            Some(resolved.recommended_command),
+                        )
+                    } else {
+                        (
+                            String::from("executing"),
+                            String::from("execution_in_progress"),
+                            String::from("clean"),
+                            None,
+                            None,
+                            String::from("continue execution"),
+                            None,
+                        )
+                    }
                 }
                 "repairing" => (
                     String::from("executing"),
@@ -1408,81 +1446,6 @@ fn finish_requires_test_plan_refresh(gate_finish: Option<&GateResult>) -> bool {
             "test_plan_artifact_generator_mismatch",
         ],
     )
-}
-
-fn resolve_execution_command(
-    status: &PlanExecutionStatus,
-    plan_path: &str,
-) -> Result<(ExecutionRoutingExecutionCommandContext, String), JsonFailure> {
-    if let Some((task_number, step_id)) = status.active_task.zip(status.active_step) {
-        return Ok((
-            ExecutionRoutingExecutionCommandContext {
-                command_kind: String::from("complete"),
-                task_number: Some(task_number),
-                step_id: Some(step_id),
-            },
-            format!(
-                "featureforge plan execution complete --plan {plan_path} --task {task_number} --step {step_id} --source {} --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint {}",
-                status.execution_mode, status.execution_fingerprint
-            ),
-        ));
-    }
-
-    if let Some((task_number, step_id)) = status.resume_task.zip(status.resume_step) {
-        return Ok((
-            ExecutionRoutingExecutionCommandContext {
-                command_kind: String::from("begin"),
-                task_number: Some(task_number),
-                step_id: Some(step_id),
-            },
-            format!(
-                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id} --expect-execution-fingerprint {}",
-                status.execution_fingerprint
-            ),
-        ));
-    }
-
-    if let Some((task_number, step_id)) = status.blocking_task.zip(status.blocking_step) {
-        return Ok((
-            ExecutionRoutingExecutionCommandContext {
-                command_kind: String::from("begin"),
-                task_number: Some(task_number),
-                step_id: Some(step_id),
-            },
-            format!(
-                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id} --expect-execution-fingerprint {}",
-                status.execution_fingerprint
-            ),
-        ));
-    }
-
-    if let Some(task_number) = status
-        .blocking_task
-        .filter(|_| status.blocking_step.is_none())
-        .or_else(|| {
-            status
-                .current_task_closures
-                .iter()
-                .map(|closure| closure.task)
-                .max()
-        })
-    {
-        return Ok((
-            ExecutionRoutingExecutionCommandContext {
-                command_kind: String::from("reopen"),
-                task_number: Some(task_number),
-                step_id: None,
-            },
-            format!(
-                "featureforge plan execution reopen --plan {plan_path} --task {task_number} --reason <reason>"
-            ),
-        ));
-    }
-
-    Err(JsonFailure::new(
-        FailureClass::ResolverContractViolation,
-        "workflow/operator expected an exact execution command but no active or resumable step is available.",
-    ))
 }
 
 fn next_action_for_context_like(

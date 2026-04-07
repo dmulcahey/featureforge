@@ -11,9 +11,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::cli::plan_execution::{
-    AdvanceLateStageArgs, BeginArgs, CloseCurrentTaskArgs, CompleteArgs, ExecutionModeArg,
-    NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs, RecordQaArgs, ReopenArgs,
-    ReviewOutcomeArg, TransferArgs, VerificationOutcomeArg,
+    AdvanceLateStageArgs, AdvanceLateStageResultArg, BeginArgs, CloseCurrentTaskArgs,
+    CompleteArgs, ExecutionModeArg, NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs,
+    RecordQaArgs, ReopenArgs, ReviewOutcomeArg, TransferArgs, VerificationOutcomeArg,
 };
 use crate::contracts::headers::parse_required_header as parse_plan_header;
 use crate::diagnostics::{FailureClass, JsonFailure};
@@ -27,7 +27,8 @@ use crate::execution::final_review::{
 };
 use crate::execution::harness::RunIdentitySnapshot;
 use crate::execution::leases::{
-    StatusAuthoritativeOverlay, load_status_authoritative_overlay_checked,
+    StatusAuthoritativeOverlay, authoritative_matching_execution_topology_downgrade_records_checked,
+    load_status_authoritative_overlay_checked,
 };
 use crate::execution::query::{ExecutionRoutingState, query_workflow_routing_state};
 use crate::execution::recording::{
@@ -133,7 +134,17 @@ struct FinalReviewArtifactInputs<'a> {
     reviewer_source: &'a str,
     reviewer_id: &'a str,
     result: &'a str,
+    deviations_required: bool,
     summary: &'a str,
+}
+
+struct CurrentFinalReviewAuthorityCheck<'a> {
+    branch_closure_id: &'a str,
+    dispatch_id: &'a str,
+    reviewer_source: &'a str,
+    reviewer_id: &'a str,
+    result: &'a str,
+    normalized_summary_hash: &'a str,
 }
 
 pub fn begin(
@@ -1192,6 +1203,30 @@ pub fn record_branch_closure(
             "record-branch-closure requires authoritative harness state.",
         ));
     };
+    if let Some(current_identity) = authoritative_state.recoverable_current_branch_closure_identity()
+        && current_identity.branch_closure_id == branch_closure_id
+        && current_identity.reviewed_state_id == reviewed_state.reviewed_state_id
+        && current_identity.contract_identity == reviewed_state.contract_identity
+    {
+        authoritative_state.restore_current_branch_closure_overlay_fields(
+            &branch_closure_id,
+            &reviewed_state.reviewed_state_id,
+            &reviewed_state.contract_identity,
+        )?;
+        authoritative_state.persist_if_dirty_with_failpoint(None)?;
+        return Ok(RecordBranchClosureOutput {
+            action: String::from("already_current"),
+            branch_closure_id: Some(branch_closure_id),
+            code: None,
+            recommended_command: None,
+            rederive_via_workflow_operator: None,
+            superseded_branch_closure_ids: Vec::new(),
+            required_follow_up: None,
+            trace_summary: String::from(
+                "Current reviewed branch state already has an authoritative current branch closure.",
+            ),
+        });
+    }
     record_current_branch_closure(
         authoritative_state,
         BranchClosureWrite {
@@ -1270,9 +1305,9 @@ pub fn advance_late_stage(
                 "reviewer_id_required: final-review advance-late-stage requires --reviewer-id.",
             )
         })?;
-        let result = match args.result.trim() {
-            "pass" => "pass",
-            "fail" => "fail",
+        let result = match args.result {
+            AdvanceLateStageResultArg::Pass => "pass",
+            AdvanceLateStageResultArg::Fail => "fail",
             _ => {
                 return Err(JsonFailure::new(
                     FailureClass::InvalidCommandInput,
@@ -1298,7 +1333,7 @@ pub fn advance_late_stage(
                     delegated_primitive: "record-final-review",
                     branch_closure_id: branch_closure_id.clone(),
                     dispatch_id: Some(dispatch_id.clone()),
-                    result: args.result.trim(),
+                    result: args.result.as_str(),
                     trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                 },
             ));
@@ -1354,13 +1389,44 @@ pub fn advance_late_stage(
         ) && current_branch_closure_id == branch_closure_id
             && current_dispatch_id == dispatch_id
         {
-            if current_reviewer_source == reviewer_source
+            let equivalent_current_result = current_reviewer_source == reviewer_source
                 && current_reviewer_id == reviewer_id
                 && current_result == result
-                && current_summary_hash == normalized_summary_hash
-            {
+                && current_summary_hash == normalized_summary_hash;
+            if equivalent_current_result {
+                if current_final_review_record_is_still_authoritative(
+                    &context,
+                    authoritative_state,
+                    CurrentFinalReviewAuthorityCheck {
+                        branch_closure_id: &branch_closure_id,
+                        dispatch_id,
+                        reviewer_source,
+                        reviewer_id,
+                        result,
+                        normalized_summary_hash: &normalized_summary_hash,
+                    },
+                )? {
+                    return Ok(AdvanceLateStageOutput {
+                        action: String::from("already_current"),
+                        stage_path: String::from("final_review"),
+                        delegated_primitive: String::from("record-final-review"),
+                        branch_closure_id: Some(branch_closure_id),
+                        dispatch_id: Some(dispatch_id.clone()),
+                        result: result.to_owned(),
+                        code: None,
+                        recommended_command: None,
+                        rederive_via_workflow_operator: None,
+                        required_follow_up: (result == "fail")
+                            .then(|| negative_result_follow_up(&operator))
+                            .flatten(),
+                        trace_summary: String::from(
+                            "Current branch closure already has an equivalent recorded final-review outcome.",
+                        ),
+                    });
+                }
+            } else {
                 return Ok(AdvanceLateStageOutput {
-                    action: String::from("already_current"),
+                    action: String::from("blocked"),
                     stage_path: String::from("final_review"),
                     delegated_primitive: String::from("record-final-review"),
                     branch_closure_id: Some(branch_closure_id),
@@ -1369,29 +1435,12 @@ pub fn advance_late_stage(
                     code: None,
                     recommended_command: None,
                     rederive_via_workflow_operator: None,
-                    required_follow_up: (result == "fail")
-                        .then(|| negative_result_follow_up(&operator))
-                        .flatten(),
+                    required_follow_up: None,
                     trace_summary: String::from(
-                        "Current branch closure already has an equivalent recorded final-review outcome.",
+                        "advance-late-stage failed closed because the current branch closure already has a conflicting recorded final-review outcome for this dispatch lineage.",
                     ),
                 });
             }
-            return Ok(AdvanceLateStageOutput {
-                action: String::from("blocked"),
-                stage_path: String::from("final_review"),
-                delegated_primitive: String::from("record-final-review"),
-                branch_closure_id: Some(branch_closure_id),
-                dispatch_id: Some(dispatch_id.clone()),
-                result: result.to_owned(),
-                code: None,
-                recommended_command: None,
-                rederive_via_workflow_operator: None,
-                required_follow_up: None,
-                trace_summary: String::from(
-                    "advance-late-stage failed closed because the current branch closure already has a conflicting recorded final-review outcome for this dispatch lineage.",
-                ),
-            });
         }
         let base_branch =
             resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
@@ -1401,6 +1450,14 @@ pub fn advance_late_stage(
                         "advance-late-stage final-review requires a resolvable base branch.",
                     )
                 })?;
+        let execution_context_key = format!("{}@{}", context.runtime.branch_name, base_branch);
+        let deviations_required =
+            authoritative_matching_execution_topology_downgrade_records_checked(
+                &context,
+                &execution_context_key,
+            )?
+            .iter()
+            .any(|record| !record.rerun_guidance_superseded);
         let rendered_final_review = render_final_review_artifacts(
             runtime,
             &context,
@@ -1412,6 +1469,7 @@ pub fn advance_late_stage(
                 reviewer_source,
                 reviewer_id,
                 result,
+                deviations_required,
                 summary: &summary,
             },
         )?;
@@ -1500,7 +1558,7 @@ pub fn advance_late_stage(
                 delegated_primitive: "record-release-readiness",
                 branch_closure_id: branch_closure_id.clone(),
                 dispatch_id: None,
-                result: args.result.trim(),
+                result: args.result.as_str(),
                 trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
             },
         ));
@@ -1521,9 +1579,9 @@ pub fn advance_late_stage(
             "release_readiness_argument_mismatch: release-readiness advance-late-stage does not accept final-review-only arguments.",
         ));
     }
-    let result = match args.result.trim() {
-        "ready" => "ready",
-        "blocked" => "blocked",
+    let result = match args.result {
+        AdvanceLateStageResultArg::Ready => "ready",
+        AdvanceLateStageResultArg::Blocked => "blocked",
         _ => {
             return Err(JsonFailure::new(
                 FailureClass::InvalidCommandInput,
@@ -4178,6 +4236,72 @@ fn render_release_readiness_artifact(
     Ok(source)
 }
 
+fn current_final_review_record_is_still_authoritative(
+    context: &ExecutionContext,
+    authoritative_state: &AuthoritativeTransitionState,
+    check: CurrentFinalReviewAuthorityCheck<'_>,
+) -> Result<bool, JsonFailure> {
+    let Some(record) = authoritative_state.current_final_review_record() else {
+        return Ok(false);
+    };
+    if record.branch_closure_id != check.branch_closure_id
+        || record.dispatch_id != check.dispatch_id
+        || record.reviewer_source != check.reviewer_source
+        || record.reviewer_id != check.reviewer_id
+        || record.result != check.result
+        || record.summary_hash != check.normalized_summary_hash
+    {
+        return Ok(false);
+    }
+    if check.result != "pass" {
+        return Ok(true);
+    }
+    let Some(final_review_fingerprint) = record
+        .final_review_fingerprint
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(false);
+    };
+
+    let final_review_path = harness_authoritative_artifact_path(
+        &context.runtime.state_dir,
+        &context.runtime.repo_slug,
+        &context.runtime.branch_name,
+        &format!("final-review-{final_review_fingerprint}.md"),
+    );
+    let current_head = current_head_sha(&context.runtime.repo_root)?;
+    let Some(current_base_branch) =
+        resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
+    else {
+        return Ok(false);
+    };
+    let strategy_checkpoint_fingerprint =
+        authoritative_strategy_checkpoint_fingerprint_checked(context)?;
+    let execution_context_key = format!("{}@{}", context.runtime.branch_name, current_base_branch);
+    let deviations_required = authoritative_matching_execution_topology_downgrade_records_checked(
+        context,
+        &execution_context_key,
+    )?
+    .iter()
+    .any(|record| !record.rerun_guidance_superseded);
+    let expectations = FinalReviewReceiptExpectations {
+        expected_plan_path: &context.plan_rel,
+        expected_plan_revision: context.plan_document.plan_revision,
+        expected_strategy_checkpoint_fingerprint: strategy_checkpoint_fingerprint.as_deref(),
+        expected_head_sha: &current_head,
+        expected_base_branch: &current_base_branch,
+        deviations_required,
+    };
+    Ok(validate_final_review_receipt(
+        &parse_final_review_receipt(&final_review_path),
+        &final_review_path,
+        &expectations,
+    )
+    .is_ok())
+}
+
 struct FinalReviewRenderedArtifacts {
     reviewer_artifact_path: PathBuf,
     reviewer_source_text: String,
@@ -4205,13 +4329,23 @@ fn render_final_review_artifacts(
     let strategy_checkpoint_fingerprint =
         authoritative_strategy_checkpoint_fingerprint_checked(context)?.unwrap_or_default();
     let generated_at = Timestamp::now().to_string();
+    let recorded_execution_deviations = if inputs.deviations_required {
+        "present"
+    } else {
+        "none"
+    };
+    let deviation_review_verdict = if inputs.deviations_required {
+        if inputs.result == "pass" { "pass" } else { "fail" }
+    } else {
+        "not_required"
+    };
     let reviewer_artifact_path = project_artifact_dir(runtime).join(format!(
         "featureforge-{}-independent-review-{}.md",
         runtime.safe_branch,
         timestamp_slug()
     ));
     let reviewer_source_text = format!(
-        "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Reviewer Source:** {}\n**Reviewer ID:** {}\n**Strategy Checkpoint Fingerprint:** {strategy_checkpoint_fingerprint}\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Recorded Execution Deviations:** none\n**Deviation Review Verdict:** not_required\n**Source Plan:** `{}`\n**Source Plan Revision:** {}\n**Branch:** {}\n**Repo:** {}\n**Base Branch:** {}\n**Head SHA:** {}\n**Current Reviewed Branch State ID:** {}\n**Branch Closure ID:** {}\n**Result:** {}\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** {generated_at}\n\n## Summary\n- {}\n",
+        "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Reviewer Source:** {}\n**Reviewer ID:** {}\n**Strategy Checkpoint Fingerprint:** {strategy_checkpoint_fingerprint}\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Recorded Execution Deviations:** {recorded_execution_deviations}\n**Deviation Review Verdict:** {deviation_review_verdict}\n**Source Plan:** `{}`\n**Source Plan Revision:** {}\n**Branch:** {}\n**Repo:** {}\n**Base Branch:** {}\n**Head SHA:** {}\n**Current Reviewed Branch State ID:** {}\n**Branch Closure ID:** {}\n**Result:** {}\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** {generated_at}\n\n## Summary\n- {}\n",
         inputs.reviewer_source,
         inputs.reviewer_id,
         context.plan_rel,
@@ -4227,7 +4361,7 @@ fn render_final_review_artifacts(
     );
     let reviewer_artifact_fingerprint = sha256_hex(reviewer_source_text.as_bytes());
     let final_review_source = format!(
-        "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Reviewer Source:** {}\n**Reviewer ID:** {}\n**Strategy Checkpoint Fingerprint:** {strategy_checkpoint_fingerprint}\n**Reviewer Artifact Path:** `{}`\n**Reviewer Artifact Fingerprint:** {}\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Source Plan:** `{}`\n**Source Plan Revision:** {}\n**Branch:** {}\n**Repo:** {}\n**Base Branch:** {}\n**Head SHA:** {}\n**Current Reviewed Branch State ID:** {}\n**Branch Closure ID:** {}\n**Recorded Execution Deviations:** none\n**Deviation Review Verdict:** not_required\n**Dispatch ID:** {}\n**Result:** {}\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** {generated_at}\n\n## Summary\n- {}\n",
+        "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Reviewer Source:** {}\n**Reviewer ID:** {}\n**Strategy Checkpoint Fingerprint:** {strategy_checkpoint_fingerprint}\n**Reviewer Artifact Path:** `{}`\n**Reviewer Artifact Fingerprint:** {}\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Source Plan:** `{}`\n**Source Plan Revision:** {}\n**Branch:** {}\n**Repo:** {}\n**Base Branch:** {}\n**Head SHA:** {}\n**Current Reviewed Branch State ID:** {}\n**Branch Closure ID:** {}\n**Recorded Execution Deviations:** {recorded_execution_deviations}\n**Deviation Review Verdict:** {deviation_review_verdict}\n**Dispatch ID:** {}\n**Result:** {}\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** {generated_at}\n\n## Summary\n- {}\n",
         inputs.reviewer_source,
         inputs.reviewer_id,
         reviewer_artifact_path.display(),
@@ -5302,18 +5436,30 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod unit_tests {
     use std::fs;
+    use std::path::PathBuf;
 
     use serde_json::json;
     use tempfile::TempDir;
 
     use super::{
-        normalized_late_stage_surface, path_matches_late_stage_surface,
+        CurrentFinalReviewAuthorityCheck, FinalReviewArtifactInputs,
+        current_final_review_record_is_still_authoritative, normalized_late_stage_surface,
+        path_matches_late_stage_surface,
+        render_final_review_artifacts,
         rewrite_branch_final_review_artifacts, rewrite_branch_head_bound_artifact,
         rewrite_branch_qa_artifact, superseded_branch_closure_ids_from_previous_current,
         verify_command_launcher,
     };
     use crate::diagnostics::FailureClass;
+    use crate::contracts::plan::parse_plan_file;
+    use crate::execution::leases::authoritative_state_path;
     use crate::execution::leases::StatusAuthoritativeOverlay;
+    use crate::execution::state::{
+        EvidenceFormat, ExecutionContext, ExecutionEvidence, ExecutionRuntime,
+    };
+    use crate::execution::transitions::load_authoritative_transition_state;
+    use crate::git::sha256_hex;
+    use crate::paths::harness_authoritative_artifact_path;
 
     #[test]
     fn verify_command_launcher_matches_platform_contract() {
@@ -5365,6 +5511,207 @@ mod unit_tests {
         assert_eq!(
             fs::read_to_string(&review_receipt).expect("review receipt should remain readable"),
             original_review
+        );
+    }
+
+    #[test]
+    fn current_final_review_record_authoritativeness_detects_reviewer_artifact_corruption() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut runtime =
+            ExecutionRuntime::discover(&repo_root).expect("repo runtime should be discoverable");
+        let tempdir = TempDir::new().expect("tempdir should exist");
+        runtime.state_dir = tempdir.path().join("state");
+        fs::create_dir_all(&runtime.state_dir).expect("state dir should be creatable");
+
+        let plan_rel = "docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
+        let plan_abs = repo_root.join(plan_rel);
+        let plan_document = parse_plan_file(&plan_abs).expect("plan document should parse");
+        let plan_source = fs::read_to_string(&plan_abs).expect("plan source should read");
+        let context = ExecutionContext {
+            runtime: runtime.clone(),
+            plan_rel: String::from(plan_rel),
+            plan_abs: plan_abs.clone(),
+            plan_document,
+            plan_source,
+            steps: Vec::new(),
+            tasks_by_number: Default::default(),
+            evidence_rel: String::from("docs/archive/featureforge/execution-evidence/placeholder.md"),
+            evidence_abs: repo_root.join(
+                "docs/archive/featureforge/execution-evidence/placeholder.md",
+            ),
+            evidence: ExecutionEvidence {
+                format: EvidenceFormat::Empty,
+                plan_path: String::from(plan_rel),
+                plan_revision: 0,
+                plan_fingerprint: None,
+                source_spec_path: String::from(
+                    "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md",
+                ),
+                source_spec_revision: 0,
+                source_spec_fingerprint: None,
+                attempts: Vec::new(),
+                source: None,
+            },
+            source_spec_source: String::new(),
+            source_spec_path: repo_root.join(
+                "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md",
+            ),
+            execution_fingerprint: String::from("unit-test-execution-fingerprint"),
+        };
+        let base_branch =
+            super::resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
+                .expect("base branch should resolve for the current repo");
+        let branch_closure_id = "unit-test-branch-closure";
+        let reviewed_state_id = "git_tree:unit-test";
+        let dispatch_id = "unit-test-final-review-dispatch";
+        let reviewer_source = "fresh-context-subagent";
+        let reviewer_id = "unit-reviewer-001";
+        let summary = "Independent final review passed in unit coverage.";
+        let summary_hash = sha256_hex(summary.as_bytes());
+        let strategy_checkpoint_fingerprint = sha256_hex(b"unit-test-strategy-checkpoint");
+        let state_path = authoritative_state_path(&context);
+        fs::create_dir_all(
+            state_path
+                .parent()
+                .expect("authoritative state path should have a parent dir"),
+        )
+        .expect("authoritative state dir should be creatable");
+        fs::write(
+            &state_path,
+            serde_json::to_string_pretty(&json!({
+                "latest_authoritative_sequence": 1,
+                "harness_phase": "final_review_pending",
+                "last_strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
+            }))
+            .expect("seed authoritative state should serialize"),
+        )
+        .expect("seed authoritative state should write");
+        let rendered = render_final_review_artifacts(
+            &runtime,
+            &context,
+            branch_closure_id,
+            reviewed_state_id,
+            &base_branch,
+            FinalReviewArtifactInputs {
+                dispatch_id,
+                reviewer_source,
+                reviewer_id,
+                result: "pass",
+                deviations_required: false,
+                summary,
+            },
+        )
+        .expect("final-review artifacts should render for unit coverage");
+        let final_review_fingerprint = sha256_hex(rendered.final_review_source.as_bytes());
+        let final_review_path = harness_authoritative_artifact_path(
+            &runtime.state_dir,
+            &runtime.repo_slug,
+            &runtime.branch_name,
+            &format!("final-review-{final_review_fingerprint}.md"),
+        );
+        fs::create_dir_all(
+            rendered
+                .reviewer_artifact_path
+                .parent()
+                .expect("reviewer artifact should have a parent directory"),
+        )
+        .expect("reviewer artifact dir should be creatable");
+        fs::create_dir_all(
+            final_review_path
+                .parent()
+                .expect("final-review artifact should have a parent directory"),
+        )
+        .expect("final-review artifact dir should be creatable");
+        fs::write(&rendered.reviewer_artifact_path, &rendered.reviewer_source_text)
+            .expect("reviewer artifact should write");
+        fs::write(&final_review_path, &rendered.final_review_source)
+            .expect("final-review artifact should write");
+
+        fs::write(
+            &state_path,
+            serde_json::to_string_pretty(&json!({
+                "latest_authoritative_sequence": 1,
+                "harness_phase": "ready_for_branch_completion",
+                "last_strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
+                "current_branch_closure_id": branch_closure_id,
+                "current_branch_closure_reviewed_state_id": reviewed_state_id,
+                "current_branch_closure_contract_identity": "unit-test-branch-contract",
+                "current_final_review_record_id": "unit-final-review-record",
+                "current_final_review_branch_closure_id": branch_closure_id,
+                "current_final_review_dispatch_id": dispatch_id,
+                "current_final_review_reviewer_source": reviewer_source,
+                "current_final_review_reviewer_id": reviewer_id,
+                "current_final_review_result": "pass",
+                "current_final_review_summary_hash": summary_hash,
+                "final_review_record_history": {
+                    "unit-final-review-record": {
+                        "record_id": "unit-final-review-record",
+                        "record_sequence": 1,
+                        "record_status": "current",
+                        "branch_closure_id": branch_closure_id,
+                        "source_plan_path": context.plan_rel,
+                        "source_plan_revision": context.plan_document.plan_revision,
+                        "repo_slug": runtime.repo_slug,
+                        "branch_name": runtime.branch_name,
+                        "base_branch": base_branch,
+                        "reviewed_state_id": reviewed_state_id,
+                        "dispatch_id": dispatch_id,
+                        "reviewer_source": reviewer_source,
+                        "reviewer_id": reviewer_id,
+                        "result": "pass",
+                        "final_review_fingerprint": final_review_fingerprint,
+                        "browser_qa_required": false,
+                        "summary": summary,
+                        "summary_hash": summary_hash
+                    }
+                }
+            }))
+            .expect("authoritative state fixture should serialize"),
+        )
+        .expect("authoritative state fixture should write");
+
+        let authoritative_state = load_authoritative_transition_state(&context)
+            .expect("authoritative state should load")
+            .expect("authoritative state should exist");
+        assert!(
+            current_final_review_record_is_still_authoritative(
+                &context,
+                &authoritative_state,
+                CurrentFinalReviewAuthorityCheck {
+                    branch_closure_id,
+                    dispatch_id,
+                    reviewer_source,
+                    reviewer_id,
+                    result: "pass",
+                    normalized_summary_hash: &summary_hash,
+                },
+            )
+            .expect("authoritativeness check should succeed for intact artifacts")
+        );
+
+        fs::write(
+            &rendered.reviewer_artifact_path,
+            "# Code Review Result\n\nTampered reviewer artifact.\n",
+        )
+        .expect("tampered reviewer artifact should write");
+
+        let authoritative_state = load_authoritative_transition_state(&context)
+            .expect("authoritative state should reload")
+            .expect("authoritative state should still exist");
+        assert!(
+            !current_final_review_record_is_still_authoritative(
+                &context,
+                &authoritative_state,
+                CurrentFinalReviewAuthorityCheck {
+                    branch_closure_id,
+                    dispatch_id,
+                    reviewer_source,
+                    reviewer_id,
+                    result: "pass",
+                    normalized_summary_hash: &summary_hash,
+                },
+            )
+            .expect("authoritativeness check should downgrade corrupted reviewer proof")
         );
     }
 

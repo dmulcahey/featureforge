@@ -1,7 +1,267 @@
 {
+  "$defs": {
+    "AggregateEvaluationState": {
+      "enum": [
+        "pass",
+        "pending",
+        "fail",
+        "blocked"
+      ],
+      "type": "string"
+    },
+    "ChunkId": {
+      "type": "string"
+    },
+    "ChunkingStrategy": {
+      "enum": [
+        "task",
+        "task-group",
+        "whole-run"
+      ],
+      "type": "string"
+    },
+    "DownstreamFreshnessState": {
+      "enum": [
+        "not_required",
+        "missing",
+        "fresh",
+        "stale"
+      ],
+      "type": "string"
+    },
+    "EvaluationVerdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "blocked"
+      ],
+      "type": "string"
+    },
+    "EvaluatorKind": {
+      "enum": [
+        "spec_compliance",
+        "code_quality"
+      ],
+      "type": "string"
+    },
+    "EvaluatorPolicyName": {
+      "type": "string"
+    },
+    "ExecutionRunId": {
+      "type": "string"
+    },
+    "FollowUpOverrideSchema": {
+      "enum": [
+        "none",
+        "record_handoff",
+        "record_pivot"
+      ],
+      "type": "string"
+    },
+    "HarnessPhase": {
+      "enum": [
+        "implementation_handoff",
+        "execution_preflight",
+        "contract_drafting",
+        "contract_pending_approval",
+        "contract_approved",
+        "executing",
+        "evaluating",
+        "repairing",
+        "pivot_required",
+        "handoff_required",
+        "final_review_pending",
+        "qa_pending",
+        "document_release_pending",
+        "ready_for_branch_completion"
+      ],
+      "type": "string"
+    },
+    "NextActionSchema": {
+      "enum": [
+        "advance late stage",
+        "close current task",
+        "continue execution",
+        "dispatch review",
+        "execution reentry required",
+        "hand off",
+        "pivot / return to planning",
+        "record branch closure",
+        "refresh test plan",
+        "repair review state / reenter execution",
+        "resolve release blocker",
+        "run QA",
+        "run finish completion gate",
+        "run finish review gate",
+        "wait for external review result"
+      ],
+      "type": "string"
+    },
+    "PhaseDetailSchema": {
+      "enum": [
+        "branch_closure_recording_required_for_release_readiness",
+        "execution_in_progress",
+        "execution_reentry_required",
+        "final_review_dispatch_required",
+        "final_review_outcome_pending",
+        "finish_completion_gate_ready",
+        "finish_review_gate_ready",
+        "handoff_recording_required",
+        "planning_reentry_required",
+        "qa_recording_required",
+        "release_blocker_resolution_required",
+        "release_readiness_recording_ready",
+        "task_review_dispatch_required",
+        "task_review_result_pending",
+        "test_plan_refresh_required"
+      ],
+      "type": "string"
+    },
+    "PublicExecutionCommandContext": {
+      "properties": {
+        "command_kind": {
+          "type": "string"
+        },
+        "step_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "task_number": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command_kind"
+      ],
+      "type": "object"
+    },
+    "PublicRecordingContext": {
+      "properties": {
+        "branch_closure_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dispatch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_number": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PublicReviewStateTaskClosure": {
+      "properties": {
+        "closure_record_id": {
+          "type": "string"
+        },
+        "contract_identity": {
+          "type": "string"
+        },
+        "effective_reviewed_surface_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reviewed_state_id": {
+          "type": "string"
+        },
+        "task": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task",
+        "closure_record_id",
+        "reviewed_state_id",
+        "contract_identity",
+        "effective_reviewed_surface_paths"
+      ],
+      "type": "object"
+    },
+    "ResetPolicy": {
+      "enum": [
+        "none",
+        "chunk-boundary",
+        "adaptive"
+      ],
+      "type": "string"
+    },
+    "ReviewStateStatusSchema": {
+      "enum": [
+        "clean",
+        "stale_unreviewed",
+        "missing_current_closure"
+      ],
+      "type": "string"
+    },
+    "StatusBlockingRecord": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "record_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record_type": {
+          "type": "string"
+        },
+        "required_follow_up": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_state_status": {
+          "type": "string"
+        },
+        "scope_key": {
+          "type": "string"
+        },
+        "scope_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "scope_type",
+        "scope_key",
+        "record_type",
+        "review_state_status",
+        "message"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "PlanExecutionStatus",
-  "type": "object",
   "properties": {
     "active_contract_fingerprint": {
       "type": [
@@ -16,45 +276,45 @@
       ]
     },
     "active_step": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "active_task": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "aggregate_evaluation_state": {
       "$ref": "#/$defs/AggregateEvaluationState"
     },
     "blocking_records": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/StatusBlockingRecord"
-      }
+      },
+      "type": "array"
     },
     "blocking_step": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "blocking_task": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "browser_qa_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"
@@ -73,10 +333,10 @@
       ]
     },
     "completed_evaluator_kinds": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
-      }
+      },
+      "type": "array"
     },
     "current_branch_closure_id": {
       "type": [
@@ -91,19 +351,19 @@
       ]
     },
     "current_chunk_pivot_threshold": {
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "current_chunk_retry_budget": {
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "current_chunk_retry_count": {
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "current_final_review_branch_closure_id": {
       "type": [
@@ -142,10 +402,10 @@
       ]
     },
     "current_task_closures": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/PublicReviewStateTaskClosure"
-      }
+      },
+      "type": "array"
     },
     "dependency_index_state": {
       "type": "string"
@@ -164,14 +424,7 @@
       "type": "string"
     },
     "execution_command_context": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/PublicExecutionCommandContext"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "$ref": "#/$defs/PublicExecutionCommandContext"
     },
     "execution_fingerprint": {
       "type": "string"
@@ -202,7 +455,7 @@
       ]
     },
     "follow_up_override": {
-      "type": "string"
+      "$ref": "#/$defs/FollowUpOverrideSchema"
     },
     "handoff_required": {
       "type": "boolean"
@@ -267,38 +520,38 @@
       ]
     },
     "latest_authoritative_sequence": {
-      "type": "integer",
       "format": "uint64",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "next_action": {
-      "type": "string"
+      "$ref": "#/$defs/NextActionSchema"
     },
     "non_passing_evaluator_kinds": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
-      }
+      },
+      "type": "array"
     },
     "open_failed_criteria": {
-      "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
     },
     "pending_evaluator_kinds": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
-      }
+      },
+      "type": "array"
     },
     "phase_detail": {
-      "type": "string"
+      "$ref": "#/$defs/PhaseDetailSchema"
     },
     "plan_revision": {
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "qa_requirement": {
       "type": [
@@ -307,10 +560,10 @@
       ]
     },
     "reason_codes": {
-      "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
     },
     "recommended_command": {
       "type": [
@@ -319,14 +572,7 @@
       ]
     },
     "recording_context": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/PublicRecordingContext"
-        },
-        {
-          "type": "null"
-        }
-      ]
+      "$ref": "#/$defs/PublicRecordingContext"
     },
     "release_docs_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"
@@ -347,10 +593,10 @@
       "type": "string"
     },
     "required_evaluator_kinds": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
-      }
+      },
+      "type": "array"
     },
     "reset_policy": {
       "anyOf": [
@@ -363,38 +609,38 @@
       ]
     },
     "resume_step": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "resume_task": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "review_stack": {
+      "items": {
+        "type": "string"
+      },
       "type": [
         "array",
         "null"
-      ],
-      "items": {
-        "type": "string"
-      }
+      ]
     },
     "review_state_status": {
       "$ref": "#/$defs/ReviewStateStatusSchema"
     },
     "stale_unreviewed_closures": {
-      "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
     },
     "strategy_checkpoint_kind": {
       "type": "string"
@@ -406,16 +652,16 @@
       "type": "string"
     },
     "superseded_closures_summary": {
-      "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
     },
     "warning_codes": {
-      "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
     },
     "workspace_state_id": {
       "type": "string"
@@ -478,218 +724,6 @@
     "execution_started",
     "warning_codes"
   ],
-  "$defs": {
-    "AggregateEvaluationState": {
-      "type": "string",
-      "enum": [
-        "pass",
-        "pending",
-        "fail",
-        "blocked"
-      ]
-    },
-    "ChunkId": {
-      "type": "string"
-    },
-    "ChunkingStrategy": {
-      "type": "string",
-      "enum": [
-        "task",
-        "task-group",
-        "whole-run"
-      ]
-    },
-    "DownstreamFreshnessState": {
-      "type": "string",
-      "enum": [
-        "not_required",
-        "missing",
-        "fresh",
-        "stale"
-      ]
-    },
-    "EvaluationVerdict": {
-      "type": "string",
-      "enum": [
-        "pass",
-        "fail",
-        "blocked"
-      ]
-    },
-    "EvaluatorKind": {
-      "type": "string",
-      "enum": [
-        "spec_compliance",
-        "code_quality"
-      ]
-    },
-    "EvaluatorPolicyName": {
-      "type": "string"
-    },
-    "ExecutionRunId": {
-      "type": "string"
-    },
-    "HarnessPhase": {
-      "type": "string",
-      "enum": [
-        "implementation_handoff",
-        "execution_preflight",
-        "contract_drafting",
-        "contract_pending_approval",
-        "contract_approved",
-        "executing",
-        "evaluating",
-        "repairing",
-        "pivot_required",
-        "handoff_required",
-        "final_review_pending",
-        "qa_pending",
-        "document_release_pending",
-        "ready_for_branch_completion"
-      ]
-    },
-    "PublicExecutionCommandContext": {
-      "type": "object",
-      "properties": {
-        "command_kind": {
-          "type": "string"
-        },
-        "step_id": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        },
-        "task_number": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "command_kind"
-      ]
-    },
-    "PublicRecordingContext": {
-      "type": "object",
-      "properties": {
-        "branch_closure_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "dispatch_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "task_number": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint32",
-          "minimum": 0
-        }
-      }
-    },
-    "PublicReviewStateTaskClosure": {
-      "type": "object",
-      "properties": {
-        "closure_record_id": {
-          "type": "string"
-        },
-        "contract_identity": {
-          "type": "string"
-        },
-        "effective_reviewed_surface_paths": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "reviewed_state_id": {
-          "type": "string"
-        },
-        "task": {
-          "type": "integer",
-          "format": "uint32",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "task",
-        "closure_record_id",
-        "reviewed_state_id",
-        "contract_identity",
-        "effective_reviewed_surface_paths"
-      ]
-    },
-    "ResetPolicy": {
-      "type": "string",
-      "enum": [
-        "none",
-        "chunk-boundary",
-        "adaptive"
-      ]
-    },
-    "ReviewStateStatusSchema": {
-      "type": "string",
-      "enum": [
-        "clean",
-        "stale_unreviewed",
-        "missing_current_closure"
-      ]
-    },
-    "StatusBlockingRecord": {
-      "type": "object",
-      "properties": {
-        "code": {
-          "type": "string"
-        },
-        "message": {
-          "type": "string"
-        },
-        "record_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "record_type": {
-          "type": "string"
-        },
-        "required_follow_up": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "review_state_status": {
-          "type": "string"
-        },
-        "scope_key": {
-          "type": "string"
-        },
-        "scope_type": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "code",
-        "scope_type",
-        "scope_key",
-        "record_type",
-        "review_state_status",
-        "message"
-      ]
-    }
-  }
+  "title": "PlanExecutionStatus",
+  "type": "object"
 }

@@ -254,6 +254,7 @@ pub(crate) struct TaskClosureNegativeResultRecord<'a> {
     pub(crate) verification_summary_hash: &'a str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CurrentTaskClosureRecord {
     pub(crate) task: u32,
     pub(crate) dispatch_id: String,
@@ -272,10 +273,21 @@ pub(crate) struct BranchClosureRecord {
     pub(crate) contract_identity: String,
 }
 
+pub(crate) struct CurrentBranchClosureIdentity {
+    pub(crate) branch_closure_id: String,
+    pub(crate) reviewed_state_id: String,
+    pub(crate) contract_identity: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TaskClosureNegativeResult {
     pub(crate) dispatch_id: String,
     pub(crate) reviewed_state_id: String,
     pub(crate) contract_identity: String,
+    pub(crate) review_result: String,
+    pub(crate) review_summary_hash: String,
+    pub(crate) verification_result: String,
+    pub(crate) verification_summary_hash: Option<String>,
 }
 
 pub(crate) struct CurrentReleaseReadinessRecord {
@@ -926,22 +938,21 @@ impl AuthoritativeTransitionState {
         task_completion_lineage_fingerprint: &str,
         reviewed_state_id: &str,
     ) -> Result<(), JsonFailure> {
-        let lineage = self.dispatch_lineage_records_mut()?;
-        lineage.insert(
-            format!("task-{task}"),
-            serde_json::json!({
-                "execution_run_id": execution_run_id,
-                "dispatch_id": strategy_checkpoint_fingerprint,
-                "reviewed_state_id": reviewed_state_id,
-                "source_task": task,
-                "source_step": source_step,
-                "strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
-                "task_completion_lineage_fingerprint": task_completion_lineage_fingerprint,
-            }),
-        );
+        self.clear_task_closure_negative_result(task)?;
         {
-            let negative_results = self.task_closure_negative_result_records_mut()?;
-            negative_results.remove(&format!("task-{task}"));
+            let lineage = self.dispatch_lineage_records_mut()?;
+            lineage.insert(
+                format!("task-{task}"),
+                serde_json::json!({
+                    "execution_run_id": execution_run_id,
+                    "dispatch_id": strategy_checkpoint_fingerprint,
+                    "reviewed_state_id": reviewed_state_id,
+                    "source_task": task,
+                    "source_step": source_step,
+                    "strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
+                    "task_completion_lineage_fingerprint": task_completion_lineage_fingerprint,
+                }),
+            );
         }
         self.dirty = true;
         Ok(())
@@ -1226,25 +1237,6 @@ impl AuthoritativeTransitionState {
         );
         self.dirty = true;
         Ok(())
-    }
-
-    pub(crate) fn restore_current_branch_closure_overlay_fields_if_current(
-        &mut self,
-        branch_closure_id: &str,
-        reviewed_state_id: &str,
-        contract_identity: &str,
-    ) -> Result<bool, JsonFailure> {
-        if json_string(&self.state_payload, "current_branch_closure_id").as_deref()
-            != Some(branch_closure_id)
-        {
-            return Ok(false);
-        }
-        self.restore_current_branch_closure_overlay_fields(
-            branch_closure_id,
-            reviewed_state_id,
-            contract_identity,
-        )?;
-        Ok(true)
     }
 
     pub(crate) fn restore_current_release_readiness_overlay_fields(
@@ -1887,7 +1879,17 @@ impl AuthoritativeTransitionState {
         &mut self,
         record: TaskClosureResultRecord<'_>,
     ) -> Result<(), JsonFailure> {
+        let record_sequence = self
+            .state_payload
+            .get("task_closure_record_history")
+            .and_then(Value::as_object)
+            .map(|history| history.len() as u64 + 1)
+            .unwrap_or(1);
         let payload = serde_json::json!({
+            "task": record.task,
+            "record_id": record.closure_record_id,
+            "record_sequence": record_sequence,
+            "record_status": "current",
             "dispatch_id": record.dispatch_id,
             "closure_record_id": record.closure_record_id,
             "reviewed_state_id": record.reviewed_state_id,
@@ -1910,10 +1912,25 @@ impl AuthoritativeTransitionState {
         &mut self,
         tasks: impl IntoIterator<Item = u32>,
     ) -> Result<(), JsonFailure> {
-        let records = self.current_task_closure_records_mut()?;
+        let tasks = tasks.into_iter().collect::<Vec<_>>();
+        let removed_closure_ids = tasks
+            .iter()
+            .filter_map(|task| self.current_task_closure_result(*task))
+            .map(|record| record.closure_record_id)
+            .collect::<Vec<_>>();
         let mut removed_any = false;
-        for task in tasks {
-            removed_any |= records.remove(&format!("task-{task}")).is_some();
+        {
+            let records = self.current_task_closure_records_mut()?;
+            for task in tasks {
+                removed_any |= records.remove(&format!("task-{task}")).is_some();
+            }
+        }
+        if !removed_closure_ids.is_empty() {
+            let history = self.task_closure_record_history_mut()?;
+            for closure_record_id in removed_closure_ids {
+                mark_record_status(history, &closure_record_id, "historical");
+            }
+            removed_any = true;
         }
         if removed_any {
             self.dirty = true;
@@ -1925,7 +1942,18 @@ impl AuthoritativeTransitionState {
         &mut self,
         record: TaskClosureNegativeResultRecord<'_>,
     ) -> Result<(), JsonFailure> {
+        let record_id = format!("task-{}:{}", record.task, record.dispatch_id);
+        let record_sequence = self
+            .state_payload
+            .get("task_closure_negative_result_history")
+            .and_then(Value::as_object)
+            .map(|history| history.len() as u64 + 1)
+            .unwrap_or(1);
         let payload = serde_json::json!({
+            "task": record.task,
+            "record_id": record_id,
+            "record_sequence": record_sequence,
+            "record_status": "current",
             "dispatch_id": record.dispatch_id,
             "closure_record_id": Value::Null,
             "reviewed_state_id": record.reviewed_state_id,
@@ -1937,10 +1965,8 @@ impl AuthoritativeTransitionState {
         });
         let records = self.task_closure_negative_result_records_mut()?;
         records.insert(format!("task-{}", record.task), payload.clone());
-        self.task_closure_negative_result_history_mut()?.insert(
-            format!("task-{}:{}", record.task, record.dispatch_id),
-            payload,
-        );
+        self.task_closure_negative_result_history_mut()?
+            .insert(format!("task-{}:{}", record.task, record.dispatch_id), payload);
         self.dirty = true;
         Ok(())
     }
@@ -1949,8 +1975,20 @@ impl AuthoritativeTransitionState {
         &mut self,
         task: u32,
     ) -> Result<(), JsonFailure> {
-        let records = self.task_closure_negative_result_records_mut()?;
-        if records.remove(&format!("task-{task}")).is_some() {
+        let negative_result = self.task_closure_negative_result(task);
+        let removed = self
+            .task_closure_negative_result_records_mut()?
+            .remove(&format!("task-{task}"))
+            .is_some();
+        if let Some(ref negative_result) = negative_result {
+            let history = self.task_closure_negative_result_history_mut()?;
+            mark_record_status(
+                history,
+                &format!("task-{task}:{}", negative_result.dispatch_id),
+                "historical",
+            );
+        }
+        if removed || negative_result.is_some() {
             self.dirty = true;
         }
         Ok(())
@@ -2099,7 +2137,7 @@ impl AuthoritativeTransitionState {
         })
     }
 
-    pub(crate) fn current_task_closure_result(
+    pub(crate) fn raw_current_task_closure_result(
         &self,
         task: u32,
     ) -> Option<CurrentTaskClosureRecord> {
@@ -2109,33 +2147,10 @@ impl AuthoritativeTransitionState {
             .and_then(Value::as_object)?
             .get(&format!("task-{task}"))?
             .as_object()?;
-        Some(CurrentTaskClosureRecord {
-            task,
-            dispatch_id: json_string(&Value::Object(payload.clone()), "dispatch_id")?,
-            closure_record_id: json_string(&Value::Object(payload.clone()), "closure_record_id")?,
-            reviewed_state_id: json_string(&Value::Object(payload.clone()), "reviewed_state_id")?,
-            contract_identity: json_string(&Value::Object(payload.clone()), "contract_identity")?,
-            effective_reviewed_surface_paths: json_string_array(
-                &Value::Object(payload.clone()),
-                "effective_reviewed_surface_paths",
-            ),
-            review_result: json_string(&Value::Object(payload.clone()), "review_result")?,
-            review_summary_hash: json_string(
-                &Value::Object(payload.clone()),
-                "review_summary_hash",
-            )?,
-            verification_result: json_string(
-                &Value::Object(payload.clone()),
-                "verification_result",
-            )?,
-            verification_summary_hash: json_string(
-                &Value::Object(payload.clone()),
-                "verification_summary_hash",
-            )?,
-        })
+        current_task_closure_record_from_payload(task, payload)
     }
 
-    pub(crate) fn current_task_closure_results(&self) -> BTreeMap<u32, CurrentTaskClosureRecord> {
+    pub(crate) fn raw_current_task_closure_results(&self) -> BTreeMap<u32, CurrentTaskClosureRecord> {
         self.state_payload
             .get("current_task_closure_records")
             .and_then(Value::as_object)
@@ -2145,12 +2160,91 @@ impl AuthoritativeTransitionState {
                     .filter_map(|key| {
                         key.strip_prefix("task-")
                             .and_then(|task| task.parse::<u32>().ok())
-                            .and_then(|task| self.current_task_closure_result(task))
+                            .and_then(|task| self.raw_current_task_closure_result(task))
                             .map(|record| (record.task, record))
                     })
                     .collect::<BTreeMap<_, _>>()
             })
             .unwrap_or_default()
+    }
+
+    fn current_task_closure_results_from_history(&self) -> BTreeMap<u32, CurrentTaskClosureRecord> {
+        self.state_payload
+            .get("task_closure_record_history")
+            .and_then(Value::as_object)
+            .map(|history| {
+                history
+                    .values()
+                    .filter_map(Value::as_object)
+                    .filter_map(|payload| {
+                        let payload_value = Value::Object(payload.clone());
+                        if json_string(&payload_value, "record_status").as_deref() != Some("current")
+                        {
+                            return None;
+                        }
+                        let task = json_u32(&payload_value, "task")?;
+                        current_task_closure_record_from_payload(task, payload)
+                            .map(|record| (record.task, record))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn current_task_closure_result(
+        &self,
+        task: u32,
+    ) -> Option<CurrentTaskClosureRecord> {
+        self.current_task_closure_results_from_history()
+            .remove(&task)
+            .or_else(|| self.raw_current_task_closure_result(task))
+    }
+
+    pub(crate) fn current_task_closure_results(&self) -> BTreeMap<u32, CurrentTaskClosureRecord> {
+        let mut records = self.raw_current_task_closure_results();
+        records.extend(self.current_task_closure_results_from_history());
+        records
+    }
+
+    pub(crate) fn current_task_closure_overlay_needs_restore(&self) -> bool {
+        let recoverable = self.current_task_closure_results_from_history();
+        if recoverable.is_empty() {
+            return false;
+        }
+        self.raw_current_task_closure_results() != recoverable
+    }
+
+    pub(crate) fn restore_current_task_closure_records_from_history(
+        &mut self,
+    ) -> Result<bool, JsonFailure> {
+        let recoverable = self.current_task_closure_results_from_history();
+        if recoverable.is_empty() || !self.current_task_closure_overlay_needs_restore() {
+            return Ok(false);
+        }
+        let mut restored = serde_json::Map::new();
+        for record in recoverable.into_values() {
+            restored.insert(
+                format!("task-{}", record.task),
+                serde_json::json!({
+                    "task": record.task,
+                    "record_id": record.closure_record_id,
+                    "record_status": "current",
+                    "dispatch_id": record.dispatch_id,
+                    "closure_record_id": record.closure_record_id,
+                    "reviewed_state_id": record.reviewed_state_id,
+                    "contract_identity": record.contract_identity,
+                    "effective_reviewed_surface_paths": record.effective_reviewed_surface_paths,
+                    "review_result": record.review_result,
+                    "review_summary_hash": record.review_summary_hash,
+                    "verification_result": record.verification_result,
+                    "verification_summary_hash": record.verification_summary_hash,
+                }),
+            );
+        }
+        self.root_object_mut()?
+            .insert(String::from("current_task_closure_records"), Value::Object(restored));
+        self.dirty = true;
+        Ok(true)
     }
 
     pub(crate) fn branch_closure_record(
@@ -2183,6 +2277,38 @@ impl AuthoritativeTransitionState {
             reviewed_state_id: json_string(&payload_value, "reviewed_state_id")?,
             contract_identity: json_string(&payload_value, "contract_identity")?,
         })
+    }
+
+    pub(crate) fn recoverable_current_branch_closure_identity(
+        &self,
+    ) -> Option<CurrentBranchClosureIdentity> {
+        if let Some(branch_closure_id) = json_string(&self.state_payload, "current_branch_closure_id")
+            && let Some(record) = self.branch_closure_record(&branch_closure_id)
+        {
+            return Some(CurrentBranchClosureIdentity {
+                branch_closure_id,
+                reviewed_state_id: record.reviewed_state_id,
+                contract_identity: record.contract_identity,
+            });
+        }
+
+        let records = self
+            .state_payload
+            .get("branch_closure_records")
+            .and_then(Value::as_object)?;
+        let mut candidates = records.keys().filter_map(|branch_closure_id| {
+            self.branch_closure_record(branch_closure_id)
+                .map(|record| CurrentBranchClosureIdentity {
+                    branch_closure_id: branch_closure_id.clone(),
+                    reviewed_state_id: record.reviewed_state_id,
+                    contract_identity: record.contract_identity,
+                })
+        });
+        let current = candidates.next()?;
+        if candidates.next().is_some() {
+            return None;
+        }
+        Some(current)
     }
 
     pub(crate) fn finish_review_gate_pass_branch_closure_id(&self) -> Option<String> {
@@ -2235,7 +2361,7 @@ impl AuthoritativeTransitionState {
         json_string_array(&self.state_payload, "superseded_branch_closure_ids")
     }
 
-    pub(crate) fn task_closure_negative_result(
+    pub(crate) fn raw_task_closure_negative_result(
         &self,
         task: u32,
     ) -> Option<TaskClosureNegativeResult> {
@@ -2245,11 +2371,98 @@ impl AuthoritativeTransitionState {
             .and_then(Value::as_object)?
             .get(&format!("task-{task}"))?
             .as_object()?;
-        Some(TaskClosureNegativeResult {
-            dispatch_id: json_string(&Value::Object(payload.clone()), "dispatch_id")?,
-            reviewed_state_id: json_string(&Value::Object(payload.clone()), "reviewed_state_id")?,
-            contract_identity: json_string(&Value::Object(payload.clone()), "contract_identity")?,
-        })
+        task_closure_negative_result_from_payload(payload)
+    }
+
+    fn task_closure_negative_results_from_history(&self) -> BTreeMap<u32, TaskClosureNegativeResult> {
+        self.state_payload
+            .get("task_closure_negative_result_history")
+            .and_then(Value::as_object)
+            .map(|history| {
+                history
+                    .values()
+                    .filter_map(Value::as_object)
+                    .filter_map(|payload| {
+                        let payload_value = Value::Object(payload.clone());
+                        if json_string(&payload_value, "record_status").as_deref() != Some("current")
+                        {
+                            return None;
+                        }
+                        let task = json_u32(&payload_value, "task")?;
+                        task_closure_negative_result_from_payload(payload)
+                            .map(|record| (task, record))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn task_closure_negative_result(
+        &self,
+        task: u32,
+    ) -> Option<TaskClosureNegativeResult> {
+        self.task_closure_negative_results_from_history()
+            .remove(&task)
+            .or_else(|| self.raw_task_closure_negative_result(task))
+    }
+
+    pub(crate) fn task_closure_negative_result_overlay_needs_restore(&self) -> bool {
+        let recoverable = self.task_closure_negative_results_from_history();
+        if recoverable.is_empty() {
+            return false;
+        }
+        let raw = self
+            .state_payload
+            .get("task_closure_negative_result_records")
+            .and_then(Value::as_object)
+            .map(|records| {
+                records
+                    .keys()
+                    .filter_map(|key| {
+                        key.strip_prefix("task-")
+                            .and_then(|task| task.parse::<u32>().ok())
+                            .and_then(|task| {
+                                self.raw_task_closure_negative_result(task)
+                                    .map(|record| (task, record))
+                            })
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+        raw != recoverable
+    }
+
+    pub(crate) fn restore_task_closure_negative_result_records_from_history(
+        &mut self,
+    ) -> Result<bool, JsonFailure> {
+        let recoverable = self.task_closure_negative_results_from_history();
+        if recoverable.is_empty() || !self.task_closure_negative_result_overlay_needs_restore() {
+            return Ok(false);
+        }
+        let mut restored = serde_json::Map::new();
+        for (task, record) in recoverable {
+            restored.insert(
+                format!("task-{task}"),
+                serde_json::json!({
+                    "task": task,
+                    "record_status": "current",
+                    "dispatch_id": record.dispatch_id,
+                    "closure_record_id": Value::Null,
+                    "reviewed_state_id": record.reviewed_state_id,
+                    "contract_identity": record.contract_identity,
+                    "review_result": record.review_result,
+                    "review_summary_hash": record.review_summary_hash,
+                    "verification_result": record.verification_result,
+                    "verification_summary_hash": record.verification_summary_hash,
+                }),
+            );
+        }
+        self.root_object_mut()?.insert(
+            String::from("task_closure_negative_result_records"),
+            Value::Object(restored),
+        );
+        self.dirty = true;
+        Ok(true)
     }
 
     pub(crate) fn current_browser_qa_record(&self) -> Option<CurrentBrowserQaRecord> {
@@ -2791,6 +3004,43 @@ fn mark_record_status(records: &mut serde_json::Map<String, Value>, record_id: &
     }
 }
 
+fn current_task_closure_record_from_payload(
+    task: u32,
+    payload: &serde_json::Map<String, Value>,
+) -> Option<CurrentTaskClosureRecord> {
+    let payload_value = Value::Object(payload.clone());
+    Some(CurrentTaskClosureRecord {
+        task,
+        dispatch_id: json_string(&payload_value, "dispatch_id")?,
+        closure_record_id: json_string(&payload_value, "closure_record_id")?,
+        reviewed_state_id: json_string(&payload_value, "reviewed_state_id")?,
+        contract_identity: json_string(&payload_value, "contract_identity")?,
+        effective_reviewed_surface_paths: json_string_array(
+            &payload_value,
+            "effective_reviewed_surface_paths",
+        ),
+        review_result: json_string(&payload_value, "review_result")?,
+        review_summary_hash: json_string(&payload_value, "review_summary_hash")?,
+        verification_result: json_string(&payload_value, "verification_result")?,
+        verification_summary_hash: json_string(&payload_value, "verification_summary_hash")?,
+    })
+}
+
+fn task_closure_negative_result_from_payload(
+    payload: &serde_json::Map<String, Value>,
+) -> Option<TaskClosureNegativeResult> {
+    let payload_value = Value::Object(payload.clone());
+    Some(TaskClosureNegativeResult {
+        dispatch_id: json_string(&payload_value, "dispatch_id")?,
+        reviewed_state_id: json_string(&payload_value, "reviewed_state_id")?,
+        contract_identity: json_string(&payload_value, "contract_identity")?,
+        review_result: json_string(&payload_value, "review_result")?,
+        review_summary_hash: json_string(&payload_value, "review_summary_hash")?,
+        verification_result: json_string(&payload_value, "verification_result")?,
+        verification_summary_hash: json_string(&payload_value, "verification_summary_hash"),
+    })
+}
+
 fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(prefix.as_bytes());
@@ -2873,21 +3123,35 @@ mod tests {
     }
 
     #[test]
-    fn restoring_branch_overlay_fields_requires_the_same_current_branch_closure() {
+    fn recoverable_current_branch_closure_identity_prefers_the_current_binding() {
         let mut authoritative_state =
             transition_state_with_current_branch_closure("branch-closure-new");
+        authoritative_state.state_payload["branch_closure_records"] = json!({
+            "branch-closure-new": {
+                "branch_closure_id": "branch-closure-new",
+                "source_plan_path": "docs/featureforge/plans/example.md",
+                "source_plan_revision": 1,
+                "repo_slug": "repo-slug",
+                "branch_name": "feature-branch",
+                "base_branch": "main",
+                "reviewed_state_id": "git_tree:new",
+                "contract_identity": "branch-contract-new",
+                "effective_reviewed_branch_surface": "repo_tracked_content",
+                "source_task_closure_ids": ["task-1-closure"],
+                "provenance_basis": "task_closure_lineage",
+                "closure_status": "current",
+                "superseded_branch_closure_ids": [],
+                "record_sequence": 1
+            }
+        });
 
-        let restored = authoritative_state
-            .restore_current_branch_closure_overlay_fields_if_current(
-                "branch-closure-old",
-                "git_tree:old",
-                "branch-contract-old",
-            )
-            .expect("stale overlay restore check should succeed");
+        let current_identity = authoritative_state
+            .recoverable_current_branch_closure_identity()
+            .expect("current branch-closure identity should be recoverable");
 
         assert!(
-            !restored,
-            "overlay restore should skip stale branch-closure ids"
+            current_identity.branch_closure_id == "branch-closure-new",
+            "recoverable current identity should stay bound to the current branch closure"
         );
         assert_eq!(
             authoritative_state.state_payload["current_branch_closure_id"],

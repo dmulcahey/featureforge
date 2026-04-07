@@ -569,10 +569,15 @@ test('execution workflow skills reference the plan-execution helper contract', (
   );
   assert.match(reviewSkill, /For plan-routed final review, require the exact approved plan path and exact approved spec path from the current execution preflight handoff or session context\./);
   assert.match(reviewSkill, /Run `featureforge plan contract analyze-plan --spec <approved-spec-path> --plan <approved-plan-path> --format json` before dispatching the reviewer\./);
+  assert.match(reviewSkill, /Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching the reviewer\./);
+  assert.match(reviewSkill, /If workflow\/operator fails, stop and return to the current execution flow; do not guess the public late-stage route from raw execution state\./);
   assert.match(reviewSkill, /Run `featureforge plan execution status --plan <approved-plan-path>` before dispatching the reviewer\./);
   assert.match(reviewSkill, /If helper status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state\./);
   assert.match(reviewSkill, /Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON\./);
   assert.match(reviewSkill, /If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`\./);
+  assert.match(reviewSkill, /treat workflow\/operator as authoritative for the public late-stage route; `featureforge plan execution status --plan <approved-plan-path>` remains supporting diagnostic detail\./);
+  assert.match(reviewSkill, /only dispatch a fresh final review when workflow\/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`\./);
+  assert.match(reviewSkill, /After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and require `phase_detail=final_review_recording_ready` before recording the result with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass\|fail --summary-file <final-review-summary>`\./);
   assert.match(reviewSkill, /Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context\./);
   assert.match(reviewSkill, /Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base aligned with `featureforge:document-release` and `gate-finish`\./);
   assert.match(reviewSkill, /project-scoped code-review artifact/);
@@ -598,8 +603,13 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /CONTRACT_STATE=\$\(printf '%s\\n' "\$ANALYZE_JSON" \| node -e 'const fs = require\("fs"\); const parsed = JSON\.parse\(fs\.readFileSync\(0, "utf8"\)\); process\.stdout\.write\(parsed\.contract_state \|\| ""\)'/);
   assert.match(reviewSkill, /if \[ "\$CONTRACT_STATE" != "valid" \] \|\| \[ "\$PACKET_BUILDABLE_TASKS" != "\$TASK_COUNT" \]; then/);
   assert.match(reviewSkill, /if \[ -n "\$ACTIVE_TASK\$BLOCKING_TASK\$RESUME_TASK" \]; then/);
+  assert.match(reviewSkill, /OPERATOR_JSON=\$\("\$_FEATUREFORGE_BIN" workflow operator --plan "\$APPROVED_PLAN_PATH" --json\)/);
+  assert.match(reviewSkill, /if \[ "\$PHASE" != "final_review_pending" \] \|\| \[ "\$PHASE_DETAIL" != "final_review_dispatch_required" \]; then/);
   assert.match(reviewSkill, /REVIEW_GATE_JSON=\$\("\$_FEATUREFORGE_BIN" plan execution record-review-dispatch --plan "\$APPROVED_PLAN_PATH" --scope final-review\)/);
   assert.match(reviewSkill, /if \[ "\$REVIEW_ALLOWED" != "true" \]; then/);
+  assert.match(reviewSkill, /RECORDING_READY_JSON=\$\("\$_FEATUREFORGE_BIN" workflow operator --plan "\$APPROVED_PLAN_PATH" --external-review-result-ready --json\)/);
+  assert.match(reviewSkill, /if \[ "\$RECORDING_PHASE_DETAIL" != "final_review_recording_ready" \]; then/);
+  assert.match(reviewSkill, /"\$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "\$APPROVED_PLAN_PATH" --dispatch-id "\$DISPATCH_ID" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary\.md/);
 
   const finishSkill = readUtf8(getSkillPath('finishing-a-development-branch'));
   assert.match(finishSkill, /rejects branch-completion handoff if the approved plan is execution-dirty or malformed/);
@@ -1408,6 +1418,10 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
     codexReadme,
     /`featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint while `featureforge plan execution record-review-dispatch` mints review-dispatch proof/,
   );
+  assert.match(
+    codexReadme,
+    /`featureforge workflow operator --plan <approved-plan-path>` remains authoritative for execution, QA, and late-stage routing after handoff; `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail/,
+  );
 
   const copilotReadme = readUtf8(path.join(REPO_ROOT, 'docs/README.copilot.md'));
   assert.match(
@@ -1417,6 +1431,10 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   assert.match(
     copilotReadme,
     /`featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint while `featureforge plan execution record-review-dispatch` mints review-dispatch proof/,
+  );
+  assert.match(
+    copilotReadme,
+    /`featureforge workflow operator --plan <approved-plan-path>` remains authoritative for execution, QA, and late-stage routing after handoff; `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail/,
   );
 
   const lateStageReference = readUtf8(path.join(REPO_ROOT, 'review/late-stage-precedence-reference.md'));
