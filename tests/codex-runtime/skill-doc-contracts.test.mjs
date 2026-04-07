@@ -693,6 +693,106 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   ]) {
     const normalized = normalizeWhitespace(content);
     assert.match(
+      content,
+      /Reviewed-Closure Command Matrix/,
+      `${label} should include the reviewed-closure command matrix`,
+    );
+    assert.match(
+      normalized,
+      /featureforge workflow operator --plan <approved-plan-path>[\s\S]*authoritative for `phase`, `next_action`, and `recommended_command`/i,
+      `${label} should treat workflow operator as the authoritative routing contract`,
+    );
+    assert.match(
+      normalized,
+      /featureforge plan execution status --plan <approved-plan-path>[\s\S]*supporting diagnostic detail/i,
+      `${label} should describe status as supporting diagnostic detail`,
+    );
+    assert.match(
+      content,
+      /featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>/,
+      `${label} should include the aggregate task-closure command`,
+    );
+    assert.match(
+      content,
+      /featureforge plan execution repair-review-state --plan <approved-plan-path>/,
+      `${label} should include the review-state repair command`,
+    );
+    assert.match(
+      content,
+      /featureforge plan execution record-branch-closure --plan <approved-plan-path>/,
+      `${label} should include the branch-closure command`,
+    );
+    assert.match(
+      content,
+      /featureforge plan execution advance-late-stage --plan <approved-plan-path>/,
+      `${label} should include the late-stage aggregate command`,
+    );
+    assert.match(
+      content,
+      /featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review/,
+      `${label} should include the final-review dispatch command`,
+    );
+    assert.match(
+      content,
+      /featureforge plan execution record-qa --plan <approved-plan-path> --result pass\|fail --summary-file <qa-report>/,
+      `${label} should include the QA recording command`,
+    );
+    assert.match(
+      content,
+      /featureforge plan execution gate-review --plan <approved-plan-path>/,
+      `${label} should include the finish-gating command`,
+    );
+    assert.match(
+      normalized,
+      /MUST NOT use the internal task-closure recording service boundary directly[\s\S]*MUST use `close-current-task` for task closure/i,
+      `${label} should forbid direct task-closure service usage`,
+    );
+    assert.match(
+      normalized,
+      /current(?: reviewed)? closure[\s\S]*superseded[\s\S]*stale-unreviewed/i,
+      `${label} should distinguish current, superseded, and stale-unreviewed closure state`,
+    );
+    assert.match(
+      content,
+      /docs\/featureforge\/reference\/2026-04-01-review-state-reference\.md/,
+      `${label} should link to the shared review-state reference`,
+    );
+    assert.match(
+      normalized,
+      /\| Compatibility-only fallback:[^|]*featureforge plan execution explain-review-state --plan <approved-plan-path>/i,
+      `${label} should keep explain-review-state as a compatibility-only fallback`,
+    );
+    assert.match(
+      normalized,
+      /\| Compatibility-only fallback:[^|]*featureforge plan execution reconcile-review-state --plan <approved-plan-path>/i,
+      `${label} should keep reconcile-review-state as a compatibility-only fallback`,
+    );
+    assert.match(
+      normalized,
+      /\| Compatibility-only fallback:[^|]*record-release-readiness[^|]*record-final-review/i,
+      `${label} should keep primitive late-stage commands as compatibility-only fallbacks`,
+    );
+    assert.doesNotMatch(
+      normalized,
+      /\| [^|]+ \| [^|]+ \| [^|]*featureforge plan execution explain-review-state --plan <approved-plan-path>[^|]* \| [^|]+ \|/i,
+      `${label} should not promote explain-review-state into the primary command column`,
+    );
+    assert.doesNotMatch(
+      normalized,
+      /\| [^|]+ \| [^|]+ \| [^|]*featureforge plan execution reconcile-review-state --plan <approved-plan-path>[^|]* \| [^|]+ \|/i,
+      `${label} should not promote reconcile-review-state into the primary command column`,
+    );
+    assert.doesNotMatch(
+      normalized,
+      /\| [^|]+ \| [^|]+ \| [^|]*record-release-readiness[^|]* \| [^|]+ \|/i,
+      `${label} should not promote record-release-readiness into the primary command column`,
+    );
+    assert.doesNotMatch(
+      normalized,
+      /\| [^|]+ \| [^|]+ \| [^|]*record-final-review[^|]* \| [^|]+ \|/i,
+      `${label} should not promote record-final-review into the primary command column`,
+    );
+    assert.match(
       normalized,
       /no (?:code|test) edits?[\s\S]*successful preflight[\s\S]*first `begin`/i,
       `${label} should prohibit code/test edits between successful preflight and first begin`,
