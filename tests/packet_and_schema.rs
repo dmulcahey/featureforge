@@ -440,6 +440,34 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_types!("chunk_id", ["string"], required);
     check_types!("chunking_strategy", ["string", "null"], optional);
     check_enum!("chunking_strategy", ["task", "task-group", "whole-run"]);
+    check_types!("workspace_state_id", ["string"], required);
+    check_types!(
+        "current_branch_reviewed_state_id",
+        ["string", "null"],
+        optional
+    );
+    check_types!("current_branch_closure_id", ["string", "null"], optional);
+    check_types!("current_task_closures", ["array"], required);
+    check_array_items!("current_task_closures", ["object"]);
+    check_types!("superseded_closures_summary", ["array"], required);
+    check_array_items!("superseded_closures_summary", ["string"]);
+    check_types!("stale_unreviewed_closures", ["array"], required);
+    check_array_items!("stale_unreviewed_closures", ["string"]);
+    check_types!(
+        "current_release_readiness_state",
+        ["string", "null"],
+        optional
+    );
+    check_types!("current_final_review_state", ["string"], required);
+    check_types!("current_qa_state", ["string"], required);
+    check_types!(
+        "current_final_review_branch_closure_id",
+        ["string", "null"],
+        optional
+    );
+    check_types!("current_final_review_result", ["string", "null"], optional);
+    check_types!("current_qa_branch_closure_id", ["string", "null"], optional);
+    check_types!("current_qa_result", ["string", "null"], optional);
     check_types!("evaluator_policy", ["string", "null"], optional);
     check_types!("reset_policy", ["string", "null"], optional);
     check_enum!("reset_policy", ["none", "chunk-boundary", "adaptive"]);
@@ -548,6 +576,21 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     );
     check_types!("strategy_checkpoint_kind", ["string"], required);
     check_types!("strategy_reset_required", ["boolean"], required);
+    check_types!("phase_detail", ["string"], required);
+    check_types!("review_state_status", ["string"], required);
+    check_enum!(
+        "review_state_status",
+        ["clean", "stale_unreviewed", "missing_current_closure"]
+    );
+    check_types!("blocking_records", ["array"], required);
+    check_array_items!("blocking_records", ["object"]);
+    check_types!("next_action", ["string"], required);
+    check_types!("recommended_command", ["string", "null"], optional);
+    check_types!(
+        "finish_review_gate_pass_branch_closure_id",
+        ["string", "null"],
+        optional
+    );
     check_types!("execution_mode", ["string"], required);
     check_types!("execution_fingerprint", ["string"], required);
     check_types!("evidence_path", ["string"], required);
@@ -648,7 +691,9 @@ fn checked_in_repo_safety_schema_matches_generated_output_and_session_entry_sche
     );
 
     assert!(
-        !schemas_dir.join("session-entry-resolve.schema.json").exists(),
+        !schemas_dir
+            .join("session-entry-resolve.schema.json")
+            .exists(),
         "active schema writers should not emit a session-entry schema artifact"
     );
 
@@ -689,21 +734,19 @@ fn checked_in_workflow_schemas_match_generated_output() {
     let schemas_dir = unique_temp_dir("workflow-schemas");
     write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
 
-    let generated_status =
-        fs::read_to_string(schemas_dir.join("workflow-status.schema.json"))
-            .expect("generated workflow-status schema should read");
+    let generated_status = fs::read_to_string(schemas_dir.join("workflow-status.schema.json"))
+        .expect("generated workflow-status schema should read");
     let checked_in_status =
         fs::read_to_string(repo_fixture_path("schemas/workflow-status.schema.json"))
             .expect("checked-in workflow-status schema should read");
-    let generated_status_json: Value =
-        serde_json::from_str(&generated_status).expect("generated workflow-status schema should parse");
-    let checked_in_status_json: Value =
-        serde_json::from_str(&checked_in_status).expect("checked-in workflow-status schema should parse");
+    let generated_status_json: Value = serde_json::from_str(&generated_status)
+        .expect("generated workflow-status schema should parse");
+    let checked_in_status_json: Value = serde_json::from_str(&checked_in_status)
+        .expect("checked-in workflow-status schema should parse");
     assert_eq!(generated_status_json, checked_in_status_json);
 
-    let generated_resolve =
-        fs::read_to_string(schemas_dir.join("workflow-resolve.schema.json"))
-            .expect("generated workflow-resolve schema should read");
+    let generated_resolve = fs::read_to_string(schemas_dir.join("workflow-resolve.schema.json"))
+        .expect("generated workflow-resolve schema should read");
     let checked_in_resolve =
         fs::read_to_string(repo_fixture_path("schemas/workflow-resolve.schema.json"))
             .expect("checked-in workflow-resolve schema should read");

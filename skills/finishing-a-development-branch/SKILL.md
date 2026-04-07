@@ -172,7 +172,7 @@ Before presenting completion options:
 
 For workflow-routed work, require the `document-release` pass before presenting completion options.
 
-For workflow-routed terminal completion, keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> any required `featureforge:qa-only` handoff -> `gate-finish`.
+For workflow-routed terminal completion, keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> `featureforge workflow operator --plan <approved-plan-path>` -> any required `featureforge:qa-only` handoff -> `record-qa` only when `phase_detail=qa_recording_required` -> `gate-review` only when `phase_detail=finish_review_gate_ready` -> rerun `featureforge workflow operator --plan <approved-plan-path>` -> `gate-finish` only when `phase_detail=finish_completion_gate_ready`.
 
 When in doubt on late-stage routing language, use `review/late-stage-precedence-reference.md` as the shared phase/action/skill table.
 
@@ -228,6 +228,8 @@ If approved-plan `QA Requirement` is missing or invalid when deciding whether QA
 
 If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or `gate-finish`.
 
+If workflow/operator reports `test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
+
 Recommendation logic:
 - Recommend `A)` when approved-plan `QA Requirement` is `required`
 - If approved-plan `QA Requirement` is `not-required`, QA remains optional unless the user explicitly wants extra browser validation
@@ -250,11 +252,23 @@ If approved-plan `QA Requirement` is `required` and no current-branch test-plan 
 
 ### Step 1.9: Finish Gate
 
-If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, run `featureforge plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.
+If the current work is governed by an approved FeatureForge plan, use `featureforge workflow operator --plan <approved-plan-path>` as the late-stage routing source after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current.
+
+If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, rerun `featureforge workflow operator --plan <approved-plan-path>` and follow the exact `phase_detail`-driven next finish command before presenting completion options.
+
+If the operator reports `qa_pending` with `phase_detail=test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` before QA or branch completion.
+
+If the operator reports `qa_pending` with `phase_detail=qa_recording_required`, record QA with `featureforge plan execution record-qa --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>`, then rerun `featureforge workflow operator --plan <approved-plan-path>`.
+
+If the operator reports `ready_for_branch_completion` with `phase_detail=finish_review_gate_ready`, run `featureforge plan execution gate-review --plan <approved-plan-path>`, then rerun `featureforge workflow operator --plan <approved-plan-path>`.
+
+If the operator reports `ready_for_branch_completion` with `phase_detail=finish_completion_gate_ready`, run `featureforge plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.
+
+If the operator reports any other late-stage phase/detail pair, follow that exact operator result instead of forcing QA or finish-gate commands from memory.
 
 For workflow-routed terminal completion, if no fresh post-document-release dedicated-independent review exists for the current `HEAD`, invoke `featureforge:requesting-code-review` before `gate-finish`.
 
-Treat `gate-review` as read-only state inspection and `record-review-dispatch` as the dispatch-proof minting boundary. Do not substitute one for the other in terminal completion flow.
+`gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint. `record-review-dispatch` remains the dispatch-proof minting boundary for task-boundary and final-review handoffs.
 
 If the current work is governed by an approved FeatureForge plan and the finish gate returns `allowed` `false`, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
 

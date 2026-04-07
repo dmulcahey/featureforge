@@ -426,12 +426,7 @@ fn session_entry_argv0_alias_is_removed_from_active_cli_surface() {
     symlink(cargo_bin("featureforge"), &alias_path)
         .expect("session-entry argv0 alias symlink should be creatable");
 
-    let output = run(
-        {
-            Command::new(&alias_path)
-        },
-        "session-entry argv0 alias removed",
-    );
+    let output = run(Command::new(&alias_path), "session-entry argv0 alias removed");
     let json = parse_failure_json(&output, "session-entry argv0 alias removed");
 
     assert_eq!(

@@ -8,8 +8,12 @@ mod workflow_support;
 use std::path::PathBuf;
 
 use featureforge::cli::plan_execution::StatusArgs;
-use featureforge::execution::query::{query_review_state, query_workflow_execution_state};
+use featureforge::cli::workflow::OperatorArgs;
+use featureforge::execution::query::{
+    query_review_state, query_workflow_execution_state, query_workflow_routing_state,
+};
 use featureforge::execution::state::ExecutionRuntime;
+use featureforge::workflow::operator::operator as workflow_operator;
 use workflow_support::{init_repo, install_full_contract_ready_artifacts};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
@@ -84,5 +88,69 @@ fn query_boundary_reports_empty_review_state_before_execution_starts() {
     assert_eq!(
         workflow_state.current_release_readiness_result, None,
         "fresh approved plans should not expose release-readiness state before execution starts",
+    );
+}
+
+#[test]
+fn routing_snapshot_matches_workflow_operator_output_before_execution_starts() {
+    let (repo_dir, _state_dir) = init_repo("execution-query-routing-snapshot");
+    let repo = repo_dir.path();
+    install_full_contract_ready_artifacts(repo);
+
+    let plan = PathBuf::from(PLAN_REL);
+    let routing = query_workflow_routing_state(repo, Some(&plan), false)
+        .expect("routing query should succeed before execution starts");
+    let operator = workflow_operator(
+        repo,
+        &OperatorArgs {
+            plan: plan.clone(),
+            external_review_result_ready: false,
+            json: false,
+        },
+    )
+    .expect("workflow operator should succeed before execution starts");
+
+    assert_eq!(
+        routing.phase, operator.phase,
+        "routing phase should match workflow/operator"
+    );
+    assert_eq!(
+        routing.phase_detail, operator.phase_detail,
+        "routing phase detail should match workflow/operator",
+    );
+    assert_eq!(
+        routing.review_state_status, operator.review_state_status,
+        "routing review-state status should match workflow/operator",
+    );
+    assert_eq!(
+        routing.qa_requirement, operator.qa_requirement,
+        "routing QA requirement should match workflow/operator",
+    );
+    assert_eq!(
+        routing.follow_up_override, operator.follow_up_override,
+        "routing follow-up override should match workflow/operator",
+    );
+    assert_eq!(
+        routing.finish_review_gate_pass_branch_closure_id,
+        operator.finish_review_gate_pass_branch_closure_id,
+        "routing finish-review gate pass identity should match workflow/operator",
+    );
+    assert_eq!(
+        routing.next_action, operator.next_action,
+        "routing next action should match workflow/operator",
+    );
+    assert_eq!(
+        routing.recommended_command, operator.recommended_command,
+        "routing recommended command should match workflow/operator",
+    );
+    assert_eq!(
+        routing.recording_context.is_some(),
+        operator.recording_context.is_some(),
+        "routing recording context presence should match workflow/operator",
+    );
+    assert_eq!(
+        routing.execution_command_context.is_some(),
+        operator.execution_command_context.is_some(),
+        "routing execution command context presence should match workflow/operator",
     );
 }

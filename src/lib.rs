@@ -99,9 +99,12 @@ pub fn run() -> std::process::ExitCode {
                                         eprintln!(
                                             "error error_class={} message={}",
                                             serde_json::to_string(&failure.error_class)
-                                                .unwrap_or_else(|_| String::from("\"<serialization-error>\"")),
-                                            serde_json::to_string(&failure.message)
-                                                .unwrap_or_else(|_| String::from("\"<serialization-error>\"")),
+                                                .unwrap_or_else(|_| String::from(
+                                                    "\"<serialization-error>\""
+                                                )),
+                                            serde_json::to_string(&failure.message).unwrap_or_else(
+                                                |_| String::from("\"<serialization-error>\"")
+                                            ),
                                         );
                                         std::process::ExitCode::from(1)
                                     }
@@ -133,13 +136,19 @@ pub fn run() -> std::process::ExitCode {
                             emit_json(runtime.record_review_dispatch(&args))
                         }
                         cli::plan_execution::PlanExecutionCommand::RepairReviewState(args) => {
-                            emit_json(execution::review_state::repair_review_state(&runtime, &args))
+                            emit_json(execution::review_state::repair_review_state(
+                                &runtime, &args,
+                            ))
                         }
                         cli::plan_execution::PlanExecutionCommand::ExplainReviewState(args) => {
-                            emit_json(execution::review_state::explain_review_state(&runtime, &args))
+                            emit_json(execution::review_state::explain_review_state(
+                                &runtime, &args,
+                            ))
                         }
                         cli::plan_execution::PlanExecutionCommand::ReconcileReviewState(args) => {
-                            emit_json(execution::review_state::reconcile_review_state(&runtime, &args))
+                            emit_json(execution::review_state::reconcile_review_state(
+                                &runtime, &args,
+                            ))
                         }
                         cli::plan_execution::PlanExecutionCommand::GateFinish(args) => {
                             emit_json(runtime.gate_finish(&args))

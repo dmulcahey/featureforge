@@ -199,8 +199,9 @@ impl WorkflowRuntime {
     }
 
     pub fn status_refresh(&mut self) -> Result<WorkflowRoute, DiagnosticError> {
-        let route =
-            normalize_workflow_route(self.decorate_route_with_manifest_context(resolve_route(self, false, true)?));
+        let route = normalize_workflow_route(
+            self.decorate_route_with_manifest_context(resolve_route(self, false, true)?),
+        );
         let expected_spec_path = route.spec_path.clone();
         let expected_plan_path = route.plan_path.clone();
 
@@ -1175,7 +1176,9 @@ fn workflow_route_schema_json(schema_label: &str) -> Result<String, DiagnosticEr
     })
 }
 
-fn lock_workflow_route_schema_version(schema: &mut serde_json::Value) -> Result<(), DiagnosticError> {
+fn lock_workflow_route_schema_version(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
     let schema_version = schema
         .get_mut("properties")
         .and_then(serde_json::Value::as_object_mut)

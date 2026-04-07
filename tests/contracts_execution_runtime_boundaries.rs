@@ -29,9 +29,13 @@ fn execution_module_exports_query_boundary() {
     assert!(
         execution_mod.contains("query owns the authoritative review-state read model")
             && query_source.contains("workflow consumes this module as a read-only client")
-            && recording_source.contains("intent adapters should delegate authoritative writes here")
-            && review_state_source.contains("reconcile/explain commands stay thin over query and recording boundaries")
-            && operator_source.contains("Workflow routing consumes the execution-owned query surface"),
+            && recording_source
+                .contains("intent adapters should delegate authoritative writes here")
+            && review_state_source.contains(
+                "reconcile/explain commands stay thin over query and recording boundaries"
+            )
+            && operator_source
+                .contains("Workflow routing consumes the execution-owned query surface"),
         "U12 ownership boundaries should be documented in the owning modules",
     );
 }
@@ -44,9 +48,9 @@ fn workflow_operator_uses_execution_query_boundary_instead_of_raw_execution_inte
         .find("fn build_context_with_plan(")
         .expect("workflow operator should keep build_context_with_plan");
     let build_context_end = operator_source[build_context_start..]
-        .find("fn build_operator_context(")
+        .find("fn operator_plan_path(")
         .map(|offset| build_context_start + offset)
-        .expect("workflow operator should keep build_operator_context");
+        .expect("workflow operator should keep operator_plan_path");
     let build_context_source = &operator_source[build_context_start..build_context_end];
 
     assert!(
@@ -54,11 +58,16 @@ fn workflow_operator_uses_execution_query_boundary_instead_of_raw_execution_inte
         "workflow operator should consume the execution-owned query boundary",
     );
     assert!(
-        operator_source.contains(".finish_review_gate_pass_branch_closure_id"),
-        "workflow operator should consume finish-review gate pass identity from the execution query boundary",
+        operator_source.contains("query_workflow_routing_state("),
+        "workflow operator should consume the execution-owned routing snapshot",
     );
     assert!(
-        !build_context_source.contains("crate::execution::leases::load_status_authoritative_overlay_checked"),
+        !build_context_source.contains("query_workflow_execution_state("),
+        "workflow operator should not rebuild routing from the lower-level execution status query",
+    );
+    assert!(
+        !build_context_source
+            .contains("crate::execution::leases::load_status_authoritative_overlay_checked"),
         "workflow operator should not read authoritative overlays directly",
     );
     assert!(
@@ -101,6 +110,11 @@ fn execution_query_boundary_stays_execution_owned() {
         "execution query boundary should not depend on workflow/operator to derive review-state truth",
     );
     assert!(
+        query_source.contains("pub struct ExecutionRoutingState")
+            && query_source.contains("pub fn query_workflow_routing_state("),
+        "execution query boundary should expose an execution-owned routing snapshot",
+    );
+    assert!(
         query_source.contains("pub finish_review_gate_pass_branch_closure_id: Option<String>"),
         "execution query boundary should expose finish-review gate pass branch closure identity",
     );
@@ -116,6 +130,14 @@ fn mutate_and_review_state_use_recording_boundary_for_transition_writes() {
     assert!(
         mutate_source.contains("crate::execution::recording::"),
         "mutate.rs should consume the recording boundary for closure writes",
+    );
+    assert!(
+        mutate_source.contains("query_workflow_routing_state"),
+        "mutate.rs should consume the execution-owned routing boundary",
+    );
+    assert!(
+        !mutate_source.contains("crate::workflow::operator"),
+        "mutate.rs should not import or call workflow/operator directly",
     );
     for forbidden in [
         "record_task_closure_result(",

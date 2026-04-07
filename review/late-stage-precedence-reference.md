@@ -20,7 +20,7 @@ Use this table when skill/docs wording needs an explicit late-stage routing sour
 
 ## Command-Boundary Semantics
 
-- `gate-review` is read-only state evaluation.
+- `gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint.
 - `record-review-dispatch` is the dispatch-proof minting boundary.
 - For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`.
 - `requesting-code-review` also supports non-terminal checkpoint/task-boundary reviews when runtime reason codes require it (for example `prior_task_review_*`).

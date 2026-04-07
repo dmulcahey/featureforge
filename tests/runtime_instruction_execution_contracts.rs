@@ -52,6 +52,7 @@ fn execution_skill_docs_describe_worktree_backed_parallel_dispatch() {
         executing,
         "Workspace preparation is the user's responsibility; `featureforge:using-git-worktrees` is optional, not automatic",
     );
+    assert_file_not_contains(root.join("skills/executing-plans/SKILL.md"), "repairing");
     assert_file_not_contains(
         subagent.clone(),
         "Do not auto-clean the workspace and do not auto-create a worktree.",
@@ -59,5 +60,9 @@ fn execution_skill_docs_describe_worktree_backed_parallel_dispatch() {
     assert_file_not_contains(
         subagent,
         "Dispatch multiple implementation subagents in parallel (conflicts)",
+    );
+    assert_file_not_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "repairing",
     );
 }

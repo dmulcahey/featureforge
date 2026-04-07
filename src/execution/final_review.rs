@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::leases::load_status_authoritative_overlay_checked;
 use crate::execution::state::ExecutionContext;
+use crate::execution::transitions::load_authoritative_transition_state;
 use crate::git::sha256_hex;
 use crate::paths::harness_authoritative_artifacts_dir;
 
@@ -433,6 +434,12 @@ pub fn latest_branch_artifact_path(
 pub(crate) fn authoritative_final_review_artifact_path_checked(
     context: &ExecutionContext,
 ) -> Result<Option<PathBuf>, JsonFailure> {
+    let Some(authoritative_state) = load_authoritative_transition_state(context)? else {
+        return Ok(None);
+    };
+    if authoritative_state.current_final_review_result() != Some("pass") {
+        return Ok(None);
+    }
     let Some(overlay) = load_status_authoritative_overlay_checked(context)? else {
         return Ok(None);
     };
@@ -476,6 +483,12 @@ pub(crate) fn authoritative_strategy_checkpoint_fingerprint_checked(
 pub(crate) fn authoritative_browser_qa_artifact_path_checked(
     context: &ExecutionContext,
 ) -> Result<Option<PathBuf>, JsonFailure> {
+    let Some(authoritative_state) = load_authoritative_transition_state(context)? else {
+        return Ok(None);
+    };
+    if authoritative_state.current_qa_result() != Some("pass") {
+        return Ok(None);
+    }
     let Some(overlay) = load_status_authoritative_overlay_checked(context)? else {
         return Ok(None);
     };
@@ -495,6 +508,14 @@ pub(crate) fn authoritative_release_docs_artifact_path_checked(
     let Some(overlay) = load_status_authoritative_overlay_checked(context)? else {
         return Ok(None);
     };
+    if overlay
+        .current_release_readiness_result
+        .as_deref()
+        .map(str::trim)
+        != Some("ready")
+    {
+        return Ok(None);
+    }
     authoritative_fingerprinted_artifact_path_checked(
         context,
         overlay.release_docs_state.as_deref(),
@@ -505,137 +526,17 @@ pub(crate) fn authoritative_release_docs_artifact_path_checked(
     )
 }
 
-pub(crate) fn authoritative_test_plan_artifact_path_from_qa_checked(
-    qa_artifact_path: &Path,
-) -> Result<Option<PathBuf>, JsonFailure> {
-    let qa = parse_artifact_document(qa_artifact_path);
-    let Some(source_test_plan) = qa.headers.get("Source Test Plan") else {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative QA artifact {} is missing the Source Test Plan header.",
-                qa_artifact_path.display()
-            ),
-        ));
-    };
-    let source_test_plan = strip_backticks(source_test_plan);
-    let source_test_plan = source_test_plan.trim();
-    if source_test_plan.is_empty() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative QA artifact {} has a blank Source Test Plan header.",
-                qa_artifact_path.display()
-            ),
-        ));
-    }
-
-    let source_test_plan_path = PathBuf::from(source_test_plan);
-    let authoritative_artifacts_dir = qa_artifact_path.parent().unwrap_or_else(|| Path::new("."));
-    let resolved_path = if source_test_plan_path.is_absolute() {
-        source_test_plan_path
-    } else {
-        authoritative_artifacts_dir.join(source_test_plan_path)
-    };
-    let metadata = fs::symlink_metadata(&resolved_path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative browser QA artifact points at unreadable test plan {}: {error}",
-                resolved_path.display()
-            ),
-        )
-    })?;
-    if metadata.file_type().is_symlink() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative browser QA artifact must point at a regular test-plan file in {}.",
-                resolved_path.display()
-            ),
-        ));
-    }
-    let resolved_path = fs::canonicalize(&resolved_path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative browser QA artifact points at unreadable test plan {}: {error}",
-                resolved_path.display()
-            ),
-        )
-    })?;
-    let authoritative_artifacts_dir =
-        fs::canonicalize(authoritative_artifacts_dir).map_err(|error| {
-            JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Could not resolve authoritative artifacts directory for browser QA artifact {}: {error}",
-                    qa_artifact_path.display()
-                ),
-            )
-        })?;
-    if !resolved_path.starts_with(&authoritative_artifacts_dir) {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative browser QA artifact Source Test Plan must stay within authoritative artifacts {}.",
-                authoritative_artifacts_dir.display()
-            ),
-        ));
-    }
-    let metadata = fs::metadata(&resolved_path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative browser QA artifact points at unreadable test plan {}: {error}",
-                resolved_path.display()
-            ),
-        )
-    })?;
-    if !metadata.is_file() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative browser QA artifact must point at a regular test-plan file in {}.",
-                resolved_path.display()
-            ),
-        ));
-    }
-    let expected_fingerprint = resolved_path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .and_then(|name| name.strip_prefix("test-plan-"))
-        .and_then(|name| name.strip_suffix(".md"))
-        .filter(|value| is_canonical_fingerprint(value))
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Authoritative browser QA artifact Source Test Plan must point at a canonical test-plan-<fingerprint>.md artifact in {}.",
-                    authoritative_artifacts_dir.display()
-                ),
-            )
-        })?;
-    let test_plan_source = fs::read(&resolved_path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative browser QA artifact points at unreadable test plan {}: {error}",
-                resolved_path.display()
-            ),
-        )
-    })?;
-    if sha256_hex(&test_plan_source) != expected_fingerprint {
-        return Err(JsonFailure::new(
-            FailureClass::ArtifactIntegrityMismatch,
-            format!(
-                "Authoritative browser QA artifact points at test plan {} whose content fingerprint does not match its canonical artifact identity.",
-                resolved_path.display()
-            ),
-        ));
-    }
-
-    Ok(Some(resolved_path))
+pub(crate) fn authoritative_test_plan_artifact_path_checked(
+    context: &ExecutionContext,
+    fingerprint: &str,
+) -> Result<PathBuf, JsonFailure> {
+    authoritative_artifact_path_from_fingerprint_checked(
+        context,
+        fingerprint,
+        "test-plan",
+        "test plan",
+        "source_test_plan_fingerprint",
+    )
 }
 
 fn parse_headers(source: &str) -> BTreeMap<String, String> {
@@ -753,16 +654,31 @@ fn authoritative_fingerprinted_artifact_path_checked(
         return Ok(None);
     }
 
-    let fingerprint = fingerprint.map(str::trim).filter(|value| !value.is_empty()).ok_or_else(
-        || {
-            JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Authoritative harness state marks {artifact_label} fresh but is missing {fingerprint_field}."
-                ),
-            )
-        },
-    )?;
+    let fingerprint = fingerprint.map(str::trim).filter(|value| !value.is_empty()).ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state marks {artifact_label} fresh but is missing {fingerprint_field}."
+            ),
+        )
+    })?;
+    authoritative_artifact_path_from_fingerprint_checked(
+        context,
+        fingerprint,
+        artifact_prefix,
+        artifact_label,
+        fingerprint_field,
+    )
+    .map(Some)
+}
+
+pub(crate) fn authoritative_artifact_path_from_fingerprint_checked(
+    context: &ExecutionContext,
+    fingerprint: &str,
+    artifact_prefix: &str,
+    artifact_label: &str,
+    fingerprint_field: &str,
+) -> Result<PathBuf, JsonFailure> {
     if fingerprint.len() != 64 || !fingerprint.chars().all(|value| value.is_ascii_hexdigit()) {
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
@@ -815,7 +731,7 @@ fn authoritative_fingerprinted_artifact_path_checked(
             ),
         ));
     }
-    Ok(Some(path))
+    Ok(path)
 }
 
 fn normalize_optional_overlay_value(value: Option<&str>) -> Option<&str> {

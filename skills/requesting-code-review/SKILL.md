@@ -147,7 +147,7 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 - If `evidence_path` is empty or unreadable, stop and return to the current execution flow instead of reviewing against missing execution evidence.
 - For terminal whole-diff review, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review` before dispatching the reviewer.
 - For terminal whole-diff review, if the review gate returns `allowed` `false`, stop and return to the current execution flow; do not dispatch review against stale, drifted, or mismatched execution evidence.
-- For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: `gate-review` is read-only, while `record-review-dispatch` is the dispatch-proof minting path when the runtime requires it for the current boundary.
+- For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: `gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is the dispatch-proof minting path when the runtime requires it for the current boundary.
 - If the review gate returns warning codes such as `legacy_evidence_format`, keep the warning in the review context but do not treat it as a blocker when `allowed` remains `true`.
 - Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context.
 - Build completed task-packet context from the approved plan and pass that completed task-packet context plus the plan's coverage matrix into the reviewer briefing.

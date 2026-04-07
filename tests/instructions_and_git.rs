@@ -122,11 +122,7 @@ fn detached_head_uses_current_branch_name() {
 #[test]
 fn source_files_reject_git_cli_and_shell_eval_shortcuts() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for relative in [
-        "src/git/mod.rs",
-        "src/instructions/mod.rs",
-        "src/lib.rs",
-    ] {
+    for relative in ["src/git/mod.rs", "src/instructions/mod.rs", "src/lib.rs"] {
         let contents = fs::read_to_string(manifest_dir.join(relative))
             .expect("foundation source file should exist");
         for forbidden in [

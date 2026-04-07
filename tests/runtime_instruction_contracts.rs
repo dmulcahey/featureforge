@@ -287,9 +287,9 @@ fn parse_runtime_quoted_field(block: &str, field: &str) -> String {
         .find(&needle)
         .unwrap_or_else(|| panic!("runtime precedence row should contain {needle:?}: {block}"));
     let rest = &block[start + needle.len()..];
-    let end = rest
-        .find('"')
-        .unwrap_or_else(|| panic!("runtime precedence row should close quoted field {field:?}: {block}"));
+    let end = rest.find('"').unwrap_or_else(|| {
+        panic!("runtime precedence row should close quoted field {field:?}: {block}")
+    });
     rest[..end].to_owned()
 }
 
@@ -298,9 +298,9 @@ fn parse_runtime_late_stage_rows(source: &str) -> Vec<LateStageRuntimeRow> {
         .find("const PRECEDENCE_ROWS")
         .unwrap_or_else(|| panic!("runtime precedence source should define PRECEDENCE_ROWS"));
     let table_source = &source[table_start..];
-    let table_end = table_source
-        .find("];")
-        .unwrap_or_else(|| panic!("runtime precedence source should close PRECEDENCE_ROWS with ];"));
+    let table_end = table_source.find("];").unwrap_or_else(|| {
+        panic!("runtime precedence source should close PRECEDENCE_ROWS with ];")
+    });
     let table_source = &table_source[..table_end];
     table_source
         .split("LateStageRow {")
@@ -354,9 +354,10 @@ fn expected_phase_action_and_skill(phase: &str) -> (&'static str, &'static str) 
         "document_release_pending" => ("run_document_release", "featureforge:document-release"),
         "final_review_pending" => ("request_code_review", "featureforge:requesting-code-review"),
         "qa_pending" => ("run_qa_only", "featureforge:qa-only"),
-        "ready_for_branch_completion" => {
-            ("finish_branch", "featureforge:finishing-a-development-branch")
-        }
+        "ready_for_branch_completion" => (
+            "finish_branch",
+            "featureforge:finishing-a-development-branch",
+        ),
         _ => panic!("unexpected late-stage phase in precedence row: {phase}"),
     }
 }
@@ -1083,7 +1084,10 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         root.join("docs/README.codex.md"),
         "`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.",
     );
-    assert_file_not_contains(root.join("docs/README.codex.md"), "featureforge session-entry");
+    assert_file_not_contains(
+        root.join("docs/README.codex.md"),
+        "featureforge session-entry",
+    );
     assert_file_not_contains(
         root.join("docs/README.codex.md"),
         "FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY",
@@ -1100,7 +1104,10 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         root.join("docs/README.copilot.md"),
         "`using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.",
     );
-    assert_file_not_contains(root.join("docs/README.copilot.md"), "featureforge session-entry");
+    assert_file_not_contains(
+        root.join("docs/README.copilot.md"),
+        "featureforge session-entry",
+    );
     assert_file_not_contains(
         root.join("docs/README.copilot.md"),
         "FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY",
@@ -1277,7 +1284,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "Required release-readiness pass for workflow-routed work before completion",
                 "featureforge repo-safety check --intent write",
                 "For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current.",
-                "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, run `featureforge plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.",
+                "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, rerun `featureforge workflow operator --plan <approved-plan-path>` and follow the exact `phase_detail`-driven next finish command before presenting completion options.",
                 "If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.",
             ],
         ),
@@ -1294,6 +1301,10 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/document-release/SKILL.md"),
         "Do not use PR metadata or repo default-branch APIs as a fallback",
+    );
+    assert_file_contains(
+        root.join("skills/document-release/SKILL.md"),
+        "Keep command-boundary semantics explicit: `gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is owned by `featureforge:requesting-code-review`.",
     );
     assert_file_not_contains(root.join("skills/document-release/SKILL.md"), "gh pr view");
     assert_file_not_contains(
@@ -1397,7 +1408,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
+        "If the handoff reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
+    );
+    assert_file_not_contains(
+        root.join("skills/using-featureforge/SKILL.md"),
+        "review_blocked",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1461,6 +1476,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         "For the final cross-task review gate in workflow-routed work",
     );
     assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: `gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is the dispatch-proof minting path when the runtime requires it for the current boundary.",
+    );
+    assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
         "After the implementation steps for a task are complete, enforce the mandatory task-boundary closure loop before beginning the next task:",
     );
@@ -1472,6 +1491,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/executing-plans/SKILL.md"),
         "does not require per-dispatch user-consent prompts.",
     );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "`review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically for each `record-review-dispatch` command that targets reviewable execution work and when remediation reopens execution work.",
+    );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "After each task in subagent-driven development",
@@ -1479,6 +1502,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
         "Those per-task review loops satisfy the \"review early\" rule during execution",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "`review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically for each `record-review-dispatch` command that targets reviewable execution work and when remediation reopens execution work.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1511,6 +1538,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
         "If `gate-finish` fails with `qa_requirement_missing_or_invalid`, hand control back to `featureforge workflow record-pivot --plan <path> --reason <reason>` so the approved plan metadata can be corrected before QA or branch completion.",
+    );
+    assert_file_contains(
+        root.join("skills/finishing-a-development-branch/SKILL.md"),
+        "If workflow/operator reports `test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -1591,7 +1622,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If that handoff returns a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of reopening execution preflight.",
+        "If that handoff returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of reopening execution preflight.",
+    );
+    assert_file_not_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "review_blocked",
     );
     assert_file_contains(
         root.join("skills/plan-ceo-review/SKILL.md"),
@@ -1783,7 +1818,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "If the handoff reports a later phase such as `review_blocked`, `qa_pending`, `document_release_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
+        "If the handoff reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
@@ -1828,7 +1863,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
-        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution record-review-dispatch` mints review-dispatch proof",
+        "keep command boundaries explicit: `featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint while `featureforge plan execution record-review-dispatch` mints review-dispatch proof",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
@@ -1836,7 +1871,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
-        "keep command boundaries explicit: `featureforge plan execution gate-review` is read-only while `featureforge plan execution record-review-dispatch` mints review-dispatch proof",
+        "keep command boundaries explicit: `featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint while `featureforge plan execution record-review-dispatch` mints review-dispatch proof",
     );
     assert_file_not_contains(
         root.join("README.md"),
@@ -1848,7 +1883,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("review/late-stage-precedence-reference.md"),
-        "`gate-review` is read-only state evaluation.",
+        "`gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint.",
     );
     assert_file_contains(
         root.join("review/late-stage-precedence-reference.md"),
@@ -1954,7 +1989,10 @@ fn late_stage_precedence_reference_rows_match_runtime_rows_and_operator_phase_ma
         "late-stage reference table should mirror runtime row count"
     );
 
-    let normalized_operator = operator.chars().filter(|char| !char.is_whitespace()).collect::<String>();
+    let normalized_operator = operator
+        .chars()
+        .filter(|char| !char.is_whitespace())
+        .collect::<String>();
 
     for (runtime_row, reference_row) in runtime_rows.iter().zip(reference_rows.iter()) {
         assert_eq!(
@@ -1992,13 +2030,9 @@ fn late_stage_precedence_reference_rows_match_runtime_rows_and_operator_phase_ma
         );
 
         assert!(
-            normalized_operator.contains(&format!(
-                "\"{}\"=>\"{}\"",
-                reference_row.phase, expected_action
-            )),
-            "operator next_action_for_phase should include {} -> {}",
-            reference_row.phase,
-            expected_action
+            normalized_operator
+                .contains("fnnext_action_for_context(context:&OperatorContext)->&str{&context.operator_next_action}"),
+            "workflow/operator should surface query-derived next_action directly",
         );
         assert!(
             normalized_operator.contains(&format!(

@@ -145,8 +145,9 @@ fn simulate_supported_route_selection_batch(
     messages: &[&str],
 ) -> Vec<Value> {
     let message_dir = state_dir.join(format!("{}-messages", harness.session_key));
-    fs::create_dir_all(&message_dir)
-        .unwrap_or_else(|error| panic!("{} should create message dir: {error}", harness.session_key));
+    fs::create_dir_all(&message_dir).unwrap_or_else(|error| {
+        panic!("{} should create message dir: {error}", harness.session_key)
+    });
     let message_paths = messages
         .iter()
         .enumerate()
@@ -288,9 +289,7 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         &output.stdout,
         "derive using-featureforge shared session marker path",
     );
-    let expected_prefix = state_dir
-        .path()
-        .join("sessions");
+    let expected_prefix = state_dir.path().join("sessions");
     assert!(
         Path::new(&session_marker_path).starts_with(&expected_prefix),
         "shared session marker path should live under {:?}, got {}",
@@ -355,8 +354,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
     let home = temp_home.path();
 
     let vague_message = "Please add some notes to the docs after plan review.\n";
-    let direct_skill_message =
-        "Please use featureforge:project-memory and work on project memory itself for this follow-up.\n";
+    let direct_skill_message = "Please use featureforge:project-memory and work on project memory itself for this follow-up.\n";
     let explicit_messages = [
         "Please set up project memory for this repo before planning.\n",
         "Please log this bug fix in project memory before continuing plan review.\n",
@@ -406,7 +404,8 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
             workflow_next_skill: active_owner,
             implementation_ready_route: "",
         };
-        let mut messages = Vec::with_capacity(1 + explicit_messages.len() + negative_messages.len() + 1);
+        let mut messages =
+            Vec::with_capacity(1 + explicit_messages.len() + negative_messages.len() + 1);
         messages.push(vague_message);
         messages.extend(explicit_messages.iter().copied());
         messages.extend(negative_messages.iter().copied());
@@ -427,7 +426,10 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
 
         for (index, _explicit_message) in explicit_messages.iter().enumerate() {
             let explicit_entry = &entries[explicit_start + index];
-            assert_eq!(explicit_entry["preamble_session_started"], Value::Bool(true));
+            assert_eq!(
+                explicit_entry["preamble_session_started"],
+                Value::Bool(true)
+            );
             assert_eq!(
                 explicit_entry["selected_route"],
                 Value::String(String::from("featureforge:project-memory")),
@@ -437,7 +439,10 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
 
         for (index, _negative_message) in negative_messages.iter().enumerate() {
             let negative_entry = &entries[negative_start + index];
-            assert_eq!(negative_entry["preamble_session_started"], Value::Bool(true));
+            assert_eq!(
+                negative_entry["preamble_session_started"],
+                Value::Bool(true)
+            );
             assert_eq!(
                 negative_entry["selected_route"],
                 Value::String(String::from(active_owner)),
@@ -446,7 +451,10 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         }
 
         let direct_skill_entry = &entries[direct_index];
-        assert_eq!(direct_skill_entry["preamble_session_started"], Value::Bool(true));
+        assert_eq!(
+            direct_skill_entry["preamble_session_started"],
+            Value::Bool(true)
+        );
         assert_eq!(
             direct_skill_entry["selected_route"],
             Value::String(String::from("featureforge:project-memory")),

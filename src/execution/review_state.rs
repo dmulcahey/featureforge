@@ -14,6 +14,7 @@ use crate::execution::query::{
 use crate::execution::recording::{
     resolve_branch_closure_identity,
     restore_current_branch_closure_overlay as persist_current_branch_closure_overlay,
+    restore_current_late_stage_overlays,
 };
 use crate::execution::state::{ExecutionRuntime, load_execution_context};
 
@@ -76,7 +77,8 @@ pub fn reconcile_review_state(
     args: &StatusArgs,
 ) -> Result<ReconcileReviewStateOutput, JsonFailure> {
     let snapshot = query_review_state(runtime, args)?;
-    if snapshot.missing_derived_overlays.is_empty() && snapshot.stale_unreviewed_closures.is_empty() {
+    if snapshot.missing_derived_overlays.is_empty() && snapshot.stale_unreviewed_closures.is_empty()
+    {
         return Ok(ReconcileReviewStateOutput {
             action: String::from("already_current"),
             current_task_closures: snapshot.current_task_closures,
@@ -86,14 +88,21 @@ pub fn reconcile_review_state(
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed: Vec::new(),
             recommended_command: recommended_operator_command(args),
-            trace_summary: String::from("No derived review-state overlays required reconciliation."),
+            trace_summary: String::from(
+                "No derived review-state overlays required reconciliation.",
+            ),
         });
     }
 
     let actions_performed = if snapshot.missing_derived_overlays.is_empty() {
         Vec::new()
     } else {
-        restore_current_branch_closure_overlay(runtime, args)?
+        let mut actions_performed = restore_current_branch_closure_overlay(runtime, args)?;
+        actions_performed.extend(restore_current_late_stage_overlays(
+            runtime,
+            &load_execution_context(runtime, &args.plan)?,
+        )?);
+        actions_performed
     };
     let restored_any_overlays = !actions_performed.is_empty();
     let refreshed = query_review_state(runtime, args)?;
@@ -165,24 +174,25 @@ pub fn repair_review_state(
     }
     if !snapshot.missing_derived_overlays.is_empty() {
         if !snapshot.stale_unreviewed_closures.is_empty() {
-            let (required_follow_up, recommended_command, trace_summary) =
-                if snapshot.branch_drift_confined_to_late_stage_surface {
-                    (
-                        Some(String::from("record_branch_closure")),
-                        recommended_branch_closure_command(args),
-                        String::from(
-                            "Repair review state could not restore every derived overlay, but the remaining stale_unreviewed drift is confined to the trusted Late-Stage Surface, so branch closure re-recording is still the next safe step.",
-                        ),
-                    )
-                } else {
-                    (
-                        Some(String::from("execution_reentry")),
-                        recommended_operator_command(args),
-                        String::from(
-                            "Repair review state could not restore every derived overlay, and the reviewed state remains stale_unreviewed, so execution reentry is still required before any new closure or milestone can be recorded.",
-                        ),
-                    )
-                };
+            let (required_follow_up, recommended_command, trace_summary) = if snapshot
+                .branch_drift_confined_to_late_stage_surface
+            {
+                (
+                    Some(String::from("record_branch_closure")),
+                    recommended_branch_closure_command(args),
+                    String::from(
+                        "Repair review state could not restore every derived overlay, but the remaining stale_unreviewed drift is confined to the trusted Late-Stage Surface, so branch closure re-recording is still the next safe step.",
+                    ),
+                )
+            } else {
+                (
+                    Some(String::from("execution_reentry")),
+                    recommended_operator_command(args),
+                    String::from(
+                        "Repair review state could not restore every derived overlay, and the reviewed state remains stale_unreviewed, so execution reentry is still required before any new closure or milestone can be recorded.",
+                    ),
+                )
+            };
             return Ok(RepairReviewStateOutput {
                 action: String::from("blocked"),
                 current_task_closures: snapshot.current_task_closures,
@@ -213,24 +223,25 @@ pub fn repair_review_state(
     }
     let repaired_any_overlays = !actions_performed.is_empty();
     if !snapshot.stale_unreviewed_closures.is_empty() {
-        let (required_follow_up, recommended_command, trace_summary) =
-            if snapshot.branch_drift_confined_to_late_stage_surface {
-                (
-                    Some(String::from("record_branch_closure")),
-                    recommended_branch_closure_command(args),
-                    String::from(
-                        "Review state is stale_unreviewed, but the tracked drift is confined to the trusted Late-Stage Surface, so branch closure re-recording is the next safe step.",
-                    ),
-                )
-            } else {
-                (
-                    Some(String::from("execution_reentry")),
-                    recommended_operator_command(args),
-                    String::from(
-                        "Review state is stale_unreviewed and requires execution reentry before any new closure or milestone can be recorded.",
-                    ),
-                )
-            };
+        let (required_follow_up, recommended_command, trace_summary) = if snapshot
+            .branch_drift_confined_to_late_stage_surface
+        {
+            (
+                Some(String::from("record_branch_closure")),
+                recommended_branch_closure_command(args),
+                String::from(
+                    "Review state is stale_unreviewed, but the tracked drift is confined to the trusted Late-Stage Surface, so branch closure re-recording is the next safe step.",
+                ),
+            )
+        } else {
+            (
+                Some(String::from("execution_reentry")),
+                recommended_operator_command(args),
+                String::from(
+                    "Review state is stale_unreviewed and requires execution reentry before any new closure or milestone can be recorded.",
+                ),
+            )
+        };
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -296,7 +307,9 @@ fn restore_current_branch_closure_overlay(
         .filter(|value| !value.is_empty())
         .is_none()
     {
-        actions_performed.push(String::from("restored_current_branch_closure_reviewed_state"));
+        actions_performed.push(String::from(
+            "restored_current_branch_closure_reviewed_state",
+        ));
     }
     if overlay
         .as_ref()
@@ -305,7 +318,9 @@ fn restore_current_branch_closure_overlay(
         .filter(|value| !value.is_empty())
         .is_none()
     {
-        actions_performed.push(String::from("restored_current_branch_closure_contract_identity"));
+        actions_performed.push(String::from(
+            "restored_current_branch_closure_contract_identity",
+        ));
     }
     if actions_performed.is_empty() {
         return Ok(actions_performed);

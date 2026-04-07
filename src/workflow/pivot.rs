@@ -9,7 +9,9 @@ use serde::Serialize;
 
 use crate::cli::workflow::{OperatorArgs, RecordPivotArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
-use crate::execution::state::{ExecutionRuntime, current_head_sha, load_execution_context, status_from_context};
+use crate::execution::state::{
+    ExecutionRuntime, current_head_sha, load_execution_context, status_from_context,
+};
 use crate::git::discover_slug_identity;
 use crate::paths::featureforge_state_dir;
 use crate::workflow::operator::operator;
@@ -110,7 +112,10 @@ pub(crate) fn write_workflow_pivot_record(
     fs::write(&path, source).map_err(|error| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not write workflow pivot record {}: {error}", path.display()),
+            format!(
+                "Could not write workflow pivot record {}: {error}",
+                path.display()
+            ),
         )
     })?;
     Ok(path)
@@ -124,7 +129,10 @@ pub fn record_pivot(
     let head_sha = current_head_sha(&slug_identity.repo_root).map_err(|error| {
         DiagnosticError::new(
             FailureClass::BranchDetectionFailed,
-            format!("Could not determine the current HEAD commit: {}", error.message),
+            format!(
+                "Could not determine the current HEAD commit: {}",
+                error.message
+            ),
         )
     })?;
     let plan_path = args.plan.to_string_lossy().into_owned();
@@ -139,7 +147,10 @@ pub fn record_pivot(
     .map_err(|error| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not evaluate workflow operator for pivot recording: {}", error.message),
+            format!(
+                "Could not evaluate workflow operator for pivot recording: {}",
+                error.message
+            ),
         )
     })?;
     if operator.phase != "pivot_required" || operator.phase_detail != "planning_reentry_required" {
@@ -156,19 +167,28 @@ pub fn record_pivot(
     let runtime = ExecutionRuntime::discover(current_dir).map_err(|error| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not discover execution runtime for pivot recording: {}", error.message),
+            format!(
+                "Could not discover execution runtime for pivot recording: {}",
+                error.message
+            ),
         )
     })?;
     let context = load_execution_context(&runtime, &args.plan).map_err(|error| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not load execution context for pivot recording: {}", error.message),
+            format!(
+                "Could not load execution context for pivot recording: {}",
+                error.message
+            ),
         )
     })?;
     let status = status_from_context(&context).map_err(|error| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not load execution status for pivot recording: {}", error.message),
+            format!(
+                "Could not load execution status for pivot recording: {}",
+                error.message
+            ),
         )
     })?;
     let follow_up_requires_pivot = operator.follow_up_override == "record_pivot";

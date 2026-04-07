@@ -34,6 +34,12 @@
     "aggregate_evaluation_state": {
       "$ref": "#/$defs/AggregateEvaluationState"
     },
+    "blocking_records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StatusBlockingRecord"
+      }
+    },
     "blocking_step": {
       "type": [
         "integer",
@@ -72,6 +78,18 @@
         "$ref": "#/$defs/EvaluatorKind"
       }
     },
+    "current_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_branch_reviewed_state_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "current_chunk_pivot_threshold": {
       "type": "integer",
       "format": "uint32",
@@ -86,6 +104,48 @@
       "type": "integer",
       "format": "uint32",
       "minimum": 0
+    },
+    "current_final_review_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_final_review_result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_final_review_state": {
+      "type": "string"
+    },
+    "current_qa_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_qa_result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_qa_state": {
+      "type": "string"
+    },
+    "current_release_readiness_state": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_task_closures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PublicReviewStateTaskClosure"
+      }
     },
     "dependency_index_state": {
       "type": "string"
@@ -102,6 +162,16 @@
     },
     "evidence_path": {
       "type": "string"
+    },
+    "execution_command_context": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublicExecutionCommandContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "execution_fingerprint": {
       "type": "string"
@@ -124,6 +194,15 @@
     },
     "final_review_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"
+    },
+    "finish_review_gate_pass_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "follow_up_override": {
+      "type": "string"
     },
     "handoff_required": {
       "type": "boolean"
@@ -192,6 +271,9 @@
       "format": "uint64",
       "minimum": 0
     },
+    "next_action": {
+      "type": "string"
+    },
     "non_passing_evaluator_kinds": {
       "type": "array",
       "items": {
@@ -210,16 +292,41 @@
         "$ref": "#/$defs/EvaluatorKind"
       }
     },
+    "phase_detail": {
+      "type": "string"
+    },
     "plan_revision": {
       "type": "integer",
       "format": "uint32",
       "minimum": 0
+    },
+    "qa_requirement": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "reason_codes": {
       "type": "array",
       "items": {
         "type": "string"
       }
+    },
+    "recommended_command": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "recording_context": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PublicRecordingContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "release_docs_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"
@@ -280,6 +387,15 @@
         "type": "string"
       }
     },
+    "review_state_status": {
+      "$ref": "#/$defs/ReviewStateStatusSchema"
+    },
+    "stale_unreviewed_closures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "strategy_checkpoint_kind": {
       "type": "string"
     },
@@ -289,11 +405,20 @@
     "strategy_state": {
       "type": "string"
     },
+    "superseded_closures_summary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "warning_codes": {
       "type": "array",
       "items": {
         "type": "string"
       }
+    },
+    "workspace_state_id": {
+      "type": "string"
     },
     "write_authority_holder": {
       "type": [
@@ -313,6 +438,13 @@
   },
   "required": [
     "plan_revision",
+    "workspace_state_id",
+    "current_task_closures",
+    "superseded_closures_summary",
+    "stale_unreviewed_closures",
+    "current_final_review_state",
+    "current_qa_state",
+    "follow_up_override",
     "latest_authoritative_sequence",
     "harness_phase",
     "chunk_id",
@@ -335,6 +467,10 @@
     "strategy_state",
     "strategy_checkpoint_kind",
     "strategy_reset_required",
+    "phase_detail",
+    "review_state_status",
+    "blocking_records",
+    "next_action",
     "reason_codes",
     "execution_mode",
     "execution_fingerprint",
@@ -412,12 +548,147 @@
         "ready_for_branch_completion"
       ]
     },
+    "PublicExecutionCommandContext": {
+      "type": "object",
+      "properties": {
+        "command_kind": {
+          "type": "string"
+        },
+        "step_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "task_number": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "command_kind"
+      ]
+    },
+    "PublicRecordingContext": {
+      "type": "object",
+      "properties": {
+        "branch_closure_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dispatch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_number": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    },
+    "PublicReviewStateTaskClosure": {
+      "type": "object",
+      "properties": {
+        "closure_record_id": {
+          "type": "string"
+        },
+        "contract_identity": {
+          "type": "string"
+        },
+        "effective_reviewed_surface_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reviewed_state_id": {
+          "type": "string"
+        },
+        "task": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "task",
+        "closure_record_id",
+        "reviewed_state_id",
+        "contract_identity",
+        "effective_reviewed_surface_paths"
+      ]
+    },
     "ResetPolicy": {
       "type": "string",
       "enum": [
         "none",
         "chunk-boundary",
         "adaptive"
+      ]
+    },
+    "ReviewStateStatusSchema": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "stale_unreviewed",
+        "missing_current_closure"
+      ]
+    },
+    "StatusBlockingRecord": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "record_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record_type": {
+          "type": "string"
+        },
+        "required_follow_up": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_state_status": {
+          "type": "string"
+        },
+        "scope_key": {
+          "type": "string"
+        },
+        "scope_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "scope_type",
+        "scope_key",
+        "record_type",
+        "review_state_status",
+        "message"
       ]
     }
   }

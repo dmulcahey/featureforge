@@ -17,6 +17,7 @@ Six layers matter:
 - `using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.
 - generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows), and that runtime resolves the active root through `featureforge repo runtime-root --path` before update checks or contributor-mode lookups.
 - `featureforge workflow` owns product-work routing up to `implementation_ready`.
+- `featureforge workflow operator --plan <approved-plan-path>` remains authoritative for execution, QA, and late-stage routing after handoff; `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail.
 - `featureforge repo-safety` owns protected branches and repo-write guarantees.
 - `featureforge plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.
 - `featureforge plan execution` owns execution state after an approved plan is handed off.
@@ -79,15 +80,15 @@ Execution starts from an engineering-approved plan and the exact approved plan p
 
 `featureforge plan execution rebuild-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state. When an authoritative active contract exists, rebuild refresh also republishes contract-bound serial unit-review receipts for the current run; without an active contract it keeps plain task-boundary unit-review receipts and validates them as non-contract task-boundary provenance instead of silently treating them as finish-gate bindings.
 
-`featureforge plan execution gate-review --plan <approved-plan-path>` is read-only: it reports the current review gate result without recording a new runtime strategy checkpoint. Workflow/operator flows that intentionally dispatch review-remediation tracking use the explicit dispatch path instead of mutating through the public gate command.
+`featureforge plan execution gate-review --plan <approved-plan-path>` is the first finish gate: it evaluates finish readiness and records or refreshes the current branch-closure pass checkpoint without minting task-boundary review-dispatch proof.
 
 `featureforge plan execution` is the execution preflight boundary for the approved plan.
 
 Task closure is enforced at task boundaries, not only at the end of the full plan:
 
 - after implementation steps complete, STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` to mint task-boundary review-dispatch proof
-- each task runs a fresh-context independent review loop until `gate-review` is green
-- public `plan execution gate-review` checks that loop without mutating runtime strategy state; workflow/operator dispatch records review-remediation checkpoints explicitly when needed
+- once the task review and verification are both green, require `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` before calling `close-current-task`
+- `featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint; `record-review-dispatch` remains the task-boundary review-dispatch proof command
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
