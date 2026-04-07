@@ -1,6 +1,7 @@
-use std::fs;
+//! Workflow routing consumes the execution-owned query surface and maps it into
+//! public phases and next-action recommendations.
+
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -10,11 +11,9 @@ use crate::cli::workflow::{OperatorArgs, PlanArgs};
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
 use crate::execution::harness::{EvaluatorKind, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
-use crate::execution::leases::load_status_authoritative_overlay_checked;
 use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED;
-use crate::execution::state::{
-    ExecutionRuntime, GateResult, PlanExecutionStatus, load_execution_context, status_from_context,
-};
+use crate::execution::query::query_workflow_execution_state;
+use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
 use crate::workflow::late_stage_precedence::{
     GateState, LateStageSignals, resolve as resolve_late_stage_precedence,
@@ -135,6 +134,7 @@ struct OperatorContext {
     task_review_dispatch_id: Option<String>,
     final_review_dispatch_id: Option<String>,
     current_branch_closure_id: Option<String>,
+    finish_review_gate_pass_branch_closure_id: Option<String>,
     current_release_readiness_result: Option<String>,
     qa_requirement: Option<String>,
 }
@@ -678,7 +678,13 @@ pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOpera
                 match context.qa_requirement.as_deref() {
                     Some("required") | Some("not-required") => {
                         let qa_requirement = context.qa_requirement.clone();
-                        if context.gate_finish.as_ref().is_some_and(|gate| gate.allowed) {
+                        if context
+                            .finish_review_gate_pass_branch_closure_id
+                            .as_ref()
+                            .zip(context.current_branch_closure_id.as_ref())
+                            .is_some_and(|(checkpoint, current)| checkpoint == current)
+                            && context.gate_finish.as_ref().is_some_and(|gate| gate.allowed)
+                        {
                             (
                                 String::from("ready_for_branch_completion"),
                                 String::from("finish_completion_gate_ready"),
@@ -787,10 +793,8 @@ pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOpera
         qa_requirement,
         follow_up_override,
         finish_review_gate_pass_branch_closure_id: context
-            .gate_review
-            .as_ref()
-            .filter(|gate| gate.allowed)
-            .and_then(|_| context.current_branch_closure_id.clone()),
+            .finish_review_gate_pass_branch_closure_id
+            .clone(),
         recording_context,
         execution_command_context,
         next_action,
@@ -891,51 +895,33 @@ fn build_context_with_plan(
         }
         if !route.plan_path.is_empty() {
             let runtime = ExecutionRuntime::discover(current_dir)?;
-            let status_args = ExecutionStatusArgs {
-                plan: PathBuf::from(&route.plan_path),
-            };
-            let dispatch_ids = dispatch_ids_for_plan(&runtime, &route.plan_path)?;
-            task_review_dispatch_id = dispatch_ids.task_review_dispatch_id;
-            final_review_dispatch_id = dispatch_ids.final_review_dispatch_id;
-            let current_branch_closure_id = dispatch_ids.current_branch_closure_id;
-            let current_release_readiness_result = dispatch_ids.current_release_readiness_result;
-            let qa_requirement = dispatch_ids.qa_requirement;
-            match runtime.status(&status_args) {
-                Ok(mut status) => {
-                    if let Some(shared_status) = started_status_from_same_branch_worktree(
-                        &PathBuf::from(&route.root),
-                        &route.plan_path,
-                        &status,
-                    ) {
-                        status = shared_status;
-                    }
-                    if status.execution_started == "yes" {
-                        if !execution_state_has_open_steps(&status) {
-                            let review = runtime.gate_review(&status_args)?;
-                            gate_finish = Some(runtime.gate_finish(&status_args)?);
-                            gate_review = Some(review);
-                        }
-                    } else if !status_has_accepted_preflight(&status) {
-                        preflight = Some(runtime.preflight_read_only(&status_args)?);
-                    }
-                    execution_status = Some(status);
-                    return Ok(build_operator_context(OperatorContextInputs {
-                        route,
-                        execution_status,
-                        plan_contract,
-                        preflight,
-                        gate_review,
-                        gate_finish,
-                        execution_preflight_block_reason,
-                        task_review_dispatch_id,
-                        final_review_dispatch_id,
-                        current_branch_closure_id,
-                        current_release_readiness_result,
-                        qa_requirement,
-                    }));
-                }
-                Err(error) => return Err(error),
-            }
+            let workflow_state = query_workflow_execution_state(&runtime, &route.plan_path)?;
+            task_review_dispatch_id = workflow_state.task_review_dispatch_id;
+            final_review_dispatch_id = workflow_state.final_review_dispatch_id;
+            let current_branch_closure_id = workflow_state.current_branch_closure_id;
+            let finish_review_gate_pass_branch_closure_id =
+                workflow_state.finish_review_gate_pass_branch_closure_id;
+            let current_release_readiness_result = workflow_state.current_release_readiness_result;
+            let qa_requirement = workflow_state.qa_requirement;
+            execution_status = workflow_state.execution_status;
+            preflight = workflow_state.preflight;
+            gate_review = workflow_state.gate_review;
+            gate_finish = workflow_state.gate_finish;
+            return Ok(build_operator_context(OperatorContextInputs {
+                route,
+                execution_status,
+                plan_contract,
+                preflight,
+                gate_review,
+                gate_finish,
+                execution_preflight_block_reason,
+                task_review_dispatch_id,
+                final_review_dispatch_id,
+                current_branch_closure_id,
+                finish_review_gate_pass_branch_closure_id,
+                current_release_readiness_result,
+                qa_requirement,
+            }));
         }
     }
 
@@ -950,6 +936,7 @@ fn build_context_with_plan(
         task_review_dispatch_id,
         final_review_dispatch_id,
         current_branch_closure_id: None,
+        finish_review_gate_pass_branch_closure_id: None,
         current_release_readiness_result: None,
         qa_requirement: None,
     }))
@@ -983,6 +970,7 @@ fn build_operator_context(inputs: OperatorContextInputs) -> OperatorContext {
         task_review_dispatch_id: inputs.task_review_dispatch_id,
         final_review_dispatch_id: inputs.final_review_dispatch_id,
         current_branch_closure_id: inputs.current_branch_closure_id,
+        finish_review_gate_pass_branch_closure_id: inputs.finish_review_gate_pass_branch_closure_id,
         current_release_readiness_result: inputs.current_release_readiness_result,
         qa_requirement: inputs.qa_requirement,
     }
@@ -996,15 +984,6 @@ fn operator_plan_path(context: &OperatorContext, args: &OperatorArgs) -> String 
     }
 }
 
-#[derive(Default)]
-struct DispatchIds {
-    task_review_dispatch_id: Option<String>,
-    final_review_dispatch_id: Option<String>,
-    current_branch_closure_id: Option<String>,
-    current_release_readiness_result: Option<String>,
-    qa_requirement: Option<String>,
-}
-
 struct OperatorContextInputs {
     route: WorkflowRoute,
     execution_status: Option<PlanExecutionStatus>,
@@ -1016,59 +995,9 @@ struct OperatorContextInputs {
     task_review_dispatch_id: Option<String>,
     final_review_dispatch_id: Option<String>,
     current_branch_closure_id: Option<String>,
+    finish_review_gate_pass_branch_closure_id: Option<String>,
     current_release_readiness_result: Option<String>,
     qa_requirement: Option<String>,
-}
-
-fn dispatch_ids_for_plan(runtime: &ExecutionRuntime, plan_path: &str) -> Result<DispatchIds, JsonFailure> {
-    if plan_path.is_empty() {
-        return Ok(DispatchIds::default());
-    }
-    let context = load_execution_context(runtime, &PathBuf::from(plan_path))?;
-    let Some(overlay) = load_status_authoritative_overlay_checked(&context)? else {
-        return Ok(DispatchIds::default());
-    };
-    let status = status_from_context(&context)?;
-    let task_review_dispatch_id = status
-        .blocking_task
-        .and_then(|task_number| {
-            overlay
-                .strategy_review_dispatch_lineage
-                .get(&format!("task-{task_number}"))
-                .and_then(|record| record.dispatch_id.clone())
-        })
-        .or_else(|| {
-            overlay
-                .strategy_review_dispatch_lineage
-                .iter()
-                .filter_map(|(key, record)| {
-                    let task_number = key.strip_prefix("task-")?.parse::<u32>().ok()?;
-                    let dispatch_id = record.dispatch_id.clone()?;
-                    Some((task_number, dispatch_id))
-                })
-                .max_by_key(|(task_number, _)| *task_number)
-                .map(|(_, dispatch_id)| dispatch_id)
-        });
-    let final_review_dispatch_id = overlay
-        .final_review_dispatch_lineage
-        .and_then(|record| {
-            let execution_run_id = record.execution_run_id?;
-            if execution_run_id.trim().is_empty() {
-                return None;
-            }
-            let branch_closure_id = record.branch_closure_id?;
-            if overlay.current_branch_closure_id.as_deref()? != branch_closure_id.as_str() {
-                return None;
-            }
-            record.dispatch_id
-        });
-    Ok(DispatchIds {
-        task_review_dispatch_id,
-        final_review_dispatch_id,
-        current_branch_closure_id: overlay.current_branch_closure_id,
-        current_release_readiness_result: overlay.current_release_readiness_result,
-        qa_requirement: context.plan_document.qa_requirement.clone(),
-    })
 }
 
 fn doctor_phase_for_context(context: &OperatorContext) -> String {
@@ -1082,121 +1011,6 @@ fn doctor_phase_for_context(context: &OperatorContext) -> String {
     }
 
     context.phase.clone()
-}
-
-fn started_status_from_same_branch_worktree(
-    current_repo_root: &Path,
-    plan_path: &str,
-    local_status: &PlanExecutionStatus,
-) -> Option<PlanExecutionStatus> {
-    if local_status.execution_started == "yes" || plan_path.is_empty() {
-        return None;
-    }
-
-    let current_root =
-        fs::canonicalize(current_repo_root).unwrap_or_else(|_| current_repo_root.to_path_buf());
-    for worktree_root in same_branch_worktree_roots(current_repo_root) {
-        let canonical_root =
-            fs::canonicalize(&worktree_root).unwrap_or_else(|_| worktree_root.clone());
-        if canonical_root == current_root {
-            continue;
-        }
-
-        let runtime = match ExecutionRuntime::discover(&worktree_root) {
-            Ok(runtime) => runtime,
-            Err(_) => continue,
-        };
-        let status = match runtime.status(&ExecutionStatusArgs {
-            plan: PathBuf::from(plan_path),
-        }) {
-            Ok(status) => status,
-            Err(_) => continue,
-        };
-        if status.execution_started == "yes" {
-            return Some(status);
-        }
-    }
-    None
-}
-
-fn same_branch_worktree_roots(current_repo_root: &Path) -> Vec<PathBuf> {
-    let output = match Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(current_repo_root)
-        .output()
-    {
-        Ok(output) if output.status.success() => output,
-        _ => return Vec::new(),
-    };
-
-    let mut entries: Vec<(PathBuf, Option<String>)> = Vec::new();
-    let mut worktree_root: Option<PathBuf> = None;
-    let mut branch_ref: Option<String> = None;
-
-    let flush_entry = |entries: &mut Vec<(PathBuf, Option<String>)>,
-                       worktree_root: &mut Option<PathBuf>,
-                       branch_ref: &mut Option<String>| {
-        if let Some(root) = worktree_root.take() {
-            entries.push((root, branch_ref.take()));
-        }
-    };
-
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        if line.is_empty() {
-            flush_entry(&mut entries, &mut worktree_root, &mut branch_ref);
-            continue;
-        }
-        if let Some(path) = line.strip_prefix("worktree ") {
-            flush_entry(&mut entries, &mut worktree_root, &mut branch_ref);
-            worktree_root = Some(PathBuf::from(path));
-            continue;
-        }
-        if let Some(branch) = line.strip_prefix("branch ") {
-            branch_ref = Some(branch.to_owned());
-        }
-    }
-    flush_entry(&mut entries, &mut worktree_root, &mut branch_ref);
-
-    let current_root =
-        fs::canonicalize(current_repo_root).unwrap_or_else(|_| current_repo_root.to_path_buf());
-    let mut current_branch_ref = entries.iter().find_map(|(root, branch)| {
-        let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.clone());
-        if canonical_root == current_root {
-            branch.clone()
-        } else {
-            None
-        }
-    });
-
-    if current_branch_ref.is_none() {
-        let branch_output = Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .current_dir(current_repo_root)
-            .output();
-        if let Ok(output) = branch_output
-            && output.status.success()
-        {
-            let branch = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !branch.is_empty() && branch != "HEAD" {
-                current_branch_ref = Some(format!("refs/heads/{branch}"));
-            }
-        }
-    }
-
-    let Some(current_branch_ref) = current_branch_ref else {
-        return Vec::new();
-    };
-
-    entries
-        .into_iter()
-        .filter_map(|(root, branch)| {
-            if branch.as_deref() == Some(current_branch_ref.as_str()) {
-                Some(root)
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 fn analyze_plan_if_available(

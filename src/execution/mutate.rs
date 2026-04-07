@@ -28,6 +28,11 @@ use crate::execution::final_review::{
 };
 use crate::execution::harness::RunIdentitySnapshot;
 use crate::execution::leases::{StatusAuthoritativeOverlay, load_status_authoritative_overlay_checked};
+use crate::execution::recording::{
+    CurrentTaskClosureWrite, FinalReviewWrite, NegativeTaskClosureWrite, record_browser_qa,
+    record_current_branch_closure, record_current_task_closure, record_final_review,
+    record_negative_task_closure, record_release_readiness,
+};
 use crate::execution::state::{
     EvidenceAttempt, ExecutionContext, ExecutionEvidence, ExecutionRuntime, FileProof,
     NO_REPO_FILES_MARKER, PacketFingerprintInput, PlanExecutionStatus, PlanStepState,
@@ -43,8 +48,7 @@ use crate::execution::state::{
 };
 use crate::execution::topology::persist_preflight_acceptance;
 use crate::execution::transitions::{
-    AuthoritativeTransitionState, FinalReviewResultRecord, StepCommand,
-    TaskClosureNegativeResultRecord, TaskClosureResultRecord, claim_step_write_authority,
+    AuthoritativeTransitionState, StepCommand, claim_step_write_authority,
     enforce_active_contract_scope, enforce_authoritative_phase, load_authoritative_transition_state,
 };
 use crate::paths::{
@@ -889,15 +893,11 @@ pub fn close_current_task(
                 .iter()
                 .map(|record| record.closure_record_id.clone())
                 .collect::<Vec<_>>();
-            authoritative_state.remove_current_task_closure_results(
-                superseded_task_closure_records
-                    .iter()
-                    .map(|record| record.task),
-            )?;
-            authoritative_state.append_superseded_task_closure_ids(
-                superseded_task_closure_ids.iter().map(String::as_str),
-            )?;
-            authoritative_state.record_task_closure_result(TaskClosureResultRecord {
+            let superseded_tasks = superseded_task_closure_records
+                .iter()
+                .map(|record| record.task)
+                .collect::<Vec<_>>();
+            record_current_task_closure(authoritative_state, CurrentTaskClosureWrite {
                 task: args.task,
                 dispatch_id: &args.dispatch_id,
                 closure_record_id: &closure_record_id,
@@ -908,8 +908,9 @@ pub fn close_current_task(
                 review_summary_hash: &review_summary_hash,
                 verification_result,
                 verification_summary_hash: &verification_summary_hash,
+                superseded_tasks: &superseded_tasks,
+                superseded_task_closure_ids: &superseded_task_closure_ids,
             })?;
-            authoritative_state.persist_if_dirty_with_failpoint(None)?;
             Ok(CloseCurrentTaskOutput {
                 action: String::from("recorded"),
                 task_number: args.task,
@@ -973,19 +974,16 @@ pub fn close_current_task(
                     ),
                 });
             }
-            authoritative_state.record_task_closure_negative_result(
-                TaskClosureNegativeResultRecord {
-                    task: args.task,
-                    dispatch_id: &args.dispatch_id,
-                    reviewed_state_id: &reviewed_state_id,
-                    contract_identity: &contract_identity,
-                    review_result: args.review_result.as_str(),
-                    review_summary_hash: &review_summary_hash,
-                    verification_result,
-                    verification_summary_hash: &verification_summary_hash,
-                },
-            )?;
-            authoritative_state.persist_if_dirty_with_failpoint(None)?;
+            record_negative_task_closure(authoritative_state, NegativeTaskClosureWrite {
+                task: args.task,
+                dispatch_id: &args.dispatch_id,
+                reviewed_state_id: &reviewed_state_id,
+                contract_identity: &contract_identity,
+                review_result: args.review_result.as_str(),
+                review_summary_hash: &review_summary_hash,
+                verification_result,
+                verification_summary_hash: &verification_summary_hash,
+            })?;
             Ok(CloseCurrentTaskOutput {
                 action: String::from("blocked"),
                 task_number: args.task,
@@ -1153,16 +1151,13 @@ pub fn record_branch_closure(
             "record-branch-closure requires authoritative harness state.",
         ));
     };
-    authoritative_state.append_superseded_branch_closure_ids(
-        superseded_branch_closure_ids.iter().map(String::as_str),
+    record_current_branch_closure(
+        authoritative_state,
+        &branch_closure_id,
+        &reviewed_state.reviewed_state_id,
+        &reviewed_state.contract_identity,
+        &superseded_branch_closure_ids,
     )?;
-    authoritative_state
-        .set_current_branch_closure_id(
-            &branch_closure_id,
-            &reviewed_state.reviewed_state_id,
-            &reviewed_state.contract_identity,
-        )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(RecordBranchClosureOutput {
         action: String::from("recorded"),
         branch_closure_id: Some(branch_closure_id),
@@ -1434,7 +1429,7 @@ pub fn advance_late_stage(
         } else {
             None
         };
-        authoritative_state.record_final_review_result(FinalReviewResultRecord {
+        record_final_review(authoritative_state, FinalReviewWrite {
             branch_closure_id: &branch_closure_id,
             dispatch_id,
             reviewer_source,
@@ -1444,7 +1439,6 @@ pub fn advance_late_stage(
             browser_qa_required,
             summary_hash: &normalized_summary_hash,
         })?;
-        authoritative_state.persist_if_dirty_with_failpoint(None)?;
         return Ok(AdvanceLateStageOutput {
             action: String::from("recorded"),
             stage_path: String::from("final_review"),
@@ -1610,12 +1604,12 @@ pub fn advance_late_stage(
     } else {
         None
     };
-    authoritative_state.record_release_readiness_result(
+    record_release_readiness(
+        authoritative_state,
         result,
         release_fingerprint.as_deref(),
         &normalized_summary_hash,
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(AdvanceLateStageOutput {
         action: String::from("recorded"),
         stage_path: String::from("release_readiness"),
@@ -1765,13 +1759,13 @@ pub fn record_qa(runtime: &ExecutionRuntime, args: &RecordQaArgs) -> Result<Reco
     } else {
         None
     };
-    authoritative_state.record_browser_qa_result(
+    record_browser_qa(
+        authoritative_state,
         &branch_closure_id,
         args.result.as_str(),
         qa_fingerprint.as_deref(),
         &summary_hash,
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(RecordQaOutput {
         action: String::from("recorded"),
         branch_closure_id,
@@ -4126,7 +4120,7 @@ fn refresh_rebuild_task_closure_receipts_with_context(
             let review_summary_hash = current_task_closure.review_summary_hash;
             let verification_result = current_task_closure.verification_result;
             let verification_summary_hash = current_task_closure.verification_summary_hash;
-            authoritative_state.record_task_closure_result(TaskClosureResultRecord {
+            record_current_task_closure(authoritative_state, CurrentTaskClosureWrite {
                 task: refresh.task,
                 dispatch_id: &dispatch_id,
                 closure_record_id: &closure_record_id,
@@ -4137,9 +4131,12 @@ fn refresh_rebuild_task_closure_receipts_with_context(
                 review_summary_hash: &review_summary_hash,
                 verification_result: &verification_result,
                 verification_summary_hash: &verification_summary_hash,
+                superseded_tasks: &[],
+                superseded_task_closure_ids: &[],
             })?;
+        } else {
+            authoritative_state.persist_if_dirty_with_failpoint(None)?;
         }
-        authoritative_state.persist_if_dirty_with_failpoint(None)?;
     }
     Ok(())
 }

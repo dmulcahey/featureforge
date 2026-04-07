@@ -677,7 +677,15 @@ impl ExecutionRuntime {
 
     pub fn gate_review(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
         match load_execution_context(self, &args.plan) {
-            Ok(context) => Ok(gate_review_from_context(&context)),
+            Ok(_) => {
+                let _write_authority = claim_step_write_authority(self)?;
+                let context = load_execution_context(self, &args.plan)?;
+                let gate = gate_review_from_context(&context);
+                if gate.allowed {
+                    persist_finish_review_gate_pass_checkpoint(&context)?;
+                }
+                Ok(gate)
+            }
             Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
                 let mut gate = GateState::default();
                 gate.fail(
@@ -2439,6 +2447,28 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
 
 pub fn gate_review_from_context(context: &ExecutionContext) -> GateResult {
     gate_review_from_context_internal(context, true)
+}
+
+fn persist_finish_review_gate_pass_checkpoint(context: &ExecutionContext) -> Result<(), JsonFailure> {
+    let overlay = load_status_authoritative_overlay_checked(context)?;
+    let Some(branch_closure_id) = overlay
+        .as_ref()
+        .and_then(|overlay| overlay.current_branch_closure_id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(());
+    };
+    if !authoritative_state
+        .record_finish_review_gate_pass_checkpoint_if_current(branch_closure_id)?
+    {
+        return Ok(());
+    }
+    authoritative_state.persist_if_dirty_with_failpoint(None)
 }
 
 fn gate_review_from_context_internal(

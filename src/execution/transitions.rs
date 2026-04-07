@@ -212,6 +212,11 @@ pub(crate) struct CurrentTaskClosureRecord {
     pub(crate) verification_summary_hash: String,
 }
 
+pub(crate) struct BranchClosureRecord {
+    pub(crate) reviewed_state_id: String,
+    pub(crate) contract_identity: String,
+}
+
 pub(crate) struct TaskClosureNegativeResult {
     pub(crate) dispatch_id: String,
     pub(crate) reviewed_state_id: String,
@@ -714,6 +719,21 @@ impl AuthoritativeTransitionState {
         })
     }
 
+    fn branch_closure_records_mut(
+        &mut self,
+    ) -> Result<&mut serde_json::Map<String, Value>, JsonFailure> {
+        let root = self.root_object_mut()?;
+        let records = root
+            .entry(String::from("branch_closure_records"))
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        records.as_object_mut().ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                "Authoritative harness branch_closure_records must be a JSON object.",
+            )
+        })
+    }
+
     fn upsert_task_dispatch_lineage(
         &mut self,
         task: u32,
@@ -920,6 +940,93 @@ impl AuthoritativeTransitionState {
         root.insert(String::from("current_qa_result"), Value::Null);
         root.insert(String::from("current_qa_summary_hash"), Value::Null);
         root.insert(String::from("final_review_dispatch_lineage"), Value::Null);
+        root.insert(String::from("finish_review_gate_pass_branch_closure_id"), Value::Null);
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn restore_current_branch_closure_overlay_fields(
+        &mut self,
+        branch_closure_id: &str,
+        reviewed_state_id: &str,
+        contract_identity: &str,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("current_branch_closure_id"),
+            Value::String(branch_closure_id.to_owned()),
+        );
+        root.insert(
+            String::from("current_branch_closure_reviewed_state_id"),
+            Value::String(reviewed_state_id.to_owned()),
+        );
+        root.insert(
+            String::from("current_branch_closure_contract_identity"),
+            Value::String(contract_identity.to_owned()),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn restore_current_branch_closure_overlay_fields_if_current(
+        &mut self,
+        branch_closure_id: &str,
+        reviewed_state_id: &str,
+        contract_identity: &str,
+    ) -> Result<bool, JsonFailure> {
+        if json_string(&self.state_payload, "current_branch_closure_id").as_deref()
+            != Some(branch_closure_id)
+        {
+            return Ok(false);
+        }
+        self.restore_current_branch_closure_overlay_fields(
+            branch_closure_id,
+            reviewed_state_id,
+            contract_identity,
+        )?;
+        Ok(true)
+    }
+
+    pub(crate) fn record_finish_review_gate_pass_checkpoint(
+        &mut self,
+        branch_closure_id: &str,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("finish_review_gate_pass_branch_closure_id"),
+            Value::String(branch_closure_id.to_owned()),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn record_finish_review_gate_pass_checkpoint_if_current(
+        &mut self,
+        branch_closure_id: &str,
+    ) -> Result<bool, JsonFailure> {
+        if json_string(&self.state_payload, "current_branch_closure_id").as_deref()
+            != Some(branch_closure_id)
+        {
+            return Ok(false);
+        }
+        self.record_finish_review_gate_pass_checkpoint(branch_closure_id)?;
+        Ok(true)
+    }
+
+    pub(crate) fn record_branch_closure(
+        &mut self,
+        branch_closure_id: &str,
+        reviewed_state_id: &str,
+        contract_identity: &str,
+    ) -> Result<(), JsonFailure> {
+        let records = self.branch_closure_records_mut()?;
+        records.insert(
+            branch_closure_id.to_owned(),
+            serde_json::json!({
+                "reviewed_state_id": reviewed_state_id,
+                "contract_identity": contract_identity,
+            }),
+        );
         self.dirty = true;
         Ok(())
     }
@@ -1260,6 +1367,26 @@ impl AuthoritativeTransitionState {
             .unwrap_or_default()
     }
 
+    pub(crate) fn branch_closure_record(
+        &self,
+        branch_closure_id: &str,
+    ) -> Option<BranchClosureRecord> {
+        let payload = self
+            .state_payload
+            .get("branch_closure_records")
+            .and_then(Value::as_object)?
+            .get(branch_closure_id)?
+            .as_object()?;
+        Some(BranchClosureRecord {
+            reviewed_state_id: json_string(&Value::Object(payload.clone()), "reviewed_state_id")?,
+            contract_identity: json_string(&Value::Object(payload.clone()), "contract_identity")?,
+        })
+    }
+
+    pub(crate) fn finish_review_gate_pass_branch_closure_id(&self) -> Option<String> {
+        json_string(&self.state_payload, "finish_review_gate_pass_branch_closure_id")
+    }
+
     pub(crate) fn task_review_dispatch_id(&self, task: u32) -> Option<String> {
         let payload = self
             .state_payload
@@ -1476,8 +1603,9 @@ impl AuthoritativeTransitionState {
     }
 }
 
-pub(crate) fn load_authoritative_transition_state(
+fn load_authoritative_transition_state_internal(
     context: &ExecutionContext,
+    require_active_contract: bool,
 ) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
     let state_path = harness_state_path(
         &context.runtime.state_dir,
@@ -1517,7 +1645,7 @@ pub(crate) fn load_authoritative_transition_state(
             )
         })?;
 
-    let active_contract = if has_active_contract_pointer(&gate_state) {
+    let active_contract = if require_active_contract && has_active_contract_pointer(&gate_state) {
         let mut gate = GateState::default();
         let active = require_active_contract_state(context, &gate_state, &mut gate);
         if !gate.allowed {
@@ -1546,6 +1674,18 @@ pub(crate) fn load_authoritative_transition_state(
         active_contract,
         dirty: false,
     }))
+}
+
+pub(crate) fn load_authoritative_transition_state(
+    context: &ExecutionContext,
+) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
+    load_authoritative_transition_state_internal(context, true)
+}
+
+pub(crate) fn load_authoritative_transition_state_relaxed(
+    context: &ExecutionContext,
+) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
+    load_authoritative_transition_state_internal(context, false)
 }
 
 pub(crate) fn enforce_authoritative_phase(
@@ -1765,6 +1905,25 @@ fn selected_topology_from_execution_mode(execution_mode: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::remove_stale_write_authority_lock;
+    use super::AuthoritativeTransitionState;
+    use std::path::PathBuf;
+
+    use serde_json::{Value, json};
+
+    fn transition_state_with_current_branch_closure(current_branch_closure_id: &str) -> AuthoritativeTransitionState {
+        AuthoritativeTransitionState {
+            state_path: PathBuf::from("/tmp/authoritative-state.json"),
+            state_payload: json!({
+                "current_branch_closure_id": current_branch_closure_id,
+                "current_branch_closure_reviewed_state_id": "git_tree:current",
+                "current_branch_closure_contract_identity": "branch-contract-current",
+                "finish_review_gate_pass_branch_closure_id": Value::Null,
+            }),
+            phase: None,
+            active_contract: None,
+            dirty: false,
+        }
+    }
 
     #[test]
     fn removing_already_gone_stale_write_authority_lock_is_allowed() {
@@ -1772,5 +1931,46 @@ mod tests {
         let lock_path = tempdir.path().join("write-authority.lock");
         remove_stale_write_authority_lock(&lock_path)
             .expect("already-removed stale write-authority lock should be treated as reclaimed");
+    }
+
+    #[test]
+    fn restoring_branch_overlay_fields_requires_the_same_current_branch_closure() {
+        let mut authoritative_state = transition_state_with_current_branch_closure("branch-closure-new");
+
+        let restored = authoritative_state
+            .restore_current_branch_closure_overlay_fields_if_current(
+                "branch-closure-old",
+                "git_tree:old",
+                "branch-contract-old",
+            )
+            .expect("stale overlay restore check should succeed");
+
+        assert!(!restored, "overlay restore should skip stale branch-closure ids");
+        assert_eq!(
+            authoritative_state.state_payload["current_branch_closure_id"],
+            "branch-closure-new"
+        );
+        assert_eq!(
+            authoritative_state.state_payload["current_branch_closure_reviewed_state_id"],
+            "git_tree:current"
+        );
+        assert_eq!(
+            authoritative_state.state_payload["current_branch_closure_contract_identity"],
+            "branch-contract-current"
+        );
+    }
+
+    #[test]
+    fn finish_review_checkpoint_requires_the_same_current_branch_closure() {
+        let mut authoritative_state = transition_state_with_current_branch_closure("branch-closure-new");
+
+        let recorded = authoritative_state
+            .record_finish_review_gate_pass_checkpoint_if_current("branch-closure-old")
+            .expect("stale finish-review checkpoint check should succeed");
+
+        assert!(!recorded, "finish-review checkpoint should skip stale branch-closure ids");
+        assert!(
+            authoritative_state.state_payload["finish_review_gate_pass_branch_closure_id"].is_null()
+        );
     }
 }

@@ -18191,6 +18191,68 @@ fn rebuild_evidence_noop_refreshes_receipt_only_strategy_checkpoint_drift() {
 }
 
 #[test]
+fn gate_review_fails_closed_when_ready_finish_fixture_has_malformed_authoritative_active_contract() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-gate-review-malformed-authoritative-active-contract");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+
+    let _ = prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "current_branch_closure_id": "branch-closure-ready",
+            "current_branch_closure_reviewed_state_id": "git_tree:branch-closure-ready",
+            "current_branch_closure_contract_identity": "branch-contract-ready"
+        }),
+    );
+    let status_before = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before malformed authoritative active-contract gate-review fixture",
+    );
+    let active_contract_file = status_before["active_contract_path"]
+        .as_str()
+        .expect("status should expose authoritative active contract path")
+        .to_owned();
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug(repo),
+            &branch_name(repo),
+            &active_contract_file,
+        ),
+        "# Execution Contract\n**Contract Fingerprint:** malformed-active-contract\n",
+    );
+
+    let gate_review = run_rust(
+        repo,
+        state,
+        &["gate-review", "--plan", PLAN_REL],
+        "gate-review should fail closed when the authoritative active contract is malformed",
+    );
+    let failure = parse_failure_json(&gate_review, "malformed authoritative active-contract gate-review");
+    assert_eq!(
+        failure["error_class"],
+        Value::from("NonAuthoritativeArtifact"),
+        "gate-review should fail closed on malformed authoritative active-contract fixtures: {failure}",
+    );
+
+    let authoritative_state: Value = serde_json::from_str(
+        &fs::read_to_string(harness_state_file_path(repo, state))
+            .expect("authoritative state should remain readable after malformed active-contract gate-review"),
+    )
+    .expect("authoritative state should remain valid json after malformed active-contract gate-review");
+    assert!(
+        authoritative_state["finish_review_gate_pass_branch_closure_id"].is_null(),
+        "malformed authoritative active-contract gate-review must not persist a finish-review checkpoint: {authoritative_state}",
+    );
+}
+
+#[test]
 fn rebuild_evidence_noop_refuses_historical_late_gate_truth_refresh() {
     let (repo_dir, state_dir) = init_repo("plan-execution-rebuild-evidence-noop-late-gate-refresh");
     let repo = repo_dir.path();

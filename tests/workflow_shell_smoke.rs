@@ -1327,7 +1327,13 @@ fn workflow_operator_routes_ready_branch_completion_to_gate_finish_after_review_
     update_authoritative_harness_state(
         repo,
         state,
-        &[("current_branch_closure_id", Value::from("branch-closure-ready"))],
+        &[
+            ("current_branch_closure_id", Value::from("branch-closure-ready")),
+            (
+                "finish_review_gate_pass_branch_closure_id",
+                Value::from("branch-closure-ready"),
+            ),
+        ],
     );
 
     let operator_json = run_featureforge_with_env_json(
@@ -1349,6 +1355,112 @@ fn workflow_operator_routes_ready_branch_completion_to_gate_finish_after_review_
     assert_eq!(
         operator_json["recommended_command"],
         Value::from(format!("featureforge plan execution gate-finish --plan {plan_rel}"))
+    );
+}
+
+#[test]
+fn workflow_operator_requires_persisted_gate_review_checkpoint_before_gate_finish() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("workflow-operator-finish-review-checkpoint-required");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_ready_for_finish_case(repo, state, plan_rel, &base_branch);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[("current_branch_closure_id", Value::from("branch-closure-ready"))],
+    );
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator json without persisted gate-review checkpoint",
+    );
+
+    assert_eq!(operator_json["phase"], "ready_for_branch_completion");
+    assert_eq!(operator_json["phase_detail"], "finish_review_gate_ready");
+    assert_eq!(operator_json["review_state_status"], "clean");
+    assert_eq!(
+        operator_json["finish_review_gate_pass_branch_closure_id"],
+        Value::Null
+    );
+    assert_eq!(operator_json["next_action"], "run finish review gate");
+    assert_eq!(
+        operator_json["recommended_command"],
+        Value::from(format!("featureforge plan execution gate-review --plan {plan_rel}"))
+    );
+}
+
+#[test]
+fn plan_execution_gate_review_records_finish_review_gate_pass_checkpoint() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-review-records-finish-checkpoint");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_ready_for_finish_case(repo, state, plan_rel, &base_branch);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[("current_branch_closure_id", Value::from("branch-closure-ready"))],
+    );
+
+    let gate_review = run_plan_execution_json(
+        repo,
+        state,
+        &["gate-review", "--plan", plan_rel],
+        "gate-review should succeed and persist the finish-review gate pass checkpoint",
+    );
+    assert_eq!(gate_review["allowed"], Value::Bool(true));
+
+    let authoritative_state_path =
+        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
+    let authoritative_state_after: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path)
+            .expect("authoritative state should be readable after gate-review"),
+    )
+    .expect("authoritative state should remain valid json after gate-review");
+    assert_eq!(
+        authoritative_state_after["finish_review_gate_pass_branch_closure_id"],
+        Value::from("branch-closure-ready")
+    );
+}
+
+#[test]
+fn plan_execution_explain_review_state_does_not_record_finish_review_gate_pass_checkpoint() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-explain-review-state-does-not-record-finish-checkpoint");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_ready_for_finish_case(repo, state, plan_rel, &base_branch);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[("current_branch_closure_id", Value::from("branch-closure-ready"))],
+    );
+
+    let _ = run_plan_execution_json(
+        repo,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "explain-review-state should stay read-only and not persist the finish-review gate pass checkpoint",
+    );
+
+    let authoritative_state_path =
+        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
+    let authoritative_state_after: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path)
+            .expect("authoritative state should remain readable after explain-review-state"),
+    )
+    .expect("authoritative state should remain valid json after explain-review-state");
+    assert!(
+        authoritative_state_after["finish_review_gate_pass_branch_closure_id"].is_null(),
+        "explain-review-state must not persist the finish-review gate pass checkpoint: {authoritative_state_after}",
     );
 }
 
@@ -5260,6 +5372,160 @@ fn plan_execution_reconcile_review_state_restores_missing_branch_closure_overlay
 }
 
 #[test]
+fn plan_execution_reconcile_review_state_restores_branch_overlay_without_branch_closure_markdown() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-reconcile-review-state-restores-authoritative-branch-overlay");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
+
+    let branch_closure = run_plan_execution_json(
+        repo,
+        state,
+        &["record-branch-closure", "--plan", plan_rel],
+        "record-branch-closure should succeed before authoritative overlay restore coverage",
+    );
+    let branch_closure_id = branch_closure["branch_closure_id"]
+        .as_str()
+        .expect("branch closure should expose branch_closure_id")
+        .to_owned();
+    let authoritative_state_path =
+        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
+    let authoritative_state_before: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path)
+            .expect("authoritative state should be readable before overlay corruption"),
+    )
+    .expect("authoritative state should remain valid json before overlay corruption");
+    let expected_reviewed_state_id = authoritative_state_before["current_branch_closure_reviewed_state_id"]
+        .as_str()
+        .expect("branch closure should seed reviewed state overlay")
+        .to_owned();
+    let expected_contract_identity = authoritative_state_before["current_branch_closure_contract_identity"]
+        .as_str()
+        .expect("branch closure should seed contract identity overlay")
+        .to_owned();
+
+    let branch_closure_path =
+        project_artifact_dir(repo, state).join(format!("branch-closure-{branch_closure_id}.md"));
+    fs::remove_file(&branch_closure_path)
+        .expect("authoritative overlay restore test should remove the rendered branch-closure artifact");
+
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("current_branch_closure_reviewed_state_id", Value::Null),
+            ("current_branch_closure_contract_identity", Value::Null),
+        ],
+    );
+
+    let reconcile = run_plan_execution_json(
+        repo,
+        state,
+        &["reconcile-review-state", "--plan", plan_rel],
+        "reconcile-review-state should rebuild missing current branch closure overlays from authoritative state",
+    );
+
+    assert_eq!(reconcile["action"], "reconciled");
+    assert_eq!(
+        reconcile["actions_performed"],
+        Value::from(vec![
+            String::from("restored_current_branch_closure_reviewed_state"),
+            String::from("restored_current_branch_closure_contract_identity"),
+        ])
+    );
+    let authoritative_state_after: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path)
+            .expect("authoritative state should be readable after reconcile"),
+    )
+    .expect("authoritative state should remain valid json after reconcile");
+    assert_eq!(
+        authoritative_state_after["current_branch_closure_id"],
+        Value::from(branch_closure_id)
+    );
+    assert_eq!(
+        authoritative_state_after["current_branch_closure_reviewed_state_id"],
+        Value::from(expected_reviewed_state_id)
+    );
+    assert_eq!(
+        authoritative_state_after["current_branch_closure_contract_identity"],
+        Value::from(expected_contract_identity)
+    );
+}
+
+#[test]
+fn plan_execution_reconcile_review_state_preserves_release_readiness_while_restoring_overlay() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-reconcile-review-state-preserves-release-readiness");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
+
+    let branch_closure = run_plan_execution_json(
+        repo,
+        state,
+        &["record-branch-closure", "--plan", plan_rel],
+        "record-branch-closure should succeed before reconcile preservation coverage",
+    );
+    assert_eq!(branch_closure["action"], "recorded");
+
+    let summary_path = repo.join("release-readiness-summary.md");
+    write_file(&summary_path, "Release readiness is still current.\n");
+    let release_json = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "advance-late-stage",
+            "--plan",
+            plan_rel,
+            "--result",
+            "ready",
+            "--summary-file",
+            summary_path.to_str().expect("summary path should be utf-8"),
+        ],
+        "advance-late-stage should record release-readiness before reconcile preservation coverage",
+    );
+    assert_eq!(release_json["action"], "recorded");
+
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("current_branch_closure_reviewed_state_id", Value::Null),
+            ("current_branch_closure_contract_identity", Value::Null),
+        ],
+    );
+
+    let reconcile = run_plan_execution_json(
+        repo,
+        state,
+        &["reconcile-review-state", "--plan", plan_rel],
+        "reconcile-review-state should restore missing overlays without clearing release-readiness",
+    );
+    assert_eq!(reconcile["action"], "reconciled");
+
+    let authoritative_state_path =
+        harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
+    let authoritative_state_after: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path)
+            .expect("authoritative state should be readable after reconcile"),
+    )
+    .expect("authoritative state should remain valid json after reconcile");
+    assert_eq!(
+        authoritative_state_after["current_release_readiness_result"],
+        Value::from("ready")
+    );
+    assert_eq!(
+        authoritative_state_after["release_docs_state"],
+        Value::from("fresh")
+    );
+}
+
+#[test]
 fn plan_execution_repair_review_state_reports_reconciled_after_overlay_restore() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) =
@@ -5304,7 +5570,7 @@ fn plan_execution_repair_review_state_reports_reconciled_after_overlay_restore()
 }
 
 #[test]
-fn plan_execution_repair_review_state_blocks_when_overlay_cannot_be_restored() {
+fn plan_execution_repair_review_state_restores_overlay_from_authoritative_branch_record() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) =
         init_repo("plan-execution-repair-review-state-blocks-unrestorable-overlay");
@@ -5339,18 +5605,21 @@ fn plan_execution_repair_review_state_blocks_when_overlay_cannot_be_restored() {
         repo,
         state,
         &["repair-review-state", "--plan", plan_rel],
-        "repair-review-state should fail closed when authoritative overlay restoration cannot derive required fields",
+        "repair-review-state should restore missing overlays from the authoritative branch record even if markdown is corrupted",
     );
 
-    assert_eq!(repair["action"], "blocked");
-    assert_eq!(repair["required_follow_up"], "record_branch_closure");
-    assert_eq!(repair["actions_performed"], Value::from(Vec::<String>::new()));
+    assert_eq!(repair["action"], "reconciled");
+    assert_eq!(repair["required_follow_up"], Value::Null);
+    assert_eq!(
+        repair["actions_performed"],
+        Value::from(vec![
+            String::from("restored_current_branch_closure_reviewed_state"),
+            String::from("restored_current_branch_closure_contract_identity"),
+        ])
+    );
     assert_eq!(
         repair["missing_derived_overlays"],
-        Value::from(vec![
-            String::from("current_branch_closure_reviewed_state_id"),
-            String::from("current_branch_closure_contract_identity"),
-        ])
+        Value::from(Vec::<String>::new())
     );
 }
 
