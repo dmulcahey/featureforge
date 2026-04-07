@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArgs};
 use crate::cli::workflow::{OperatorArgs, PlanArgs};
 use crate::contracts::plan::AnalyzePlanReport;
-use crate::diagnostics::{DiagnosticError, JsonFailure};
+use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::execution::harness::{EvaluatorKind, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
 use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED;
 use crate::execution::query::query_workflow_execution_state;
@@ -726,31 +726,66 @@ pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOpera
                     ),
                 }
             } else {
-                let phase_detail = match context.phase.as_str() {
-                    "executing" | "repairing" => "execution_in_progress",
-                    "handoff_required" => "handoff_recording_required",
-                    "pivot_required" => "planning_reentry_required",
-                    _ => "execution_in_progress",
-                };
-                let recommended_command = match context.phase.as_str() {
-                    "handoff_required" => Some(format!(
-                        "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
-                    )),
-                    "pivot_required" => Some(format!(
-                        "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
-                    )),
-                    _ => None,
-                };
-                (
-                    context.phase.clone(),
-                    String::from(phase_detail),
-                    String::from("clean"),
-                    None,
-                    None,
-                    None,
-                    next_action_for_context(&context).replace('_', " "),
-                    recommended_command,
-                )
+                match context.phase.as_str() {
+                    "executing" => {
+                        let (execution_command_context, recommended_command) =
+                            resolve_execution_command(status, &plan_path)?;
+                        (
+                            String::from("executing"),
+                            String::from("execution_in_progress"),
+                            String::from("clean"),
+                            None,
+                            None,
+                            Some(execution_command_context),
+                            String::from("continue execution"),
+                            Some(recommended_command),
+                        )
+                    }
+                    "repairing" => (
+                        context.phase.clone(),
+                        String::from("execution_in_progress"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        None,
+                        next_action_for_context(&context).replace('_', " "),
+                        None,
+                    ),
+                    "handoff_required" => (
+                        context.phase.clone(),
+                        String::from("handoff_recording_required"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        None,
+                        String::from("hand off"),
+                        Some(format!(
+                            "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
+                        )),
+                    ),
+                    "pivot_required" => (
+                        context.phase.clone(),
+                        String::from("planning_reentry_required"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        None,
+                        String::from("pivot / return to planning"),
+                        Some(format!(
+                            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
+                        )),
+                    ),
+                    _ => (
+                        context.phase.clone(),
+                        String::from("execution_in_progress"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        None,
+                        next_action_for_context(&context).replace('_', " "),
+                        None,
+                    ),
+                }
             }
         } else {
             let phase_detail = match context.phase.as_str() {
@@ -1417,6 +1452,58 @@ fn review_requires_execution_reentry(context: &OperatorContext) -> bool {
             .gate_review
             .as_ref()
             .is_some_and(|gate| !gate.allowed)
+}
+
+fn resolve_execution_command(
+    status: &PlanExecutionStatus,
+    plan_path: &str,
+) -> Result<(WorkflowOperatorExecutionCommandContext, String), JsonFailure> {
+    if let Some((task_number, step_id)) = status.active_task.zip(status.active_step) {
+        return Ok((
+            WorkflowOperatorExecutionCommandContext {
+                command_kind: String::from("complete"),
+                task_number: Some(task_number),
+                step_id: Some(step_id),
+            },
+            format!(
+                "featureforge plan execution complete --plan {plan_path} --task {task_number} --step {step_id} --source {} --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint {}",
+                status.execution_mode, status.execution_fingerprint
+            ),
+        ));
+    }
+
+    if let Some((task_number, step_id)) = status.resume_task.zip(status.resume_step) {
+        return Ok((
+            WorkflowOperatorExecutionCommandContext {
+                command_kind: String::from("begin"),
+                task_number: Some(task_number),
+                step_id: Some(step_id),
+            },
+            format!(
+                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id} --expect-execution-fingerprint {}",
+                status.execution_fingerprint
+            ),
+        ));
+    }
+
+    if let Some((task_number, step_id)) = status.blocking_task.zip(status.blocking_step) {
+        return Ok((
+            WorkflowOperatorExecutionCommandContext {
+                command_kind: String::from("begin"),
+                task_number: Some(task_number),
+                step_id: Some(step_id),
+            },
+            format!(
+                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_id} --expect-execution-fingerprint {}",
+                status.execution_fingerprint
+            ),
+        ));
+    }
+
+    Err(JsonFailure::new(
+        FailureClass::ResolverContractViolation,
+        "workflow/operator expected an exact execution command but no active or resumable step is available.",
+    ))
 }
 
 fn task_boundary_block_reason_code(status: &PlanExecutionStatus) -> Option<&str> {

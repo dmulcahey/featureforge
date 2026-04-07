@@ -186,11 +186,14 @@ pub fn begin(
             "A different step is already active.",
         ));
     }
-    if context
+    let blocked_step = context
         .steps
         .iter()
-        .any(|step| step.note_state == Some(crate::execution::state::NoteState::Blocked))
-    {
+        .find(|step| step.note_state == Some(crate::execution::state::NoteState::Blocked));
+    let resuming_blocked_same_step = blocked_step.is_some_and(|blocked| {
+        blocked.task_number == request.task && blocked.step_number == request.step
+    });
+    if blocked_step.is_some() && !resuming_blocked_same_step {
         return Err(JsonFailure::new(
             FailureClass::InvalidStepTransition,
             "begin may not bypass existing blocked work.",

@@ -882,6 +882,199 @@ fn workflow_operator_commands_work_for_ready_plan() {
     assert!(!explain_stdout.contains("session-entry"));
 }
 
+#[test]
+fn workflow_operator_routes_active_execution_to_exact_step_command() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("workflow-operator-execution-command-context");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
+    prepare_preflight_acceptance_workspace(repo, "workflow-operator-execution-command-context");
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status for workflow operator active execution routing",
+    );
+    let preflight = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "preflight for workflow operator active execution routing",
+    );
+    assert_eq!(preflight["allowed"], true);
+    let begin = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status["execution_fingerprint"]
+                .as_str()
+                .expect("status should expose execution fingerprint for begin"),
+        ],
+        "begin should establish an active step for workflow operator routing",
+    );
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator json for active execution routing",
+    );
+
+    assert_eq!(operator_json["phase"], "executing");
+    assert_eq!(operator_json["phase_detail"], "execution_in_progress");
+    assert_eq!(operator_json["review_state_status"], "clean");
+    assert_eq!(operator_json["next_action"], "continue execution");
+    assert_eq!(
+        operator_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution complete --plan {plan_rel} --task 1 --step 1 --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint {}",
+            begin["execution_fingerprint"]
+                .as_str()
+                .expect("begin should expose execution fingerprint for operator command")
+        ))
+    );
+    assert_eq!(
+        operator_json["execution_command_context"],
+        serde_json::json!({
+            "command_kind": "complete",
+            "task_number": 1,
+            "step_id": 1
+        })
+    );
+}
+
+#[test]
+fn workflow_operator_routes_blocked_execution_to_resume_same_step() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("workflow-operator-blocked-step-command-context");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
+    prepare_preflight_acceptance_workspace(repo, "workflow-operator-blocked-step-command-context");
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status for workflow operator blocked execution routing",
+    );
+    let preflight = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "preflight for workflow operator blocked execution routing",
+    );
+    assert_eq!(preflight["allowed"], true);
+    let begin = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status["execution_fingerprint"]
+                .as_str()
+                .expect("status should expose execution fingerprint for blocked begin"),
+        ],
+        "begin should establish an active step before it becomes blocked",
+    );
+    let blocked = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "note",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--state",
+            "blocked",
+            "--message",
+            "Waiting for dependency",
+            "--expect-execution-fingerprint",
+            begin["execution_fingerprint"]
+                .as_str()
+                .expect("begin should expose execution fingerprint for blocked note"),
+        ],
+        "note blocked should establish a blocked step for workflow operator routing",
+    );
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator json for blocked execution routing",
+    );
+
+    assert_eq!(operator_json["phase"], "executing");
+    assert_eq!(operator_json["phase_detail"], "execution_in_progress");
+    assert_eq!(operator_json["review_state_status"], "clean");
+    assert_eq!(operator_json["next_action"], "continue execution");
+    assert_eq!(
+        operator_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution begin --plan {plan_rel} --task 1 --step 1 --expect-execution-fingerprint {}",
+            blocked["execution_fingerprint"]
+                .as_str()
+                .expect("blocked note should expose execution fingerprint for operator command")
+        ))
+    );
+    assert_eq!(
+        operator_json["execution_command_context"],
+        serde_json::json!({
+            "command_kind": "begin",
+            "task_number": 1,
+            "step_id": 1
+        })
+    );
+
+    let resumed = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--expect-execution-fingerprint",
+            blocked["execution_fingerprint"]
+                .as_str()
+                .expect("blocked note should expose execution fingerprint for resume begin"),
+        ],
+        "begin should resume the same blocked step",
+    );
+    assert_eq!(resumed["active_task"], Value::from(1));
+    assert_eq!(resumed["active_step"], Value::from(1));
+    assert_eq!(resumed["blocking_task"], Value::Null);
+    assert_eq!(resumed["blocking_step"], Value::Null);
+}
+
 #[derive(Clone, Copy)]
 struct LateStageCase {
     name: &'static str,
