@@ -55,8 +55,12 @@ pub enum PlanExecutionCommand {
     CloseCurrentTask(CloseCurrentTaskArgs),
     #[command(name = "record-branch-closure")]
     RecordBranchClosure(RecordBranchClosureArgs),
+    #[command(name = "record-release-readiness")]
+    RecordReleaseReadiness(RecordReleaseReadinessArgs),
     #[command(name = "advance-late-stage")]
     AdvanceLateStage(AdvanceLateStageArgs),
+    #[command(name = "record-final-review")]
+    RecordFinalReview(RecordFinalReviewArgs),
     #[command(name = "record-qa")]
     RecordQa(RecordQaArgs),
     Begin(BeginArgs),
@@ -185,6 +189,18 @@ pub struct RecordBranchClosureArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct RecordReleaseReadinessArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long = "branch-closure-id")]
+    pub branch_closure_id: String,
+    #[arg(long, value_enum)]
+    pub result: ReleaseReadinessOutcomeArg,
+    #[arg(long = "summary-file")]
+    pub summary_file: PathBuf,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct AdvanceLateStageArgs {
     #[arg(long)]
     pub plan: PathBuf,
@@ -198,6 +214,24 @@ pub struct AdvanceLateStageArgs {
     pub reviewer_id: Option<String>,
     #[arg(long, value_enum)]
     pub result: AdvanceLateStageResultArg,
+    #[arg(long = "summary-file")]
+    pub summary_file: PathBuf,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct RecordFinalReviewArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long = "branch-closure-id")]
+    pub branch_closure_id: String,
+    #[arg(long = "dispatch-id")]
+    pub dispatch_id: String,
+    #[arg(long = "reviewer-source")]
+    pub reviewer_source: String,
+    #[arg(long = "reviewer-id")]
+    pub reviewer_id: String,
+    #[arg(long, value_enum)]
+    pub result: ReviewOutcomeArg,
     #[arg(long = "summary-file")]
     pub summary_file: PathBuf,
 }

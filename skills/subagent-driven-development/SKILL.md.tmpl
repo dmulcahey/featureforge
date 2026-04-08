@@ -57,7 +57,8 @@ For each task, enforce this exact order before dispatching the next task:
 4. If review fails, reopen/remediate/re-review until green.
 5. When remediation churn reaches 3 cycles for the same task, follow runtime cycle-break handling before retry.
 6. After review is green, run `verification-before-completion` and persist the task verification receipt.
-7. No exceptions: only after dispatch proof, green review closure, and task verification receipt may you dispatch Task `N+1`.
+7. After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.
+8. No exceptions: only after dispatch proof, green review closure, and task verification receipt may you dispatch Task `N+1`.
 
 ### Reviewed-Closure Command Matrix
 
@@ -74,7 +75,7 @@ The coordinator and runtime MUST NOT use the internal task-closure recording ser
 | External reviewer result is already in hand for task closure or final review | Caller already has the external task-review or final-review result | `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` then `featureforge plan execution status --plan <approved-plan-path>` | Operator surfaces the matching recording-ready substate | If the result is not yet in hand, rerun plain `workflow operator` and wait; do not use this hint for release-readiness |
 | Any reviewed-closure checkpoint before dispatching implementers or reviewers | Approved plan path is current | `featureforge workflow operator --plan <approved-plan-path>` then `featureforge plan execution status --plan <approved-plan-path>` | Operator returns authoritative routing for the next closure or milestone action | Stop and follow the operator-reported blocker instead of reconstructing flow from artifacts |
 | Task work finished and task review must be recorded | Task implementation steps are complete | `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` | Dispatch lineage exists for the current task-boundary review | Compatibility-only fallback: inspect with `featureforge plan execution explain-review-state --plan <approved-plan-path>` before reopening or reconciling |
-| Task review and verification are both green | Dedicated-independent review is green and verification receipt exists | `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail --verification-summary-file <verification-summary>` | Current task closure is recorded for the still-current reviewed state | If review-state drift blocks closure, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` |
+| Task review and verification outcome are both known | Dedicated-independent review is green and verification outcome is known | `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` | Current task closure is recorded for the still-current reviewed state | If review-state drift blocks closure, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` |
 | Operator reports stale-unreviewed, escaped, or ambiguous review-state drift | Operator review-state is not clean | `featureforge plan execution repair-review-state --plan <approved-plan-path>` | Review-state blocker is reconciled or restated as the authoritative next action | Compatibility-only fallback: `featureforge plan execution explain-review-state --plan <approved-plan-path>` or `featureforge plan execution reconcile-review-state --plan <approved-plan-path>` |
 | Operator reports missing branch closure | Current branch closure is required before release-readiness/final-review/QA can advance | `featureforge plan execution record-branch-closure --plan <approved-plan-path>` | Current branch closure exists for the still-current reviewed branch state | Stop and resolve any resolver/store blocker surfaced by operator/status |
 | Operator reports release-readiness recording ready | Current branch closure exists and operator recommends release-readiness recording | `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` | Aggregate late-stage trace names the delegated primitive and recorded release-readiness milestone keyed by `stage_path` | Compatibility-only fallback: use `record-release-readiness` only for explicit debug or compatibility paths |
@@ -105,6 +106,7 @@ digraph process {
 
     "Read plan, build a task packet per task" [shape=box];
     "More tasks remain?" [shape=diamond];
+    "Use featureforge:document-release for release-readiness before terminal review" [shape=box];
     "Use featureforge:requesting-code-review for final review gate" [shape=box];
     "Use featureforge:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
@@ -124,7 +126,8 @@ digraph process {
     "Code quality reviewer subagent approves?" -> "Run verification-before-completion, record task verification receipt, and confirm task plan steps are checked off" [label="yes"];
     "Run verification-before-completion, record task verification receipt, and confirm task plan steps are checked off" -> "More tasks remain?";
     "More tasks remain?" -> "Build task packet + dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
-    "More tasks remain?" -> "Use featureforge:requesting-code-review for final review gate" [label="no"];
+    "More tasks remain?" -> "Use featureforge:document-release for release-readiness before terminal review" [label="no"];
+    "Use featureforge:document-release for release-readiness before terminal review" -> "Use featureforge:requesting-code-review for final review gate";
     "Use featureforge:requesting-code-review for final review gate" -> "Use featureforge:finishing-a-development-branch";
 }
 ```

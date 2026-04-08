@@ -10,7 +10,7 @@ description: Use when you have an engineering-approved FeatureForge implementati
 
 ## Overview
 
-Load the approved plan, follow the runtime-selected topology, execute all tasks, request final review, then report when complete. When the runtime-selected topology is worktree-backed parallel, create isolated worktrees first and dispatch the parallel lanes; when it is conservative fallback, stay serial.
+Load the approved plan, follow the runtime-selected topology, execute all tasks, run `featureforge:document-release`, request final review, then report when complete. When the runtime-selected topology is worktree-backed parallel, create isolated worktrees first and dispatch the parallel lanes; when it is conservative fallback, stay serial.
 
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
 
@@ -132,6 +132,7 @@ For each task:
    - if review fails, reopen/remediate/re-review until green
    - when remediation churn reaches 3 cycles for the same task, follow runtime cycle-break handling before retry
    - after review is green, run `verification-before-completion` and persist the task verification receipt
+   - After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.
    - no exceptions: only after dispatch proof, green review closure, and task verification receipt may Task `N+1` begin
 7. If the packet is malformed, stale, or still leaves ambiguity unresolved, stop and route back to review instead of guessing.
 8. Call `complete` as soon as a step is truly satisfied so the plan checkbox flips to `- [x]`.
@@ -151,7 +152,7 @@ Agents MUST NOT use the internal task-closure recording service boundary directl
 | External reviewer result is already in hand for task closure or final review | Caller already has the external task-review or final-review result | `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` then `featureforge plan execution status --plan <approved-plan-path>` | Operator surfaces the matching recording-ready substate | If the result is not yet in hand, rerun plain `workflow operator` and wait; do not use this hint for release-readiness |
 | Any reviewed-closure execution checkpoint | Approved plan path is current | `featureforge workflow operator --plan <approved-plan-path>` then `featureforge plan execution status --plan <approved-plan-path>` | Operator returns authoritative `phase`, `next_action`, and `recommended_command` | Stop and resolve the operator-reported blocker; do not guess from stale receipts |
 | Task work finished and task-boundary review must start | Task implementation steps are complete | `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` | Dispatch lineage exists for the current task review checkpoint | Compatibility-only fallback: inspect with `featureforge plan execution explain-review-state --plan <approved-plan-path>` before reopening or reconciling |
-| Task review is green and verification is green | Dedicated-independent review is green and task verification receipt exists | `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail --verification-summary-file <verification-summary>` | Current task closure is recorded for the still-current reviewed state | If blocked on stale or escaped edits, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` |
+| Task review is green and verification outcome is known | Dedicated-independent review is green and task verification outcome is known | `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` | Current task closure is recorded for the still-current reviewed state | If blocked on stale or escaped edits, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` |
 | Operator reports stale-unreviewed, escaped, or ambiguous review-state drift | Operator review-state is not clean | `featureforge plan execution repair-review-state --plan <approved-plan-path>` | Review-state blocker is reconciled or restated as the next required runtime action | Compatibility-only fallback: `featureforge plan execution explain-review-state --plan <approved-plan-path>` or `featureforge plan execution reconcile-review-state --plan <approved-plan-path>` |
 | Operator reports missing branch closure | Operator phase/next action requires current branch closure | `featureforge plan execution record-branch-closure --plan <approved-plan-path>` | Current branch closure exists for the still-current reviewed branch state | Stop and fix the blocker surfaced by operator/status; do not edit runtime-owned records manually |
 | Operator reports release-readiness recording ready | Current branch closure exists and operator recommends release-readiness recording | `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` | Late-stage aggregate command records the current release-readiness milestone and returns a structured trace keyed by `stage_path` | Compatibility-only fallback: use `record-release-readiness` only when explicitly debugging or preserving compatibility |
@@ -164,6 +165,7 @@ Agents MUST NOT use the internal task-closure recording service boundary directl
 ### Step 3: Request Final Review
 
 After all tasks complete and verified:
+- Run `featureforge:document-release` first, then route to `featureforge:requesting-code-review` for the terminal final review pass.
 - Announce: "I'm using the requesting-code-review skill for the final review pass."
 - **REQUIRED SUB-SKILL:** Use `featureforge:requesting-code-review`
 - Resolve any Critical or Important findings before proceeding

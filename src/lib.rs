@@ -159,8 +159,14 @@ pub fn run() -> std::process::ExitCode {
                         cli::plan_execution::PlanExecutionCommand::RecordBranchClosure(args) => {
                             emit_json(execution::mutate::record_branch_closure(&runtime, &args))
                         }
+                        cli::plan_execution::PlanExecutionCommand::RecordReleaseReadiness(args) => {
+                            emit_json(execution::mutate::record_release_readiness(&runtime, &args))
+                        }
                         cli::plan_execution::PlanExecutionCommand::AdvanceLateStage(args) => {
                             emit_json(execution::mutate::advance_late_stage(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RecordFinalReview(args) => {
+                            emit_json(execution::mutate::record_final_review(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::RecordQa(args) => {
                             emit_json(execution::mutate::record_qa(&runtime, &args))

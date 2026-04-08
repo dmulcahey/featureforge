@@ -116,6 +116,19 @@ function assertDownstreamMaterialStaysGateAndHarnessAware(content, label) {
   );
 }
 
+function assertOrderedSubstrings(content, label, needles) {
+  let previousIndex = -1;
+  for (const needle of needles) {
+    const index = content.indexOf(needle);
+    assert.ok(index >= 0, `${label} should contain ${needle}`);
+    assert.ok(
+      index > previousIndex,
+      `${label} should list ${needle} after the previous required boundary text`,
+    );
+    previousIndex = index;
+  }
+}
+
 function buildTimedHookPatterns(timings, targetPattern, gapPattern = '[^.\\n]{0,160}') {
   const obligationPattern = '(?:must|always|required|requires|should|need(?:s)? to|have(?:s)? to|ought to)';
   const imperativeActionPattern = '(?:consult|search|update|use|record)';
@@ -691,6 +704,18 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(executingPlans, /treat it as the exact task contract for that execution segment/);
   assert.match(executingPlans, /mandatory task-boundary closure loop/i);
   assert.match(executingPlans, /STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` immediately after task completion/i);
+  assert.match(
+    executingPlans,
+    /After all tasks complete and verified:[\s\S]*featureforge:document-release[\s\S]*featureforge:requesting-code-review/,
+  );
+  assert.match(
+    executingPlans,
+    /After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N\+1` begins\./,
+  );
+  assert.match(
+    executingPlans,
+    /featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]/,
+  );
   assert.match(executingPlans, /does not require per-dispatch user-consent prompts/);
   assert.match(executingPlans, /Non-execution ad-hoc delegation still follows normal user-consent policy/);
 
@@ -699,7 +724,33 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(subagentSkill, /If the packet does not answer it, the task is ambiguous and execution must stop or route back to review\./);
   assert.match(subagentSkill, /The coordinator owns every `git commit`, `git merge`, and `git push` for this workflow/);
   assert.match(subagentSkill, /STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` immediately after task completion/i);
+  assert.match(
+    subagentSkill,
+    /"More tasks remain\?" -> "Use featureforge:document-release for release-readiness before terminal review" \[label="no"\];/,
+  );
+  assert.match(
+    subagentSkill,
+    /"Use featureforge:document-release for release-readiness before terminal review" -> "Use featureforge:requesting-code-review for final review gate";/,
+  );
+  assert.match(
+    subagentSkill,
+    /After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N\+1` begins\./,
+  );
+  assert.match(
+    subagentSkill,
+    /featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]/,
+  );
   assert.match(subagentSkill, /run `verification-before-completion` and persist the task verification receipt/i);
+  assertOrderedSubstrings(executingPlans, 'skills/executing-plans/SKILL.md task-boundary loop', [
+    'after review is green, run `verification-before-completion` and persist the task verification receipt',
+    'After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.',
+    'no exceptions: only after dispatch proof, green review closure, and task verification receipt may Task `N+1` begin',
+  ]);
+  assertOrderedSubstrings(subagentSkill, 'skills/subagent-driven-development/SKILL.md task-boundary loop', [
+    'After review is green, run `verification-before-completion` and persist the task verification receipt.',
+    'After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.',
+    'No exceptions: only after dispatch proof, green review closure, and task verification receipt may you dispatch Task `N+1`.',
+  ]);
   assert.match(subagentSkill, /does not require per-dispatch user-consent prompts/);
   assert.match(subagentSkill, /Non-execution ad-hoc delegation still follows normal user-consent policy/);
   assert.doesNotMatch(subagentSkill, /controller provides full text/);
@@ -1278,7 +1329,8 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.match(sdd, /"Return to using-featureforge artifact-state routing" \[shape=box\];/);
   assert.match(sdd, /"Have engineering-approved implementation plan\?" -> "Return to using-featureforge artifact-state routing" \[label="no"\];/);
   assert.match(sdd, /"Tasks mostly independent\?" -> "executing-plans" \[label="no - tightly coupled or better handled in one coordinator session"\];/);
-  assert.match(sdd, /"More tasks remain\?" -> "Use featureforge:requesting-code-review for final review gate" \[label="no"\];/);
+  assert.match(sdd, /"More tasks remain\?" -> "Use featureforge:document-release for release-readiness before terminal review" \[label="no"\];/);
+  assert.match(sdd, /"Use featureforge:document-release for release-readiness before terminal review" -> "Use featureforge:requesting-code-review for final review gate";/);
   assert.match(sdd, /\[Announce: I'm using the requesting-code-review skill for the final review pass\.\]/);
   assert.match(sdd, /\[Invoke featureforge:requesting-code-review\]/);
   assert.match(sdd, /Those per-task review loops satisfy the "review early" rule during execution/);

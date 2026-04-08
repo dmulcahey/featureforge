@@ -233,6 +233,18 @@ fn assert_file_contains(path: impl AsRef<Path>, needle: &str) {
     assert_contains(&content, needle, &path_ref.display().to_string());
 }
 
+fn assert_file_contains_in_order(path: impl AsRef<Path>, needles: &[&str]) {
+    let path_ref = path.as_ref();
+    let content = read_utf8(path_ref);
+    let mut previous_index = 0usize;
+    for needle in needles {
+        let relative_index = content[previous_index..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("{} should contain {needle:?}", path_ref.display()));
+        previous_index += relative_index + needle.len();
+    }
+}
+
 fn assert_file_not_contains(path: impl AsRef<Path>, needle: &str) {
     let path_ref = path.as_ref();
     let content = read_utf8(path_ref);
@@ -1489,6 +1501,34 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
+        "After all tasks complete and verified:",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "featureforge:document-release",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "featureforge:requesting-code-review",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
+    );
+    assert_file_contains_in_order(
+        root.join("skills/executing-plans/SKILL.md"),
+        &[
+            "after review is green, run `verification-before-completion` and persist the task verification receipt",
+            "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.",
+            "no exceptions: only after dispatch proof, green review closure, and task verification receipt may Task `N+1` begin",
+        ],
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
         "does not require per-dispatch user-consent prompts.",
     );
     assert_file_contains(
@@ -1505,11 +1545,35 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
+        "\"More tasks remain?\" -> \"Use featureforge:document-release for release-readiness before terminal review\" [label=\"no\"];",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "\"Use featureforge:document-release for release-readiness before terminal review\" -> \"Use featureforge:requesting-code-review for final review gate\";",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
         "`review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically for each `record-review-dispatch` command that targets reviewable execution work and when remediation reopens execution work.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
         "After review is green, run `verification-before-completion` and persist the task verification receipt.",
+    );
+    assert_file_contains_in_order(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        &[
+            "After review is green, run `verification-before-completion` and persist the task verification receipt.",
+            "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.",
+            "No exceptions: only after dispatch proof, green review closure, and task verification receipt may you dispatch Task `N+1`.",
+        ],
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),

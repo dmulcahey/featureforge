@@ -585,6 +585,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "execution_reentry_required",
             "final_review_dispatch_required",
             "final_review_outcome_pending",
+            "final_review_recording_ready",
             "finish_completion_gate_ready",
             "finish_review_gate_ready",
             "handoff_recording_required",
@@ -592,6 +593,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "qa_recording_required",
             "release_blocker_resolution_required",
             "release_readiness_recording_ready",
+            "task_closure_recording_ready",
             "task_review_dispatch_required",
             "task_review_result_pending",
             "test_plan_refresh_required"

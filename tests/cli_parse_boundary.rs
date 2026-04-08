@@ -340,7 +340,13 @@ fn plan_execution_record_review_dispatch_requires_scope_at_parse_boundary() {
     let output = run_featureforge(
         repo,
         state,
-        &["plan", "execution", "record-review-dispatch", "--plan", PLAN_REL],
+        &[
+            "plan",
+            "execution",
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+        ],
         "plan execution record-review-dispatch missing scope",
     );
     let json = parse_failure_json(
@@ -357,6 +363,81 @@ fn plan_execution_record_review_dispatch_requires_scope_at_parse_boundary() {
         .expect("failure message should stay a string");
     assert!(message.contains("required arguments were not provided"));
     assert!(message.contains("--scope"));
+}
+
+#[test]
+fn plan_execution_record_release_readiness_requires_primitive_arguments_at_parse_boundary() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-record-release-readiness");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "record-release-readiness",
+            "--plan",
+            PLAN_REL,
+        ],
+        "plan execution record-release-readiness missing primitive arguments",
+    );
+    let json = parse_failure_json(
+        &output,
+        "plan execution record-release-readiness missing primitive arguments",
+    );
+
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+    assert!(message.contains("required arguments were not provided"));
+    assert!(message.contains("--branch-closure-id"));
+    assert!(message.contains("--result"));
+    assert!(message.contains("--summary-file"));
+}
+
+#[test]
+fn plan_execution_record_final_review_requires_primitive_arguments_at_parse_boundary() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-record-final-review");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let output = run_featureforge(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "record-final-review",
+            "--plan",
+            PLAN_REL,
+        ],
+        "plan execution record-final-review missing primitive arguments",
+    );
+    let json = parse_failure_json(
+        &output,
+        "plan execution record-final-review missing primitive arguments",
+    );
+
+    assert_eq!(
+        json["error_class"],
+        Value::String(String::from("InvalidCommandInput"))
+    );
+    let message = json["message"]
+        .as_str()
+        .expect("failure message should stay a string");
+    assert!(message.contains("required arguments were not provided"));
+    assert!(message.contains("--branch-closure-id"));
+    assert!(message.contains("--dispatch-id"));
+    assert!(message.contains("--reviewer-source"));
+    assert!(message.contains("--reviewer-id"));
+    assert!(message.contains("--result"));
+    assert!(message.contains("--summary-file"));
 }
 
 #[test]
@@ -381,10 +462,7 @@ fn plan_execution_advance_late_stage_rejects_unknown_results_at_parse_boundary()
         ],
         "plan execution advance-late-stage invalid result",
     );
-    let json = parse_failure_json(
-        &output,
-        "plan execution advance-late-stage invalid result",
-    );
+    let json = parse_failure_json(&output, "plan execution advance-late-stage invalid result");
 
     assert_eq!(
         json["error_class"],
@@ -495,7 +573,10 @@ fn session_entry_argv0_alias_is_removed_from_active_cli_surface() {
     symlink(cargo_bin("featureforge"), &alias_path)
         .expect("session-entry argv0 alias symlink should be creatable");
 
-    let output = run(Command::new(&alias_path), "session-entry argv0 alias removed");
+    let output = run(
+        Command::new(&alias_path),
+        "session-entry argv0 alias removed",
+    );
     let json = parse_failure_json(&output, "session-entry argv0 alias removed");
 
     assert_eq!(

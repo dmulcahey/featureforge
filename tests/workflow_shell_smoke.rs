@@ -3987,6 +3987,85 @@ fn plan_execution_advance_late_stage_records_final_review() {
 }
 
 #[test]
+fn plan_execution_record_final_review_primitive_records_final_review() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-final-review-primitive");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
+
+    let dispatch = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "record-review-dispatch",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "final-review",
+        ],
+        "plan execution final review dispatch for primitive fixture",
+    );
+    assert_eq!(dispatch["allowed"], Value::Bool(true));
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        &[],
+        "workflow operator json for final review primitive fixture",
+    );
+    let dispatch_id = operator_json["recording_context"]["dispatch_id"]
+        .as_str()
+        .expect("final review primitive fixture should expose dispatch_id")
+        .to_owned();
+    let branch_closure_id = operator_json["recording_context"]["branch_closure_id"]
+        .as_str()
+        .expect("final review primitive fixture should expose branch_closure_id")
+        .to_owned();
+
+    let summary_path = repo.join("final-review-summary.md");
+    write_file(&summary_path, "Independent final review passed.\n");
+    let review_json = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "record-final-review",
+            "--plan",
+            plan_rel,
+            "--branch-closure-id",
+            &branch_closure_id,
+            "--dispatch-id",
+            &dispatch_id,
+            "--reviewer-source",
+            "fresh-context-subagent",
+            "--reviewer-id",
+            "reviewer-fixture-001",
+            "--result",
+            "pass",
+            "--summary-file",
+            summary_path.to_str().expect("summary path should be utf-8"),
+        ],
+        "record-final-review primitive command should succeed",
+    );
+
+    assert_eq!(review_json["action"], "recorded");
+    assert_eq!(review_json["stage_path"], "final_review");
+    assert_eq!(review_json["delegated_primitive"], "record-final-review");
+}
+
+#[test]
 fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disposition() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-records-runtime-deviation");
@@ -6165,6 +6244,55 @@ fn plan_execution_advance_late_stage_records_release_readiness() {
     assert_eq!(
         operator_json["phase_detail"],
         "final_review_dispatch_required"
+    );
+}
+
+#[test]
+fn plan_execution_record_release_readiness_primitive_records_release_readiness() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-release-readiness-primitive");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
+    let branch_closure_json = run_plan_execution_json(
+        repo,
+        state,
+        &["record-branch-closure", "--plan", plan_rel],
+        "record-branch-closure for release-readiness primitive fixture",
+    );
+    let branch_closure_id = branch_closure_json["branch_closure_id"]
+        .as_str()
+        .expect("release-readiness primitive fixture should expose branch_closure_id")
+        .to_owned();
+
+    let summary_path = repo.join("release-readiness-summary.md");
+    write_file(
+        &summary_path,
+        "Release readiness is green for the current branch closure.\n",
+    );
+    let release_json = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "record-release-readiness",
+            "--plan",
+            plan_rel,
+            "--branch-closure-id",
+            &branch_closure_id,
+            "--result",
+            "ready",
+            "--summary-file",
+            summary_path.to_str().expect("summary path should be utf-8"),
+        ],
+        "record-release-readiness primitive command should succeed",
+    );
+
+    assert_eq!(release_json["action"], "recorded");
+    assert_eq!(release_json["stage_path"], "release_readiness");
+    assert_eq!(
+        release_json["delegated_primitive"],
+        "record-release-readiness"
     );
 }
 
