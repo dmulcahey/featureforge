@@ -25241,3 +25241,287 @@ fn task3_record_evaluation_legacy_blocked_only_with_retry_count_stays_blocked() 
         "blocked-only legacy recovery should keep handoff_required true while blocked evaluators remain"
     );
 }
+
+#[test]
+fn late_stage_recording_equivalent_reruns_are_already_current() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-late-stage-rerun-already-current");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let _ = accept_execution_preflight(repo, state, PLAN_REL);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "last_strategy_checkpoint_fingerprint": FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT
+        }),
+    );
+
+    let release_summary_path = repo.join("release-summary.md");
+    write_file(
+        &release_summary_path,
+        "Release-readiness artifact fixture for finish-gate coverage.\n",
+    );
+    let final_summary_path = repo.join("final-review-summary.md");
+    write_file(
+        &final_summary_path,
+        "Final whole-diff review artifact fixture for finish-gate coverage.\n",
+    );
+    let qa_summary_path = repo.join("qa-summary.md");
+    write_file(
+        &qa_summary_path,
+        "Browser QA artifact fixture for gate-finish coverage.\n",
+    );
+
+    let advance_release = run_rust_json(
+        repo,
+        state,
+        &[
+            "advance-late-stage",
+            "--plan",
+            PLAN_REL,
+            "--result",
+            "ready",
+            "--summary-file",
+            release_summary_path
+                .to_str()
+                .expect("release summary path should be utf-8"),
+        ],
+        "advance-late-stage release-readiness equivalent rerun",
+    );
+    assert_eq!(
+        advance_release["action"],
+        Value::from("already_current"),
+        "json: {advance_release}"
+    );
+    assert_eq!(
+        advance_release["stage_path"],
+        Value::from("release_readiness")
+    );
+    assert_eq!(
+        advance_release["delegated_primitive"],
+        Value::from("record-release-readiness")
+    );
+
+    let primitive_release = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-release-readiness",
+            "--plan",
+            PLAN_REL,
+            "--branch-closure-id",
+            "branch-closure-ready",
+            "--result",
+            "ready",
+            "--summary-file",
+            release_summary_path
+                .to_str()
+                .expect("release summary path should be utf-8"),
+        ],
+        "record-release-readiness equivalent rerun",
+    );
+    assert_eq!(primitive_release["action"], Value::from("already_current"));
+
+    let advance_final = run_rust_json(
+        repo,
+        state,
+        &[
+            "advance-late-stage",
+            "--plan",
+            PLAN_REL,
+            "--dispatch-id",
+            "fixture-final-review-dispatch",
+            "--reviewer-source",
+            "fresh-context-subagent",
+            "--reviewer-id",
+            "reviewer-fixture-001",
+            "--result",
+            "pass",
+            "--summary-file",
+            final_summary_path
+                .to_str()
+                .expect("final summary path should be utf-8"),
+        ],
+        "advance-late-stage final-review equivalent rerun",
+    );
+    assert_eq!(advance_final["action"], Value::from("already_current"));
+    assert_eq!(advance_final["stage_path"], Value::from("final_review"));
+    assert_eq!(
+        advance_final["delegated_primitive"],
+        Value::from("record-final-review")
+    );
+
+    let primitive_final = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-final-review",
+            "--plan",
+            PLAN_REL,
+            "--branch-closure-id",
+            "branch-closure-ready",
+            "--dispatch-id",
+            "fixture-final-review-dispatch",
+            "--reviewer-source",
+            "fresh-context-subagent",
+            "--reviewer-id",
+            "reviewer-fixture-001",
+            "--result",
+            "pass",
+            "--summary-file",
+            final_summary_path
+                .to_str()
+                .expect("final summary path should be utf-8"),
+        ],
+        "record-final-review equivalent rerun",
+    );
+    assert_eq!(primitive_final["action"], Value::from("already_current"));
+
+    let qa = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-qa",
+            "--plan",
+            PLAN_REL,
+            "--result",
+            "pass",
+            "--summary-file",
+            qa_summary_path
+                .to_str()
+                .expect("qa summary path should be utf-8"),
+        ],
+        "record-qa equivalent rerun",
+    );
+    assert_eq!(qa["action"], Value::from("already_current"));
+}
+
+#[test]
+fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-late-stage-summary-requery-ordering");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let _ = accept_execution_preflight(repo, state, PLAN_REL);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "last_strategy_checkpoint_fingerprint": FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT
+        }),
+    );
+
+    let missing_summary = repo.join("missing-summary.md");
+    let missing_summary_str = missing_summary
+        .to_str()
+        .expect("missing summary path should be utf-8");
+
+    let advance_release = run_rust_json(
+        repo,
+        state,
+        &[
+            "advance-late-stage",
+            "--plan",
+            PLAN_REL,
+            "--result",
+            "ready",
+            "--summary-file",
+            missing_summary_str,
+        ],
+        "advance-late-stage release-readiness out-of-phase summary ordering",
+    );
+    assert_eq!(advance_release["action"], Value::from("blocked"));
+    assert!(
+        advance_release["code"].as_str() == Some("out_of_phase_requery_required")
+            || advance_release["required_follow_up"].is_string(),
+        "json: {advance_release}"
+    );
+
+    let primitive_release = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-release-readiness",
+            "--plan",
+            PLAN_REL,
+            "--branch-closure-id",
+            "branch-closure-ready",
+            "--result",
+            "ready",
+            "--summary-file",
+            missing_summary_str,
+        ],
+        "record-release-readiness out-of-phase summary ordering",
+    );
+    assert_eq!(primitive_release["action"], Value::from("blocked"));
+    assert!(
+        primitive_release["code"].as_str() == Some("out_of_phase_requery_required")
+            || primitive_release["required_follow_up"].is_string(),
+        "json: {primitive_release}"
+    );
+
+    let advance_final = run_rust_json(
+        repo,
+        state,
+        &[
+            "advance-late-stage",
+            "--plan",
+            PLAN_REL,
+            "--dispatch-id",
+            "fixture-final-review-dispatch",
+            "--reviewer-source",
+            "fresh-context-subagent",
+            "--reviewer-id",
+            "reviewer-fixture-001",
+            "--result",
+            "pass",
+            "--summary-file",
+            missing_summary_str,
+        ],
+        "advance-late-stage final-review out-of-phase summary ordering",
+    );
+    assert_eq!(advance_final["action"], Value::from("blocked"));
+    assert!(
+        advance_final["code"].as_str() == Some("out_of_phase_requery_required")
+            || advance_final["required_follow_up"].is_string(),
+        "json: {advance_final}"
+    );
+
+    let primitive_final = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-final-review",
+            "--plan",
+            PLAN_REL,
+            "--branch-closure-id",
+            "branch-closure-ready",
+            "--dispatch-id",
+            "fixture-final-review-dispatch",
+            "--reviewer-source",
+            "fresh-context-subagent",
+            "--reviewer-id",
+            "reviewer-fixture-001",
+            "--result",
+            "pass",
+            "--summary-file",
+            missing_summary_str,
+        ],
+        "record-final-review out-of-phase summary ordering",
+    );
+    assert_eq!(primitive_final["action"], Value::from("blocked"));
+    assert!(
+        primitive_final["code"].as_str() == Some("out_of_phase_requery_required")
+            || primitive_final["required_follow_up"].is_string(),
+        "json: {primitive_final}"
+    );
+}

@@ -259,6 +259,9 @@ pub(crate) struct CurrentTaskClosureRecord {
     pub(crate) task: u32,
     pub(crate) dispatch_id: String,
     pub(crate) closure_record_id: String,
+    pub(crate) source_plan_path: Option<String>,
+    pub(crate) source_plan_revision: Option<u32>,
+    pub(crate) execution_run_id: Option<String>,
     pub(crate) reviewed_state_id: String,
     pub(crate) contract_identity: String,
     pub(crate) effective_reviewed_surface_paths: Vec<String>,
@@ -266,6 +269,7 @@ pub(crate) struct CurrentTaskClosureRecord {
     pub(crate) review_summary_hash: String,
     pub(crate) verification_result: String,
     pub(crate) verification_summary_hash: String,
+    pub(crate) closure_status: Option<String>,
 }
 
 pub(crate) struct BranchClosureRecord {
@@ -1904,11 +1908,28 @@ impl AuthoritativeTransitionState {
             .and_then(Value::as_object)
             .map(|history| history.len() as u64 + 1)
             .unwrap_or(1);
+        let source_plan_path = self
+            .state_payload
+            .get("run_identity")
+            .and_then(|run_identity| json_string(run_identity, "source_plan_path"));
+        let source_plan_revision = self
+            .state_payload
+            .get("run_identity")
+            .and_then(|run_identity| json_u32(run_identity, "source_plan_revision"));
+        let execution_run_id = self
+            .state_payload
+            .get("run_identity")
+            .and_then(|run_identity| json_string(run_identity, "execution_run_id"))
+            .unwrap_or_else(|| self.current_execution_run_id());
         let payload = serde_json::json!({
             "task": record.task,
             "record_id": record.closure_record_id,
             "record_sequence": record_sequence,
             "record_status": "current",
+            "closure_status": "current",
+            "source_plan_path": source_plan_path,
+            "source_plan_revision": source_plan_revision,
+            "execution_run_id": execution_run_id,
             "dispatch_id": record.dispatch_id,
             "closure_record_id": record.closure_record_id,
             "reviewed_state_id": record.reviewed_state_id,
@@ -1947,7 +1968,7 @@ impl AuthoritativeTransitionState {
         if !removed_closure_ids.is_empty() {
             let history = self.task_closure_record_history_mut()?;
             for closure_record_id in removed_closure_ids {
-                mark_record_status(history, &closure_record_id, "historical");
+                mark_record_status(history, &closure_record_id, "superseded");
             }
             removed_any = true;
         }
@@ -2247,12 +2268,20 @@ impl AuthoritativeTransitionState {
         }
         let mut restored = serde_json::Map::new();
         for record in recoverable.into_values() {
+            let closure_status = record
+                .closure_status
+                .clone()
+                .unwrap_or_else(|| String::from("current"));
             restored.insert(
                 format!("task-{}", record.task),
                 serde_json::json!({
                     "task": record.task,
                     "record_id": record.closure_record_id,
                     "record_status": "current",
+                    "closure_status": closure_status,
+                    "source_plan_path": record.source_plan_path,
+                    "source_plan_revision": record.source_plan_revision,
+                    "execution_run_id": record.execution_run_id,
                     "dispatch_id": record.dispatch_id,
                     "closure_record_id": record.closure_record_id,
                     "reviewed_state_id": record.reviewed_state_id,
@@ -3071,6 +3100,9 @@ fn current_task_closure_record_from_payload(
         task,
         dispatch_id: json_string(&payload_value, "dispatch_id")?,
         closure_record_id: json_string(&payload_value, "closure_record_id")?,
+        source_plan_path: json_string(&payload_value, "source_plan_path"),
+        source_plan_revision: json_u32(&payload_value, "source_plan_revision"),
+        execution_run_id: json_string(&payload_value, "execution_run_id"),
         reviewed_state_id: json_string(&payload_value, "reviewed_state_id")?,
         contract_identity: json_string(&payload_value, "contract_identity")?,
         effective_reviewed_surface_paths: json_string_array(
@@ -3081,6 +3113,7 @@ fn current_task_closure_record_from_payload(
         review_summary_hash: json_string(&payload_value, "review_summary_hash")?,
         verification_result: json_string(&payload_value, "verification_result")?,
         verification_summary_hash: json_string(&payload_value, "verification_summary_hash")?,
+        closure_status: json_string(&payload_value, "closure_status"),
     })
 }
 
@@ -3124,6 +3157,7 @@ mod tests {
     use super::BrowserQaResultRecord;
     use super::FinalReviewMilestoneRecord;
     use super::ReleaseReadinessResultRecord;
+    use super::TaskClosureResultRecord;
     use super::remove_stale_write_authority_lock;
     use std::path::PathBuf;
 
@@ -3538,5 +3572,121 @@ mod tests {
         assert_eq!(current_identity.branch_closure_id, "branch-closure-current");
         assert_eq!(current_identity.reviewed_state_id, "git_tree:current");
         assert_eq!(current_identity.contract_identity, "branch-contract-current");
+    }
+
+    #[test]
+    fn task_closure_history_marks_replaced_record_superseded() {
+        let mut authoritative_state = AuthoritativeTransitionState {
+            state_path: PathBuf::from("/tmp/authoritative-state.json"),
+            state_payload: json!({
+                "run_identity": {
+                    "execution_run_id": "run-unit-test",
+                    "source_plan_path": "docs/featureforge/plans/example.md",
+                    "source_plan_revision": 7
+                },
+                "current_task_closure_records": {
+                    "task-1": {
+                        "task": 1,
+                        "record_id": "task-closure-old",
+                        "record_sequence": 1,
+                        "record_status": "current",
+                        "closure_status": "current",
+                        "dispatch_id": "dispatch-1",
+                        "closure_record_id": "task-closure-old",
+                        "reviewed_state_id": "git_tree:old",
+                        "contract_identity": "task-contract-1",
+                        "effective_reviewed_surface_paths": ["README.md"],
+                        "review_result": "pass",
+                        "review_summary_hash": "review-old",
+                        "verification_result": "pass",
+                        "verification_summary_hash": "verify-old"
+                    }
+                },
+                "task_closure_record_history": {
+                    "task-closure-old": {
+                        "task": 1,
+                        "record_id": "task-closure-old",
+                        "record_sequence": 1,
+                        "record_status": "current",
+                        "closure_status": "current",
+                        "dispatch_id": "dispatch-1",
+                        "closure_record_id": "task-closure-old",
+                        "reviewed_state_id": "git_tree:old",
+                        "contract_identity": "task-contract-1",
+                        "effective_reviewed_surface_paths": ["README.md"],
+                        "review_result": "pass",
+                        "review_summary_hash": "review-old",
+                        "verification_result": "pass",
+                        "verification_summary_hash": "verify-old"
+                    }
+                }
+            }),
+            phase: None,
+            active_contract: None,
+            dirty: false,
+        };
+
+        authoritative_state
+            .remove_current_task_closure_results([1])
+            .expect("removing superseded task closure should succeed");
+
+        assert!(
+            authoritative_state.state_payload["current_task_closure_records"]["task-1"].is_null(),
+            "removed current task closure overlay should no longer retain the superseded task record"
+        );
+        assert_eq!(
+            authoritative_state.state_payload["task_closure_record_history"]["task-closure-old"]
+                ["record_status"],
+            "superseded"
+        );
+        assert_eq!(
+            authoritative_state.state_payload["task_closure_record_history"]["task-closure-old"]
+                ["closure_status"],
+            "superseded"
+        );
+    }
+
+    #[test]
+    fn task_closure_record_persists_run_identity_bindings() {
+        let mut authoritative_state = AuthoritativeTransitionState {
+            state_path: PathBuf::from("/tmp/authoritative-state.json"),
+            state_payload: json!({
+                "run_identity": {
+                    "execution_run_id": "run-unit-test",
+                    "source_plan_path": "docs/featureforge/plans/example.md",
+                    "source_plan_revision": 7
+                },
+                "current_task_closure_records": {},
+                "task_closure_record_history": {}
+            }),
+            phase: None,
+            active_contract: None,
+            dirty: false,
+        };
+
+        authoritative_state
+            .record_task_closure_result(TaskClosureResultRecord {
+                task: 1,
+                dispatch_id: "dispatch-1",
+                closure_record_id: "task-closure-new",
+                reviewed_state_id: "git_tree:new",
+                contract_identity: "task-contract-1",
+                effective_reviewed_surface_paths: &["README.md".to_owned()],
+                review_result: "pass",
+                review_summary_hash: "review-new",
+                verification_result: "pass",
+                verification_summary_hash: "verify-new",
+            })
+            .expect("task closure record should persist");
+
+        let payload =
+            &authoritative_state.state_payload["task_closure_record_history"]["task-closure-new"];
+        assert_eq!(
+            payload["source_plan_path"],
+            "docs/featureforge/plans/example.md"
+        );
+        assert_eq!(payload["source_plan_revision"], 7);
+        assert_eq!(payload["execution_run_id"], "run-unit-test");
+        assert_eq!(payload["closure_status"], "current");
     }
 }
