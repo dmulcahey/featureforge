@@ -804,6 +804,17 @@ fn checked_in_workflow_schemas_match_generated_output() {
     let checked_in_resolve_json: Value = serde_json::from_str(&checked_in_resolve)
         .expect("checked-in workflow-resolve schema should parse");
     assert_eq!(generated_resolve_json, checked_in_resolve_json);
+
+    let generated_operator = fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
+        .expect("generated workflow-operator schema should read");
+    let checked_in_operator =
+        fs::read_to_string(repo_fixture_path("schemas/workflow-operator.schema.json"))
+            .expect("checked-in workflow-operator schema should read");
+    let generated_operator_json: Value = serde_json::from_str(&generated_operator)
+        .expect("generated workflow-operator schema should parse");
+    let checked_in_operator_json: Value = serde_json::from_str(&checked_in_operator)
+        .expect("checked-in workflow-operator schema should parse");
+    assert_eq!(generated_operator_json, checked_in_operator_json);
 }
 
 #[test]

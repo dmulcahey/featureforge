@@ -25,6 +25,7 @@ use crate::git::{
     stored_repo_root_matches_current,
 };
 use crate::paths::{RepoPath, featureforge_state_dir};
+use crate::workflow::operator::WorkflowOperator;
 use crate::workflow::manifest::{
     ManifestLoadResult, WorkflowManifest, load_manifest, load_manifest_read_only, manifest_path,
     recover_slug_changed_manifest, recover_slug_changed_manifest_read_only, save_manifest,
@@ -1135,6 +1136,7 @@ pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
 
     let status_schema = workflow_route_schema_json("workflow status")?;
     let resolve_schema = workflow_route_schema_json("workflow resolve")?;
+    let operator_schema = workflow_operator_schema_json("workflow operator")?;
 
     fs::write(
         output_dir.join("workflow-status.schema.json"),
@@ -1156,6 +1158,16 @@ pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
             format!("Could not write workflow-resolve schema: {err}"),
         )
     })?;
+    fs::write(
+        output_dir.join("workflow-operator.schema.json"),
+        operator_schema,
+    )
+    .map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not write workflow-operator schema: {err}"),
+        )
+    })?;
 
     Ok(())
 }
@@ -1169,6 +1181,15 @@ fn workflow_route_schema_json(schema_label: &str) -> Result<String, DiagnosticEr
     })?;
     lock_workflow_route_schema_version(&mut schema)?;
     serde_json::to_string_pretty(&schema).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize {schema_label} schema: {err}"),
+        )
+    })
+}
+
+fn workflow_operator_schema_json(schema_label: &str) -> Result<String, DiagnosticError> {
+    serde_json::to_string_pretty(&schema_for!(WorkflowOperator)).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
             format!("Could not serialize {schema_label} schema: {err}"),

@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkflowOperator",
+  "type": "object",
+  "properties": {
+    "execution_command_context": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowOperatorExecutionCommandContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "finish_review_gate_pass_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "follow_up_override": {
+      "type": "string"
+    },
+    "next_action": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "phase_detail": {
+      "type": "string"
+    },
+    "plan_path": {
+      "type": "string"
+    },
+    "qa_requirement": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "recommended_command": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "recording_context": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowOperatorRecordingContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "review_state_status": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "spec_path": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "phase",
+    "phase_detail",
+    "review_state_status",
+    "follow_up_override",
+    "next_action",
+    "spec_path",
+    "plan_path"
+  ],
+  "$defs": {
+    "WorkflowOperatorExecutionCommandContext": {
+      "type": "object",
+      "properties": {
+        "command_kind": {
+          "type": "string"
+        },
+        "step_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "task_number": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "command_kind"
+      ]
+    },
+    "WorkflowOperatorRecordingContext": {
+      "type": "object",
+      "properties": {
+        "branch_closure_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dispatch_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_number": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
