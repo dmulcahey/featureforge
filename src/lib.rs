@@ -7,6 +7,7 @@ use cli::{Command, PlanCommand, RepoCommand};
 use diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use serde_json::{Value, json};
 
+pub mod benchmarking;
 pub mod cli;
 pub mod config;
 pub mod contracts;

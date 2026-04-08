@@ -69,6 +69,15 @@ where
     }
 }
 
+pub fn render_run_gate_message(config: &BenchConfig) -> Option<String> {
+    (!config.run_requested).then(|| {
+        format!(
+            "Skipping {} benchmark; pass --run-benchmark to execute.",
+            config.benchmark
+        )
+    })
+}
+
 fn os_string_to_string(value: OsString) -> String {
     value
         .into_string()
@@ -77,7 +86,7 @@ fn os_string_to_string(value: OsString) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{BenchConfig, parse_args_from};
+    use super::{BenchConfig, parse_args_from, render_run_gate_message};
     use std::path::PathBuf;
 
     #[test]
@@ -117,5 +126,22 @@ mod tests {
                 run_requested: true,
             }
         );
+    }
+
+    #[test]
+    fn benchmark_run_gate_message_requires_run_flag() {
+        let config = parse_args_from("workflow_status", std::iter::empty::<&str>());
+        assert_eq!(
+            render_run_gate_message(&config),
+            Some(String::from(
+                "Skipping workflow_status benchmark; pass --run-benchmark to execute.",
+            ))
+        );
+    }
+
+    #[test]
+    fn benchmark_run_gate_message_is_absent_when_run_requested() {
+        let config = parse_args_from("workflow_status", ["--run-benchmark"]);
+        assert_eq!(render_run_gate_message(&config), None);
     }
 }
