@@ -338,3 +338,20 @@ pub(crate) fn restore_current_late_stage_overlays(
     authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(actions_performed)
 }
+
+pub(crate) fn clear_task_review_dispatch_lineage_for_execution_reentry(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    task_number: u32,
+) -> Result<bool, JsonFailure> {
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(false);
+    };
+    if !authoritative_state.clear_task_review_dispatch_lineage(task_number)? {
+        return Ok(false);
+    }
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(true)
+}

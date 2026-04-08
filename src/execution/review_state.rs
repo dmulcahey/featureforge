@@ -13,13 +13,12 @@ use crate::execution::query::{
     ReviewStateBranchClosure, ReviewStateTaskClosure, query_review_state,
 };
 use crate::execution::recording::{
+    clear_task_review_dispatch_lineage_for_execution_reentry as clear_task_dispatch_lineage,
     restore_current_branch_closure_overlay as persist_current_branch_closure_overlay,
     restore_current_late_stage_overlays, restore_current_task_closure_overlays,
 };
 use crate::execution::state::{ExecutionRuntime, load_execution_context, status_from_context};
-use crate::execution::transitions::{
-    load_authoritative_transition_state, load_authoritative_transition_state_relaxed,
-};
+use crate::execution::transitions::load_authoritative_transition_state_relaxed;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ExplainReviewStateOutput {
@@ -408,11 +407,7 @@ fn clear_task_review_dispatch_lineage_for_execution_reentry(
         return Ok(());
     };
     let context = load_execution_context(runtime, &args.plan)?;
-    let Some(mut authoritative_state) = load_authoritative_transition_state(&context)? else {
-        return Ok(());
-    };
-    if authoritative_state.clear_task_review_dispatch_lineage(task_number)? {
-        authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    if clear_task_dispatch_lineage(runtime, &context, task_number)? {
         actions_performed.push(format!(
             "cleared_task_review_dispatch_lineage_task_{task_number}"
         ));
