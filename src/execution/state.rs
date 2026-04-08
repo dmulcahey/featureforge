@@ -1607,14 +1607,36 @@ pub fn load_execution_context(
     runtime: &ExecutionRuntime,
     plan_path: &Path,
 ) -> Result<ExecutionContext, JsonFailure> {
-    load_execution_context_with_legacy_policy(runtime, plan_path, LegacyEvidencePolicy::Reject)
+    load_execution_context_with_policies(
+        runtime,
+        plan_path,
+        LegacyEvidencePolicy::Reject,
+        ApprovedArtifactSelectionPolicy::RequireUnique,
+    )
 }
 
 pub(crate) fn load_execution_context_for_mutation(
     runtime: &ExecutionRuntime,
     plan_path: &Path,
 ) -> Result<ExecutionContext, JsonFailure> {
-    load_execution_context_with_legacy_policy(runtime, plan_path, LegacyEvidencePolicy::Allow)
+    load_execution_context_with_policies(
+        runtime,
+        plan_path,
+        LegacyEvidencePolicy::Allow,
+        ApprovedArtifactSelectionPolicy::RequireUnique,
+    )
+}
+
+pub(crate) fn load_execution_context_for_exact_plan_query(
+    runtime: &ExecutionRuntime,
+    plan_path: &Path,
+) -> Result<ExecutionContext, JsonFailure> {
+    load_execution_context_with_policies(
+        runtime,
+        plan_path,
+        LegacyEvidencePolicy::Reject,
+        ApprovedArtifactSelectionPolicy::AllowExactPlan,
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1623,10 +1645,17 @@ enum LegacyEvidencePolicy {
     Allow,
 }
 
-fn load_execution_context_with_legacy_policy(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovedArtifactSelectionPolicy {
+    RequireUnique,
+    AllowExactPlan,
+}
+
+fn load_execution_context_with_policies(
     runtime: &ExecutionRuntime,
     plan_path: &Path,
     legacy_evidence_policy: LegacyEvidencePolicy,
+    selection_policy: ApprovedArtifactSelectionPolicy,
 ) -> Result<ExecutionContext, JsonFailure> {
     let plan_rel = normalize_plan_path(plan_path)?;
     let plan_abs = runtime.repo_root.join(&plan_rel);
@@ -1696,6 +1725,7 @@ fn load_execution_context_with_legacy_policy(
         plan_document.source_spec_revision,
         runtime,
         matching_manifest.as_ref(),
+        selection_policy,
     )?;
     validate_unique_approved_plan(
         &plan_rel,
@@ -1703,6 +1733,7 @@ fn load_execution_context_with_legacy_policy(
         plan_document.source_spec_revision,
         runtime,
         matching_manifest.as_ref(),
+        selection_policy,
     )?;
 
     let evidence_rel = derive_evidence_rel_path(&plan_rel, plan_document.plan_revision);
@@ -2530,6 +2561,9 @@ fn populate_public_status_contract_fields(
     {
         status.current_branch_closure_id = Some(current_identity.branch_closure_id);
         status.current_branch_reviewed_state_id = Some(current_identity.reviewed_state_id);
+    } else {
+        status.current_branch_closure_id = None;
+        status.current_branch_reviewed_state_id = None;
     }
     status.current_final_review_branch_closure_id = authoritative_state
         .as_ref()
@@ -2705,6 +2739,8 @@ fn derive_public_review_state_status(
                 | "final_review_state_stale"
                 | "browser_qa_state_stale"
                 | "release_docs_state_stale"
+                | "review_receipt_reviewer_fingerprint_invalid"
+                | "review_receipt_reviewer_fingerprint_mismatch"
         )
     }) {
         return String::from("stale_unreviewed");
@@ -2809,19 +2845,21 @@ fn task_review_result_pending_task(
         return None;
     }
     let blocking_task = status.blocking_task?;
+    let reason_code = task_boundary_block_reason_code(status)?;
     let dispatch_id = dispatch_id?.trim();
     if dispatch_id.is_empty() {
         return None;
     }
-    if status
-        .reason_codes
-        .iter()
-        .any(|code| code == "prior_task_review_not_green")
-    {
-        Some(blocking_task)
-    } else {
-        None
-    }
+    matches!(
+        reason_code,
+        "prior_task_review_not_green"
+            | "task_review_not_independent"
+            | "task_review_receipt_malformed"
+            | "prior_task_verification_missing"
+            | "prior_task_verification_missing_legacy"
+            | "task_verification_receipt_malformed"
+    )
+    .then_some(blocking_task)
 }
 
 fn finish_requires_test_plan_refresh(gate_finish: Option<&GateResult>) -> bool {
@@ -2858,6 +2896,12 @@ fn derive_public_phase_detail(
     }
     if review_state_status == "stale_unreviewed" {
         return String::from("execution_reentry_required");
+    }
+    if task_review_dispatch_task(status).is_some() {
+        return String::from("task_review_dispatch_required");
+    }
+    if task_review_result_pending_task(status, task_review_dispatch_id).is_some() {
+        return String::from("task_review_result_pending");
     }
 
     match status.harness_phase {
@@ -2908,11 +2952,7 @@ fn derive_public_phase_detail(
             }
         }
         HarnessPhase::Executing => {
-            if task_review_dispatch_task(status).is_some() {
-                String::from("task_review_dispatch_required")
-            } else if task_review_result_pending_task(status, task_review_dispatch_id).is_some() {
-                String::from("task_review_result_pending")
-            } else if status.active_task.is_some()
+            if status.active_task.is_some()
                 || status.blocking_step.is_some()
                 || status.resume_task.is_some()
             {
@@ -3263,7 +3303,7 @@ fn public_exact_execution_command_required(status: &PlanExecutionStatus) -> bool
         )
 }
 
-fn require_public_exact_execution_command(
+pub(crate) fn require_public_exact_execution_command(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
 ) -> Result<(), JsonFailure> {
@@ -3371,18 +3411,50 @@ fn derive_public_blocking_records(
                 ),
             )
         };
+        let stale_targets = if status.stale_unreviewed_closures.is_empty() {
+            vec![
+                status
+                    .current_branch_closure_id
+                    .clone()
+                    .unwrap_or_else(|| String::from("current")),
+            ]
+        } else {
+            status.stale_unreviewed_closures.clone()
+        };
+        return stale_targets
+            .into_iter()
+            .map(|scope_key| StatusBlockingRecord {
+                code: code.clone(),
+                scope_type: String::from(if scope_key.starts_with("task-") {
+                    "task"
+                } else {
+                    "branch"
+                }),
+                scope_key: scope_key.clone(),
+                record_type: String::from("review_state"),
+                record_id: Some(scope_key),
+                review_state_status: status.review_state_status.clone(),
+                required_follow_up: Some(String::from("repair_review_state")),
+                message: message.clone(),
+            })
+            .collect();
+    }
+
+    if status.phase_detail == "release_blocker_resolution_required" {
         return vec![StatusBlockingRecord {
-            code,
+            code: String::from("release_blocker_resolution_required"),
             scope_type: String::from("branch"),
             scope_key: status
                 .current_branch_closure_id
                 .clone()
                 .unwrap_or_else(|| String::from("current")),
-            record_type: String::from("review_state"),
+            record_type: String::from("release_readiness"),
             record_id: status.current_branch_closure_id.clone(),
             review_state_status: status.review_state_status.clone(),
-            required_follow_up: Some(String::from("repair_review_state")),
-            message,
+            required_follow_up: Some(String::from("resolve_release_blocker")),
+            message: String::from(
+                "The latest release-readiness result for the current branch closure is blocked and must be resolved before late-stage progression can continue.",
+            ),
         }];
     }
 
@@ -3420,17 +3492,6 @@ fn current_branch_reviewed_state_id(context: &ExecutionContext) -> Option<String
         .and_then(|state| state)
         .and_then(|state| state.recoverable_current_branch_closure_identity())
         .map(|identity| identity.reviewed_state_id)
-        .or_else(|| {
-            load_status_authoritative_overlay_checked(context)
-                .ok()
-                .and_then(|overlay| overlay)
-                .and_then(|overlay| {
-                    normalize_optional_overlay_value(
-                        overlay.current_branch_closure_reviewed_state_id.as_deref(),
-                    )
-                    .map(str::to_owned)
-                })
-        })
 }
 
 fn current_branch_closure_id(context: &ExecutionContext) -> Option<String> {
@@ -3439,15 +3500,6 @@ fn current_branch_closure_id(context: &ExecutionContext) -> Option<String> {
         .and_then(|state| state)
         .and_then(|state| state.recoverable_current_branch_closure_identity())
         .map(|identity| identity.branch_closure_id)
-        .or_else(|| {
-            load_status_authoritative_overlay_checked(context)
-                .ok()
-                .and_then(|overlay| overlay)
-                .and_then(|overlay| {
-                    normalize_optional_overlay_value(overlay.current_branch_closure_id.as_deref())
-                        .map(str::to_owned)
-                })
-        })
 }
 
 fn finish_review_gate_pass_branch_closure_id(
@@ -8856,6 +8908,7 @@ fn validate_source_spec(
     expected_revision: u32,
     runtime: &ExecutionRuntime,
     matching_manifest: Option<&WorkflowManifest>,
+    selection_policy: ApprovedArtifactSelectionPolicy,
 ) -> Result<(), JsonFailure> {
     let headers = parse_headers(source);
     if headers.get("Workflow State") != Some(&String::from("CEO Approved")) {
@@ -8886,7 +8939,13 @@ fn validate_source_spec(
     let approved_spec_candidates = approved_spec_candidate_paths(&runtime.repo_root);
     let manifest_selected_spec =
         matching_manifest.is_some_and(|manifest| manifest.expected_spec_path == expected_path);
-    if approved_spec_candidates.len() > 1 && !manifest_selected_spec {
+    if approved_spec_candidates.len() > 1
+        && !manifest_selected_spec
+        && !matches!(
+            selection_policy,
+            ApprovedArtifactSelectionPolicy::AllowExactPlan
+        )
+    {
         return Err(JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             "Approved spec candidates are ambiguous.",
@@ -8910,12 +8969,19 @@ fn validate_unique_approved_plan(
     source_spec_revision: u32,
     runtime: &ExecutionRuntime,
     matching_manifest: Option<&WorkflowManifest>,
+    selection_policy: ApprovedArtifactSelectionPolicy,
 ) -> Result<(), JsonFailure> {
     let approved_plan_candidates =
         approved_plan_candidate_paths(&runtime.repo_root, source_spec_path, source_spec_revision);
     let manifest_selected_plan =
         matching_manifest.is_some_and(|manifest| manifest.expected_plan_path == expected_plan_path);
-    if approved_plan_candidates.len() > 1 && !manifest_selected_plan {
+    if approved_plan_candidates.len() > 1
+        && !manifest_selected_plan
+        && !matches!(
+            selection_policy,
+            ApprovedArtifactSelectionPolicy::AllowExactPlan
+        )
+    {
         return Err(JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             "Approved plan candidates are ambiguous.",

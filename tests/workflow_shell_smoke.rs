@@ -3658,23 +3658,24 @@ fn workflow_operator_reroutes_dispatched_final_review_without_release_ready() {
         "workflow operator should reroute dispatched final review without release readiness",
     );
 
-    assert_eq!(operator_json["phase"], "executing");
-    assert_eq!(operator_json["phase_detail"], "execution_reentry_required");
-    assert_eq!(operator_json["review_state_status"], "stale_unreviewed");
-    assert!(
-        operator_json["recording_context"].is_null(),
-        "json: {operator_json}"
-    );
+    assert_eq!(operator_json["phase"], "document_release_pending");
     assert_eq!(
-        operator_json["next_action"],
-        "repair review state / reenter execution"
+        operator_json["phase_detail"],
+        "release_readiness_recording_ready"
     );
+    assert_eq!(operator_json["review_state_status"], "clean");
+    assert_eq!(
+        operator_json["recording_context"]["branch_closure_id"],
+        "branch-release-closure"
+    );
+    assert_eq!(operator_json["next_action"], "advance late stage");
     assert_eq!(
         operator_json["recommended_command"],
         Value::from(format!(
-            "featureforge plan execution repair-review-state --plan {plan_rel}"
+            "featureforge plan execution advance-late-stage --plan {plan_rel} --result ready|blocked --summary-file <path>"
         ))
     );
+
 }
 
 #[test]
@@ -3738,6 +3739,32 @@ fn workflow_operator_reroutes_dispatched_final_review_blocked_release_ready_to_r
         Value::from(format!(
             "featureforge plan execution advance-late-stage --plan {plan_rel} --result ready|blocked --summary-file <path>"
         ))
+    );
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status should surface blocked release readiness as an active blocker",
+    );
+    assert_eq!(
+        status_json["phase_detail"],
+        "release_blocker_resolution_required"
+    );
+    assert_eq!(status_json["review_state_status"], "clean");
+    assert_eq!(
+        status_json["recording_context"]["branch_closure_id"],
+        "branch-release-closure"
+    );
+    assert!(
+        status_json["blocking_records"]
+            .as_array()
+            .is_some_and(|records| records.iter().any(|record| {
+                record["code"] == Value::from("release_blocker_resolution_required")
+                    && record["scope_type"] == Value::from("branch")
+                    && record["required_follow_up"] == Value::from("resolve_release_blocker")
+            })),
+        "status should expose a structured release blocker summary: {status_json}"
     );
 }
 
@@ -4819,6 +4846,24 @@ fn workflow_operator_routes_tampered_reviewer_artifact_to_repair_review_state() 
         Value::from(format!(
             "featureforge plan execution repair-review-state --plan {plan_rel}"
         ))
+    );
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status should surface reviewer-artifact tamper as stale_unreviewed",
+    );
+    assert_eq!(status_json["review_state_status"], "stale_unreviewed");
+    assert_eq!(status_json["phase_detail"], "execution_reentry_required");
+    assert!(
+        status_json["blocking_records"]
+            .as_array()
+            .is_some_and(|records| records.iter().any(|record| {
+                record["code"] == Value::from("stale_unreviewed")
+                    && record["required_follow_up"] == Value::from("repair_review_state")
+            })),
+        "status should expose a stale_unreviewed blocking record after reviewer-artifact tamper: {status_json}"
     );
 
     let rerun = run_plan_execution_json(
@@ -9159,6 +9204,61 @@ fn plan_execution_record_branch_closure_same_id_reassertion_preserves_release_re
     assert_eq!(
         authoritative_state["release_docs_state"],
         Value::from("fresh")
+    );
+}
+
+#[test]
+fn plan_execution_status_ignores_overlay_only_branch_closure_without_authoritative_record() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("plan-execution-status-overlay-only-branch-closure");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_document_release_pending_with_current_closure_case(repo, state, plan_rel, &base_branch);
+
+    let mut payload = authoritative_harness_state(repo, state);
+    let branch_closure_id = payload["current_branch_closure_id"]
+        .as_str()
+        .expect("fixture should expose a current branch closure id")
+        .to_owned();
+    payload["branch_closure_records"]
+        .as_object_mut()
+        .expect("branch_closure_records should remain an object")
+        .remove(&branch_closure_id);
+    write_authoritative_harness_state(repo, state, &payload);
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status should not treat an overlay-only branch closure as authoritative current truth",
+    );
+
+    assert!(status_json["current_branch_closure_id"].is_null());
+    assert_eq!(
+        status_json["review_state_status"],
+        Value::from("missing_current_closure")
+    );
+    assert_eq!(
+        status_json["phase_detail"],
+        Value::from("branch_closure_recording_required_for_release_readiness")
+    );
+    assert_eq!(status_json["next_action"], Value::from("record branch closure"));
+    assert_eq!(
+        status_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution record-branch-closure --plan {plan_rel}"
+        ))
+    );
+    assert!(
+        status_json["blocking_records"]
+            .as_array()
+            .is_some_and(|records| records.iter().any(|record| {
+                record["code"] == Value::from("missing_current_closure")
+                    && record["record_type"] == Value::from("branch_closure")
+                    && record["required_follow_up"] == Value::from("record_branch_closure")
+            })),
+        "status should surface the missing current branch closure blocker when the authoritative record is absent: {status_json}"
     );
 }
 

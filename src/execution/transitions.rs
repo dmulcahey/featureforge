@@ -2305,12 +2305,39 @@ impl AuthoritativeTransitionState {
         })
     }
 
+    fn current_branch_closure_identity_record(
+        &self,
+        branch_closure_id: &str,
+    ) -> Option<BranchClosureRecord> {
+        let payload = self
+            .state_payload
+            .get("branch_closure_records")
+            .and_then(Value::as_object)?
+            .get(branch_closure_id)?
+            .as_object()?;
+        let payload_value = Value::Object(payload.clone());
+        if let Some(recorded_branch_closure_id) = json_string(&payload_value, "branch_closure_id")
+            && recorded_branch_closure_id.trim() != branch_closure_id
+        {
+            return None;
+        }
+        if let Some(closure_status) = json_string(&payload_value, "closure_status")
+            && closure_status.trim() != "current"
+        {
+            return None;
+        }
+        Some(BranchClosureRecord {
+            reviewed_state_id: json_string(&payload_value, "reviewed_state_id")?,
+            contract_identity: json_string(&payload_value, "contract_identity")?,
+        })
+    }
+
     pub(crate) fn recoverable_current_branch_closure_identity(
         &self,
     ) -> Option<CurrentBranchClosureIdentity> {
         if let Some(branch_closure_id) =
             json_string(&self.state_payload, "current_branch_closure_id")
-            && let Some(record) = self.branch_closure_record(&branch_closure_id)
+            && let Some(record) = self.current_branch_closure_identity_record(&branch_closure_id)
         {
             return Some(CurrentBranchClosureIdentity {
                 branch_closure_id,
@@ -3491,5 +3518,25 @@ mod tests {
                 .is_none(),
             "incomplete branch-closure records must not satisfy current authoritative identity lookups"
         );
+    }
+
+    #[test]
+    fn recoverable_current_branch_closure_identity_accepts_minimal_current_record_binding() {
+        let mut authoritative_state =
+            transition_state_with_current_branch_closure("branch-closure-current");
+        authoritative_state.state_payload["branch_closure_records"] = json!({
+            "branch-closure-current": {
+                "reviewed_state_id": "git_tree:current",
+                "contract_identity": "branch-contract-current"
+            }
+        });
+
+        let current_identity = authoritative_state
+            .recoverable_current_branch_closure_identity()
+            .expect("explicit current branch closure binding should be recoverable");
+
+        assert_eq!(current_identity.branch_closure_id, "branch-closure-current");
+        assert_eq!(current_identity.reviewed_state_id, "git_tree:current");
+        assert_eq!(current_identity.contract_identity, "branch-contract-current");
     }
 }

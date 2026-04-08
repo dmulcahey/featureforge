@@ -9,6 +9,7 @@ use std::process::Command;
 use serde::Serialize;
 
 use crate::cli::plan_execution::StatusArgs;
+use crate::contracts::plan::{analyze_plan, parse_plan_file};
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
 use crate::execution::leases::{
@@ -21,10 +22,12 @@ use crate::execution::mutate::{
 use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED;
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, GateResult, PlanExecutionStatus, gate_finish_from_context,
-    gate_review_from_context, load_execution_context, missing_derived_review_state_fields,
-    resolve_exact_execution_command, status_from_context,
+    gate_review_from_context, load_execution_context, load_execution_context_for_exact_plan_query,
+    missing_derived_review_state_fields, preflight_from_context,
+    require_public_exact_execution_command, resolve_exact_execution_command, status_from_context,
 };
 use crate::execution::transitions::load_authoritative_transition_state_relaxed;
+use crate::paths::RepoPath;
 use crate::workflow::late_stage_precedence::{
     GateState, LateStageSignals, resolve as resolve_late_stage_precedence,
 };
@@ -121,7 +124,19 @@ pub fn query_review_state(
     runtime: &ExecutionRuntime,
     args: &StatusArgs,
 ) -> Result<ReviewStateSnapshot, JsonFailure> {
-    let context = load_execution_context(runtime, &args.plan)?;
+    query_review_state_internal(runtime, &args.plan, false)
+}
+
+fn query_review_state_internal(
+    runtime: &ExecutionRuntime,
+    plan_path: &std::path::Path,
+    exact_plan_override: bool,
+) -> Result<ReviewStateSnapshot, JsonFailure> {
+    let context = if exact_plan_override {
+        load_execution_context_for_exact_plan_query(runtime, plan_path)?
+    } else {
+        load_execution_context(runtime, plan_path)?
+    };
     let status = status_from_context(&context)?;
     let overlay = load_status_authoritative_overlay_checked(&context)?;
     let authoritative_state = load_authoritative_transition_state_relaxed(&context)?;
@@ -150,30 +165,6 @@ pub fn query_review_state(
             branch_closure_id: identity.branch_closure_id,
             reviewed_state_id: Some(identity.reviewed_state_id),
             contract_identity: Some(identity.contract_identity),
-        })
-        .or_else(|| {
-            overlay.as_ref().and_then(|overlay| {
-                overlay
-                    .current_branch_closure_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(|branch_closure_id| ReviewStateBranchClosure {
-                        branch_closure_id: branch_closure_id.to_owned(),
-                        reviewed_state_id: overlay
-                            .current_branch_closure_reviewed_state_id
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(str::to_owned),
-                        contract_identity: overlay
-                            .current_branch_closure_contract_identity
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(str::to_owned),
-                    })
-            })
         });
     let superseded_closures = authoritative_state
         .as_ref()
@@ -218,17 +209,28 @@ pub fn query_workflow_execution_state(
     runtime: &ExecutionRuntime,
     plan_path: &str,
 ) -> Result<WorkflowExecutionState, JsonFailure> {
+    query_workflow_execution_state_internal(runtime, plan_path, false)
+}
+
+fn query_workflow_execution_state_internal(
+    runtime: &ExecutionRuntime,
+    plan_path: &str,
+    exact_plan_override: bool,
+) -> Result<WorkflowExecutionState, JsonFailure> {
     if plan_path.is_empty() {
         return Ok(WorkflowExecutionState::default());
     }
-    let context = load_execution_context(runtime, &PathBuf::from(plan_path))?;
+    let plan_path_buf = PathBuf::from(plan_path);
+    let context = if exact_plan_override {
+        load_execution_context_for_exact_plan_query(runtime, &plan_path_buf)?
+    } else {
+        load_execution_context(runtime, &plan_path_buf)?
+    };
     let overlay = load_status_authoritative_overlay_checked(&context)?;
     let authoritative_state = load_authoritative_transition_state_relaxed(&context)?;
-    let status_args = StatusArgs {
-        plan: PathBuf::from(plan_path),
-    };
-    let review_state_snapshot = query_review_state(runtime, &status_args)?;
-    let mut execution_status = runtime.status(&status_args)?;
+    let review_state_snapshot = query_review_state_internal(runtime, &plan_path_buf, exact_plan_override)?;
+    let mut execution_status = status_from_context(&context)?;
+    require_public_exact_execution_command(&context, &execution_status)?;
     if let Some(shared_status) =
         started_status_from_same_branch_worktree(&runtime.repo_root, plan_path, &execution_status)
     {
@@ -244,7 +246,7 @@ pub fn query_workflow_execution_state(
             gate_review = Some(review);
         }
     } else if !status_has_accepted_preflight(&execution_status) {
-        preflight = Some(runtime.preflight_read_only(&status_args)?);
+        preflight = Some(preflight_from_context(&context));
     }
     let task_review_dispatch_id = overlay.as_ref().and_then(|overlay| {
         execution_status
@@ -279,6 +281,10 @@ pub fn query_workflow_execution_state(
                 state.current_task_closure_overlay_needs_restore()
                     || state.task_closure_negative_result_overlay_needs_restore()
             });
+    let authoritative_current_branch_closure_id = authoritative_state
+        .as_ref()
+        .and_then(|state| state.recoverable_current_branch_closure_identity())
+        .map(|identity| identity.branch_closure_id);
     let final_review_dispatch_id = overlay.as_ref().and_then(|overlay| {
         overlay
             .final_review_dispatch_lineage
@@ -289,7 +295,7 @@ pub fn query_workflow_execution_state(
                     return None;
                 }
                 let branch_closure_id = record.branch_closure_id.as_deref()?;
-                if overlay.current_branch_closure_id.as_deref()? != branch_closure_id {
+                if authoritative_current_branch_closure_id.as_deref()? != branch_closure_id {
                     return None;
                 }
                 record.dispatch_id.clone()
@@ -307,9 +313,7 @@ pub fn query_workflow_execution_state(
         task_negative_result_task,
         task_review_dispatch_id,
         final_review_dispatch_id,
-        current_branch_closure_id: overlay
-            .as_ref()
-            .and_then(|overlay| overlay.current_branch_closure_id.clone()),
+        current_branch_closure_id: authoritative_current_branch_closure_id,
         finish_review_gate_pass_branch_closure_id,
         current_release_readiness_result: overlay
             .as_ref()
@@ -342,7 +346,13 @@ pub fn query_workflow_routing_state(
     let workflow = WorkflowRuntime::discover_read_only(current_dir).map_err(JsonFailure::from)?;
     let mut route = workflow.resolve().map_err(JsonFailure::from)?;
     if let Some(plan_override) = plan_override {
-        route.plan_path = plan_override.to_string_lossy().into_owned();
+        if let Some(explicit_route) =
+            explicit_route_for_plan_override(&workflow, &route, plan_override)?
+        {
+            route = explicit_route;
+        } else {
+            route.plan_path = normalize_plan_override(plan_override)?;
+        }
     }
 
     let mut execution_status = None;
@@ -364,7 +374,11 @@ pub fn query_workflow_routing_state(
 
     if route.status == "implementation_ready" && !route.plan_path.is_empty() {
         let runtime = ExecutionRuntime::discover(current_dir)?;
-        let workflow_state = query_workflow_execution_state(&runtime, &route.plan_path)?;
+        let workflow_state = query_workflow_execution_state_internal(
+            &runtime,
+            &route.plan_path,
+            plan_override.is_some(),
+        )?;
         task_scope_overlay_restore_required = workflow_state.task_scope_overlay_restore_required;
         task_negative_result_task = workflow_state.task_negative_result_task;
         task_review_dispatch_id = workflow_state.task_review_dispatch_id;
@@ -481,16 +495,14 @@ pub fn query_workflow_routing_state(
                     )
                 }
             }
-        } else if matches!(
+        } else if late_stage_repair_review_state_required(
             workflow_phase.as_str(),
-            "document_release_pending"
-                | "final_review_pending"
-                | "qa_pending"
-                | "ready_for_branch_completion"
-        ) && (late_stage_stale_unreviewed(gate_review.as_ref(), gate_finish.as_ref())
-            || execution_status
-                .as_ref()
-                .is_some_and(|status| status.review_state_status == "stale_unreviewed"))
+            execution_status.as_ref(),
+            gate_review.as_ref(),
+            gate_finish.as_ref(),
+            current_branch_closure_id.as_deref(),
+            current_release_readiness_result.as_deref(),
+        )
         {
             (
                 String::from("executing"),
@@ -878,16 +890,14 @@ pub fn query_workflow_routing_state(
             String::from("execution reentry required"),
             None,
         )
-    } else if matches!(
+    } else if late_stage_repair_review_state_required(
         workflow_phase.as_str(),
-        "document_release_pending"
-            | "final_review_pending"
-            | "qa_pending"
-            | "ready_for_branch_completion"
-    ) && (late_stage_stale_unreviewed(gate_review.as_ref(), gate_finish.as_ref())
-        || execution_status
-            .as_ref()
-            .is_some_and(|status| status.review_state_status == "stale_unreviewed"))
+        execution_status.as_ref(),
+        gate_review.as_ref(),
+        gate_finish.as_ref(),
+        current_branch_closure_id.as_deref(),
+        current_release_readiness_result.as_deref(),
+    )
     {
         (
             String::from("executing"),
@@ -1742,6 +1752,104 @@ fn late_stage_observability_for_phase(
     (decision.reason_family.to_owned(), diagnostic_reason_codes)
 }
 
+fn late_stage_repair_review_state_required(
+    workflow_phase: &str,
+    execution_status: Option<&PlanExecutionStatus>,
+    gate_review: Option<&GateResult>,
+    gate_finish: Option<&GateResult>,
+    current_branch_closure_id: Option<&str>,
+    current_release_readiness_result: Option<&str>,
+) -> bool {
+    if !matches!(
+        workflow_phase,
+        "document_release_pending"
+            | "final_review_pending"
+            | "qa_pending"
+            | "ready_for_branch_completion"
+    ) {
+        return false;
+    }
+
+    let stale_review_state = late_stage_stale_unreviewed(gate_review, gate_finish)
+        || execution_status.is_some_and(|status| status.review_state_status == "stale_unreviewed");
+    if !stale_review_state {
+        return false;
+    }
+
+    if workflow_phase == "final_review_pending"
+        && (current_branch_closure_id.is_none()
+            || current_release_readiness_result != Some("ready"))
+    {
+        return false;
+    }
+
+    if workflow_phase == "qa_pending" && current_branch_closure_id.is_none() {
+        return false;
+    }
+
+    true
+}
+
+fn normalize_plan_override(plan_override: &std::path::Path) -> Result<String, JsonFailure> {
+    let raw = plan_override.to_str().ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::InvalidRepoPath,
+            "Workflow plan overrides must be valid utf-8 repo-relative paths.",
+        )
+    })?;
+    RepoPath::parse(raw)
+        .map(|path| path.as_str().to_owned())
+        .map_err(JsonFailure::from)
+}
+
+fn explicit_route_for_plan_override(
+    workflow: &WorkflowRuntime,
+    resolved_route: &WorkflowRoute,
+    plan_override: &std::path::Path,
+) -> Result<Option<WorkflowRoute>, JsonFailure> {
+    let plan_path = normalize_plan_override(plan_override)?;
+    let plan_abs = workflow.identity.repo_root.join(&plan_path);
+    if !plan_abs.is_file() {
+        return Ok(None);
+    }
+
+    let plan = parse_plan_file(&plan_abs).map_err(JsonFailure::from)?;
+    let spec_path = plan.source_spec_path.clone();
+    let spec_abs = workflow.identity.repo_root.join(&spec_path);
+    let report = analyze_plan(&spec_abs, &plan_abs).map_err(JsonFailure::from)?;
+
+    let mut route = resolved_route.clone();
+    route.plan_path = plan_path;
+    route.spec_path = spec_path;
+    route.contract_state = report.contract_state.clone();
+
+    if plan.workflow_state == "Engineering Approved" && report.contract_state == "valid" {
+        route.status = String::from("implementation_ready");
+        route.next_skill.clear();
+        route.reason_codes = vec![String::from("implementation_ready")];
+        route.diagnostics.clear();
+        route.reason = String::from("implementation_ready");
+        route.note = String::from("implementation_ready");
+        return Ok(Some(route));
+    }
+
+    if plan.workflow_state == "Engineering Approved" && report.contract_state == "stale" {
+        route.status = String::from("stale_plan");
+        route.next_skill = String::from("featureforge:writing-plans");
+        route.reason_codes = report.reason_codes.clone();
+        route.reason = report.reason_codes.join(",");
+        route.note = route.reason.clone();
+        return Ok(Some(route));
+    }
+
+    route.status = String::from("plan_draft");
+    route.next_skill = String::from("featureforge:plan-eng-review");
+    route.reason_codes = report.reason_codes.clone();
+    route.reason = report.reason_codes.join(",");
+    route.note = route.reason.clone();
+    Ok(Some(route))
+}
+
 fn authoritative_public_phase(status: &PlanExecutionStatus) -> Option<&'static str> {
     if status.latest_authoritative_sequence == INITIAL_AUTHORITATIVE_SEQUENCE {
         return None;
@@ -1854,19 +1962,21 @@ fn task_review_result_pending_task(
         return None;
     }
     let blocking_task = status.blocking_task?;
+    let reason_code = task_boundary_block_reason_code(status)?;
     let dispatch_id = dispatch_id?.trim();
     if dispatch_id.is_empty() {
         return None;
     }
-    if status
-        .reason_codes
-        .iter()
-        .any(|code| code == "prior_task_review_not_green")
-    {
-        Some(blocking_task)
-    } else {
-        None
-    }
+    matches!(
+        reason_code,
+        "prior_task_review_not_green"
+            | "task_review_not_independent"
+            | "task_review_receipt_malformed"
+            | "prior_task_verification_missing"
+            | "prior_task_verification_missing_legacy"
+            | "task_verification_receipt_malformed"
+    )
+    .then_some(blocking_task)
 }
 
 fn finish_requires_test_plan_refresh(gate_finish: Option<&GateResult>) -> bool {
@@ -1987,4 +2097,116 @@ fn late_stage_qa_blocked(gate_finish: &GateResult) -> bool {
                 "browser_qa_state_not_fresh",
             ],
         )
+}
+
+#[cfg(test)]
+mod routing_helper_tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn run_git(repo_root: &Path, args: &[&str], context: &str) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(repo_root)
+            .status()
+            .unwrap_or_else(|error| panic!("{context} should launch git: {error}"));
+        assert!(status.success(), "{context} should succeed");
+    }
+
+    fn unresolved_status() -> PlanExecutionStatus {
+        let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/codex-runtime/fixtures/workflow-artifacts");
+        let repo_dir = TempDir::new().expect("routing-helper temp repo should exist");
+        let repo_root = repo_dir.path();
+        let plan_rel =
+            String::from("docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md");
+        let spec_rel = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
+        let plan_path = repo_root.join(&plan_rel);
+        let spec_path = repo_root.join(spec_rel);
+
+        run_git(repo_root, &["init"], "git init for routing-helper unit tests");
+        run_git(
+            repo_root,
+            &["config", "user.name", "FeatureForge Test"],
+            "git config user.name for routing-helper unit tests",
+        );
+        run_git(
+            repo_root,
+            &["config", "user.email", "featureforge-tests@example.com"],
+            "git config user.email for routing-helper unit tests",
+        );
+        fs::write(repo_root.join("README.md"), "# routing-helper-test\n")
+            .expect("routing-helper README should write");
+        run_git(
+            repo_root,
+            &["add", "README.md"],
+            "git add README for routing-helper unit tests",
+        );
+        run_git(
+            repo_root,
+            &["commit", "-m", "init"],
+            "git commit init for routing-helper unit tests",
+        );
+
+        fs::create_dir_all(
+            spec_path
+                .parent()
+                .expect("routing-helper spec fixture path should have a parent"),
+        )
+        .expect("routing-helper spec fixture directory should create");
+        fs::create_dir_all(
+            plan_path
+                .parent()
+                .expect("routing-helper plan fixture path should have a parent"),
+        )
+        .expect("routing-helper plan fixture directory should create");
+        fs::copy(
+            fixture_root.join("specs/2026-03-22-runtime-integration-hardening-design.md"),
+            &spec_path,
+        )
+        .expect("routing-helper spec fixture should copy");
+        let plan_source = fs::read_to_string(
+            fixture_root.join("plans/2026-03-22-runtime-integration-hardening.md"),
+        )
+        .expect("routing-helper plan fixture should read")
+        .replace(
+            "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
+            spec_rel,
+        );
+        fs::write(&plan_path, plan_source).expect("routing-helper plan fixture should write");
+
+        let runtime =
+            ExecutionRuntime::discover(repo_root).expect("routing-helper runtime should discover");
+        let context = load_execution_context(&runtime, Path::new(&plan_rel))
+            .expect("routing-helper plan should load");
+        let mut status =
+            status_from_context(&context).expect("routing-helper status should derive");
+        status.blocking_task = Some(1);
+        status.blocking_step = None;
+        status
+    }
+
+    #[test]
+    fn task_review_result_pending_task_accepts_boundary_repair_reason_codes() {
+        let status = unresolved_status();
+        for reason_code in [
+            "prior_task_review_not_green",
+            "task_review_not_independent",
+            "task_review_receipt_malformed",
+            "prior_task_verification_missing",
+            "prior_task_verification_missing_legacy",
+            "task_verification_receipt_malformed",
+        ] {
+            let mut mutated = status.clone();
+            mutated.reason_codes = vec![reason_code.to_owned()];
+            assert_eq!(
+                task_review_result_pending_task(&mutated, Some("dispatch-task-1")),
+                Some(1),
+                "{reason_code} should keep task-boundary routing in the task review result lane"
+            );
+        }
+    }
 }

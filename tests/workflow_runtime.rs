@@ -3225,6 +3225,45 @@ fn canonical_workflow_operator_accepts_manifest_selected_ready_route_with_extra_
 }
 
 #[test]
+fn canonical_workflow_operator_plan_override_selects_explicit_ready_plan_amid_ambiguity() {
+    let (repo_dir, state_dir) = init_repo("workflow-operator-plan-override-ready-route");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let spec_path = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
+    let plan_path = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let extra_plan_path = "docs/featureforge/plans/2026-03-24-extra-approved-plan.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-operator-explicit-plan"])
+        .current_dir(repo);
+    run_checked(git_checkout, "git checkout workflow-operator-explicit-plan");
+
+    install_full_contract_ready_artifacts(repo);
+    write_file(
+        &repo.join(extra_plan_path),
+        &format!(
+            "# Extra Approved Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n"
+        ),
+    );
+
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_path, "--json"],
+            &[],
+            "workflow operator should honor an explicit approved plan even when the repo-wide resolver is ambiguous",
+        ),
+        "workflow operator should honor an explicit approved plan even when the repo-wide resolver is ambiguous",
+    );
+
+    assert_eq!(operator_json["phase"], "execution_preflight");
+    assert_eq!(operator_json["spec_path"], spec_path);
+    assert_eq!(operator_json["plan_path"], plan_path);
+}
+
+#[test]
 fn canonical_workflow_status_treats_ceo_approved_specs_without_ceo_review_as_draft() {
     let (repo_dir, state_dir) = init_repo("workflow-status-approved-spec-reviewer-mismatch");
     let repo = repo_dir.path();

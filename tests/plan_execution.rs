@@ -5680,6 +5680,16 @@ fn task_boundary_status_reports_prior_task_verification_missing_after_review_clo
             }),
         "status should surface prior_task_verification_missing for task-boundary block, got {status_before_task2}"
     );
+    assert_eq!(
+        status_before_task2["phase_detail"],
+        Value::from("task_review_result_pending")
+    );
+    assert_eq!(
+        status_before_task2["next_action"],
+        Value::from("wait for external review result")
+    );
+    assert_eq!(status_before_task2["review_state_status"], Value::from("clean"));
+    assert!(status_before_task2["recommended_command"].is_null());
 }
 
 #[test]
@@ -6239,6 +6249,16 @@ fn task_boundary_status_reports_non_independent_review_receipt() {
             }),
         "status should surface task_review_not_independent for task-boundary block, got {status_before_task2}"
     );
+    assert_eq!(
+        status_before_task2["phase_detail"],
+        Value::from("task_review_result_pending")
+    );
+    assert_eq!(
+        status_before_task2["next_action"],
+        Value::from("wait for external review result")
+    );
+    assert_eq!(status_before_task2["review_state_status"], Value::from("clean"));
+    assert!(status_before_task2["recommended_command"].is_null());
 }
 
 #[test]
