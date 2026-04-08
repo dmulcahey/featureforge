@@ -11,9 +11,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::cli::plan_execution::{
-    AdvanceLateStageArgs, AdvanceLateStageResultArg, BeginArgs, CloseCurrentTaskArgs,
-    CompleteArgs, ExecutionModeArg, NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs,
-    RecordQaArgs, ReopenArgs, ReviewOutcomeArg, TransferArgs, VerificationOutcomeArg,
+    AdvanceLateStageArgs, AdvanceLateStageResultArg, BeginArgs, CloseCurrentTaskArgs, CompleteArgs,
+    ExecutionModeArg, NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs, RecordQaArgs,
+    ReopenArgs, ReviewOutcomeArg, TransferArgs, VerificationOutcomeArg,
 };
 use crate::contracts::headers::parse_required_header as parse_plan_header;
 use crate::diagnostics::{FailureClass, JsonFailure};
@@ -21,13 +21,16 @@ use crate::execution::authority::{
     ensure_preflight_authoritative_bootstrap, write_authoritative_unit_review_receipt_artifact,
 };
 use crate::execution::final_review::{
-    FinalReviewReceiptExpectations, authoritative_strategy_checkpoint_fingerprint_checked,
-    latest_branch_artifact_path, parse_artifact_document, parse_final_review_receipt,
-    resolve_release_base_branch, validate_final_review_receipt,
+    FinalReviewReceiptExpectations, FinalReviewReceiptIssue,
+    authoritative_artifact_path_from_fingerprint_checked,
+    authoritative_strategy_checkpoint_fingerprint_checked, latest_branch_artifact_path,
+    parse_artifact_document, parse_final_review_receipt, resolve_release_base_branch,
+    validate_final_review_receipt,
 };
 use crate::execution::harness::RunIdentitySnapshot;
 use crate::execution::leases::{
-    StatusAuthoritativeOverlay, authoritative_matching_execution_topology_downgrade_records_checked,
+    StatusAuthoritativeOverlay,
+    authoritative_matching_execution_topology_downgrade_records_checked,
     load_status_authoritative_overlay_checked,
 };
 use crate::execution::query::{ExecutionRoutingState, query_workflow_routing_state};
@@ -1203,7 +1206,8 @@ pub fn record_branch_closure(
             "record-branch-closure requires authoritative harness state.",
         ));
     };
-    if let Some(current_identity) = authoritative_state.recoverable_current_branch_closure_identity()
+    if let Some(current_identity) =
+        authoritative_state.recoverable_current_branch_closure_identity()
         && current_identity.branch_closure_id == branch_closure_id
         && current_identity.reviewed_state_id == reviewed_state.reviewed_state_id
         && current_identity.contract_identity == reviewed_state.contract_identity
@@ -1424,6 +1428,17 @@ pub fn advance_late_stage(
                         ),
                     });
                 }
+                return Ok(shared_out_of_phase_advance_late_stage_output(
+                    &args.plan,
+                    AdvanceLateStageOutputContext {
+                        stage_path: "final_review",
+                        delegated_primitive: "record-final-review",
+                        branch_closure_id: Some(branch_closure_id.clone()),
+                        dispatch_id: Some(dispatch_id.clone()),
+                        result,
+                        trace_summary: "advance-late-stage failed closed because the current final-review record is no longer authoritative and workflow/operator must re-derive the next safe step.",
+                    },
+                ));
             } else {
                 return Ok(AdvanceLateStageOutput {
                     action: String::from("blocked"),
@@ -3149,6 +3164,8 @@ fn refresh_rebuild_downstream_truth(
         expected_plan_path: &context.plan_rel,
         expected_plan_revision: context.plan_document.plan_revision,
         expected_strategy_checkpoint_fingerprint: Some(&strategy_checkpoint_fingerprint),
+        expected_branch: &context.runtime.branch_name,
+        expected_repo: &context.runtime.repo_slug,
         expected_head_sha: &current_head,
         expected_base_branch: &base_branch,
         deviations_required: false,
@@ -4265,17 +4282,21 @@ fn current_final_review_record_is_still_authoritative(
         return Ok(false);
     };
 
-    let final_review_path = harness_authoritative_artifact_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-        &format!("final-review-{final_review_fingerprint}.md"),
-    );
+    let final_review_path = authoritative_artifact_path_from_fingerprint_checked(
+        context,
+        final_review_fingerprint,
+        "final-review",
+        "final review",
+        "current_final_review_record.final_review_fingerprint",
+    )?;
     let current_head = current_head_sha(&context.runtime.repo_root)?;
     let Some(current_base_branch) =
         resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
     else {
-        return Ok(false);
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            "Current final-review authority could not resolve the expected base branch.",
+        ));
     };
     let strategy_checkpoint_fingerprint =
         authoritative_strategy_checkpoint_fingerprint_checked(context)?;
@@ -4290,16 +4311,54 @@ fn current_final_review_record_is_still_authoritative(
         expected_plan_path: &context.plan_rel,
         expected_plan_revision: context.plan_document.plan_revision,
         expected_strategy_checkpoint_fingerprint: strategy_checkpoint_fingerprint.as_deref(),
+        expected_branch: &context.runtime.branch_name,
+        expected_repo: &context.runtime.repo_slug,
         expected_head_sha: &current_head,
         expected_base_branch: &current_base_branch,
         deviations_required,
     };
-    Ok(validate_final_review_receipt(
+    validate_final_review_receipt(
         &parse_final_review_receipt(&final_review_path),
         &final_review_path,
         &expectations,
     )
-    .is_ok())
+    .map(|_| true)
+    .map_err(final_review_authority_validation_failure)
+}
+
+fn final_review_authority_validation_failure(issue: FinalReviewReceiptIssue) -> JsonFailure {
+    let failure_class = match issue {
+        FinalReviewReceiptIssue::ReviewerArtifactFingerprintInvalid
+        | FinalReviewReceiptIssue::ReviewerArtifactFingerprintMismatch => {
+            FailureClass::ArtifactIntegrityMismatch
+        }
+        FinalReviewReceiptIssue::ReviewStageMismatch
+        | FinalReviewReceiptIssue::ReviewerArtifactPathMissing
+        | FinalReviewReceiptIssue::ReviewerArtifactUnreadable
+        | FinalReviewReceiptIssue::ReviewerArtifactNotRuntimeOwned
+        | FinalReviewReceiptIssue::ReviewerArtifactIdentityMismatch
+        | FinalReviewReceiptIssue::ReviewerArtifactContractMismatch
+        | FinalReviewReceiptIssue::DistinctFromStagesMissing
+        | FinalReviewReceiptIssue::DistinctFromStagesInvalid
+        | FinalReviewReceiptIssue::SourcePlanMismatch
+        | FinalReviewReceiptIssue::SourcePlanRevisionMismatch
+        | FinalReviewReceiptIssue::BranchMismatch
+        | FinalReviewReceiptIssue::RepoMismatch
+        | FinalReviewReceiptIssue::BaseBranchMismatch
+        | FinalReviewReceiptIssue::StrategyCheckpointFingerprintMissing
+        | FinalReviewReceiptIssue::StrategyCheckpointFingerprintMismatch
+        | FinalReviewReceiptIssue::HeadMismatch
+        | FinalReviewReceiptIssue::ResultNotPass
+        | FinalReviewReceiptIssue::GeneratedByMismatch
+        | FinalReviewReceiptIssue::DeviationRecordMismatch
+        | FinalReviewReceiptIssue::DeviationReviewVerdictMismatch
+        | FinalReviewReceiptIssue::ReviewerProvenanceMissing
+        | FinalReviewReceiptIssue::ReviewerIdentityMissing
+        | FinalReviewReceiptIssue::ReviewerSourceNotIndependent => {
+            FailureClass::ReviewArtifactNotFresh
+        }
+    };
+    JsonFailure::new(failure_class, issue.message())
 }
 
 struct FinalReviewRenderedArtifacts {
@@ -4335,7 +4394,11 @@ fn render_final_review_artifacts(
         "none"
     };
     let deviation_review_verdict = if inputs.deviations_required {
-        if inputs.result == "pass" { "pass" } else { "fail" }
+        if inputs.result == "pass" {
+            "pass"
+        } else {
+            "fail"
+        }
     } else {
         "not_required"
     };
@@ -5444,16 +5507,15 @@ mod unit_tests {
     use super::{
         CurrentFinalReviewAuthorityCheck, FinalReviewArtifactInputs,
         current_final_review_record_is_still_authoritative, normalized_late_stage_surface,
-        path_matches_late_stage_surface,
-        render_final_review_artifacts,
+        path_matches_late_stage_surface, render_final_review_artifacts,
         rewrite_branch_final_review_artifacts, rewrite_branch_head_bound_artifact,
         rewrite_branch_qa_artifact, superseded_branch_closure_ids_from_previous_current,
         verify_command_launcher,
     };
-    use crate::diagnostics::FailureClass;
     use crate::contracts::plan::parse_plan_file;
-    use crate::execution::leases::authoritative_state_path;
+    use crate::diagnostics::FailureClass;
     use crate::execution::leases::StatusAuthoritativeOverlay;
+    use crate::execution::leases::authoritative_state_path;
     use crate::execution::state::{
         EvidenceFormat, ExecutionContext, ExecutionEvidence, ExecutionRuntime,
     };
@@ -5523,7 +5585,8 @@ mod unit_tests {
         runtime.state_dir = tempdir.path().join("state");
         fs::create_dir_all(&runtime.state_dir).expect("state dir should be creatable");
 
-        let plan_rel = "docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
+        let plan_rel =
+            "docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
         let plan_abs = repo_root.join(plan_rel);
         let plan_document = parse_plan_file(&plan_abs).expect("plan document should parse");
         let plan_source = fs::read_to_string(&plan_abs).expect("plan source should read");
@@ -5535,10 +5598,11 @@ mod unit_tests {
             plan_source,
             steps: Vec::new(),
             tasks_by_number: Default::default(),
-            evidence_rel: String::from("docs/archive/featureforge/execution-evidence/placeholder.md"),
-            evidence_abs: repo_root.join(
+            evidence_rel: String::from(
                 "docs/archive/featureforge/execution-evidence/placeholder.md",
             ),
+            evidence_abs: repo_root
+                .join("docs/archive/featureforge/execution-evidence/placeholder.md"),
             evidence: ExecutionEvidence {
                 format: EvidenceFormat::Empty,
                 plan_path: String::from(plan_rel),
@@ -5553,14 +5617,15 @@ mod unit_tests {
                 source: None,
             },
             source_spec_source: String::new(),
-            source_spec_path: repo_root.join(
-                "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md",
-            ),
+            source_spec_path: repo_root
+                .join("docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md"),
             execution_fingerprint: String::from("unit-test-execution-fingerprint"),
         };
-        let base_branch =
-            super::resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
-                .expect("base branch should resolve for the current repo");
+        let base_branch = super::resolve_release_base_branch(
+            &context.runtime.git_dir,
+            &context.runtime.branch_name,
+        )
+        .expect("base branch should resolve for the current repo");
         let branch_closure_id = "unit-test-branch-closure";
         let reviewed_state_id = "git_tree:unit-test";
         let dispatch_id = "unit-test-final-review-dispatch";
@@ -5622,8 +5687,11 @@ mod unit_tests {
                 .expect("final-review artifact should have a parent directory"),
         )
         .expect("final-review artifact dir should be creatable");
-        fs::write(&rendered.reviewer_artifact_path, &rendered.reviewer_source_text)
-            .expect("reviewer artifact should write");
+        fs::write(
+            &rendered.reviewer_artifact_path,
+            &rendered.reviewer_source_text,
+        )
+        .expect("reviewer artifact should write");
         fs::write(&final_review_path, &rendered.final_review_source)
             .expect("final-review artifact should write");
 
@@ -5690,6 +5758,35 @@ mod unit_tests {
         );
 
         fs::write(
+            &final_review_path,
+            "# Code Review Result\n\nTampered final-review receipt.\n",
+        )
+        .expect("tampered final-review receipt should write");
+
+        let authoritative_state = load_authoritative_transition_state(&context)
+            .expect("authoritative state should reload after final-review tamper")
+            .expect("authoritative state should still exist after final-review tamper");
+        let final_review_error = current_final_review_record_is_still_authoritative(
+            &context,
+            &authoritative_state,
+            CurrentFinalReviewAuthorityCheck {
+                branch_closure_id,
+                dispatch_id,
+                reviewer_source,
+                reviewer_id,
+                result: "pass",
+                normalized_summary_hash: &summary_hash,
+            },
+        )
+        .expect_err("authoritativeness check should surface corrupted final-review receipts");
+        assert_eq!(
+            final_review_error.error_class,
+            FailureClass::ArtifactIntegrityMismatch.as_str()
+        );
+
+        fs::write(&final_review_path, &rendered.final_review_source)
+            .expect("intact final-review receipt should restore");
+        fs::write(
             &rendered.reviewer_artifact_path,
             "# Code Review Result\n\nTampered reviewer artifact.\n",
         )
@@ -5698,20 +5795,22 @@ mod unit_tests {
         let authoritative_state = load_authoritative_transition_state(&context)
             .expect("authoritative state should reload")
             .expect("authoritative state should still exist");
-        assert!(
-            !current_final_review_record_is_still_authoritative(
-                &context,
-                &authoritative_state,
-                CurrentFinalReviewAuthorityCheck {
-                    branch_closure_id,
-                    dispatch_id,
-                    reviewer_source,
-                    reviewer_id,
-                    result: "pass",
-                    normalized_summary_hash: &summary_hash,
-                },
-            )
-            .expect("authoritativeness check should downgrade corrupted reviewer proof")
+        let reviewer_artifact_error = current_final_review_record_is_still_authoritative(
+            &context,
+            &authoritative_state,
+            CurrentFinalReviewAuthorityCheck {
+                branch_closure_id,
+                dispatch_id,
+                reviewer_source,
+                reviewer_id,
+                result: "pass",
+                normalized_summary_hash: &summary_hash,
+            },
+        )
+        .expect_err("authoritativeness check should surface corrupted reviewer proof");
+        assert_eq!(
+            reviewer_artifact_error.error_class,
+            FailureClass::ArtifactIntegrityMismatch.as_str()
         );
     }
 

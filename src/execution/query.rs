@@ -63,6 +63,7 @@ pub struct WorkflowExecutionState {
     pub preflight: Option<GateResult>,
     pub gate_review: Option<GateResult>,
     pub gate_finish: Option<GateResult>,
+    pub task_scope_overlay_restore_required: bool,
     pub task_negative_result_task: Option<u32>,
     pub task_review_dispatch_id: Option<String>,
     pub final_review_dispatch_id: Option<String>,
@@ -226,6 +227,7 @@ pub fn query_workflow_execution_state(
     let status_args = StatusArgs {
         plan: PathBuf::from(plan_path),
     };
+    let review_state_snapshot = query_review_state(runtime, &status_args)?;
     let mut execution_status = runtime.status(&status_args)?;
     if let Some(shared_status) =
         started_status_from_same_branch_worktree(&runtime.repo_root, plan_path, &execution_status)
@@ -271,6 +273,12 @@ pub fn query_workflow_execution_state(
         overlay.as_ref(),
         authoritative_state.as_ref(),
     );
+    let task_scope_overlay_restore_required =
+        task_scope_overlay_restore_required(&review_state_snapshot.missing_derived_overlays)
+            || authoritative_state.as_ref().is_some_and(|state| {
+                state.current_task_closure_overlay_needs_restore()
+                    || state.task_closure_negative_result_overlay_needs_restore()
+            });
     let final_review_dispatch_id = overlay.as_ref().and_then(|overlay| {
         overlay
             .final_review_dispatch_lineage
@@ -295,6 +303,7 @@ pub fn query_workflow_execution_state(
         preflight,
         gate_review,
         gate_finish,
+        task_scope_overlay_restore_required,
         task_negative_result_task,
         task_review_dispatch_id,
         final_review_dispatch_id,
@@ -340,6 +349,7 @@ pub fn query_workflow_routing_state(
     let mut preflight = None;
     let mut gate_review = None;
     let mut gate_finish = None;
+    let mut task_scope_overlay_restore_required = false;
     let mut task_negative_result_task = None;
     let mut task_review_dispatch_id = None;
     let mut final_review_dispatch_id = None;
@@ -355,6 +365,7 @@ pub fn query_workflow_routing_state(
     if route.status == "implementation_ready" && !route.plan_path.is_empty() {
         let runtime = ExecutionRuntime::discover(current_dir)?;
         let workflow_state = query_workflow_execution_state(&runtime, &route.plan_path)?;
+        task_scope_overlay_restore_required = workflow_state.task_scope_overlay_restore_required;
         task_negative_result_task = workflow_state.task_negative_result_task;
         task_review_dispatch_id = workflow_state.task_review_dispatch_id;
         final_review_dispatch_id = workflow_state.final_review_dispatch_id;
@@ -397,46 +408,64 @@ pub fn query_workflow_routing_state(
         execution_command_context,
         next_action,
         recommended_command,
-    ) = if negative_result_requires_execution_reentry(
-        task_negative_result_task.is_some(),
-        workflow_phase.as_str(),
-        current_branch_closure_id.as_deref(),
-        current_final_review_branch_closure_id.as_deref(),
-        current_final_review_result.as_deref(),
-        current_qa_branch_closure_id.as_deref(),
-        current_qa_result.as_deref(),
-    ) {
-        match follow_up_override.as_str() {
-            "record_handoff" => (
-                String::from("handoff_required"),
-                String::from("handoff_recording_required"),
-                String::from("clean"),
+    ) = if let Some(status) = execution_status.as_ref() {
+        if ((workflow_phase == "executing" || workflow_phase == "task_closure_pending")
+            && (task_scope_overlay_restore_required
+                || status.review_state_status == "stale_unreviewed"
+                || task_review_dispatch_stale(status).is_some()))
+            || (task_scope_overlay_restore_required && task_negative_result_task.is_some())
+        {
+            (
+                String::from("executing"),
+                String::from("execution_reentry_required"),
+                String::from("stale_unreviewed"),
                 None,
                 None,
-                String::from("hand off"),
+                String::from("repair review state / reenter execution"),
                 Some(format!(
-                    "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
+                    "featureforge plan execution repair-review-state --plan {plan_path}"
                 )),
-            ),
-            "record_pivot" => (
-                String::from("pivot_required"),
-                String::from("planning_reentry_required"),
-                String::from("clean"),
-                None,
-                None,
-                String::from("pivot / return to planning"),
-                Some(format!(
-                    "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
-                )),
-            ),
-            _ => {
-                let status = execution_status.as_ref().ok_or_else(|| {
-                    JsonFailure::new(
-                        FailureClass::MalformedExecutionState,
-                        "workflow/operator could not derive the execution reentry command required after a negative review outcome.",
-                    )
-                })?;
-                if let Some(resolved) = resolve_exact_execution_command(status, &plan_path) {
+            )
+        } else if negative_result_requires_execution_reentry(
+            task_negative_result_task.is_some(),
+            workflow_phase.as_str(),
+            current_branch_closure_id.as_deref(),
+            current_final_review_branch_closure_id.as_deref(),
+            current_final_review_result.as_deref(),
+            current_qa_branch_closure_id.as_deref(),
+            current_qa_result.as_deref(),
+        ) {
+            match follow_up_override.as_str() {
+                "record_handoff" => (
+                    String::from("handoff_required"),
+                    String::from("handoff_recording_required"),
+                    String::from("clean"),
+                    None,
+                    None,
+                    String::from("hand off"),
+                    Some(format!(
+                        "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
+                    )),
+                ),
+                "record_pivot" => (
+                    String::from("pivot_required"),
+                    String::from("planning_reentry_required"),
+                    String::from("clean"),
+                    None,
+                    None,
+                    String::from("pivot / return to planning"),
+                    Some(format!(
+                        "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
+                    )),
+                ),
+                _ => {
+                    let resolved = resolve_exact_execution_command(status, &plan_path)
+                        .ok_or_else(|| {
+                            JsonFailure::new(
+                                FailureClass::MalformedExecutionState,
+                                "workflow/operator could not derive the execution reentry command required after a negative review outcome.",
+                            )
+                        })?;
                     (
                         String::from("executing"),
                         String::from("execution_reentry_required"),
@@ -450,19 +479,405 @@ pub fn query_workflow_routing_state(
                         String::from("execution reentry required"),
                         Some(resolved.recommended_command),
                     )
+                }
+            }
+        } else if matches!(
+            workflow_phase.as_str(),
+            "document_release_pending"
+                | "final_review_pending"
+                | "qa_pending"
+                | "ready_for_branch_completion"
+        ) && (late_stage_stale_unreviewed(gate_review.as_ref(), gate_finish.as_ref())
+            || execution_status
+                .as_ref()
+                .is_some_and(|status| status.review_state_status == "stale_unreviewed"))
+        {
+            (
+                String::from("executing"),
+                String::from("execution_reentry_required"),
+                String::from("stale_unreviewed"),
+                None,
+                None,
+                String::from("repair review state / reenter execution"),
+                Some(format!(
+                    "featureforge plan execution repair-review-state --plan {plan_path}"
+                )),
+            )
+        } else {
+            if let Some(task_number) = task_review_dispatch_task(status) {
+                (
+                    String::from("task_closure_pending"),
+                    String::from("task_review_dispatch_required"),
+                    String::from("clean"),
+                    None,
+                    None,
+                    String::from("dispatch review"),
+                    Some(format!(
+                        "featureforge plan execution record-review-dispatch --plan {plan_path} --scope task --task {task_number}"
+                    )),
+                )
+            } else if let Some(task_number) =
+                task_review_result_pending_task(status, task_review_dispatch_id.as_deref())
+            {
+                let recommended_command = if external_review_result_ready {
+                    task_review_dispatch_id.as_ref().map(|dispatch_id| {
+                        format!(
+                            "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --dispatch-id {dispatch_id} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
+                        )
+                    })
+                } else {
+                    None
+                };
+                (
+                    String::from("task_closure_pending"),
+                    if external_review_result_ready {
+                        String::from("task_closure_recording_ready")
+                    } else {
+                        String::from("task_review_result_pending")
+                    },
+                    String::from("clean"),
+                    if external_review_result_ready {
+                        task_review_dispatch_id.as_ref().map(|dispatch_id| {
+                            ExecutionRoutingRecordingContext {
+                                task_number: Some(task_number),
+                                dispatch_id: Some(dispatch_id.clone()),
+                                branch_closure_id: None,
+                            }
+                        })
+                    } else {
+                        None
+                    },
+                    None,
+                    if external_review_result_ready {
+                        String::from("close current task")
+                    } else {
+                        String::from("wait for external review result")
+                    },
+                    recommended_command,
+                )
+            } else if workflow_phase == "final_review_pending"
+                && current_branch_closure_id.is_none()
+            {
+                (
+                    String::from("document_release_pending"),
+                    String::from("branch_closure_recording_required_for_release_readiness"),
+                    String::from("missing_current_closure"),
+                    None,
+                    None,
+                    String::from("record branch closure"),
+                    Some(format!(
+                        "featureforge plan execution record-branch-closure --plan {plan_path}"
+                    )),
+                )
+            } else if workflow_phase == "final_review_pending"
+                && current_release_readiness_result.as_deref() != Some("ready")
+            {
+                (
+                    String::from("document_release_pending"),
+                    String::from(
+                        if current_release_readiness_result.as_deref() == Some("blocked") {
+                            "release_blocker_resolution_required"
+                        } else {
+                            "release_readiness_recording_ready"
+                        },
+                    ),
+                    String::from("clean"),
+                    current_branch_closure_id.as_ref().map(|branch_closure_id| {
+                        ExecutionRoutingRecordingContext {
+                            task_number: None,
+                            dispatch_id: None,
+                            branch_closure_id: Some(branch_closure_id.clone()),
+                        }
+                    }),
+                    None,
+                    String::from(
+                        if current_release_readiness_result.as_deref() == Some("blocked") {
+                            "resolve release blocker"
+                        } else {
+                            "advance late stage"
+                        },
+                    ),
+                    Some(format!(
+                        "featureforge plan execution advance-late-stage --plan {plan_path} --result ready|blocked --summary-file <path>"
+                    )),
+                )
+            } else if workflow_phase == "final_review_pending" && final_review_dispatch_id.is_none()
+            {
+                (
+                    String::from("final_review_pending"),
+                    String::from("final_review_dispatch_required"),
+                    String::from("clean"),
+                    None,
+                    None,
+                    String::from("dispatch final review"),
+                    Some(format!(
+                        "featureforge plan execution record-review-dispatch --plan {plan_path} --scope final-review"
+                    )),
+                )
+            } else if workflow_phase == "final_review_pending" {
+                let recommended_command = if external_review_result_ready {
+                    final_review_dispatch_id.as_ref().map(|dispatch_id| {
+                        format!(
+                            "featureforge plan execution advance-late-stage --plan {plan_path} --dispatch-id {dispatch_id} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
+                        )
+                    })
+                } else {
+                    None
+                };
+                (
+                    String::from("final_review_pending"),
+                    if external_review_result_ready {
+                        String::from("final_review_recording_ready")
+                    } else {
+                        String::from("final_review_outcome_pending")
+                    },
+                    String::from("clean"),
+                    if external_review_result_ready {
+                        final_review_dispatch_id.as_ref().map(|dispatch_id| {
+                            ExecutionRoutingRecordingContext {
+                                task_number: None,
+                                dispatch_id: Some(dispatch_id.clone()),
+                                branch_closure_id: current_branch_closure_id.clone(),
+                            }
+                        })
+                    } else {
+                        None
+                    },
+                    None,
+                    if external_review_result_ready {
+                        String::from("advance late stage")
+                    } else {
+                        String::from("wait for external review result")
+                    },
+                    recommended_command,
+                )
+            } else if workflow_phase == "document_release_pending" {
+                if let Some(branch_closure_id) = current_branch_closure_id.as_ref() {
+                    (
+                        String::from("document_release_pending"),
+                        String::from(
+                            if current_release_readiness_result.as_deref() == Some("blocked") {
+                                "release_blocker_resolution_required"
+                            } else {
+                                "release_readiness_recording_ready"
+                            },
+                        ),
+                        String::from("clean"),
+                        Some(ExecutionRoutingRecordingContext {
+                            task_number: None,
+                            dispatch_id: None,
+                            branch_closure_id: Some(branch_closure_id.clone()),
+                        }),
+                        None,
+                        String::from(
+                            if current_release_readiness_result.as_deref() == Some("blocked") {
+                                "resolve release blocker"
+                            } else {
+                                "advance late stage"
+                            },
+                        ),
+                        Some(format!(
+                            "featureforge plan execution advance-late-stage --plan {plan_path} --result ready|blocked --summary-file <path>"
+                        )),
+                    )
                 } else {
                     (
-                        String::from("executing"),
-                        String::from("execution_reentry_required"),
+                        String::from("document_release_pending"),
+                        String::from("branch_closure_recording_required_for_release_readiness"),
+                        String::from("missing_current_closure"),
+                        None,
+                        None,
+                        String::from("record branch closure"),
+                        Some(format!(
+                            "featureforge plan execution record-branch-closure --plan {plan_path}"
+                        )),
+                    )
+                }
+            } else if workflow_phase == "qa_pending" && current_branch_closure_id.is_none() {
+                (
+                    String::from("document_release_pending"),
+                    String::from("branch_closure_recording_required_for_release_readiness"),
+                    String::from("missing_current_closure"),
+                    None,
+                    None,
+                    String::from("record branch closure"),
+                    Some(format!(
+                        "featureforge plan execution record-branch-closure --plan {plan_path}"
+                    )),
+                )
+            } else if workflow_phase == "qa_pending" {
+                match qa_requirement.as_deref() {
+                    Some("required") if finish_requires_test_plan_refresh(gate_finish.as_ref()) => {
+                        (
+                            String::from("qa_pending"),
+                            String::from("test_plan_refresh_required"),
+                            String::from("clean"),
+                            None,
+                            None,
+                            String::from("refresh test plan"),
+                            None,
+                        )
+                    }
+                    Some("required") => (
+                        String::from("qa_pending"),
+                        String::from("qa_recording_required"),
                         String::from("clean"),
                         None,
                         None,
-                        String::from("execution reentry required"),
+                        String::from("run QA"),
+                        Some(format!(
+                            "featureforge plan execution record-qa --plan {plan_path} --result pass|fail --summary-file <path>"
+                        )),
+                    ),
+                    _ => (
+                        String::from("pivot_required"),
+                        String::from("planning_reentry_required"),
+                        String::from("clean"),
                         None,
-                    )
+                        None,
+                        String::from("pivot / return to planning"),
+                        Some(format!(
+                            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
+                        )),
+                    ),
+                }
+            } else if workflow_phase == "ready_for_branch_completion" {
+                match qa_requirement.as_deref() {
+                    Some("required") | Some("not-required") => {
+                        if finish_review_gate_pass_branch_closure_id
+                            .as_ref()
+                            .zip(current_branch_closure_id.as_ref())
+                            .is_some_and(|(checkpoint, current)| checkpoint == current)
+                            && gate_finish.as_ref().is_some_and(|gate| gate.allowed)
+                        {
+                            (
+                                String::from("ready_for_branch_completion"),
+                                String::from("finish_completion_gate_ready"),
+                                String::from("clean"),
+                                None,
+                                None,
+                                String::from("run finish completion gate"),
+                                Some(format!(
+                                    "featureforge plan execution gate-finish --plan {plan_path}"
+                                )),
+                            )
+                        } else {
+                            (
+                                String::from("ready_for_branch_completion"),
+                                String::from("finish_review_gate_ready"),
+                                String::from("clean"),
+                                None,
+                                None,
+                                String::from("run finish review gate"),
+                                Some(format!(
+                                    "featureforge plan execution gate-review --plan {plan_path}"
+                                )),
+                            )
+                        }
+                    }
+                    _ => (
+                        String::from("pivot_required"),
+                        String::from("planning_reentry_required"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        String::from("pivot / return to planning"),
+                        Some(format!(
+                            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
+                        )),
+                    ),
+                }
+            } else {
+                match workflow_phase.as_str() {
+                    "executing" => {
+                        let (execution_command_context, recommended_command) =
+                            required_execution_command_from_status(
+                                status,
+                                "workflow/operator could not derive the exact execution command for the current execution state.",
+                            )?;
+                        let phase_detail = status.phase_detail.clone();
+                        let next_action = status.next_action.clone();
+                        (
+                            String::from("executing"),
+                            phase_detail,
+                            String::from("clean"),
+                            None,
+                            Some(execution_command_context),
+                            next_action,
+                            Some(recommended_command),
+                        )
+                    }
+                    "repairing" => (
+                        String::from("executing"),
+                        String::from("execution_in_progress"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        next_action_for_context_like(
+                            workflow_phase.as_str(),
+                            gate_review.as_ref(),
+                            gate_finish.as_ref(),
+                        )
+                        .replace('_', " "),
+                        None,
+                    ),
+                    "handoff_required" => (
+                        String::from("handoff_required"),
+                        String::from("handoff_recording_required"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        String::from("hand off"),
+                        Some(format!(
+                            "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
+                        )),
+                    ),
+                    "pivot_required" => (
+                        String::from("pivot_required"),
+                        String::from("planning_reentry_required"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        String::from("pivot / return to planning"),
+                        Some(format!(
+                            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
+                        )),
+                    ),
+                    _ => (
+                        workflow_phase.clone(),
+                        String::from("execution_in_progress"),
+                        String::from("clean"),
+                        None,
+                        None,
+                        next_action_for_context_like(
+                            workflow_phase.as_str(),
+                            gate_review.as_ref(),
+                            gate_finish.as_ref(),
+                        )
+                        .replace('_', " "),
+                        None,
+                    ),
                 }
             }
         }
+    } else if negative_result_requires_execution_reentry(
+        task_negative_result_task.is_some(),
+        workflow_phase.as_str(),
+        current_branch_closure_id.as_deref(),
+        current_final_review_branch_closure_id.as_deref(),
+        current_final_review_result.as_deref(),
+        current_qa_branch_closure_id.as_deref(),
+        current_qa_result.as_deref(),
+    ) {
+        (
+            String::from("executing"),
+            String::from("execution_reentry_required"),
+            String::from("clean"),
+            None,
+            None,
+            String::from("execution reentry required"),
+            None,
+        )
     } else if matches!(
         workflow_phase.as_str(),
         "document_release_pending"
@@ -486,19 +901,7 @@ pub fn query_workflow_routing_state(
             )),
         )
     } else if let Some(status) = execution_status.as_ref() {
-        if task_review_dispatch_stale(status).is_some() {
-            (
-                String::from("executing"),
-                String::from("execution_reentry_required"),
-                String::from("stale_unreviewed"),
-                None,
-                None,
-                String::from("repair review state / reenter execution"),
-                Some(format!(
-                    "featureforge plan execution repair-review-state --plan {plan_path}"
-                )),
-            )
-        } else if let Some(task_number) = task_review_dispatch_task(status) {
+        if let Some(task_number) = task_review_dispatch_task(status) {
             (
                 String::from("task_closure_pending"),
                 String::from("task_review_dispatch_required"),
@@ -779,31 +1182,22 @@ pub fn query_workflow_routing_state(
         } else {
             match workflow_phase.as_str() {
                 "executing" => {
-                    if let Some(resolved) = resolve_exact_execution_command(status, &plan_path) {
-                        (
-                            String::from("executing"),
-                            String::from("execution_in_progress"),
-                            String::from("clean"),
-                            None,
-                            Some(ExecutionRoutingExecutionCommandContext {
-                                command_kind: String::from(resolved.command_kind),
-                                task_number: Some(resolved.task_number),
-                                step_id: resolved.step_id,
-                            }),
-                            String::from("continue execution"),
-                            Some(resolved.recommended_command),
-                        )
-                    } else {
-                        (
-                            String::from("executing"),
-                            String::from("execution_in_progress"),
-                            String::from("clean"),
-                            None,
-                            None,
-                            String::from("continue execution"),
-                            None,
-                        )
-                    }
+                    let (execution_command_context, recommended_command) =
+                        required_execution_command_from_status(
+                            status,
+                            "workflow/operator could not derive the exact execution command for the current execution state.",
+                        )?;
+                    let phase_detail = status.phase_detail.clone();
+                    let next_action = status.next_action.clone();
+                    (
+                        String::from("executing"),
+                        phase_detail,
+                        String::from("clean"),
+                        None,
+                        Some(execution_command_context),
+                        next_action,
+                        Some(recommended_command),
+                    )
                 }
                 "repairing" => (
                     String::from("executing"),
@@ -1009,7 +1403,10 @@ fn review_state_is_stale_unreviewed(
 }
 
 fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {
-    status.active_task.is_some() || status.blocking_task.is_some() || status.resume_task.is_some()
+    status.active_task.is_some()
+        || status.blocking_task.is_some()
+        || status.resume_task.is_some()
+        || status.execution_command_context.is_some()
 }
 
 fn status_has_accepted_preflight(status: &PlanExecutionStatus) -> bool {
@@ -1033,12 +1430,19 @@ fn late_stage_stale_unreviewed(
             "release_docs_state_not_fresh",
             "final_review_state_stale",
             "final_review_state_not_fresh",
+            "review_receipt_reviewer_fingerprint_invalid",
+            "review_receipt_reviewer_fingerprint_mismatch",
             "browser_qa_state_stale",
             "browser_qa_state_not_fresh",
         ],
     ) || gate_has_any_reason(
         gate_review,
-        &["release_docs_state_stale", "release_docs_state_not_fresh"],
+        &[
+            "release_docs_state_stale",
+            "release_docs_state_not_fresh",
+            "review_receipt_reviewer_fingerprint_invalid",
+            "review_receipt_reviewer_fingerprint_mismatch",
+        ],
     )
 }
 
@@ -1412,6 +1816,36 @@ fn task_review_dispatch_stale(status: &PlanExecutionStatus) -> Option<u32> {
     (reason_code == "prior_task_review_dispatch_stale").then_some(blocking_task)
 }
 
+fn task_scope_overlay_restore_required(missing_derived_overlays: &[String]) -> bool {
+    missing_derived_overlays.iter().any(|field| {
+        matches!(
+            field.as_str(),
+            "current_task_closure_records" | "task_closure_negative_result_records"
+        )
+    })
+}
+
+fn required_execution_command_from_status(
+    status: &PlanExecutionStatus,
+    message: &str,
+) -> Result<(ExecutionRoutingExecutionCommandContext, String), JsonFailure> {
+    let execution_command_context = status
+        .execution_command_context
+        .as_ref()
+        .cloned()
+        .map(|context| ExecutionRoutingExecutionCommandContext {
+            command_kind: context.command_kind,
+            task_number: context.task_number,
+            step_id: context.step_id,
+        })
+        .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
+    let recommended_command = status
+        .recommended_command
+        .clone()
+        .ok_or_else(|| JsonFailure::new(FailureClass::MalformedExecutionState, message))?;
+    Ok((execution_command_context, recommended_command))
+}
+
 fn task_review_result_pending_task(
     status: &PlanExecutionStatus,
     dispatch_id: Option<&str>,
@@ -1520,6 +1954,8 @@ fn late_stage_review_truth_blocked(gate_review: Option<&GateResult>) -> bool {
             "final_review_state_missing",
             "final_review_state_stale",
             "final_review_state_not_fresh",
+            "review_receipt_reviewer_fingerprint_invalid",
+            "review_receipt_reviewer_fingerprint_mismatch",
         ],
     )
 }
@@ -1533,6 +1969,8 @@ fn late_stage_review_blocked(gate_finish: &GateResult) -> bool {
                 "final_review_state_missing",
                 "final_review_state_stale",
                 "final_review_state_not_fresh",
+                "review_receipt_reviewer_fingerprint_invalid",
+                "review_receipt_reviewer_fingerprint_mismatch",
             ],
         )
 }

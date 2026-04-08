@@ -56,6 +56,8 @@ pub struct FinalReviewReceiptExpectations<'a> {
     pub expected_plan_path: &'a str,
     pub expected_plan_revision: u32,
     pub expected_strategy_checkpoint_fingerprint: Option<&'a str>,
+    pub expected_branch: &'a str,
+    pub expected_repo: &'a str,
     pub expected_head_sha: &'a str,
     pub expected_base_branch: &'a str,
     pub deviations_required: bool,
@@ -78,6 +80,9 @@ pub enum FinalReviewReceiptIssue {
     DistinctFromStagesInvalid,
     SourcePlanMismatch,
     SourcePlanRevisionMismatch,
+    BranchMismatch,
+    RepoMismatch,
+    BaseBranchMismatch,
     StrategyCheckpointFingerprintMissing,
     StrategyCheckpointFingerprintMismatch,
     HeadMismatch,
@@ -113,6 +118,9 @@ impl FinalReviewReceiptIssue {
             Self::DistinctFromStagesInvalid => "review_receipt_distinct_from_stages_invalid",
             Self::SourcePlanMismatch => "review_receipt_plan_mismatch",
             Self::SourcePlanRevisionMismatch => "review_receipt_plan_revision_mismatch",
+            Self::BranchMismatch => "review_receipt_branch_mismatch",
+            Self::RepoMismatch => "review_receipt_repo_mismatch",
+            Self::BaseBranchMismatch => "review_receipt_base_branch_mismatch",
             Self::StrategyCheckpointFingerprintMissing => {
                 "review_receipt_strategy_checkpoint_fingerprint_missing"
             }
@@ -173,6 +181,15 @@ impl FinalReviewReceiptIssue {
             }
             Self::SourcePlanRevisionMismatch => {
                 "The latest code-review artifact does not match the current approved plan revision."
+            }
+            Self::BranchMismatch => {
+                "The latest code-review artifact does not match the current branch."
+            }
+            Self::RepoMismatch => {
+                "The latest code-review artifact does not match the current repository."
+            }
+            Self::BaseBranchMismatch => {
+                "The latest code-review artifact does not match the current base branch."
             }
             Self::StrategyCheckpointFingerprintMissing => {
                 "The latest code-review artifact is missing its runtime strategy checkpoint fingerprint binding."
@@ -316,6 +333,15 @@ pub fn validate_final_review_receipt(
     if receipt.source_plan_revision != Some(expectations.expected_plan_revision) {
         return Err(FinalReviewReceiptIssue::SourcePlanRevisionMismatch);
     }
+    if receipt.branch.as_deref().map(str::trim) != Some(expectations.expected_branch) {
+        return Err(FinalReviewReceiptIssue::BranchMismatch);
+    }
+    if receipt.repo.as_deref().map(str::trim) != Some(expectations.expected_repo) {
+        return Err(FinalReviewReceiptIssue::RepoMismatch);
+    }
+    if receipt.base_branch.as_deref().map(str::trim) != Some(expectations.expected_base_branch) {
+        return Err(FinalReviewReceiptIssue::BaseBranchMismatch);
+    }
     if let Some(expected_strategy_checkpoint_fingerprint) = expectations
         .expected_strategy_checkpoint_fingerprint
         .map(str::trim)
@@ -352,8 +378,8 @@ pub fn validate_final_review_receipt(
         expected_plan_revision: expectations.expected_plan_revision,
         expected_strategy_checkpoint_fingerprint: expectations
             .expected_strategy_checkpoint_fingerprint,
-        expected_branch: receipt.branch.as_deref().map(str::trim).unwrap_or_default(),
-        expected_repo: receipt.repo.as_deref().map(str::trim).unwrap_or_default(),
+        expected_branch: expectations.expected_branch,
+        expected_repo: expectations.expected_repo,
         expected_head_sha: expectations.expected_head_sha,
         expected_base_branch: expectations.expected_base_branch,
         expected_deviation_record,

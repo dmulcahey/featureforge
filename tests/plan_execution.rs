@@ -7779,7 +7779,7 @@ fn gate_finish_rejects_code_review_artifact_regressions() {
             "review_branch_mismatch",
             "review_branch_mismatch",
             "ReviewArtifactNotFresh",
-            "review_receipt_reviewer_artifact_contract_mismatch",
+            "review_receipt_branch_mismatch",
         ),
         (
             "review_base_branch_unresolved",
@@ -7815,7 +7815,7 @@ fn gate_finish_rejects_code_review_artifact_regressions() {
             "review_repo_mismatch",
             "review_repo_mismatch",
             "ReviewArtifactNotFresh",
-            "review_receipt_reviewer_artifact_contract_mismatch",
+            "review_receipt_repo_mismatch",
         ),
         (
             "review_authoritative_fingerprint_mismatch",

@@ -612,6 +612,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "close current task",
             "continue execution",
             "dispatch review",
+            "dispatch final review",
             "execution reentry required",
             "hand off",
             "pivot / return to planning",
@@ -626,7 +627,10 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         ]
     );
     check_types!("recommended_command", ["string", "null"], optional);
-    check_enum!("follow_up_override", ["none", "record_handoff", "record_pivot"]);
+    check_enum!(
+        "follow_up_override",
+        ["none", "record_handoff", "record_pivot"]
+    );
     check_types!("recording_context", ["object"], optional);
     check_types!("execution_command_context", ["object"], optional);
     check_types!(

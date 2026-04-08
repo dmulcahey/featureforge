@@ -83,6 +83,7 @@
         "close current task",
         "continue execution",
         "dispatch review",
+        "dispatch final review",
         "execution reentry required",
         "hand off",
         "pivot / return to planning",

@@ -1026,6 +1026,25 @@ impl AuthoritativeTransitionState {
         )
     }
 
+    pub(crate) fn clear_task_review_dispatch_lineage(
+        &mut self,
+        task: u32,
+    ) -> Result<bool, JsonFailure> {
+        let lineage_key = format!("task-{task}");
+        let removed_lineage = self
+            .dispatch_lineage_records_mut()?
+            .remove(&lineage_key)
+            .is_some();
+        let removed_credit = self
+            .dispatch_credit_counts_mut()?
+            .remove(&lineage_key)
+            .is_some();
+        if removed_lineage || removed_credit {
+            self.dirty = true;
+        }
+        Ok(removed_lineage || removed_credit)
+    }
+
     pub(crate) fn restore_downstream_truth(
         &mut self,
         final_review_fingerprint: &str,
@@ -1965,8 +1984,10 @@ impl AuthoritativeTransitionState {
         });
         let records = self.task_closure_negative_result_records_mut()?;
         records.insert(format!("task-{}", record.task), payload.clone());
-        self.task_closure_negative_result_history_mut()?
-            .insert(format!("task-{}:{}", record.task, record.dispatch_id), payload);
+        self.task_closure_negative_result_history_mut()?.insert(
+            format!("task-{}:{}", record.task, record.dispatch_id),
+            payload,
+        );
         self.dirty = true;
         Ok(())
     }
@@ -2150,7 +2171,9 @@ impl AuthoritativeTransitionState {
         current_task_closure_record_from_payload(task, payload)
     }
 
-    pub(crate) fn raw_current_task_closure_results(&self) -> BTreeMap<u32, CurrentTaskClosureRecord> {
+    pub(crate) fn raw_current_task_closure_results(
+        &self,
+    ) -> BTreeMap<u32, CurrentTaskClosureRecord> {
         self.state_payload
             .get("current_task_closure_records")
             .and_then(Value::as_object)
@@ -2178,7 +2201,8 @@ impl AuthoritativeTransitionState {
                     .filter_map(Value::as_object)
                     .filter_map(|payload| {
                         let payload_value = Value::Object(payload.clone());
-                        if json_string(&payload_value, "record_status").as_deref() != Some("current")
+                        if json_string(&payload_value, "record_status").as_deref()
+                            != Some("current")
                         {
                             return None;
                         }
@@ -2241,8 +2265,10 @@ impl AuthoritativeTransitionState {
                 }),
             );
         }
-        self.root_object_mut()?
-            .insert(String::from("current_task_closure_records"), Value::Object(restored));
+        self.root_object_mut()?.insert(
+            String::from("current_task_closure_records"),
+            Value::Object(restored),
+        );
         self.dirty = true;
         Ok(true)
     }
@@ -2282,7 +2308,8 @@ impl AuthoritativeTransitionState {
     pub(crate) fn recoverable_current_branch_closure_identity(
         &self,
     ) -> Option<CurrentBranchClosureIdentity> {
-        if let Some(branch_closure_id) = json_string(&self.state_payload, "current_branch_closure_id")
+        if let Some(branch_closure_id) =
+            json_string(&self.state_payload, "current_branch_closure_id")
             && let Some(record) = self.branch_closure_record(&branch_closure_id)
         {
             return Some(CurrentBranchClosureIdentity {
@@ -2297,12 +2324,13 @@ impl AuthoritativeTransitionState {
             .get("branch_closure_records")
             .and_then(Value::as_object)?;
         let mut candidates = records.keys().filter_map(|branch_closure_id| {
-            self.branch_closure_record(branch_closure_id)
-                .map(|record| CurrentBranchClosureIdentity {
+            self.branch_closure_record(branch_closure_id).map(|record| {
+                CurrentBranchClosureIdentity {
                     branch_closure_id: branch_closure_id.clone(),
                     reviewed_state_id: record.reviewed_state_id,
                     contract_identity: record.contract_identity,
-                })
+                }
+            })
         });
         let current = candidates.next()?;
         if candidates.next().is_some() {
@@ -2374,7 +2402,9 @@ impl AuthoritativeTransitionState {
         task_closure_negative_result_from_payload(payload)
     }
 
-    fn task_closure_negative_results_from_history(&self) -> BTreeMap<u32, TaskClosureNegativeResult> {
+    fn task_closure_negative_results_from_history(
+        &self,
+    ) -> BTreeMap<u32, TaskClosureNegativeResult> {
         self.state_payload
             .get("task_closure_negative_result_history")
             .and_then(Value::as_object)
@@ -2384,7 +2414,8 @@ impl AuthoritativeTransitionState {
                     .filter_map(Value::as_object)
                     .filter_map(|payload| {
                         let payload_value = Value::Object(payload.clone());
-                        if json_string(&payload_value, "record_status").as_deref() != Some("current")
+                        if json_string(&payload_value, "record_status").as_deref()
+                            != Some("current")
                         {
                             return None;
                         }

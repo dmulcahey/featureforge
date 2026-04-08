@@ -124,6 +124,8 @@ enum NextActionSchema {
     ContinueExecution,
     #[serde(rename = "dispatch review")]
     DispatchReview,
+    #[serde(rename = "dispatch final review")]
+    DispatchFinalReview,
     #[serde(rename = "execution reentry required")]
     ExecutionReentryRequired,
     #[serde(rename = "hand off")]
@@ -674,7 +676,9 @@ impl ExecutionRuntime {
 
     pub fn status(&self, args: &StatusArgs) -> Result<PlanExecutionStatus, JsonFailure> {
         let context = load_execution_context(self, &args.plan)?;
-        status_from_context(&context)
+        let status = status_from_context(&context)?;
+        require_public_exact_execution_command(&context, &status)?;
+        Ok(status)
     }
 
     pub fn recommend(&self, args: &RecommendArgs) -> Result<RecommendOutput, JsonFailure> {
@@ -2173,13 +2177,15 @@ pub(crate) fn missing_derived_review_state_fields(
         if overlay_current_branch_closure_id != Some(current_identity.branch_closure_id.as_str()) {
             push_missing_derived_field(&mut missing, "current_branch_closure_id");
         }
-        if normalize_optional_overlay_value(overlay.current_branch_closure_reviewed_state_id.as_deref())
-            != Some(current_identity.reviewed_state_id.as_str())
+        if normalize_optional_overlay_value(
+            overlay.current_branch_closure_reviewed_state_id.as_deref(),
+        ) != Some(current_identity.reviewed_state_id.as_str())
         {
             push_missing_derived_field(&mut missing, "current_branch_closure_reviewed_state_id");
         }
-        if normalize_optional_overlay_value(overlay.current_branch_closure_contract_identity.as_deref())
-            != Some(current_identity.contract_identity.as_str())
+        if normalize_optional_overlay_value(
+            overlay.current_branch_closure_contract_identity.as_deref(),
+        ) != Some(current_identity.contract_identity.as_str())
         {
             push_missing_derived_field(&mut missing, "current_branch_closure_contract_identity");
         }
@@ -2633,27 +2639,25 @@ fn populate_public_status_contract_fields(
         task_review_dispatch_id.as_deref(),
         final_review_dispatch_id.as_deref(),
     );
-    let (execution_command_context, execution_command) = if status.execution_started == "yes"
-        && status.review_state_status == "clean"
-        && matches!(
-            status.phase_detail.as_str(),
-            "execution_in_progress" | "execution_reentry_required"
-        ) {
-        if let Some(resolved) = resolve_exact_execution_command(status, &context.plan_rel) {
-            (
-                Some(PublicExecutionCommandContext {
-                    command_kind: String::from(resolved.command_kind),
-                    task_number: Some(resolved.task_number),
-                    step_id: resolved.step_id,
-                }),
-                Some(resolved.recommended_command),
-            )
+    let (execution_command_context, execution_command) =
+        if public_exact_execution_command_required(status) {
+            if let Some(resolved) =
+                resolve_exact_execution_command_from_context(context, status, &context.plan_rel)
+            {
+                (
+                    Some(PublicExecutionCommandContext {
+                        command_kind: String::from(resolved.command_kind),
+                        task_number: Some(resolved.task_number),
+                        step_id: resolved.step_id,
+                    }),
+                    Some(resolved.recommended_command),
+                )
+            } else {
+                (None, None)
+            }
         } else {
             (None, None)
-        }
-    } else {
-        (None, None)
-    };
+        };
     status.execution_command_context = execution_command_context;
     status.next_action = derive_public_next_action(status, &status.phase_detail);
     status.recommended_command =
@@ -3052,6 +3056,221 @@ pub(crate) fn resolve_exact_execution_command(
     None
 }
 
+pub(crate) fn resolve_exact_execution_command_from_context(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    plan_path: &str,
+) -> Option<ExactExecutionCommand> {
+    if let Some(resolved) = resolve_exact_execution_command(status, plan_path) {
+        return Some(resolved);
+    }
+    if !context_step_execution_command_fallback_allowed(status) {
+        return None;
+    }
+    context
+        .steps
+        .iter()
+        .find(|step| !step.checked)
+        .map(|step| ExactExecutionCommand {
+            command_kind: "begin",
+            task_number: step.task_number,
+            step_id: Some(step.step_number),
+            recommended_command: format!(
+                "featureforge plan execution begin --plan {plan_path} --task {} --step {} --execution-mode {} --expect-execution-fingerprint {}",
+                step.task_number,
+                step.step_number,
+                status.execution_mode,
+                status.execution_fingerprint
+            ),
+        })
+}
+
+fn context_step_execution_command_fallback_allowed(status: &PlanExecutionStatus) -> bool {
+    status.active_task.is_none()
+        && status.active_step.is_none()
+        && status.resume_task.is_none()
+        && status.resume_step.is_none()
+        && status.blocking_task.is_none()
+        && status.blocking_step.is_none()
+}
+
+#[cfg(test)]
+mod exact_execution_command_tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn run_git(repo_root: &Path, args: &[&str], context: &str) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(repo_root)
+            .status()
+            .unwrap_or_else(|error| panic!("{context} should launch git: {error}"));
+        assert!(status.success(), "{context} should succeed");
+    }
+
+    fn unresolved_execution_context() -> (TempDir, ExecutionContext, String) {
+        let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/codex-runtime/fixtures/workflow-artifacts");
+        let repo_dir = TempDir::new().expect("exact-command temp repo should exist");
+        let repo_root = repo_dir.path();
+        let plan_rel =
+            String::from("docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md");
+        let spec_rel = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
+        let plan_path = repo_root.join(&plan_rel);
+        let spec_path = repo_root.join(spec_rel);
+
+        run_git(
+            repo_root,
+            &["init"],
+            "git init for exact-command unit tests",
+        );
+        run_git(
+            repo_root,
+            &["config", "user.name", "FeatureForge Test"],
+            "git config user.name for exact-command unit tests",
+        );
+        run_git(
+            repo_root,
+            &["config", "user.email", "featureforge-tests@example.com"],
+            "git config user.email for exact-command unit tests",
+        );
+        fs::write(repo_root.join("README.md"), "# exact-command-test\n")
+            .expect("exact-command unit-test README should write");
+        run_git(
+            repo_root,
+            &["add", "README.md"],
+            "git add README for exact-command unit tests",
+        );
+        run_git(
+            repo_root,
+            &["commit", "-m", "init"],
+            "git commit init for exact-command unit tests",
+        );
+
+        fs::create_dir_all(
+            spec_path
+                .parent()
+                .expect("spec fixture path should have a parent"),
+        )
+        .expect("spec fixture directory should create");
+        fs::create_dir_all(
+            plan_path
+                .parent()
+                .expect("plan fixture path should have a parent"),
+        )
+        .expect("plan fixture directory should create");
+        fs::copy(
+            fixture_root.join("specs/2026-03-22-runtime-integration-hardening-design.md"),
+            &spec_path,
+        )
+        .expect("exact-command unit-test spec fixture should copy");
+        let plan_source = fs::read_to_string(
+            fixture_root.join("plans/2026-03-22-runtime-integration-hardening.md"),
+        )
+        .expect("exact-command unit-test plan fixture should read")
+        .replace(
+            "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
+            spec_rel,
+        );
+        fs::write(&plan_path, plan_source)
+            .expect("exact-command unit-test plan fixture should write");
+
+        let runtime =
+            ExecutionRuntime::discover(repo_root).expect("temp repo runtime should discover");
+        let context = load_execution_context(&runtime, Path::new(&plan_rel))
+            .expect("runtime integration hardening plan should load for exact-command unit tests");
+        (repo_dir, context, plan_rel)
+    }
+
+    #[test]
+    fn resolve_exact_execution_command_from_context_uses_first_unchecked_step_without_markers() {
+        let (_repo_dir, context, plan_rel) = unresolved_execution_context();
+        let mut status =
+            status_from_context(&context).expect("status should derive for exact-command test");
+        status.execution_started = String::from("yes");
+        status.review_state_status = String::from("clean");
+        status.phase_detail = String::from("execution_in_progress");
+        status.harness_phase = HarnessPhase::Executing;
+        status.execution_mode = String::from("featureforge:executing-plans");
+
+        let resolved =
+            resolve_exact_execution_command_from_context(&context, &status, plan_rel.as_str())
+                .expect("marker-free started execution should derive the first unchecked step");
+
+        assert_eq!(resolved.command_kind, "begin");
+        assert_eq!(resolved.task_number, 1);
+        assert_eq!(resolved.step_id, Some(1));
+        assert_eq!(
+            resolved.recommended_command,
+            format!(
+                "featureforge plan execution begin --plan {plan_rel} --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint {}",
+                status.execution_fingerprint
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_exact_execution_command_from_context_fails_closed_for_malformed_active_marker() {
+        let (_repo_dir, context, plan_rel) = unresolved_execution_context();
+        let mut status =
+            status_from_context(&context).expect("status should derive for exact-command test");
+        status.execution_started = String::from("yes");
+        status.review_state_status = String::from("clean");
+        status.phase_detail = String::from("execution_in_progress");
+        status.harness_phase = HarnessPhase::Executing;
+        status.active_task = Some(1);
+        status.active_step = None;
+
+        assert!(
+            resolve_exact_execution_command_from_context(&context, &status, plan_rel.as_str())
+                .is_none(),
+            "malformed active execution markers must fail closed instead of synthesizing a begin command"
+        );
+    }
+}
+
+pub(crate) fn require_exact_execution_command(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    plan_path: &str,
+    context_label: &str,
+) -> Result<ExactExecutionCommand, JsonFailure> {
+    resolve_exact_execution_command_from_context(context, status, plan_path).ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "{context_label} could not derive the exact execution command for the current execution state."
+            ),
+        )
+    })
+}
+
+fn public_exact_execution_command_required(status: &PlanExecutionStatus) -> bool {
+    (status.harness_phase == HarnessPhase::Executing
+        || status.active_task.is_some()
+        || status.resume_task.is_some()
+        || status.blocking_task.is_some())
+        && status.execution_started == "yes"
+        && status.review_state_status == "clean"
+        && matches!(
+            status.phase_detail.as_str(),
+            "execution_in_progress" | "execution_reentry_required"
+        )
+}
+
+fn require_public_exact_execution_command(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+) -> Result<(), JsonFailure> {
+    if public_exact_execution_command_required(status) {
+        let _ = require_exact_execution_command(context, status, &context.plan_rel, "status")?;
+    }
+    Ok(())
+}
+
 fn derive_public_recommended_command(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
@@ -3279,6 +3498,8 @@ fn status_review_blocked(gate_finish: &GateResult) -> bool {
                     | "final_review_state_missing"
                     | "final_review_state_stale"
                     | "final_review_state_not_fresh"
+                    | "review_receipt_reviewer_fingerprint_invalid"
+                    | "review_receipt_reviewer_fingerprint_mismatch"
             )
         })
 }
@@ -3291,6 +3512,8 @@ fn status_review_truth_blocked(gate_review: &GateResult) -> bool {
                 | "final_review_state_missing"
                 | "final_review_state_stale"
                 | "final_review_state_not_fresh"
+                | "review_receipt_reviewer_fingerprint_invalid"
+                | "review_receipt_reviewer_fingerprint_mismatch"
         )
     })
 }
@@ -6859,6 +7082,8 @@ fn validate_final_review_artifact_for_finish(
         expected_plan_revision: context.plan_document.plan_revision,
         expected_strategy_checkpoint_fingerprint: expected_strategy_checkpoint_fingerprint
             .as_deref(),
+        expected_branch: &context.runtime.branch_name,
+        expected_repo: &context.runtime.repo_slug,
         expected_head_sha: current_head,
         expected_base_branch: current_base_branch,
         deviations_required,
