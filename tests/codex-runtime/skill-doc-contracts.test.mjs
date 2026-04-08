@@ -838,6 +838,36 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
       `${label} should distinguish current, superseded, and stale-unreviewed closure state`,
     );
     assert.match(
+      normalized,
+      /MUST rerun `featureforge plan execution status --plan <approved-plan-path>` before invoking `repair-review-state`[\s\S]*MUST follow[\s\S]*`recommended_command` before any additional recording commands/i,
+      `${label} should require status -> repair-review-state -> returned recommended_command sequencing`,
+    );
+    assert.match(
+      normalized,
+      /MUST NOT manually edit runtime-owned execution records[\s\S]*MUST NOT manually edit derived markdown artifacts or receipts/i,
+      `${label} should explicitly forbid manual edits to runtime-owned records and derived markdown receipts`,
+    );
+    assert.match(
+      content,
+      /`task_closure_recording_ready`[\s\S]*`recording_context\.task_number`[\s\S]*`recording_context\.dispatch_id`/,
+      `${label} should require task recording_context task_number and dispatch_id`,
+    );
+    assert.match(
+      content,
+      /`release_readiness_recording_ready`[\s\S]*`recording_context\.branch_closure_id`/,
+      `${label} should require release recording_context branch_closure_id`,
+    );
+    assert.match(
+      content,
+      /`release_blocker_resolution_required`[\s\S]*`recording_context\.branch_closure_id`/,
+      `${label} should require release-blocker recording_context branch_closure_id`,
+    );
+    assert.match(
+      content,
+      /`final_review_recording_ready`[\s\S]*`recording_context\.dispatch_id`[\s\S]*`recording_context\.branch_closure_id`/,
+      `${label} should require final-review recording_context dispatch_id and branch_closure_id`,
+    );
+    assert.match(
       content,
       /docs\/featureforge\/reference\/2026-04-01-review-state-reference\.md/,
       `${label} should link to the shared review-state reference`,
@@ -1445,6 +1475,15 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   assert.match(
     readme,
     /Completion then flows through \(runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`\):/,
+  );
+  assert.match(
+    readme,
+    /`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility\/debug recovery helper, not a normal execution progression step\./,
+  );
+  assert.doesNotMatch(
+    readme,
+    /`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state\./,
+    'README should not present rebuild-evidence refresh as normal progression guidance',
   );
   assert.doesNotMatch(
     readme,

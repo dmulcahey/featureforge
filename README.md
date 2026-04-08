@@ -78,7 +78,7 @@ Execution starts from an engineering-approved plan and the exact approved plan p
 
 `featureforge plan execution gate-finish --plan <approved-plan-path>` now derives execution-deviation review requirements from authoritative runtime-owned topology downgrade artifacts. Reason-code-only deviation hints are treated as corroborating metadata, not primary truth.
 
-`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state. When an authoritative active contract exists, rebuild refresh also republishes contract-bound serial unit-review receipts for the current run; without an active contract it keeps plain task-boundary unit-review receipts and validates them as non-contract task-boundary provenance instead of silently treating them as finish-gate bindings.
+`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug recovery helper, not a normal execution progression step.
 
 `featureforge plan execution gate-review --plan <approved-plan-path>` is the first finish gate: it evaluates finish readiness and records or refreshes the current branch-closure pass checkpoint without minting task-boundary review-dispatch proof.
 

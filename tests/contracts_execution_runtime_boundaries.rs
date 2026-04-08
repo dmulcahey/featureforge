@@ -121,6 +121,31 @@ fn execution_query_boundary_stays_execution_owned() {
 }
 
 #[test]
+fn execution_query_recording_ready_states_surface_required_recording_context_ids() {
+    let query_source = fs::read_to_string(repo_root().join("src/execution/query.rs"))
+        .expect("execution query source should be readable");
+
+    assert!(
+        query_source.contains("String::from(\"task_closure_recording_ready\")")
+            && query_source.contains("task_number: Some(task_number)")
+            && query_source.contains("dispatch_id: Some(dispatch_id.clone())"),
+        "task_closure_recording_ready should expose task_number and dispatch_id recording_context ids",
+    );
+    assert!(
+        query_source.contains("\"release_readiness_recording_ready\"")
+            && query_source.contains("\"release_blocker_resolution_required\"")
+            && query_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
+        "release-readiness recording-ready states should expose branch_closure_id recording_context ids",
+    );
+    assert!(
+        query_source.contains("String::from(\"final_review_recording_ready\")")
+            && query_source.contains("dispatch_id: Some(dispatch_id.clone())")
+            && query_source.contains("branch_closure_id: current_branch_closure_id.clone()"),
+        "final_review_recording_ready should expose dispatch_id and branch_closure_id recording_context ids",
+    );
+}
+
+#[test]
 fn mutate_and_review_state_use_recording_boundary_for_transition_writes() {
     let mutate_source = fs::read_to_string(repo_root().join("src/execution/mutate.rs"))
         .expect("execution mutate source should be readable");

@@ -1519,6 +1519,34 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/executing-plans/SKILL.md"),
         "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
     );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "When workflow/operator reports `review_state_status` as stale or missing closure context, MUST rerun `featureforge plan execution status --plan <approved-plan-path>` before invoking `repair-review-state`.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "After `repair-review-state`, MUST follow the command returned in that command's `recommended_command` before any additional recording commands.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "MUST NOT manually edit runtime-owned execution records.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "MUST NOT manually edit derived markdown artifacts or receipts.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "`task_closure_recording_ready` requires `recording_context.task_number` plus `recording_context.dispatch_id`.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "`release_readiness_recording_ready` and `release_blocker_resolution_required` require `recording_context.branch_closure_id`.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "`final_review_recording_ready` requires `recording_context.dispatch_id` plus `recording_context.branch_closure_id`.",
+    );
     assert_file_contains_in_order(
         root.join("skills/executing-plans/SKILL.md"),
         &[
@@ -1558,6 +1586,34 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
         "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "When workflow/operator reports `review_state_status` as stale or missing closure context, MUST rerun `featureforge plan execution status --plan <approved-plan-path>` before invoking `repair-review-state`.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "After `repair-review-state`, MUST follow the command returned in that command's `recommended_command` before any additional recording commands.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "MUST NOT manually edit runtime-owned execution records.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "MUST NOT manually edit derived markdown artifacts or receipts.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "`task_closure_recording_ready` requires `recording_context.task_number` plus `recording_context.dispatch_id`.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "`release_readiness_recording_ready` and `release_blocker_resolution_required` require `recording_context.branch_closure_id`.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "`final_review_recording_ready` requires `recording_context.dispatch_id` plus `recording_context.branch_closure_id`.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1948,6 +2004,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("README.md"),
         "Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):",
+    );
+    assert_file_contains(
+        root.join("README.md"),
+        "`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug recovery helper, not a normal execution progression step.",
+    );
+    assert_file_not_contains(
+        root.join("README.md"),
+        "`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state.",
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
