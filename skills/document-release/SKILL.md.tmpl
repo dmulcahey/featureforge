@@ -209,14 +209,15 @@ If `TODOS.md` exists:
 - Add new follow-up items only when they are concrete and justified by the diff
 - Ask the user before large reorganizations or subjective reprioritization
 
-## Step 7.5: Structured Release-Readiness Artifact
+## Step 7.5: Structured Release-Readiness Companion Artifact
 
-For workflow-routed implementation work, also write a project-scoped release-readiness artifact:
+For workflow-routed implementation work, also write a project-scoped release-readiness companion artifact:
 
-- Require the exact approved plan path from the current workflow context before writing the release-readiness artifact.
+- Require the exact approved plan path from the current workflow context before writing the release-readiness companion artifact.
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - If the approved plan path or revision is unavailable, stop and return to the current workflow instead of writing a partial artifact.
 - Use the base branch detected in Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
+- This markdown output is a derived operator handoff companion. Runtime-owned reviewed-closure and late-stage milestone records remain the authoritative gate-truth surface.
 
 ```bash
 _SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
@@ -227,11 +228,11 @@ unset _SLUG_ENV
 USER=$(whoami)
 DATETIME=$(date +%Y%m%d-%H%M%S)
 HEAD_SHA=$(git rev-parse HEAD)
-mkdir -p "$_SP_STATE_DIR/projects/$SLUG"
+mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
 ```
 
 Write to:
-- `$_SP_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-release-readiness-{datetime}.md`
+- `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-release-readiness-{datetime}.md`
 
 Use this structure:
 

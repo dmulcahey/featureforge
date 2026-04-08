@@ -9,14 +9,14 @@ Use this table when skill/docs wording needs an explicit late-stage routing sour
 
 | Release Gate | Review Gate | QA Gate | Phase | Next Action | Recommended Skill | Reason Family |
 | --- | --- | --- | --- | --- | --- | --- |
-| blocked | blocked | blocked | `document_release_pending` | `run_document_release` | `featureforge:document-release` | `release_readiness` |
-| blocked | blocked | ready | `document_release_pending` | `run_document_release` | `featureforge:document-release` | `release_readiness` |
-| blocked | ready | blocked | `document_release_pending` | `run_document_release` | `featureforge:document-release` | `release_readiness` |
-| blocked | ready | ready | `document_release_pending` | `run_document_release` | `featureforge:document-release` | `release_readiness` |
-| ready | blocked | blocked | `final_review_pending` | `request_code_review` | `featureforge:requesting-code-review` | `final_review_freshness` |
-| ready | blocked | ready | `final_review_pending` | `request_code_review` | `featureforge:requesting-code-review` | `final_review_freshness` |
-| ready | ready | blocked | `qa_pending` | `run_qa_only` | `featureforge:qa-only` | `qa_freshness` |
-| ready | ready | ready | `ready_for_branch_completion` | `finish_branch` | `featureforge:finishing-a-development-branch` | `all_fresh` |
+| blocked | blocked | blocked | `document_release_pending` | `advance_late_stage` | `featureforge:document-release` | `release_readiness` |
+| blocked | blocked | ready | `document_release_pending` | `advance_late_stage` | `featureforge:document-release` | `release_readiness` |
+| blocked | ready | blocked | `document_release_pending` | `advance_late_stage` | `featureforge:document-release` | `release_readiness` |
+| blocked | ready | ready | `document_release_pending` | `advance_late_stage` | `featureforge:document-release` | `release_readiness` |
+| ready | blocked | blocked | `final_review_pending` | `dispatch_final_review` | `featureforge:requesting-code-review` | `final_review_freshness` |
+| ready | blocked | ready | `final_review_pending` | `dispatch_final_review` | `featureforge:requesting-code-review` | `final_review_freshness` |
+| ready | ready | blocked | `qa_pending` | `run_qa` | `featureforge:qa-only` | `qa_freshness` |
+| ready | ready | ready | `ready_for_branch_completion` | `run_finish_review_gate` | `featureforge:finishing-a-development-branch` | `all_fresh` |
 
 ## Command-Boundary Semantics
 

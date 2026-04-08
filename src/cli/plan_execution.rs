@@ -206,7 +206,7 @@ pub struct AdvanceLateStageArgs {
     pub plan: PathBuf,
     #[arg(long = "dispatch-id")]
     pub dispatch_id: Option<String>,
-    #[arg(long = "branch-closure-id")]
+    #[arg(long = "branch-closure-id", hide = true)]
     pub branch_closure_id: Option<String>,
     #[arg(long = "reviewer-source")]
     pub reviewer_source: Option<String>,

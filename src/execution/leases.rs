@@ -599,8 +599,8 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
         let probe_result = Some(
             std::process::Command::new("kill")
                 .arg("-0")
-            .arg(pid.to_string())
-            .status()
+                .arg(pid.to_string())
+                .status()
                 .map(|status| status.success())
                 .unwrap_or(true),
         );
@@ -612,10 +612,7 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
     }
 }
 
-pub(crate) fn process_is_running_from_probe_result(
-    pid: u32,
-    probe_result: Option<bool>,
-) -> bool {
+pub(crate) fn process_is_running_from_probe_result(pid: u32, probe_result: Option<bool>) -> bool {
     if pid == 0 {
         return false;
     }

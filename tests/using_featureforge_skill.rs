@@ -174,10 +174,10 @@ simulate_one() {{
     if [ -z "$_selected_route" ] && [ -n "${{SP_TEST_IMPLEMENTATION_READY_ROUTE:-}}" ]; then
         _selected_route="$SP_TEST_IMPLEMENTATION_READY_ROUTE"
     fi
-    if [ -f "$_SP_STATE_DIR/sessions/$PPID" ]; then
-        printf '{{"preamble_session_started":true,"selected_route":"%s"}}\n' "$_selected_route"
+    if [ -n "${{_FEATUREFORGE_STATE_DIR:-}}" ] && [ "$_FEATUREFORGE_STATE_DIR" = "$FEATUREFORGE_STATE_DIR" ]; then
+        printf '{{"preamble_state_dir_bound":true,"selected_route":"%s"}}\n' "$_selected_route"
     else
-        printf '{{"preamble_session_started":false,"selected_route":"%s"}}\n' "$_selected_route"
+        printf '{{"preamble_state_dir_bound":false,"selected_route":"%s"}}\n' "$_selected_route"
     fi
 }}
 {simulate_calls}
@@ -221,9 +221,7 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
         "When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself, in which case the explicit project-memory route above takes precedence over helper-derived workflow routes and execution handoff paths.",
         "In manual fallback, choose this route only for explicit memory-oriented requests; vague mentions of notes or docs are not enough.",
-        "_UPD=\"\"",
-        "_SESSIONS=$(find \"$_SP_STATE_DIR/sessions\" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')",
-        "_CONTRIB=\"\"",
+        "_FEATUREFORGE_STATE_DIR=\"${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}\"",
     ] {
         assert!(
             content.contains(pattern),
@@ -240,6 +238,9 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         "FEATUREFORGE_SPAWNED_SUBAGENT_OPT_IN",
         "ask one interactive question before any normal FeatureForge work happens",
         "Only after the bypass gate resolves to `enabled` for the current session key",
+        "[ -n \"$_FEATUREFORGE_BIN\" ] && \"$_FEATUREFORGE_BIN\" update-check 2>/dev/null || :",
+        "_SESSIONS=$(find \"$_FEATUREFORGE_STATE_DIR/sessions\" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')",
+        "_CONTRIB=\"\"",
     ] {
         assert!(
             !content.contains(removed_pattern),
@@ -262,18 +263,18 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         .find("If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.")
         .expect("using-featureforge skill should document explicit-memory routing precedence");
     let generic_next_skill_index = content
-        .find("If the JSON result contains a non-empty `next_skill`, use that route.")
+        .find("If the JSON result is not `implementation_ready` and contains a non-empty `next_skill`, use that route as compatibility fallback.")
         .expect("using-featureforge skill should still document generic next_skill routing");
     let implementation_ready_index = content
-        .find("If the JSON result reports `status` `implementation_ready`, proceed to the normal execution preflight and handoff flow using the exact approved plan path.")
+        .find("If the JSON result reports `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` using that exact approved plan path.")
         .expect("using-featureforge skill should still document implementation-ready handoff routing");
-    assert!(
-        explicit_memory_route_index < generic_next_skill_index,
-        "explicit project-memory routing should be documented before the generic next_skill rule"
-    );
     assert!(
         explicit_memory_route_index < implementation_ready_index,
         "explicit project-memory routing should be documented before the implementation-ready handoff rule"
+    );
+    assert!(
+        implementation_ready_index < generic_next_skill_index,
+        "implementation-ready operator routing should be documented before the compatibility next_skill fallback"
     );
 
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
@@ -282,19 +283,18 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
     let output = run_bash_block(
         state_dir.path(),
         temp_home.path(),
-        &format!("{preamble}\nprintf \"%s\\n\" \"$_SP_STATE_DIR/sessions/$PPID\"\n"),
-        "derive using-featureforge shared session marker path",
+        &format!("{preamble}\nprintf \"%s\\n\" \"$_FEATUREFORGE_STATE_DIR\"\n"),
+        "derive using-featureforge shared state dir path",
     );
-    let session_marker_path = extract_last_nonempty_line(
+    let state_dir_path = extract_last_nonempty_line(
         &output.stdout,
-        "derive using-featureforge shared session marker path",
+        "derive using-featureforge shared state dir path",
     );
-    let expected_prefix = state_dir.path().join("sessions");
     assert!(
-        Path::new(&session_marker_path).starts_with(&expected_prefix),
-        "shared session marker path should live under {:?}, got {}",
-        expected_prefix,
-        session_marker_path
+        Path::new(&state_dir_path).starts_with(state_dir.path()),
+        "shared state dir path should live under {:?}, got {}",
+        state_dir.path(),
+        state_dir_path
     );
 }
 
@@ -413,7 +413,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         let entries = simulate_supported_route_selection_batch(state, home, &harness, &messages);
 
         let vague_entry = &entries[0];
-        assert_eq!(vague_entry["preamble_session_started"], Value::Bool(true));
+        assert_eq!(vague_entry["preamble_state_dir_bound"], Value::Bool(true));
         assert_eq!(
             vague_entry["selected_route"],
             Value::String(String::from(active_owner)),
@@ -427,7 +427,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         for (index, _explicit_message) in explicit_messages.iter().enumerate() {
             let explicit_entry = &entries[explicit_start + index];
             assert_eq!(
-                explicit_entry["preamble_session_started"],
+                explicit_entry["preamble_state_dir_bound"],
                 Value::Bool(true)
             );
             assert_eq!(
@@ -440,7 +440,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         for (index, _negative_message) in negative_messages.iter().enumerate() {
             let negative_entry = &entries[negative_start + index];
             assert_eq!(
-                negative_entry["preamble_session_started"],
+                negative_entry["preamble_state_dir_bound"],
                 Value::Bool(true)
             );
             assert_eq!(
@@ -452,7 +452,7 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
 
         let direct_skill_entry = &entries[direct_index];
         assert_eq!(
-            direct_skill_entry["preamble_session_started"],
+            direct_skill_entry["preamble_state_dir_bound"],
             Value::Bool(true)
         );
         assert_eq!(

@@ -77,6 +77,39 @@ pub(crate) fn claim_step_write_authority(
         {
             Ok(file) => break file,
             Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let metadata = match fs::symlink_metadata(&lock_path) {
+                    Ok(metadata) => metadata,
+                    Err(metadata_error) if metadata_error.kind() == ErrorKind::NotFound => {
+                        continue;
+                    }
+                    Err(metadata_error) => {
+                        return Err(JsonFailure::new(
+                            FailureClass::ConcurrentWriterConflict,
+                            format!(
+                                "Another runtime writer currently holds authoritative mutation authority, and the lock {} could not be inspected: {metadata_error}",
+                                lock_path.display()
+                            ),
+                        ));
+                    }
+                };
+                if metadata.file_type().is_symlink() {
+                    return Err(JsonFailure::new(
+                        FailureClass::PartialAuthoritativeMutation,
+                        format!(
+                            "Write-authority lock path must not be a symlink in {}.",
+                            lock_path.display()
+                        ),
+                    ));
+                }
+                if !metadata.is_file() {
+                    return Err(JsonFailure::new(
+                        FailureClass::PartialAuthoritativeMutation,
+                        format!(
+                            "Write-authority lock must be a regular file in {}.",
+                            lock_path.display()
+                        ),
+                    ));
+                }
                 let source = fs::read_to_string(&lock_path).map_err(|read_error| {
                     JsonFailure::new(
                         FailureClass::ConcurrentWriterConflict,
@@ -933,6 +966,179 @@ impl AuthoritativeTransitionState {
         })
     }
 
+    fn dispatch_lineage_history_mut(
+        &mut self,
+    ) -> Result<&mut serde_json::Map<String, Value>, JsonFailure> {
+        let root = self.root_object_mut()?;
+        let history = root
+            .entry(String::from("strategy_review_dispatch_lineage_history"))
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        history.as_object_mut().ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                "Authoritative harness strategy_review_dispatch_lineage_history must be a JSON object.",
+            )
+        })
+    }
+
+    fn final_review_dispatch_lineage_history_mut(
+        &mut self,
+    ) -> Result<&mut serde_json::Map<String, Value>, JsonFailure> {
+        let root = self.root_object_mut()?;
+        let history = root
+            .entry(String::from("final_review_dispatch_lineage_history"))
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        history.as_object_mut().ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                "Authoritative harness final_review_dispatch_lineage_history must be a JSON object.",
+            )
+        })
+    }
+
+    fn archive_task_dispatch_lineage_record(
+        &mut self,
+        task: u32,
+        status: &str,
+    ) -> Result<Option<String>, JsonFailure> {
+        let lineage_key = format!("task-{task}");
+        let current_payload = self
+            .state_payload
+            .get("strategy_review_dispatch_lineage")
+            .and_then(Value::as_object)
+            .and_then(|records| records.get(&lineage_key))
+            .and_then(Value::as_object)
+            .cloned();
+        let Some(current_payload) = current_payload else {
+            return Ok(None);
+        };
+        let payload_value = Value::Object(current_payload.clone());
+        let dispatch_id = json_string(&payload_value, "dispatch_id");
+        let Some(record_id) = json_string(&payload_value, "record_id").or_else(|| {
+            dispatch_id.as_deref().map(|dispatch_id| {
+                deterministic_record_id(
+                    "task-review-dispatch",
+                    &[lineage_key.as_str(), dispatch_id],
+                )
+            })
+        }) else {
+            return Ok(None);
+        };
+        let recorded_at = Timestamp::now().to_string();
+        let record_sequence = {
+            let history = self.dispatch_lineage_history_mut()?;
+            history
+                .get(&record_id)
+                .and_then(record_sequence_from_dispatch_record)
+                .or_else(|| {
+                    let sequence = json_u64(&payload_value, "record_sequence");
+                    (sequence > 0).then_some(sequence)
+                })
+                .unwrap_or_else(|| next_dispatch_record_sequence(history))
+        };
+        let mut archived_payload = current_payload;
+        archived_payload.insert(String::from("record_id"), Value::String(record_id.clone()));
+        archived_payload.insert(
+            String::from("record_sequence"),
+            Value::Number(record_sequence.into()),
+        );
+        archived_payload.insert(
+            String::from("record_status"),
+            Value::String(status.to_owned()),
+        );
+        archived_payload.insert(String::from("status"), Value::String(status.to_owned()));
+        archived_payload.insert(
+            String::from("status_updated_at"),
+            Value::String(recorded_at.clone()),
+        );
+        if json_string(&Value::Object(archived_payload.clone()), "recorded_at").is_none() {
+            archived_payload.insert(String::from("recorded_at"), Value::String(recorded_at));
+        }
+        if !archived_payload.contains_key("dispatch_provenance") {
+            archived_payload.insert(
+                String::from("dispatch_provenance"),
+                serde_json::json!({
+                    "scope_type": "task",
+                    "scope_key": lineage_key,
+                }),
+            );
+        }
+        self.dispatch_lineage_history_mut()?
+            .insert(record_id.clone(), Value::Object(archived_payload));
+        self.dirty = true;
+        Ok(Some(record_id))
+    }
+
+    fn archive_final_review_dispatch_lineage_record(
+        &mut self,
+        status: &str,
+    ) -> Result<Option<String>, JsonFailure> {
+        let current_payload = self
+            .state_payload
+            .get("final_review_dispatch_lineage")
+            .and_then(Value::as_object)
+            .cloned();
+        let Some(current_payload) = current_payload else {
+            return Ok(None);
+        };
+        let payload_value = Value::Object(current_payload.clone());
+        let dispatch_id = json_string(&payload_value, "dispatch_id");
+        let branch_closure_id = json_string(&payload_value, "branch_closure_id");
+        let Some(record_id) = json_string(&payload_value, "record_id").or_else(|| {
+            dispatch_id.as_deref().map(|dispatch_id| {
+                deterministic_record_id(
+                    "final-review-dispatch",
+                    &[branch_closure_id.as_deref().unwrap_or("none"), dispatch_id],
+                )
+            })
+        }) else {
+            return Ok(None);
+        };
+        let recorded_at = Timestamp::now().to_string();
+        let record_sequence = {
+            let history = self.final_review_dispatch_lineage_history_mut()?;
+            history
+                .get(&record_id)
+                .and_then(record_sequence_from_dispatch_record)
+                .or_else(|| {
+                    let sequence = json_u64(&payload_value, "record_sequence");
+                    (sequence > 0).then_some(sequence)
+                })
+                .unwrap_or_else(|| next_dispatch_record_sequence(history))
+        };
+        let mut archived_payload = current_payload;
+        archived_payload.insert(String::from("record_id"), Value::String(record_id.clone()));
+        archived_payload.insert(
+            String::from("record_sequence"),
+            Value::Number(record_sequence.into()),
+        );
+        archived_payload.insert(
+            String::from("record_status"),
+            Value::String(status.to_owned()),
+        );
+        archived_payload.insert(String::from("status"), Value::String(status.to_owned()));
+        archived_payload.insert(
+            String::from("status_updated_at"),
+            Value::String(recorded_at.clone()),
+        );
+        if json_string(&Value::Object(archived_payload.clone()), "recorded_at").is_none() {
+            archived_payload.insert(String::from("recorded_at"), Value::String(recorded_at));
+        }
+        if !archived_payload.contains_key("dispatch_provenance") {
+            archived_payload.insert(
+                String::from("dispatch_provenance"),
+                serde_json::json!({
+                    "scope_type": "final_review",
+                    "scope_key": branch_closure_id.as_deref().unwrap_or("unknown"),
+                }),
+            );
+        }
+        self.final_review_dispatch_lineage_history_mut()?
+            .insert(record_id.clone(), Value::Object(archived_payload));
+        self.dirty = true;
+        Ok(Some(record_id))
+    }
+
     fn upsert_task_dispatch_lineage(
         &mut self,
         task: u32,
@@ -943,21 +1149,46 @@ impl AuthoritativeTransitionState {
         reviewed_state_id: &str,
     ) -> Result<(), JsonFailure> {
         self.clear_task_closure_negative_result(task)?;
-        {
-            let lineage = self.dispatch_lineage_records_mut()?;
-            lineage.insert(
-                format!("task-{task}"),
-                serde_json::json!({
-                    "execution_run_id": execution_run_id,
-                    "dispatch_id": strategy_checkpoint_fingerprint,
-                    "reviewed_state_id": reviewed_state_id,
-                    "source_task": task,
-                    "source_step": source_step,
-                    "strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
-                    "task_completion_lineage_fingerprint": task_completion_lineage_fingerprint,
-                }),
-            );
-        }
+        let lineage_key = format!("task-{task}");
+        let _ = self.archive_task_dispatch_lineage_record(task, "historical")?;
+        let record_id = deterministic_record_id(
+            "task-review-dispatch",
+            &[lineage_key.as_str(), strategy_checkpoint_fingerprint],
+        );
+        let now = Timestamp::now().to_string();
+        let record_sequence = {
+            let history = self.dispatch_lineage_history_mut()?;
+            history
+                .get(&record_id)
+                .and_then(record_sequence_from_dispatch_record)
+                .unwrap_or_else(|| next_dispatch_record_sequence(history))
+        };
+        let record_payload = serde_json::json!({
+            "record_id": record_id.clone(),
+            "record_sequence": record_sequence,
+            "record_status": "current",
+            "status": "current",
+            "recorded_at": now,
+            "status_updated_at": now,
+            "execution_run_id": execution_run_id,
+            "dispatch_id": strategy_checkpoint_fingerprint,
+            "reviewed_state_id": reviewed_state_id,
+            "source_task": task,
+            "source_step": source_step,
+            "strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
+            "task_completion_lineage_fingerprint": task_completion_lineage_fingerprint,
+            "dispatch_provenance": {
+                "scope_type": "task",
+                "scope_key": lineage_key,
+                "source_task": task,
+                "source_step": source_step,
+                "strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
+            }
+        });
+        self.dispatch_lineage_history_mut()?
+            .insert(record_id.clone(), record_payload.clone());
+        self.dispatch_lineage_records_mut()?
+            .insert(lineage_key, record_payload);
         self.dirty = true;
         Ok(())
     }
@@ -968,14 +1199,40 @@ impl AuthoritativeTransitionState {
         branch_closure_id: &str,
         strategy_checkpoint_fingerprint: &str,
     ) -> Result<(), JsonFailure> {
-        let root = self.root_object_mut()?;
-        root.insert(
+        let _ = self.archive_final_review_dispatch_lineage_record("historical")?;
+        let record_id = deterministic_record_id(
+            "final-review-dispatch",
+            &[branch_closure_id, strategy_checkpoint_fingerprint],
+        );
+        let now = Timestamp::now().to_string();
+        let record_sequence = {
+            let history = self.final_review_dispatch_lineage_history_mut()?;
+            history
+                .get(&record_id)
+                .and_then(record_sequence_from_dispatch_record)
+                .unwrap_or_else(|| next_dispatch_record_sequence(history))
+        };
+        let record_payload = serde_json::json!({
+            "record_id": record_id.clone(),
+            "record_sequence": record_sequence,
+            "record_status": "current",
+            "status": "current",
+            "recorded_at": now,
+            "status_updated_at": now,
+            "execution_run_id": execution_run_id,
+            "dispatch_id": strategy_checkpoint_fingerprint,
+            "branch_closure_id": branch_closure_id,
+            "dispatch_provenance": {
+                "scope_type": "final_review",
+                "scope_key": branch_closure_id,
+                "strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
+            }
+        });
+        self.final_review_dispatch_lineage_history_mut()?
+            .insert(record_id.clone(), record_payload.clone());
+        self.root_object_mut()?.insert(
             String::from("final_review_dispatch_lineage"),
-            serde_json::json!({
-                "execution_run_id": execution_run_id,
-                "dispatch_id": strategy_checkpoint_fingerprint,
-                "branch_closure_id": branch_closure_id,
-            }),
+            record_payload,
         );
         self.dirty = true;
         Ok(())
@@ -1035,6 +1292,7 @@ impl AuthoritativeTransitionState {
         task: u32,
     ) -> Result<bool, JsonFailure> {
         let lineage_key = format!("task-{task}");
+        let _ = self.archive_task_dispatch_lineage_record(task, "stale_unreviewed")?;
         let removed_lineage = self
             .dispatch_lineage_records_mut()?
             .remove(&lineage_key)
@@ -1133,11 +1391,17 @@ impl AuthoritativeTransitionState {
     ) -> Result<(), JsonFailure> {
         let previous_branch_closure_id =
             json_string(&self.state_payload, "current_branch_closure_id");
+        let branch_closure_changed = previous_branch_closure_id
+            .as_deref()
+            .is_some_and(|value| value != branch_closure_id);
         let previous_release_readiness_record_id =
             json_string(&self.state_payload, "current_release_readiness_record_id");
         let previous_final_review_record_id =
             json_string(&self.state_payload, "current_final_review_record_id");
         let previous_qa_record_id = json_string(&self.state_payload, "current_qa_record_id");
+        if branch_closure_changed {
+            let _ = self.archive_final_review_dispatch_lineage_record("stale_unreviewed")?;
+        }
         {
             let root = self.root_object_mut()?;
             root.insert(
@@ -1213,10 +1477,7 @@ impl AuthoritativeTransitionState {
         }
         self.dirty = true;
 
-        if previous_branch_closure_id
-            .as_deref()
-            .is_some_and(|value| value != branch_closure_id)
-        {
+        if branch_closure_changed {
             let records = self.branch_closure_records_mut()?;
             if let Some(previous_branch_closure_id) = previous_branch_closure_id.as_deref() {
                 mark_record_status(records, previous_branch_closure_id, "superseded");
@@ -2784,19 +3045,9 @@ fn load_authoritative_transition_state_internal(
         &context.runtime.repo_slug,
         &context.runtime.branch_name,
     );
-    if !state_path.is_file() {
+    let Some(source) = read_authoritative_transition_state_source(&state_path)? else {
         return Ok(None);
-    }
-
-    let source = fs::read_to_string(&state_path).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Could not read authoritative harness state {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
+    };
     let state_payload: Value = serde_json::from_str(&source).map_err(|error| {
         JsonFailure::new(
             FailureClass::MalformedExecutionState,
@@ -2846,6 +3097,53 @@ fn load_authoritative_transition_state_internal(
         active_contract,
         dirty: false,
     }))
+}
+
+fn read_authoritative_transition_state_source(
+    state_path: &Path,
+) -> Result<Option<String>, JsonFailure> {
+    let metadata = match fs::symlink_metadata(state_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not inspect authoritative harness state {}: {error}",
+                    state_path.display()
+                ),
+            ));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state path must not be a symlink in {}.",
+                state_path.display()
+            ),
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness state must be a regular file in {}.",
+                state_path.display()
+            ),
+        ));
+    }
+
+    let source = fs::read_to_string(state_path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Could not read authoritative harness state {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    Ok(Some(source))
 }
 
 pub(crate) fn load_authoritative_transition_state(
@@ -3074,6 +3372,23 @@ fn append_unique_string_array<'a>(
     Ok(())
 }
 
+fn record_sequence_from_dispatch_record(record: &Value) -> Option<u64> {
+    record
+        .as_object()
+        .and_then(|record| record.get("record_sequence"))
+        .and_then(Value::as_u64)
+        .filter(|sequence| *sequence > 0)
+}
+
+fn next_dispatch_record_sequence(records: &serde_json::Map<String, Value>) -> u64 {
+    records
+        .values()
+        .filter_map(record_sequence_from_dispatch_record)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
 fn mark_record_status(records: &mut serde_json::Map<String, Value>, record_id: &str, status: &str) {
     if let Some(record) = records.get_mut(record_id)
         && let Some(record) = record.as_object_mut()
@@ -3158,10 +3473,29 @@ mod tests {
     use super::FinalReviewMilestoneRecord;
     use super::ReleaseReadinessResultRecord;
     use super::TaskClosureResultRecord;
+    use super::claim_step_write_authority;
+    use super::read_authoritative_transition_state_source;
     use super::remove_stale_write_authority_lock;
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+    use std::path::Path;
     use std::path::PathBuf;
 
+    use crate::execution::state::ExecutionRuntime;
+    use crate::paths::harness_branch_root;
     use serde_json::{Value, json};
+
+    fn test_runtime(state_dir: &Path) -> ExecutionRuntime {
+        ExecutionRuntime {
+            repo_root: state_dir.to_path_buf(),
+            git_dir: state_dir.join(".git"),
+            branch_name: String::from("feature"),
+            repo_slug: String::from("repo"),
+            safe_branch: String::from("feature"),
+            state_dir: state_dir.to_path_buf(),
+        }
+    }
 
     fn transition_state_with_current_branch_closure(
         current_branch_closure_id: &str,
@@ -3212,6 +3546,55 @@ mod tests {
         let lock_path = tempdir.path().join("write-authority.lock");
         remove_stale_write_authority_lock(&lock_path)
             .expect("already-removed stale write-authority lock should be treated as reclaimed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claim_step_write_authority_fails_closed_when_lock_path_is_symlink() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let runtime = test_runtime(tempdir.path());
+        let lock_path =
+            harness_branch_root(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name)
+                .join("write-authority.lock");
+        fs::create_dir_all(
+            lock_path
+                .parent()
+                .expect("lock path should have a parent directory"),
+        )
+        .expect("lock parent should be creatable");
+        let lock_target_path = tempdir.path().join("lock-target.pid");
+        fs::write(&lock_target_path, format!("pid={}\n", std::process::id()))
+            .expect("lock target should be writable");
+        symlink(&lock_target_path, &lock_path)
+            .expect("symlink lock path fixture should be creatable");
+
+        let error = match claim_step_write_authority(&runtime) {
+            Ok(_guard) => panic!("symlink write-authority lock path must fail closed"),
+            Err(error) => error,
+        };
+        assert!(
+            error.message.contains("must not be a symlink"),
+            "symlink lock failure should explain trust-boundary rejection"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transition_state_source_load_fails_closed_when_state_path_is_symlink() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let state_path = tempdir.path().join("state.json");
+        let state_target_path = tempdir.path().join("state-target.json");
+        fs::write(&state_target_path, r#"{"harness_phase":"executing"}"#)
+            .expect("state target should be writable");
+        symlink(&state_target_path, &state_path)
+            .expect("symlink authoritative state fixture should be creatable");
+
+        let error = read_authoritative_transition_state_source(&state_path)
+            .expect_err("authoritative transition state loader must reject symlink paths");
+        assert!(
+            error.message.contains("must not be a symlink"),
+            "symlink state failure should explain trust-boundary rejection"
+        );
     }
 
     #[test]
@@ -3276,6 +3659,159 @@ mod tests {
             authoritative_state.state_payload["finish_review_gate_pass_branch_closure_id"]
                 .is_null()
         );
+    }
+
+    #[test]
+    fn task_dispatch_lineage_history_tracks_current_and_historical_records() {
+        let mut authoritative_state = AuthoritativeTransitionState {
+            state_path: PathBuf::from("/tmp/authoritative-state.json"),
+            state_payload: json!({
+                "run_identity": {
+                    "execution_run_id": "run-unit-test",
+                    "source_plan_path": "docs/featureforge/plans/example.md",
+                    "source_plan_revision": 7
+                },
+                "strategy_review_dispatch_lineage": {},
+                "strategy_review_dispatch_lineage_history": {},
+                "task_closure_negative_result_records": {}
+            }),
+            phase: None,
+            active_contract: None,
+            dirty: false,
+        };
+
+        authoritative_state
+            .upsert_task_dispatch_lineage(
+                1,
+                "run-unit-test",
+                1,
+                "dispatch-a",
+                "task-lineage-a",
+                "git_tree:a",
+            )
+            .expect("first task dispatch lineage should record");
+        authoritative_state
+            .upsert_task_dispatch_lineage(
+                1,
+                "run-unit-test",
+                1,
+                "dispatch-b",
+                "task-lineage-b",
+                "git_tree:b",
+            )
+            .expect("second task dispatch lineage should append");
+
+        let history = authoritative_state.state_payload["strategy_review_dispatch_lineage_history"]
+            .as_object()
+            .expect("task dispatch lineage history should be an object");
+        assert_eq!(history.len(), 2);
+        let historical = history
+            .values()
+            .find(|record| record["dispatch_id"] == "dispatch-a")
+            .expect("first task dispatch should be present in history");
+        let current = history
+            .values()
+            .find(|record| record["dispatch_id"] == "dispatch-b")
+            .expect("latest task dispatch should be present in history");
+        assert_eq!(historical["record_status"], "historical");
+        assert_eq!(historical["status"], "historical");
+        assert_eq!(current["record_status"], "current");
+        assert_eq!(current["status"], "current");
+        assert_eq!(
+            authoritative_state.state_payload["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"],
+            "dispatch-b"
+        );
+    }
+
+    #[test]
+    fn clearing_task_dispatch_lineage_preserves_stale_history() {
+        let mut authoritative_state = AuthoritativeTransitionState {
+            state_path: PathBuf::from("/tmp/authoritative-state.json"),
+            state_payload: json!({
+                "run_identity": {
+                    "execution_run_id": "run-unit-test",
+                    "source_plan_path": "docs/featureforge/plans/example.md",
+                    "source_plan_revision": 7
+                },
+                "strategy_review_dispatch_lineage": {},
+                "strategy_review_dispatch_lineage_history": {},
+                "strategy_review_dispatch_credits": {},
+                "task_closure_negative_result_records": {}
+            }),
+            phase: None,
+            active_contract: None,
+            dirty: false,
+        };
+        authoritative_state
+            .upsert_task_dispatch_lineage(
+                2,
+                "run-unit-test",
+                3,
+                "dispatch-stale",
+                "task-lineage-stale",
+                "git_tree:stale",
+            )
+            .expect("task dispatch lineage should record");
+
+        let cleared = authoritative_state
+            .clear_task_review_dispatch_lineage(2)
+            .expect("clearing task dispatch lineage should succeed");
+        assert!(cleared);
+        assert!(
+            authoritative_state.state_payload["strategy_review_dispatch_lineage"]
+                .as_object()
+                .is_some_and(|lineage| !lineage.contains_key("task-2"))
+        );
+        let history = authoritative_state.state_payload["strategy_review_dispatch_lineage_history"]
+            .as_object()
+            .expect("task dispatch history should be an object");
+        let stale_record = history
+            .values()
+            .find(|record| record["dispatch_id"] == "dispatch-stale")
+            .expect("cleared dispatch lineage should remain in history");
+        assert_eq!(stale_record["record_status"], "stale_unreviewed");
+        assert_eq!(stale_record["status"], "stale_unreviewed");
+    }
+
+    #[test]
+    fn branch_reclosure_preserves_stale_final_review_dispatch_history() {
+        let mut authoritative_state = AuthoritativeTransitionState {
+            state_path: PathBuf::from("/tmp/authoritative-state.json"),
+            state_payload: json!({
+                "current_branch_closure_id": "branch-closure-1",
+                "current_branch_closure_reviewed_state_id": "git_tree:one",
+                "current_branch_closure_contract_identity": "contract-one",
+                "current_release_readiness_record_id": Value::Null,
+                "current_final_review_record_id": Value::Null,
+                "current_qa_record_id": Value::Null,
+                "final_review_dispatch_lineage": {
+                    "execution_run_id": "run-unit-test",
+                    "dispatch_id": "dispatch-final",
+                    "branch_closure_id": "branch-closure-1"
+                }
+            }),
+            phase: None,
+            active_contract: None,
+            dirty: false,
+        };
+
+        authoritative_state
+            .set_current_branch_closure_id("branch-closure-2", "git_tree:two", "contract-two")
+            .expect("branch reclosure should succeed");
+
+        assert!(
+            authoritative_state.state_payload["final_review_dispatch_lineage"].is_null(),
+            "current final-review dispatch lineage should be cleared after branch reclosure"
+        );
+        let history = authoritative_state.state_payload["final_review_dispatch_lineage_history"]
+            .as_object()
+            .expect("final-review dispatch history should be an object");
+        let stale_record = history
+            .values()
+            .find(|record| record["dispatch_id"] == "dispatch-final")
+            .expect("previous final-review dispatch lineage should remain in history");
+        assert_eq!(stale_record["record_status"], "stale_unreviewed");
+        assert_eq!(stale_record["status"], "stale_unreviewed");
     }
 
     #[test]
@@ -3571,7 +4107,10 @@ mod tests {
 
         assert_eq!(current_identity.branch_closure_id, "branch-closure-current");
         assert_eq!(current_identity.reviewed_state_id, "git_tree:current");
-        assert_eq!(current_identity.contract_identity, "branch-contract-current");
+        assert_eq!(
+            current_identity.contract_identity,
+            "branch-contract-current"
+        );
     }
 
     #[test]
@@ -3635,13 +4174,11 @@ mod tests {
             "removed current task closure overlay should no longer retain the superseded task record"
         );
         assert_eq!(
-            authoritative_state.state_payload["task_closure_record_history"]["task-closure-old"]
-                ["record_status"],
+            authoritative_state.state_payload["task_closure_record_history"]["task-closure-old"]["record_status"],
             "superseded"
         );
         assert_eq!(
-            authoritative_state.state_payload["task_closure_record_history"]["task-closure-old"]
-                ["closure_status"],
+            authoritative_state.state_payload["task_closure_record_history"]["task-closure-old"]["closure_status"],
             "superseded"
         );
     }

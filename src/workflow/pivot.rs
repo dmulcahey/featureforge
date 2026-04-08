@@ -216,7 +216,8 @@ pub fn record_pivot(
             ),
         )
     })?;
-    let follow_up_requires_pivot = operator.follow_up_override == "record_pivot";
+    let follow_up_requires_pivot =
+        operator.phase == "pivot_required" && operator.phase_detail == "planning_reentry_required";
     let qa_requirement_missing_or_invalid = !matches!(
         context.plan_document.qa_requirement.as_deref(),
         Some("required") | Some("not-required")
@@ -319,13 +320,8 @@ pub(crate) fn next_workflow_pivot_record_path(
 ) -> PathBuf {
     let mut suffix = 0_u32;
     loop {
-        let candidate = workflow_pivot_record_path(
-            artifact_dir,
-            user_name,
-            safe_branch,
-            timestamp,
-            suffix,
-        );
+        let candidate =
+            workflow_pivot_record_path(artifact_dir, user_name, safe_branch, timestamp, suffix);
         if !candidate.exists() {
             return candidate;
         }
@@ -380,9 +376,7 @@ fn parse_headers(source: &str) -> BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        WorkflowPivotRecordOutput, next_workflow_pivot_record_path, render_pivot_record,
-    };
+    use super::{WorkflowPivotRecordOutput, next_workflow_pivot_record_path, render_pivot_record};
     use std::fs;
     use tempfile::TempDir;
 

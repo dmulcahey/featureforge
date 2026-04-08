@@ -285,7 +285,7 @@ fn upgrade_skill_contract_tracks_doc_patterns_and_install_root_resolution() {
         "git stash pop",
         "ERROR: featureforge upgrade failed during git pull",
         "Run $FEATUREFORGE_RUNTIME_BIN config set update_check true to re-enable.",
-        "_UPDATE_CHECK_DIR=\"$_SP_STATE_DIR/update-check\"",
+        "_UPDATE_CHECK_DIR=\"$_FEATUREFORGE_STATE_DIR/update-check\"",
         "_SNOOZE_FILE=\"$_UPDATE_CHECK_DIR/update-snoozed\"",
         "rm -f \"$_UPDATE_CHECK_DIR/last-update-check\" \"$_UPDATE_CHECK_DIR/update-snoozed\"",
         "echo \"$OLD_VERSION\" > \"$_UPDATE_CHECK_DIR/just-upgraded-from\"",

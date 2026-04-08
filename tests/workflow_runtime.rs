@@ -1152,14 +1152,7 @@ fn write_dispatched_branch_review_artifact(
 ) -> PathBuf {
     let initial_review_path = write_branch_review_artifact(repo, state, plan_rel, base_branch);
     publish_authoritative_final_review_truth(repo, state, plan_rel, &initial_review_path);
-    update_authoritative_harness_state(
-        repo,
-        state,
-        &current_branch_name(repo),
-        plan_rel,
-        1,
-        &[("current_release_readiness_result", Value::from("ready"))],
-    );
+    let _release_path = write_branch_release_artifact(repo, state, plan_rel, base_branch);
     let gate_review = run_plan_execution_json(
         repo,
         state,
@@ -3247,18 +3240,25 @@ fn canonical_workflow_operator_plan_override_selects_explicit_ready_plan_amid_am
         ),
     );
 
+    let explicit_plan_arg = format!("./{plan_path}");
     let operator_json = parse_json(
         &run_rust_featureforge_with_env(
             repo,
             state,
-            &["workflow", "operator", "--plan", plan_path, "--json"],
+            &[
+                "workflow",
+                "operator",
+                "--plan",
+                &explicit_plan_arg,
+                "--json",
+            ],
             &[],
             "workflow operator should honor an explicit approved plan even when the repo-wide resolver is ambiguous",
         ),
         "workflow operator should honor an explicit approved plan even when the repo-wide resolver is ambiguous",
     );
 
-    assert_eq!(operator_json["phase"], "execution_preflight");
+    assert_eq!(operator_json["phase"], "executing");
     assert_eq!(operator_json["spec_path"], spec_path);
     assert_eq!(operator_json["plan_path"], plan_path);
 }
@@ -6667,7 +6667,6 @@ fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
         ),
         "workflow doctor for gate-review evidence failure fixture",
     );
-
     assert_eq!(doctor_json["gate_review"]["allowed"], false);
     assert_eq!(
         doctor_json["gate_review"]["failure_class"],
@@ -6749,6 +6748,73 @@ fn canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review() {
     assert_eq!(
         gate_finish_json["reason_codes"][0],
         "test_plan_artifact_missing"
+    );
+}
+
+#[test]
+fn canonical_workflow_phase_prioritizes_test_plan_prerequisite_over_failed_current_qa_result() {
+    let (repo_dir, state_dir) = init_repo("workflow-phase-test-plan-prereq-over-failed-qa");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let session_key = "workflow-phase-test-plan-prereq-over-failed-qa";
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let base_branch = expected_release_base_branch(repo);
+    let branch = current_branch_name(repo);
+
+    complete_workflow_fixture_execution_with_qa_requirement(repo, state, plan_rel, "required");
+    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("harness_phase", Value::from("qa_pending")),
+            (
+                "current_branch_closure_id",
+                Value::from("branch-release-closure"),
+            ),
+            ("current_release_readiness_result", Value::from("ready")),
+            ("release_docs_state", Value::from("fresh")),
+            ("final_review_state", Value::from("fresh")),
+            ("browser_qa_state", Value::from("missing")),
+            (
+                "current_qa_branch_closure_id",
+                Value::from("branch-release-closure"),
+            ),
+            ("current_qa_result", Value::from("fail")),
+        ],
+    );
+    enable_session_decision(state, session_key);
+
+    let phase_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "phase", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow phase for test-plan-prereq-over-failed-qa fixture",
+        ),
+        "workflow phase for test-plan-prereq-over-failed-qa fixture",
+    );
+    let handoff_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "handoff", "--json"],
+            &[("FEATUREFORGE_SESSION_KEY", session_key)],
+            "workflow handoff for test-plan-prereq-over-failed-qa fixture",
+        ),
+        "workflow handoff for test-plan-prereq-over-failed-qa fixture",
+    );
+
+    assert_eq!(phase_json["phase"], "qa_pending");
+    assert_eq!(phase_json["next_action"], "refresh test plan");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:plan-eng-review"
     );
 }
 
@@ -7874,7 +7940,7 @@ fn canonical_workflow_phase_routes_review_resolved_to_document_release_pending()
     );
     assert_eq!(
         handoff_json["recommendation_reason"],
-        "Finish readiness requires a current release-readiness milestone for the current branch closure."
+        "Finish readiness requires an authoritative release-readiness artifact for the current milestone."
     );
 }
 

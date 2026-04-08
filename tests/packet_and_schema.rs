@@ -818,6 +818,43 @@ fn checked_in_workflow_schemas_match_generated_output() {
 }
 
 #[test]
+fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
+    let schemas_dir = unique_temp_dir("workflow-operator-schema-vocab");
+    write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
+
+    let generated_operator = fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
+        .expect("generated workflow-operator schema should read");
+    let generated_operator_json: Value = serde_json::from_str(&generated_operator)
+        .expect("generated workflow-operator schema should parse");
+    let properties = generated_operator_json["properties"]
+        .as_object()
+        .expect("workflow-operator schema should contain properties");
+
+    assert_eq!(properties["schema_version"]["const"], Value::from(1));
+    for phase in [
+        "executing",
+        "task_closure_pending",
+        "document_release_pending",
+        "final_review_pending",
+        "qa_pending",
+        "ready_for_branch_completion",
+        "handoff_required",
+        "pivot_required",
+    ] {
+        assert!(
+            generated_operator.contains(&format!("\"{phase}\"")),
+            "workflow-operator schema should include phase '{phase}' in the public phase vocabulary"
+        );
+    }
+    for value in ["none", "record_handoff", "record_pivot"] {
+        assert!(
+            generated_operator.contains(&format!("\"{value}\"")),
+            "workflow-operator schema should include follow_up_override '{value}'"
+        );
+    }
+}
+
+#[test]
 fn runtime_root_schema_bounds_the_source_contract() {
     let schemas_dir = unique_temp_dir("runtime-root-source-schema");
     write_contract_schemas(&schemas_dir).expect("schemas should write");

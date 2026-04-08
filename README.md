@@ -12,7 +12,7 @@ This repository keeps the workflow-first core and extends it with additional rev
 
 ## How It Works
 
-Six layers matter:
+Seven layers matter:
 
 - `using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.
 - generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows), and that runtime resolves the active root through `featureforge repo runtime-root --path` before update checks or contributor-mode lookups.
@@ -26,7 +26,9 @@ Repo-visible artifacts remain authoritative:
 
 - spec approval truth lives in `docs/featureforge/specs/*.md`
 - plan approval truth lives in `docs/featureforge/plans/*.md`
-- execution truth lives in the approved plan checklist plus paired execution evidence
+- execution progress truth for operators lives in the approved plan checklist
+- runtime-owned reviewed-closure, milestone, and strategy state is authoritative for routing and gates
+- execution evidence plus release/review markdown artifacts are derived operator handoff surfaces, not the primary gate-truth source
 - branch-scoped local state lives under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 
 ## Installation
@@ -82,6 +84,10 @@ Execution starts from an engineering-approved plan and the exact approved plan p
 
 `featureforge plan execution gate-review --plan <approved-plan-path>` is the first finish gate: it evaluates finish readiness and records or refreshes the current branch-closure pass checkpoint without minting task-boundary review-dispatch proof.
 
+When workflow/operator reports stale or missing closure context, rerun `featureforge plan execution status --plan <approved-plan-path>` before `featureforge plan execution repair-review-state --plan <approved-plan-path>`.
+
+After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra recording command. Rerun `featureforge workflow operator --plan <approved-plan-path>` next only when the returned command asks for it or after the returned follow-up is complete.
+
 `featureforge plan execution` is the execution preflight boundary for the approved plan.
 
 Task closure is enforced at task boundaries, not only at the end of the full plan:
@@ -97,7 +103,7 @@ Completion then flows through (runtime-owned late-stage sequencing keeps `featur
 
 - `featureforge:document-release`
 - `featureforge:requesting-code-review` (terminal final review gate after document release)
-- optional `featureforge:qa-only` when browser-facing work or a test plan requires it
+- `featureforge:qa-only` only when authoritative `QA Requirement` routing for the current plan requires it
 - `featureforge:finishing-a-development-branch`
 
 ## Project Memory

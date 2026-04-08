@@ -363,11 +363,14 @@ fn parse_reference_late_stage_rows(source: &str) -> Vec<LateStageReferenceRow> {
 
 fn expected_phase_action_and_skill(phase: &str) -> (&'static str, &'static str) {
     match phase {
-        "document_release_pending" => ("run_document_release", "featureforge:document-release"),
-        "final_review_pending" => ("request_code_review", "featureforge:requesting-code-review"),
-        "qa_pending" => ("run_qa_only", "featureforge:qa-only"),
+        "document_release_pending" => ("advance_late_stage", "featureforge:document-release"),
+        "final_review_pending" => (
+            "dispatch_final_review",
+            "featureforge:requesting-code-review",
+        ),
+        "qa_pending" => ("run_qa", "featureforge:qa-only"),
         "ready_for_branch_completion" => (
-            "finish_branch",
+            "run_finish_review_gate",
             "featureforge:finishing-a-development-branch",
         ),
         _ => panic!("unexpected late-stage phase in precedence row: {phase}"),
@@ -1059,7 +1062,7 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
     assert_file_contains(root.join("README.md"), "featureforge repo-safety");
     assert_file_contains(root.join("README.md"), "featureforge plan contract");
     assert_file_contains(root.join("README.md"), "protected branches");
-    assert_file_contains(root.join("README.md"), "Six layers matter:");
+    assert_file_contains(root.join("README.md"), "Seven layers matter:");
     assert_file_contains(
         root.join("AGENTS.md"),
         "`docs/project_notes/` is supportive memory only; approved specs, plans, execution evidence, review artifacts, runtime state, and active repo instructions remain authoritative.",
@@ -1282,7 +1285,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "rollback notes",
                 "known risks or operator-facing caveats",
                 "# Release Readiness Result",
-                "Require the exact approved plan path from the current workflow context before writing the release-readiness artifact.",
+                "Require the exact approved plan path from the current workflow context before writing the release-readiness companion artifact.",
                 "Derive `Source Plan` and `Source Plan Revision` from that exact approved plan",
             ],
         ),
@@ -1295,8 +1298,8 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
                 "Conditional Pre-Landing QA Gate",
                 "Required release-readiness pass for workflow-routed work before completion",
                 "featureforge repo-safety check --intent write",
-                "For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current.",
-                "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current, rerun `featureforge workflow operator --plan <approved-plan-path>` and follow the exact `phase_detail`-driven next finish command before presenting completion options.",
+                "For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and before any runtime-routed `featureforge:qa-only` handoff.",
+                "If the current work is governed by an approved FeatureForge plan, after `featureforge:document-release` and the terminal `featureforge:requesting-code-review` gate are current, rerun `featureforge workflow operator --plan <approved-plan-path>` and follow the exact `phase_detail`-driven next finish command before presenting completion options.",
                 "If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.",
             ],
         ),
@@ -1404,7 +1407,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "If `$_FEATUREFORGE_BIN` is available call `$_FEATUREFORGE_BIN workflow status --refresh`.",
+        "If `$_FEATUREFORGE_BIN` is available call `$_FEATUREFORGE_BIN workflow status --refresh` to discover artifact-state status and the current approved `plan_path` when it exists.",
     );
     assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1416,11 +1419,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "treat `execution_started` as an executor-resume signal only when the reported `phase` is `executing`",
+        "treat `execution_started` as an executor-resume signal only when workflow/operator reports `phase` `executing`",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "If the handoff reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
+        "If workflow/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
     );
     assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1428,7 +1431,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Treat the public handoff recommendation as a conservative default.",
+        "Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` as the authoritative public routing contract.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1513,7 +1516,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.",
+        "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before Task `N+1` begins.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1551,7 +1554,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/executing-plans/SKILL.md"),
         &[
             "after review is green, run `verification-before-completion` and persist the task verification receipt",
-            "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.",
+            "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before Task `N+1` begins.",
             "no exceptions: only after dispatch proof, green review closure, and task verification receipt may Task `N+1` begin",
         ],
     );
@@ -1581,7 +1584,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.",
+        "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before Task `N+1` begins.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1627,7 +1630,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/subagent-driven-development/SKILL.md"),
         &[
             "After review is green, run `verification-before-completion` and persist the task verification receipt.",
-            "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.",
+            "After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before Task `N+1` begins.",
             "No exceptions: only after dispatch proof, green review closure, and task verification receipt may you dispatch Task `N+1`.",
         ],
     );
@@ -1642,6 +1645,18 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
         "If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.",
+    );
+    assert_file_not_contains(
+        root.join("skills/finishing-a-development-branch/SKILL.md"),
+        "after `featureforge:document-release` and any required `featureforge:qa-only` handoff are current",
+    );
+    assert_file_not_contains(
+        root.join("skills/finishing-a-development-branch/SKILL.md"),
+        "after `featureforge:document-release` and any required QA handoff",
+    );
+    assert_file_contains(
+        root.join("skills/finishing-a-development-branch/SKILL.md"),
+        "For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and before any runtime-routed `featureforge:qa-only` handoff.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -1734,15 +1749,15 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If the helper returns `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow handoff` before presenting any handoff text.",
+        "Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If that handoff returns `phase` `execution_preflight`, present the normal execution preflight handoff below.",
+        "If workflow/operator returns `phase` `executing`, present the normal execution preflight handoff below.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
-        "If that handoff returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of reopening execution preflight.",
+        "If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution preflight.",
     );
     assert_file_not_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -1894,7 +1909,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "project-scoped code-review artifact",
+        "project-scoped code-review companion artifact",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -1906,7 +1921,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "structured finish-gate input for final review freshness",
+        "derived companion for reviewer provenance and audit traceability",
     );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -1962,11 +1977,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "treat `execution_started` as an executor-resume signal only when the reported `phase` is `executing`",
+        "treat `execution_started` as an executor-resume signal only when workflow/operator reports `phase` `executing`",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "If the handoff reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
+        "If workflow/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
@@ -2413,22 +2428,22 @@ fn generated_skill_preamble_never_executes_repo_or_root_selected_launchers() {
     // purpose. Repo-local binaries and binaries discovered from the resolved
     // runtime root are companion-file locations only. They must NEVER become
     // command execution fallbacks unless product direction changes explicitly.
-    assert_contains(
-        &stdout,
-        "UPGRADE_AVAILABLE 1.0.0 1.1.0",
-        "generated skill preamble stdout",
+    assert_eq!(
+        stdout.trim_end(),
+        "",
+        "generated skill preamble should stay quiet"
     );
     assert_contains(
         &log,
         "PACKAGED:repo-runtime-root",
         "packaged runtime command log",
     );
-    assert_contains(
+    assert_not_contains(
         &log,
         "PACKAGED:update-check",
         "packaged runtime command log",
     );
-    assert_contains(&log, "PACKAGED:config-get", "packaged runtime command log");
+    assert_not_contains(&log, "PACKAGED:config-get", "packaged runtime command log");
     assert_not_contains(&log, "POISON_REPO", "packaged runtime command log");
     assert_not_contains(&log, "POISON_ROOT", "packaged runtime command log");
 }

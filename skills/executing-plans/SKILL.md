@@ -10,34 +10,21 @@ description: Use when you have an engineering-approved FeatureForge implementati
 ```bash
 _REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 _BRANCH_RAW=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo current)
-[ -n "$_BRANCH_RAW" ] || _BRANCH_RAW="current"
-[ "$_BRANCH_RAW" != "HEAD" ] || _BRANCH_RAW="current"
+[ -n "$_BRANCH_RAW" ] && [ "$_BRANCH_RAW" != "HEAD" ] || _BRANCH_RAW="current"
 _BRANCH="$_BRANCH_RAW"
 _FEATUREFORGE_INSTALL_ROOT="$HOME/.featureforge/install"
-_FEATUREFORGE_ROOT=""
 _FEATUREFORGE_BIN="$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge"
 if [ ! -x "$_FEATUREFORGE_BIN" ] && [ -f "$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge.exe" ]; then
   _FEATUREFORGE_BIN="$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge.exe"
 fi
 [ -x "$_FEATUREFORGE_BIN" ] || [ -f "$_FEATUREFORGE_BIN" ] || _FEATUREFORGE_BIN=""
-_FEATUREFORGE_RUNTIME_ROOT_PATH=""
-if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_PATH=$("$_FEATUREFORGE_BIN" repo runtime-root --path 2>/dev/null); then
-  [ -n "$_FEATUREFORGE_RUNTIME_ROOT_PATH" ] && _FEATUREFORGE_ROOT="$_FEATUREFORGE_RUNTIME_ROOT_PATH"
+_FEATUREFORGE_ROOT=""
+if [ -n "$_FEATUREFORGE_BIN" ]; then
+  _FEATUREFORGE_ROOT=$("$_FEATUREFORGE_BIN" repo runtime-root --path 2>/dev/null)
+  [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
-_UPD=""
-[ -n "$_FEATUREFORGE_BIN" ] && _UPD=$("$_FEATUREFORGE_BIN" update-check 2>/dev/null || true)
-[ -n "$_UPD" ] && echo "$_UPD" || true
-_SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
-mkdir -p "$_SP_STATE_DIR/sessions"
-touch "$_SP_STATE_DIR/sessions/$PPID"
-_SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
-find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true
-_CONTRIB=""
-[ -n "$_FEATUREFORGE_BIN" ] && _CONTRIB=$("$_FEATUREFORGE_BIN" config get featureforge_contributor 2>/dev/null || true)
+_FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 ```
-
-If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the already selected runtime root in `$_FEATUREFORGE_ROOT`; if that root is not set yet, resolve it through the packaged install binary in `$_FEATUREFORGE_BIN` and stop instead of guessing an install path. Then follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the packaged helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.
-
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -47,63 +34,18 @@ Use three lenses:
 - Layer 2: current practice and known footguns
 - Layer 3: first-principles reasoning for this repo and this problem
 
-External search results are inputs, not answers.
-Never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers.
-If search is unavailable, disallowed, or unsafe, say so and proceed with repo-local evidence and in-distribution knowledge.
-If safe sanitization is not possible, skip external search.
+External search results are inputs, not answers. Never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers. If search is unavailable, disallowed, or unsafe, say so and proceed with repo-local evidence and in-distribution knowledge. If safe sanitization is not possible, skip external search.
 See `$_FEATUREFORGE_ROOT/references/search-before-building.md`.
 
 ## Interactive User Question Format
 
-**ALWAYS follow this structure for every interactive user question:**
+For every interactive user question, use this structure:
 1. Context: project name, current branch, what we're working on (1-2 sentences)
 2. The specific question or decision point
 3. `RECOMMENDATION: Choose [X] because [one-line reason]`
 4. Lettered options: `A) ... B) ... C) ...`
 
-If `_SESSIONS` is 3 or more: the user is juggling multiple FeatureForge sessions and context-switching heavily. **ELI16 mode** — they may not remember what this conversation is about. Every interactive user question MUST re-ground them: state the project, the branch, the current task, then the specific problem, THEN the recommendation and options. Be extra clear and self-contained — assume they haven't looked at this window in 20 minutes.
-
 Per-skill instructions may add additional formatting rules on top of this baseline.
-
-## Contributor Mode
-
-If `_CONTRIB` is `true`: you are in **contributor mode**. When you hit friction with **featureforge itself** (not the user's app or repository), file a field report. Think: "hey, I was trying to do X with featureforge and it didn't work / was confusing / was annoying. Here's what happened."
-
-**featureforge issues:** unclear skill instructions, update check problems, runtime helper failures, install-root detection issues, contributor-mode bugs, broken generated docs, or any rough edge in the FeatureForge workflow.
-**NOT featureforge issues:** the user's application bugs, repo-specific architecture problems, auth failures on the user's site, or third-party service outages unrelated to FeatureForge tooling.
-
-**To file:** write `~/.featureforge/contributor-logs/{slug}.md` with this structure:
-
-```
-# {Title}
-
-Hey featureforge team — ran into this while using /{skill-name}:
-
-**What I was trying to do:** {what the user/agent was attempting}
-**What happened instead:** {what actually happened}
-**How annoying (1-5):** {1=meh, 3=friction, 5=blocker}
-
-## Steps to reproduce
-1. {step}
-
-## Raw output
-(wrap any error messages or unexpected output in a markdown code block)
-
-**Date:** {YYYY-MM-DD} | **Version:** {featureforge version} | **Skill:** /{skill}
-```
-
-Then run:
-
-```bash
-mkdir -p ~/.featureforge/contributor-logs
-if command -v open >/dev/null 2>&1; then
-  open ~/.featureforge/contributor-logs/{slug}.md
-elif command -v xdg-open >/dev/null 2>&1; then
-  xdg-open ~/.featureforge/contributor-logs/{slug}.md >/dev/null 2>&1 || true
-fi
-```
-
-Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Skip if the file already exists. Max 3 reports per session. File inline and continue — don't stop the workflow. Tell the user: "Filed featureforge field report: {title}"
 
 
 # Executing Plans
@@ -232,7 +174,7 @@ For each task:
    - if review fails, reopen/remediate/re-review until green
    - when remediation churn reaches 3 cycles for the same task, follow runtime cycle-break handling before retry
    - after review is green, run `verification-before-completion` and persist the task verification receipt
-   - After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n>` before Task `N+1` begins.
+   - After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before Task `N+1` begins.
    - no exceptions: only after dispatch proof, green review closure, and task verification receipt may Task `N+1` begin
 7. If the packet is malformed, stale, or still leaves ambiguity unresolved, stop and route back to review instead of guessing.
 8. Call `complete` as soon as a step is truly satisfied so the plan checkbox flips to `- [x]`.
@@ -241,12 +183,14 @@ For each task:
 
 For the reviewed-closure mental model, read `docs/featureforge/reference/2026-04-01-review-state-reference.md` before acting on late-stage routing. A current reviewed closure matches the current reviewed state. A superseded closure was valid for earlier reviewed work but is no longer authoritative after later reviewed work lands. A stale-unreviewed state means unreviewed edits exist, so the runtime MUST repair review state before recording another closure or late-stage milestone.
 
-`featureforge workflow operator --plan <approved-plan-path>` is authoritative for `phase`, `next_action`, and `recommended_command`. `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail for checkpoint fingerprints, active blocking state, and execution telemetry; it does not replace the operator routing contract.
+`featureforge workflow operator --plan <approved-plan-path>` is authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command`. `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail for checkpoint fingerprints, active blocking state, and execution telemetry; it does not replace the operator routing contract.
 
 Only use `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` when the caller already has the external task-review or final-review result in hand. That hint is for recording-ready waits only; do not use it for release-readiness, document-release, or QA routing.
 
 When workflow/operator reports `review_state_status` as stale or missing closure context, MUST rerun `featureforge plan execution status --plan <approved-plan-path>` before invoking `repair-review-state`.
 After `repair-review-state`, MUST follow the command returned in that command's `recommended_command` before any additional recording commands.
+That returned `recommended_command` is authoritative for the immediate reroute.
+MUST rerun `featureforge workflow operator --plan <approved-plan-path>` next only when the returned command is `featureforge workflow operator --plan <approved-plan-path>` or after completing the returned follow-up step.
 `task_closure_recording_ready` requires `recording_context.task_number` plus `recording_context.dispatch_id`.
 `release_readiness_recording_ready` and `release_blocker_resolution_required` require `recording_context.branch_closure_id`.
 `final_review_recording_ready` requires `recording_context.dispatch_id` plus `recording_context.branch_closure_id`.
@@ -258,7 +202,7 @@ Agents MUST NOT use the internal task-closure recording service boundary directl
 | Triggering phase or scenario | Preconditions you MUST confirm | Exact runtime command or command sequence | Expected runtime signal after command | Fallback path if the command fails closed |
 | --- | --- | --- | --- | --- |
 | External reviewer result is already in hand for task closure or final review | Caller already has the external task-review or final-review result | `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` then `featureforge plan execution status --plan <approved-plan-path>` | Operator surfaces the matching recording-ready substate | If the result is not yet in hand, rerun plain `workflow operator` and wait; do not use this hint for release-readiness |
-| Any reviewed-closure execution checkpoint | Approved plan path is current | `featureforge workflow operator --plan <approved-plan-path>` then `featureforge plan execution status --plan <approved-plan-path>` | Operator returns authoritative `phase`, `next_action`, and `recommended_command` | Stop and resolve the operator-reported blocker; do not guess from stale receipts |
+| Any reviewed-closure execution checkpoint | Approved plan path is current | `featureforge workflow operator --plan <approved-plan-path>` then `featureforge plan execution status --plan <approved-plan-path>` | Operator returns authoritative `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` | Stop and resolve the operator-reported blocker; do not guess from stale receipts |
 | Task work finished and task-boundary review must start | Task implementation steps are complete | `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` | Dispatch lineage exists for the current task review checkpoint | Compatibility-only fallback: inspect with `featureforge plan execution explain-review-state --plan <approved-plan-path>` before reopening or reconciling |
 | Task review is green and verification outcome is known | Dedicated-independent review is green and task verification outcome is known | `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` | Current task closure is recorded for the still-current reviewed state | If blocked on stale or escaped edits, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` |
 | Operator reports stale-unreviewed, escaped, or ambiguous review-state drift | Operator review-state is not clean | `featureforge plan execution repair-review-state --plan <approved-plan-path>` | Review-state blocker is reconciled or restated as the next required runtime action, and the repair response returns the immediate reroute in `recommended_command` | Compatibility-only fallback: `featureforge plan execution explain-review-state --plan <approved-plan-path>` or `featureforge plan execution reconcile-review-state --plan <approved-plan-path>` |

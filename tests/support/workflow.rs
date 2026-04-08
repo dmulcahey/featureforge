@@ -1,10 +1,11 @@
+#[path = "repo_template.rs"]
+mod repo_template_support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tempfile::TempDir;
 
-use crate::files_support::write_file;
-use crate::process_support::{repo_root, run_checked};
+use crate::process_support::repo_root;
 
 pub fn workflow_fixture_root() -> PathBuf {
     repo_root().join("tests/codex-runtime/fixtures/workflow-artifacts")
@@ -39,36 +40,10 @@ pub fn read_harness_json_fixture(file_name: &str) -> serde_json::Value {
         .expect("harness fixture should contain valid json")
 }
 
-pub fn init_repo(name: &str) -> (TempDir, TempDir) {
+pub fn init_repo(_name: &str) -> (TempDir, TempDir) {
     let repo_dir = TempDir::new().expect("repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
-    let repo = repo_dir.path();
-
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(repo);
-    run_checked(git_init, "git init");
-
-    let mut git_config_name = Command::new("git");
-    git_config_name
-        .args(["config", "user.name", "FeatureForge Test"])
-        .current_dir(repo);
-    run_checked(git_config_name, "git config user.name");
-
-    let mut git_config_email = Command::new("git");
-    git_config_email
-        .args(["config", "user.email", "featureforge-tests@example.com"])
-        .current_dir(repo);
-    run_checked(git_config_email, "git config user.email");
-
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-
-    let mut git_add = Command::new("git");
-    git_add.args(["add", "README.md"]).current_dir(repo);
-    run_checked(git_add, "git add README");
-
-    let mut git_commit = Command::new("git");
-    git_commit.args(["commit", "-m", "init"]).current_dir(repo);
-    run_checked(git_commit, "git commit init");
+    repo_template_support::populate_repo_from_template(repo_dir.path());
 
     (repo_dir, state_dir)
 }

@@ -20,24 +20,28 @@
       ]
     },
     "follow_up_override": {
-      "type": "string"
+      "$ref": "#/$defs/WorkflowOperatorFollowUpOverrideSchema"
     },
     "next_action": {
-      "type": "string"
+      "$ref": "#/$defs/WorkflowOperatorNextActionSchema"
     },
     "phase": {
-      "type": "string"
+      "$ref": "#/$defs/WorkflowOperatorPhaseSchema"
     },
     "phase_detail": {
-      "type": "string"
+      "$ref": "#/$defs/WorkflowOperatorPhaseDetailSchema"
     },
     "plan_path": {
       "type": "string"
     },
     "qa_requirement": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowOperatorQaRequirementSchema"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "recommended_command": {
@@ -57,12 +61,14 @@
       ]
     },
     "review_state_status": {
-      "type": "string"
+      "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema"
     },
     "schema_version": {
+      "const": 1,
       "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 1,
+      "maximum": 1
     },
     "spec_path": {
       "type": "string"
@@ -79,11 +85,19 @@
     "plan_path"
   ],
   "$defs": {
+    "WorkflowOperatorCommandKindSchema": {
+      "type": "string",
+      "enum": [
+        "begin",
+        "complete",
+        "reopen"
+      ]
+    },
     "WorkflowOperatorExecutionCommandContext": {
       "type": "object",
       "properties": {
         "command_kind": {
-          "type": "string"
+          "$ref": "#/$defs/WorkflowOperatorCommandKindSchema"
         },
         "step_id": {
           "type": [
@@ -104,6 +118,77 @@
       },
       "required": [
         "command_kind"
+      ]
+    },
+    "WorkflowOperatorFollowUpOverrideSchema": {
+      "type": "string",
+      "enum": [
+        "none",
+        "record_handoff",
+        "record_pivot"
+      ]
+    },
+    "WorkflowOperatorNextActionSchema": {
+      "type": "string",
+      "enum": [
+        "advance late stage",
+        "close current task",
+        "continue execution",
+        "dispatch review",
+        "dispatch final review",
+        "execution reentry required",
+        "hand off",
+        "pivot / return to planning",
+        "record branch closure",
+        "refresh test plan",
+        "repair review state / reenter execution",
+        "resolve release blocker",
+        "run QA",
+        "run finish completion gate",
+        "run finish review gate",
+        "wait for external review result"
+      ]
+    },
+    "WorkflowOperatorPhaseDetailSchema": {
+      "type": "string",
+      "enum": [
+        "execution_in_progress",
+        "execution_reentry_required",
+        "task_review_dispatch_required",
+        "task_review_result_pending",
+        "task_closure_recording_ready",
+        "branch_closure_recording_required_for_release_readiness",
+        "release_readiness_recording_ready",
+        "release_blocker_resolution_required",
+        "final_review_dispatch_required",
+        "final_review_outcome_pending",
+        "final_review_recording_ready",
+        "qa_recording_required",
+        "test_plan_refresh_required",
+        "finish_review_gate_ready",
+        "finish_completion_gate_ready",
+        "handoff_recording_required",
+        "planning_reentry_required"
+      ]
+    },
+    "WorkflowOperatorPhaseSchema": {
+      "type": "string",
+      "enum": [
+        "executing",
+        "task_closure_pending",
+        "document_release_pending",
+        "final_review_pending",
+        "qa_pending",
+        "ready_for_branch_completion",
+        "handoff_required",
+        "pivot_required"
+      ]
+    },
+    "WorkflowOperatorQaRequirementSchema": {
+      "type": "string",
+      "enum": [
+        "required",
+        "not-required"
       ]
     },
     "WorkflowOperatorRecordingContext": {
@@ -130,6 +215,14 @@
           "minimum": 0
         }
       }
+    },
+    "WorkflowOperatorReviewStateStatusSchema": {
+      "type": "string",
+      "enum": [
+        "clean",
+        "stale_unreviewed",
+        "missing_current_closure"
+      ]
     }
   }
 }

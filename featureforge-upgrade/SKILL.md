@@ -192,8 +192,8 @@ Tell the user: `Auto-upgrade enabled. Future updates will install automatically.
 **If "Not now":** write snooze state with escalating backoff (24h, then 48h, then 1 week), then continue with the current skill.
 
 ```bash
-_SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
-_UPDATE_CHECK_DIR="$_SP_STATE_DIR/update-check"
+_FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_UPDATE_CHECK_DIR="$_FEATUREFORGE_STATE_DIR/update-check"
 _SNOOZE_FILE="$_UPDATE_CHECK_DIR/update-snoozed"
 _REMOTE_VER="{new}"
 _CUR_LEVEL=0
@@ -244,8 +244,8 @@ If `$STASH_OUTPUT` contains `Saved working directory`, warn the user that local 
 ### Step 5: Write marker and clear cache
 
 ```bash
-_SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
-_UPDATE_CHECK_DIR="$_SP_STATE_DIR/update-check"
+_FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
+_UPDATE_CHECK_DIR="$_FEATUREFORGE_STATE_DIR/update-check"
 mkdir -p "$_UPDATE_CHECK_DIR"
 rm -f "$_UPDATE_CHECK_DIR/last-update-check" "$_UPDATE_CHECK_DIR/update-snoozed"
 if [ "$NEW_VERSION" != "$OLD_VERSION" ] && [ "$NEW_VERSION" != "unknown" ]; then

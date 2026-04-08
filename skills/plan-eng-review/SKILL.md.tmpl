@@ -318,10 +318,10 @@ fi
 unset _SLUG_ENV
 USER=$(whoami)
 DATETIME=$(date +%Y%m%d-%H%M%S)
-mkdir -p "$_SP_STATE_DIR/projects/$SLUG"
+mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
 ```
 
-Write to `$_SP_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-test-plan-{datetime}.md` with:
+Write to `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-test-plan-{datetime}.md` with:
 
 ```markdown
 # Test Plan
@@ -508,12 +508,12 @@ Check the git log for this branch. If there are prior commits suggesting a previ
 
 ## Execution handoff
 
-Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow status --refresh`.
+Before presenting the final execution preflight handoff, if `$_FEATUREFORGE_BIN` is available, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json`.
 
-- If the helper returns a non-empty `next_skill`, use that route instead of re-deriving state manually.
-- If the helper returns `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow handoff` before presenting any handoff text.
-- If that handoff returns `phase` `execution_preflight`, present the normal execution preflight handoff below.
-- If that handoff returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of reopening execution preflight.
+- Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` as authoritative for public routing.
+- If workflow/operator returns `phase` `executing`, present the normal execution preflight handoff below.
+- If workflow/operator returns a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution preflight.
+- `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail only; do not let it override workflow/operator routing.
 - Only fall back to manual artifact inspection if the helper is unavailable or fails.
 
 When the review is resolved and the written plan is approved, present the normal execution preflight handoff.

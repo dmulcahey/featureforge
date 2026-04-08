@@ -1,4 +1,11 @@
-use assert_cmd::cargo::CommandCargoExt;
+#[path = "support/bin.rs"]
+mod bin_support;
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
+#[path = "support/repo_template.rs"]
+mod repo_template_support;
+
+use bin_support::compiled_featureforge_path;
 use featureforge::contracts::harness::{WorktreeLease, WorktreeLeaseState};
 use featureforge::execution::authority::{
     persist_active_worktree_lease_index, write_authoritative_unit_review_receipt_artifact,
@@ -9,8 +16,10 @@ use featureforge::execution::harness::{
     ChunkId, ExecutionRunId, RunIdentitySnapshot, WorktreeLeaseBindingSnapshot,
 };
 use featureforge::execution::state::{
-    ExecutionRuntime, gate_finish_from_context, load_execution_context, preflight_from_context,
+    ExecutionRuntime, current_head_sha as runtime_current_head_sha, gate_finish_from_context,
+    load_execution_context, preflight_from_context,
 };
+use featureforge::git::discover_slug_identity;
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_dependency_index_path,
 };
@@ -315,36 +324,10 @@ fn write_file(path: &Path, contents: &str) {
     fs::write(path, contents).expect("file should be writable");
 }
 
-fn init_repo(name: &str) -> (TempDir, TempDir) {
+fn init_repo(_name: &str) -> (TempDir, TempDir) {
     let repo_dir = TempDir::new().expect("repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
-    let repo = repo_dir.path();
-
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(repo);
-    run_checked(git_init, "git init");
-
-    let mut git_config_name = Command::new("git");
-    git_config_name
-        .args(["config", "user.name", "FeatureForge Test"])
-        .current_dir(repo);
-    run_checked(git_config_name, "git config user.name");
-
-    let mut git_config_email = Command::new("git");
-    git_config_email
-        .args(["config", "user.email", "featureforge-tests@example.com"])
-        .current_dir(repo);
-    run_checked(git_config_email, "git config user.email");
-
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-
-    let mut git_add = Command::new("git");
-    git_add.args(["add", "README.md"]).current_dir(repo);
-    run_checked(git_add, "git add README");
-
-    let mut git_commit = Command::new("git");
-    git_commit.args(["commit", "-m", "init"]).current_dir(repo);
-    run_checked(git_commit, "git commit init");
+    repo_template_support::populate_repo_from_template(repo_dir.path());
 
     (repo_dir, state_dir)
 }
@@ -357,6 +340,13 @@ fn write_approved_spec(repo: &Path) {
 **Workflow State:** CEO Approved
 **Spec Revision:** 1
 **Last Reviewed By:** plan-ceo-review
+
+## Requirement Index
+
+- [REQ-001][behavior] Core execution setup and validation must stay grounded in canonical execution-state evidence.
+- [REQ-002][behavior] Execution helpers must preserve authoritative runtime invariants.
+- [REQ-003][behavior] Repair and handoff flows must fail closed on stale or malformed state.
+- [VERIFY-001][verification] Runtime coverage must exercise the execution and repair flows through plan execution tests.
 
 ## Summary
 
@@ -373,6 +363,13 @@ fn write_newer_approved_spec_same_revision_different_path(repo: &Path) {
 **Workflow State:** CEO Approved
 **Spec Revision:** 1
 **Last Reviewed By:** plan-ceo-review
+
+## Requirement Index
+
+- [REQ-001][behavior] Core execution setup and validation must stay grounded in canonical execution-state evidence.
+- [REQ-002][behavior] Execution helpers must preserve authoritative runtime invariants.
+- [REQ-003][behavior] Repair and handoff flows must fail closed on stale or malformed state.
+- [VERIFY-001][verification] Runtime coverage must exercise the execution and repair flows through plan execution tests.
 
 ## Summary
 
@@ -918,25 +915,16 @@ fn replace_manual_verification_with_command(repo: &Path, command: &str, summary:
 }
 
 fn current_head_sha(repo: &Path) -> String {
-    let mut git_rev_parse = Command::new("git");
-    git_rev_parse.args(["rev-parse", "HEAD"]).current_dir(repo);
-    let output = run_checked(git_rev_parse, "git rev-parse HEAD");
-    String::from_utf8(output.stdout)
-        .expect("head sha should be utf-8")
-        .trim()
-        .to_owned()
+    runtime_current_head_sha(repo).expect("head sha should resolve")
 }
 
 fn current_head_tree_sha(repo: &Path) -> String {
-    let mut git_rev_parse = Command::new("git");
-    git_rev_parse
-        .args(["rev-parse", "HEAD^{tree}"])
-        .current_dir(repo);
-    let output = run_checked(git_rev_parse, "git rev-parse HEAD tree");
-    String::from_utf8(output.stdout)
-        .expect("head tree sha should be utf-8")
-        .trim()
-        .to_owned()
+    gix::discover(repo)
+        .expect("head tree helper should discover repository")
+        .head_tree_id_or_empty()
+        .expect("head tree helper should resolve HEAD tree")
+        .detach()
+        .to_string()
 }
 
 fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
@@ -951,15 +939,7 @@ fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
 }
 
 fn branch_name(repo: &Path) -> String {
-    let mut git_branch = Command::new("git");
-    git_branch
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo);
-    let output = run_checked(git_branch, "git rev-parse branch");
-    String::from_utf8(output.stdout)
-        .expect("branch should be utf-8")
-        .trim()
-        .to_owned()
+    discover_slug_identity(repo).branch_name
 }
 
 fn normalize_identifier(value: &str) -> String {
@@ -967,21 +947,7 @@ fn normalize_identifier(value: &str) -> String {
 }
 
 fn repo_slug(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::cargo_bin("featureforge")
-                .expect("featureforge binary should be available");
-            command.current_dir(repo).args(["repo", "slug"]);
-            command
-        },
-        "featureforge repo slug",
-    );
-    String::from_utf8(output.stdout)
-        .expect("repo slug output should be utf-8")
-        .lines()
-        .find_map(|line| line.strip_prefix("SLUG="))
-        .unwrap_or_else(|| panic!("repo slug output should include SLUG=..., got missing slug"))
-        .to_owned()
+    discover_slug_identity(repo).repo_slug
 }
 
 fn write_unresolved_index_entries(repo: &Path) {
@@ -3246,19 +3212,13 @@ fn reconcile_result_proof_fingerprint_from_worktree_lease(source: &str) -> Optio
 }
 
 fn commit_object_fingerprint(repo: &Path, commit_sha: &str) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["cat-file", "commit", commit_sha])
-                .current_dir(repo);
-            command
-        },
-        "git cat-file commit",
-    );
-    let object = String::from_utf8(output.stdout)
-        .expect("commit object should be valid UTF-8 for test fingerprints");
-    sha256_hex(object.as_bytes())
+    let repository = gix::discover(repo).expect("commit fingerprint helper should discover repo");
+    let object_id = gix::hash::ObjectId::from_hex(commit_sha.as_bytes())
+        .expect("commit fingerprint helper should parse commit object id");
+    let commit = repository
+        .find_commit(object_id)
+        .expect("commit fingerprint helper should load commit object");
+    sha256_hex(commit.data.as_slice())
 }
 
 fn reconcile_mode_from_unit_review_receipt(source: &str) -> Option<String> {
@@ -3661,13 +3621,11 @@ fn prepare_finished_single_step_finish_gate_fixture_with_plan_qa_requirement(
 }
 
 fn run_shell(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
-    let compat_bin =
-        std::env::var_os("CARGO_BIN_EXE_featureforge").expect("featureforge test binary path");
+    let mut command = Command::new(compiled_featureforge_path());
+    let compat_bin = compiled_featureforge_path();
     command
         .current_dir(repo)
-        .env("FEATUREFORGE_COMPAT_BIN", compat_bin)
+        .env("FEATUREFORGE_COMPAT_BIN", &compat_bin)
         .env("FEATUREFORGE_STATE_DIR", state)
         .args(["plan", "execution"])
         .args(args);
@@ -3679,8 +3637,7 @@ fn run_shell_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Va
 }
 
 fn run_rust(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)
@@ -3696,8 +3653,7 @@ fn run_rust_with_env(
     env: &[(&str, &str)],
     context: &str,
 ) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)
@@ -3710,7 +3666,15 @@ fn run_rust_with_env(
 }
 
 fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    parse_json(&run_rust(repo, state, args, context), context)
+    match plan_execution_direct_support::try_run_plan_execution_json_direct(
+        repo, state, args, context,
+    ) {
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => value,
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {
+            parse_json(&run_rust(repo, state, args, context), context)
+        }
+        Err(error) => panic!("{error}"),
+    }
 }
 
 fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) -> Value {
@@ -5688,7 +5652,10 @@ fn task_boundary_status_reports_prior_task_verification_missing_after_review_clo
         status_before_task2["next_action"],
         Value::from("wait for external review result")
     );
-    assert_eq!(status_before_task2["review_state_status"], Value::from("clean"));
+    assert_eq!(
+        status_before_task2["review_state_status"],
+        Value::from("clean")
+    );
     assert!(status_before_task2["recommended_command"].is_null());
 }
 
@@ -6257,7 +6224,10 @@ fn task_boundary_status_reports_non_independent_review_receipt() {
         status_before_task2["next_action"],
         Value::from("wait for external review result")
     );
-    assert_eq!(status_before_task2["review_state_status"], Value::from("clean"));
+    assert_eq!(
+        status_before_task2["review_state_status"],
+        Value::from("clean")
+    );
     assert!(status_before_task2["recommended_command"].is_null());
 }
 
@@ -10066,18 +10036,23 @@ fn gate_finish_rejects_non_regular_authoritative_worktree_state() {
     let _ = fs::remove_file(&harness_state_path);
     fs::create_dir(&harness_state_path).expect("state path should be creatable as a directory");
 
-    let gate_finish = run_rust_json(
+    let gate_finish = run_rust(
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
         "gate finish should reject non-regular authoritative harness state",
     );
+    let failure = parse_failure_json(
+        &gate_finish,
+        "gate finish non-regular authoritative harness state",
+    );
 
-    assert_eq!(gate_finish["allowed"], false);
-    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
-    assert_eq!(
-        gate_finish["reason_codes"][0],
-        "authoritative_state_unavailable"
+    assert_eq!(failure["error_class"], "MalformedExecutionState");
+    assert!(
+        failure["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Authoritative harness state must be a regular file")
     );
 }
 
@@ -10183,18 +10158,23 @@ fn gate_finish_rejects_symlinked_authoritative_worktree_state() {
     fs::remove_file(&harness_state_path).expect("state file should be removable");
     symlink(&target_path, &harness_state_path).expect("state file symlink should be creatable");
 
-    let gate_finish = run_rust_json(
+    let gate_finish = run_rust(
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
         "gate finish should reject symlinked authoritative harness state",
     );
+    let failure = parse_failure_json(
+        &gate_finish,
+        "gate finish symlinked authoritative harness state",
+    );
 
-    assert_eq!(gate_finish["allowed"], false);
-    assert_eq!(gate_finish["failure_class"], "MalformedExecutionState");
-    assert_eq!(
-        gate_finish["reason_codes"][0],
-        "authoritative_state_unavailable"
+    assert_eq!(failure["error_class"], "MalformedExecutionState");
+    assert!(
+        failure["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Authoritative harness state path must not be a symlink")
     );
 }
 
@@ -25243,7 +25223,7 @@ fn task3_record_evaluation_legacy_blocked_only_with_retry_count_stays_blocked() 
 }
 
 #[test]
-fn late_stage_recording_equivalent_reruns_are_already_current() {
+fn late_stage_recording_equivalent_reruns_stay_idempotent_once_workflow_reroutes() {
     let (repo_dir, state_dir) = init_repo("plan-execution-late-stage-rerun-already-current");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -25291,13 +25271,9 @@ fn late_stage_recording_equivalent_reruns_are_already_current() {
                 .to_str()
                 .expect("release summary path should be utf-8"),
         ],
-        "advance-late-stage release-readiness equivalent rerun",
+        "advance-late-stage release-readiness equivalent rerun after workflow reroute",
     );
-    assert_eq!(
-        advance_release["action"],
-        Value::from("already_current"),
-        "json: {advance_release}"
-    );
+    assert_eq!(advance_release["action"], Value::from("already_current"));
     assert_eq!(
         advance_release["stage_path"],
         Value::from("release_readiness")
@@ -25306,6 +25282,10 @@ fn late_stage_recording_equivalent_reruns_are_already_current() {
         advance_release["delegated_primitive"],
         Value::from("record-release-readiness")
     );
+    assert!(advance_release["code"].is_null());
+    assert!(advance_release["recommended_command"].is_null());
+    assert!(advance_release["rederive_via_workflow_operator"].is_null());
+    assert_eq!(advance_release["required_follow_up"], Value::Null);
 
     let primitive_release = run_rust_json(
         repo,
@@ -25323,9 +25303,13 @@ fn late_stage_recording_equivalent_reruns_are_already_current() {
                 .to_str()
                 .expect("release summary path should be utf-8"),
         ],
-        "record-release-readiness equivalent rerun",
+        "record-release-readiness equivalent rerun after workflow reroute",
     );
     assert_eq!(primitive_release["action"], Value::from("already_current"));
+    assert!(primitive_release["code"].is_null());
+    assert!(primitive_release["recommended_command"].is_null());
+    assert!(primitive_release["rederive_via_workflow_operator"].is_null());
+    assert_eq!(primitive_release["required_follow_up"], Value::Null);
 
     let advance_final = run_rust_json(
         repo,
@@ -25347,7 +25331,7 @@ fn late_stage_recording_equivalent_reruns_are_already_current() {
                 .to_str()
                 .expect("final summary path should be utf-8"),
         ],
-        "advance-late-stage final-review equivalent rerun",
+        "advance-late-stage final-review equivalent rerun after workflow reroute",
     );
     assert_eq!(advance_final["action"], Value::from("already_current"));
     assert_eq!(advance_final["stage_path"], Value::from("final_review"));
@@ -25355,6 +25339,10 @@ fn late_stage_recording_equivalent_reruns_are_already_current() {
         advance_final["delegated_primitive"],
         Value::from("record-final-review")
     );
+    assert!(advance_final["code"].is_null());
+    assert!(advance_final["recommended_command"].is_null());
+    assert!(advance_final["rederive_via_workflow_operator"].is_null());
+    assert_eq!(advance_final["required_follow_up"], Value::Null);
 
     let primitive_final = run_rust_json(
         repo,
@@ -25378,9 +25366,13 @@ fn late_stage_recording_equivalent_reruns_are_already_current() {
                 .to_str()
                 .expect("final summary path should be utf-8"),
         ],
-        "record-final-review equivalent rerun",
+        "record-final-review equivalent rerun after workflow reroute",
     );
     assert_eq!(primitive_final["action"], Value::from("already_current"));
+    assert!(primitive_final["code"].is_null());
+    assert!(primitive_final["recommended_command"].is_null());
+    assert!(primitive_final["rederive_via_workflow_operator"].is_null());
+    assert_eq!(primitive_final["required_follow_up"], Value::Null);
 
     let qa = run_rust_json(
         repo,
@@ -25399,6 +25391,7 @@ fn late_stage_recording_equivalent_reruns_are_already_current() {
         "record-qa equivalent rerun",
     );
     assert_eq!(qa["action"], Value::from("already_current"));
+    assert!(qa["code"].is_null());
 }
 
 #[test]
@@ -25440,11 +25433,19 @@ fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
         "advance-late-stage release-readiness out-of-phase summary ordering",
     );
     assert_eq!(advance_release["action"], Value::from("blocked"));
-    assert!(
-        advance_release["code"].as_str() == Some("out_of_phase_requery_required")
-            || advance_release["required_follow_up"].is_string(),
-        "json: {advance_release}"
+    assert_eq!(
+        advance_release["code"],
+        Value::from("out_of_phase_requery_required")
     );
+    assert_eq!(
+        advance_release["recommended_command"],
+        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+    );
+    assert_eq!(
+        advance_release["rederive_via_workflow_operator"],
+        Value::Bool(true)
+    );
+    assert_eq!(advance_release["required_follow_up"], Value::Null);
 
     let primitive_release = run_rust_json(
         repo,
@@ -25463,11 +25464,19 @@ fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
         "record-release-readiness out-of-phase summary ordering",
     );
     assert_eq!(primitive_release["action"], Value::from("blocked"));
-    assert!(
-        primitive_release["code"].as_str() == Some("out_of_phase_requery_required")
-            || primitive_release["required_follow_up"].is_string(),
-        "json: {primitive_release}"
+    assert_eq!(
+        primitive_release["code"],
+        Value::from("out_of_phase_requery_required")
     );
+    assert_eq!(
+        primitive_release["recommended_command"],
+        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+    );
+    assert_eq!(
+        primitive_release["rederive_via_workflow_operator"],
+        Value::Bool(true)
+    );
+    assert_eq!(primitive_release["required_follow_up"], Value::Null);
 
     let advance_final = run_rust_json(
         repo,
@@ -25490,11 +25499,19 @@ fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
         "advance-late-stage final-review out-of-phase summary ordering",
     );
     assert_eq!(advance_final["action"], Value::from("blocked"));
-    assert!(
-        advance_final["code"].as_str() == Some("out_of_phase_requery_required")
-            || advance_final["required_follow_up"].is_string(),
-        "json: {advance_final}"
+    assert_eq!(
+        advance_final["code"],
+        Value::from("out_of_phase_requery_required")
     );
+    assert_eq!(
+        advance_final["recommended_command"],
+        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+    );
+    assert_eq!(
+        advance_final["rederive_via_workflow_operator"],
+        Value::Bool(true)
+    );
+    assert_eq!(advance_final["required_follow_up"], Value::Null);
 
     let primitive_final = run_rust_json(
         repo,
@@ -25519,9 +25536,17 @@ fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
         "record-final-review out-of-phase summary ordering",
     );
     assert_eq!(primitive_final["action"], Value::from("blocked"));
-    assert!(
-        primitive_final["code"].as_str() == Some("out_of_phase_requery_required")
-            || primitive_final["required_follow_up"].is_string(),
-        "json: {primitive_final}"
+    assert_eq!(
+        primitive_final["code"],
+        Value::from("out_of_phase_requery_required")
     );
+    assert_eq!(
+        primitive_final["recommended_command"],
+        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+    );
+    assert_eq!(
+        primitive_final["rederive_via_workflow_operator"],
+        Value::Bool(true)
+    );
+    assert_eq!(primitive_final["required_follow_up"], Value::Null);
 }

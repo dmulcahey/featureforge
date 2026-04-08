@@ -1,5 +1,3 @@
-#[path = "support/files.rs"]
-mod files_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/workflow.rs"]

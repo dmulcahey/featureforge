@@ -52,7 +52,7 @@ test('renderTemplateContent always ends generated files with a trailing newline'
 });
 
 test('base and review shell builders include their expected contract lines', () => {
-  assert.equal(buildBaseShellLines().some((line) => line.includes('_SESSIONS=')), true);
+  assert.equal(buildBaseShellLines().some((line) => line.includes('_FEATUREFORGE_STATE_DIR=')), true);
   assert.equal(buildBaseShellLines().some((line) => line.includes('_BRANCH=')), true);
   assert.equal(buildReviewShellLines().some((line) => line.includes('_TODOS_FORMAT=')), true);
 });
@@ -82,8 +82,7 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   // must NEVER switch runtime execution back to a root-selected binary or a
   // PATH-selected fallback.
   assert.match(baseShell, /repo runtime-root --path/);
-  assert.match(baseShell, /"\$_FEATUREFORGE_BIN" update-check/);
-  assert.match(baseShell, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/);
+  assert.match(baseShell, /_FEATUREFORGE_STATE_DIR="\$\{FEATUREFORGE_STATE_DIR:-\$HOME\/\.featureforge\}"/);
   assert.doesNotMatch(baseShell, /repo runtime-root --path.*\|\| true/);
   assert.doesNotMatch(baseShell, /\$_REPO_ROOT\/bin\/featureforge/);
   assert.doesNotMatch(baseShell, /\$_FEATUREFORGE_ROOT\/bin\/featureforge/);
@@ -94,6 +93,8 @@ test('shared shell builders delegate runtime-root discovery to the helper contra
   assert.doesNotMatch(baseShell, /command -v featureforge/);
   assert.doesNotMatch(baseShell, /featureforge-update-check/);
   assert.doesNotMatch(baseShell, /featureforge-config/);
+  assert.doesNotMatch(baseShell, /"\$_FEATUREFORGE_BIN" update-check/);
+  assert.doesNotMatch(baseShell, /"\$_FEATUREFORGE_BIN" config get featureforge_contributor/);
 });
 
 test('using-featureforge helpers omit the removed bypass gate contract', () => {
@@ -117,7 +118,7 @@ test('using-featureforge template keeps canonical late-stage precedence wording'
   );
   assert.match(
     usingFeatureForgeTemplate,
-    /If the handoff reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported phase and `next_action` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`\./,
+    /If workflow\/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`\./,
   );
 
   const lateStageReference = fs.readFileSync(
@@ -145,4 +146,7 @@ test('generated preambles include the shared Search Before Building section for 
     assert.match(preamble, /If safe sanitization is not possible, skip external search\./);
     assert.match(preamble, /See `\$_FEATUREFORGE_ROOT\/references\/search-before-building\.md`\./);
   }
+
+  assert.doesNotMatch(basePreamble, /## Contributor Mode/);
+  assert.match(reviewPreamble, /## Contributor Mode/);
 });

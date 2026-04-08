@@ -25,12 +25,12 @@ use crate::git::{
     stored_repo_root_matches_current,
 };
 use crate::paths::{RepoPath, featureforge_state_dir};
-use crate::workflow::operator::WorkflowOperator;
 use crate::workflow::manifest::{
     ManifestLoadResult, WorkflowManifest, load_manifest, load_manifest_read_only, manifest_path,
     recover_slug_changed_manifest, recover_slug_changed_manifest_read_only, save_manifest,
 };
 use crate::workflow::markdown_scan::markdown_files_under;
+use crate::workflow::operator::WorkflowOperator;
 
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
 const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
@@ -38,6 +38,7 @@ const ACTIVE_IMPLEMENTATION_TARGET_INDEX: &str =
     "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md";
 const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 2;
+const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowRoute {
@@ -74,9 +75,13 @@ pub struct WorkflowPhase {
     pub schema_version: u32,
     pub phase: String,
     pub route_status: String,
+    pub phase_detail: String,
+    pub review_state_status: String,
     pub next_skill: String,
     pub next_step: String,
     pub next_action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub reason_family: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -133,9 +138,23 @@ impl WorkflowRuntime {
         Self::discover_with_loader(current_dir, true)
     }
 
+    pub fn discover_read_only_for_state_dir(
+        current_dir: &Path,
+        state_dir: &Path,
+    ) -> Result<Self, DiagnosticError> {
+        Self::discover_with_loader_and_state_dir(current_dir, state_dir.to_path_buf(), true)
+    }
+
     fn discover_with_loader(current_dir: &Path, read_only: bool) -> Result<Self, DiagnosticError> {
+        Self::discover_with_loader_and_state_dir(current_dir, featureforge_state_dir(), read_only)
+    }
+
+    fn discover_with_loader_and_state_dir(
+        current_dir: &Path,
+        state_dir: PathBuf,
+        read_only: bool,
+    ) -> Result<Self, DiagnosticError> {
         let identity = discover_repo_identity(current_dir)?;
-        let state_dir = featureforge_state_dir();
         let manifest_path = manifest_path(&identity, &state_dir);
         let load = if read_only {
             load_manifest_read_only
@@ -404,9 +423,12 @@ impl WorkflowRuntime {
             schema_version: WORKFLOW_PHASE_SCHEMA_VERSION,
             phase,
             route_status: route.status.clone(),
+            phase_detail: String::new(),
+            review_state_status: String::new(),
             next_skill: route.next_skill.clone(),
             next_step,
             next_action,
+            recommended_command: None,
             reason_family: String::new(),
             diagnostic_reason_codes: Vec::new(),
             spec_path: route.spec_path.clone(),
@@ -1189,7 +1211,14 @@ fn workflow_route_schema_json(schema_label: &str) -> Result<String, DiagnosticEr
 }
 
 fn workflow_operator_schema_json(schema_label: &str) -> Result<String, DiagnosticError> {
-    serde_json::to_string_pretty(&schema_for!(WorkflowOperator)).map_err(|err| {
+    let mut schema = serde_json::to_value(schema_for!(WorkflowOperator)).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize {schema_label} schema: {err}"),
+        )
+    })?;
+    lock_workflow_operator_schema_version(&mut schema)?;
+    serde_json::to_string_pretty(&schema).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
             format!("Could not serialize {schema_label} schema: {err}"),
@@ -1214,6 +1243,27 @@ fn lock_workflow_route_schema_version(
     schema_version.insert(
         String::from("const"),
         serde_json::Value::from(WORKFLOW_ROUTE_SCHEMA_VERSION),
+    );
+    Ok(())
+}
+
+fn lock_workflow_operator_schema_version(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let schema_version = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|properties| properties.get_mut("schema_version"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema is missing the schema_version property.",
+            )
+        })?;
+    schema_version.insert(
+        String::from("const"),
+        serde_json::Value::from(WORKFLOW_OPERATOR_SCHEMA_VERSION),
     );
     Ok(())
 }

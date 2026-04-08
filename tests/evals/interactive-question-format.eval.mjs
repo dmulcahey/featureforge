@@ -15,7 +15,10 @@ const testFn = evalsEnabled() && gate.enabled ? test : test.skip;
 testFn('interactive question format preserves context, recommendation, and options', async () => {
   const content = fs.readFileSync(path.join(REPO_ROOT, 'skills/using-featureforge/SKILL.md'), 'utf8');
   const start = content.indexOf('## Interactive User Question Format');
-  const end = content.indexOf('## Contributor Mode');
+  const contributorModeIndex = content.indexOf('## Contributor Mode', start);
+  const nextHeadingIndex = content.indexOf('\n## ', start + 1);
+  const endCandidates = [contributorModeIndex, nextHeadingIndex].filter((value) => value !== -1);
+  const end = endCandidates.length === 0 ? content.length : Math.min(...endCandidates);
   const section = content.slice(start, end);
 
   const result = await runJsonJudgeEval({

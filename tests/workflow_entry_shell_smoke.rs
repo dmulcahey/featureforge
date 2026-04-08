@@ -1,11 +1,11 @@
-#[path = "support/files.rs"]
-mod files_support;
+#[path = "support/bin.rs"]
+mod bin_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
-use assert_cmd::cargo::CommandCargoExt;
+use bin_support::compiled_featureforge_path;
 use process_support::run;
 use serde_json::Value;
 use std::path::Path;
@@ -13,8 +13,7 @@ use std::process::{Command, Output};
 use workflow_support::{init_repo, install_full_contract_ready_artifacts};
 
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge cargo binary should be available");
+    let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state_dir)
