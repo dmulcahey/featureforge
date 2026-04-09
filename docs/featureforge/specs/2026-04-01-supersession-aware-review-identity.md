@@ -49,7 +49,7 @@ This April supersession-aware corpus is the intended implementation target for t
 
 The March 2026 specs and plans that introduced `gate-review-dispatch` and `rebuild-evidence` remain historical and useful for provenance, but they are no longer normative for the implementation target after this architectural pivot.
 
-The machine-readable human-facing index for the active implementation-target corpus lives in [ACTIVE_IMPLEMENTATION_TARGET.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md). Historical March specs that still live under the same directory are not normative unless they are listed there.
+The machine-readable human-facing index for the active implementation-target corpus lives in [ACTIVE_IMPLEMENTATION_TARGET.md](ACTIVE_IMPLEMENTATION_TARGET.md). Historical March specs that still live under the same directory are not normative unless they are listed there.
 
 ## Core Model
 

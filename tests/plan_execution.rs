@@ -3697,6 +3697,117 @@ fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) -> Valu
 }
 
 #[test]
+fn direct_helper_defers_aggregate_workflow_commands_to_real_cli() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-direct-helper-aggregate-routing");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let scenarios: [(&str, &[&str]); 6] = [
+        (
+            "close-current-task",
+            &[
+                "close-current-task",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--dispatch-id",
+                "dispatch-fixture",
+                "--review-result",
+                "pass",
+                "--review-summary-file",
+                "review-summary.md",
+                "--verification-result",
+                "pass",
+                "--verification-summary-file",
+                "verification-summary.md",
+            ],
+        ),
+        (
+            "record-branch-closure",
+            &["record-branch-closure", "--plan", PLAN_REL],
+        ),
+        (
+            "record-release-readiness",
+            &[
+                "record-release-readiness",
+                "--plan",
+                PLAN_REL,
+                "--branch-closure-id",
+                "branch-closure-fixture",
+                "--result",
+                "ready",
+                "--summary-file",
+                "release-summary.md",
+            ],
+        ),
+        (
+            "advance-late-stage",
+            &[
+                "advance-late-stage",
+                "--plan",
+                PLAN_REL,
+                "--result",
+                "ready",
+                "--summary-file",
+                "release-summary.md",
+            ],
+        ),
+        (
+            "record-final-review",
+            &[
+                "record-final-review",
+                "--plan",
+                PLAN_REL,
+                "--branch-closure-id",
+                "branch-closure-fixture",
+                "--dispatch-id",
+                "dispatch-fixture",
+                "--reviewer-source",
+                "fresh-context-subagent",
+                "--reviewer-id",
+                "reviewer-fixture-001",
+                "--result",
+                "pass",
+                "--summary-file",
+                "final-review-summary.md",
+            ],
+        ),
+        (
+            "record-qa",
+            &[
+                "record-qa",
+                "--plan",
+                PLAN_REL,
+                "--result",
+                "pass",
+                "--summary-file",
+                "qa-summary.md",
+            ],
+        ),
+    ];
+
+    for (command, args) in scenarios {
+        let direct = plan_execution_direct_support::try_run_plan_execution_json_direct(
+            repo,
+            state,
+            args,
+            "direct helper aggregate command routing",
+        )
+        .unwrap_or_else(|error| {
+            panic!("direct helper should not execute aggregate command {command}: {error}")
+        });
+        assert!(
+            matches!(
+                direct,
+                plan_execution_direct_support::DirectPlanExecutionRun::Unsupported
+            ),
+            "direct helper should defer aggregate command {command} to real CLI execution"
+        );
+    }
+}
+
+#[test]
 fn canonical_status_matches_helper_for_clean_plan() {
     let (repo_dir, state_dir) = init_repo("plan-execution-status");
     let repo = repo_dir.path();
@@ -13571,7 +13682,7 @@ fn record_review_dispatch_task_scope_requires_current_target_when_no_reviewable_
         "status before gate-review dispatch without reviewable work",
     );
 
-    let output = run_rust(
+    let blocked = run_rust_json(
         repo,
         state,
         &[
@@ -13585,16 +13696,24 @@ fn record_review_dispatch_task_scope_requires_current_target_when_no_reviewable_
         ],
         "record-review-dispatch without current task target",
     );
-    let failure = parse_failure_json(
-        &output,
-        "record-review-dispatch without current task target",
+    assert_eq!(blocked["allowed"], Value::Bool(false));
+    assert_eq!(blocked["action"], "blocked");
+    assert_eq!(blocked["failure_class"], "ExecutionStateNotReady");
+    assert_eq!(blocked["code"], "out_of_phase_requery_required");
+    assert_eq!(
+        blocked["recommended_command"],
+        format!("featureforge workflow operator --plan {PLAN_REL}")
     );
-    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
     assert!(
-        failure["message"].as_str().is_some_and(
-            |message| message.contains("requires a current task review-dispatch target")
-        ),
-        "task-scoped dispatch without a current target should fail closed before mutation: {failure}"
+        blocked["diagnostics"]
+            .as_array()
+            .is_some_and(
+                |diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["message"]
+                    .as_str()
+                    .is_some_and(|message| message
+                        .contains("requires a current task review-dispatch target")))
+            ),
+        "task-scoped dispatch without a current target should return the shared blocked contract: {blocked}"
     );
 
     let status = run_rust_json(
@@ -13670,7 +13789,7 @@ fn record_review_dispatch_final_review_scope_requires_completed_plan_target() {
     )
     .expect("harness state should be valid json before blocked bound final-review dispatch");
 
-    let output = run_rust(
+    let blocked = run_rust_json(
         repo,
         state,
         &[
@@ -13682,17 +13801,24 @@ fn record_review_dispatch_final_review_scope_requires_completed_plan_target() {
         ],
         "record-review-dispatch final-review scope while a task target is bound",
     );
-    let failure = parse_failure_json(
-        &output,
-        "record-review-dispatch final-review scope while a task target is bound",
+    assert_eq!(blocked["allowed"], Value::Bool(false));
+    assert_eq!(blocked["action"], "blocked");
+    assert_eq!(blocked["failure_class"], "ExecutionStateNotReady");
+    assert_eq!(blocked["code"], "out_of_phase_requery_required");
+    assert_eq!(
+        blocked["recommended_command"],
+        format!("featureforge workflow operator --plan {PLAN_REL}")
     );
-    assert_eq!(failure["error_class"], "ExecutionStateNotReady");
     assert!(
-        failure["message"]
-            .as_str()
-            .is_some_and(|message| message
-                .contains("requires a completed-plan final-review dispatch target")),
-        "bound final-review dispatch should fail closed until the plan is actually complete: {failure}"
+        blocked["diagnostics"]
+            .as_array()
+            .is_some_and(
+                |diagnostics| diagnostics.iter().any(|diagnostic| diagnostic["message"]
+                    .as_str()
+                    .is_some_and(|message| message
+                        .contains("requires a completed-plan final-review dispatch target")))
+            ),
+        "bound final-review dispatch should return the shared blocked contract until the plan is actually complete: {blocked}"
     );
 
     let harness_state: Value = serde_json::from_str(

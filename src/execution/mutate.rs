@@ -1063,8 +1063,8 @@ pub fn close_current_task(
             ),
         });
     }
-    match (args.review_result, args.verification_result) {
-        (ReviewOutcomeArg::Pass, VerificationOutcomeArg::Pass) => {
+    match close_current_task_outcome_class(args.review_result, args.verification_result) {
+        CloseCurrentTaskOutcomeClass::Positive => {
             let effective_reviewed_surface_paths =
                 current_task_effective_reviewed_surface_paths(&context, args.task)?;
             refresh_rebuild_task_closure_receipts_with_context(
@@ -1203,8 +1203,7 @@ pub fn close_current_task(
                 ),
             })
         }
-        (ReviewOutcomeArg::Fail, VerificationOutcomeArg::Fail | VerificationOutcomeArg::NotRun)
-        | (ReviewOutcomeArg::Pass, VerificationOutcomeArg::Fail) => {
+        CloseCurrentTaskOutcomeClass::Negative => {
             let _write_authority = claim_step_write_authority(runtime)?;
             let mut authoritative_state = load_authoritative_transition_state(&context)?;
             let Some(authoritative_state) = authoritative_state.as_mut() else {
@@ -1289,14 +1288,34 @@ pub fn close_current_task(
                 ),
             })
         }
-        (ReviewOutcomeArg::Fail, VerificationOutcomeArg::Pass) => Err(JsonFailure::new(
-            FailureClass::InvalidCommandInput,
-            "verification_result_pass_incompatible_with_review_fail: verification may not be pass when the supplied review result is fail.",
-        )),
-        (ReviewOutcomeArg::Pass, VerificationOutcomeArg::NotRun) => Err(JsonFailure::new(
+        CloseCurrentTaskOutcomeClass::Invalid => Err(JsonFailure::new(
             FailureClass::InvalidCommandInput,
             "verification_not_run_incompatible_with_passing_review: a passing task closure requires passing verification in the first slice.",
         )),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseCurrentTaskOutcomeClass {
+    Positive,
+    Negative,
+    Invalid,
+}
+
+fn close_current_task_outcome_class(
+    review_result: ReviewOutcomeArg,
+    verification_result: VerificationOutcomeArg,
+) -> CloseCurrentTaskOutcomeClass {
+    match (review_result, verification_result) {
+        (ReviewOutcomeArg::Pass, VerificationOutcomeArg::Pass) => {
+            CloseCurrentTaskOutcomeClass::Positive
+        }
+        (ReviewOutcomeArg::Pass, VerificationOutcomeArg::NotRun) => {
+            CloseCurrentTaskOutcomeClass::Invalid
+        }
+        (ReviewOutcomeArg::Fail, _) | (ReviewOutcomeArg::Pass, VerificationOutcomeArg::Fail) => {
+            CloseCurrentTaskOutcomeClass::Negative
+        }
     }
 }
 
@@ -6551,14 +6570,15 @@ mod unit_tests {
     use tempfile::TempDir;
 
     use super::{
-        CurrentFinalReviewAuthorityCheck, FinalReviewArtifactInputs,
-        blocked_follow_up_for_operator, current_final_review_record_is_still_authoritative,
-        late_stage_required_follow_up, normalized_late_stage_surface,
-        path_matches_late_stage_surface, render_final_review_artifacts,
-        rewrite_branch_final_review_artifacts, rewrite_branch_head_bound_artifact,
-        rewrite_branch_qa_artifact, superseded_branch_closure_ids_from_previous_current,
-        verify_command_launcher,
+        CloseCurrentTaskOutcomeClass, CurrentFinalReviewAuthorityCheck, FinalReviewArtifactInputs,
+        blocked_follow_up_for_operator, close_current_task_outcome_class,
+        current_final_review_record_is_still_authoritative, late_stage_required_follow_up,
+        normalized_late_stage_surface, path_matches_late_stage_surface,
+        render_final_review_artifacts, rewrite_branch_final_review_artifacts,
+        rewrite_branch_head_bound_artifact, rewrite_branch_qa_artifact,
+        superseded_branch_closure_ids_from_previous_current, verify_command_launcher,
     };
+    use crate::cli::plan_execution::{ReviewOutcomeArg, VerificationOutcomeArg};
     use crate::contracts::plan::parse_plan_file;
     use crate::diagnostics::FailureClass;
     use crate::execution::leases::StatusAuthoritativeOverlay;
@@ -7016,6 +7036,14 @@ mod unit_tests {
         assert_eq!(
             late_stage_required_follow_up("final_review", &operator),
             None
+        );
+    }
+
+    #[test]
+    fn close_current_task_outcome_class_treats_review_fail_verification_pass_as_negative() {
+        assert_eq!(
+            close_current_task_outcome_class(ReviewOutcomeArg::Fail, VerificationOutcomeArg::Pass),
+            CloseCurrentTaskOutcomeClass::Negative
         );
     }
 }

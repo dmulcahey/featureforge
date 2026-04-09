@@ -417,13 +417,14 @@ This is the path for rebases, late fixes, or review-driven changes that invalida
 ### What the agent does
 
 ```bash
+featureforge plan execution status --plan docs/featureforge/plans/<plan>.md
 featureforge plan execution repair-review-state --plan docs/featureforge/plans/<plan>.md
 ```
 
-Then either:
+Then follow the returned reroute exactly:
 
-- record a new reviewed closure after new review
-- or continue execution until the corrected reviewed state can be recorded
+- run the returned `recommended_command` from `repair-review-state` as the immediate next step
+- rerun `featureforge workflow operator --plan <path>` next only when that returned command is `featureforge workflow operator --plan <path>` or after completing the returned follow-up step
 
 ### What the runtime is doing underneath
 
@@ -542,9 +543,10 @@ featureforge plan execution advance-late-stage \
   --summary-file <release-summary>
 ```
 
-If resolving the blocker requires repo-tracked edits, the branch state is now stale and the agent must first inspect the reroute that `repair-review-state` returns:
+If resolving the blocker requires repo-tracked edits, the branch state is now stale and the agent must rerun status, then run `repair-review-state`, then follow the reroute it returns:
 
 ```bash
+featureforge plan execution status --plan docs/featureforge/plans/<plan>.md
 featureforge plan execution repair-review-state --plan docs/featureforge/plans/<plan>.md
 # if the returned reroute is back to document_release_pending because drift is confined to approved-plan Late-Stage Surface:
 featureforge plan execution record-branch-closure --plan docs/featureforge/plans/<plan>.md

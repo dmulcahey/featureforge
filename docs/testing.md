@@ -13,6 +13,7 @@ Run these commands from the repo root for the core contract surface:
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
+npm --prefix tests/brainstorm-server test
 cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill --test contracts_spec_plan --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
 ```
 
@@ -26,6 +27,11 @@ cargo nextest run --test runtime_instruction_contracts --test using_featureforge
 - active docs and archive layout fixtures
 - workflow-fixture invariants
 - routing and eval-document contract assertions
+
+`tests/brainstorm-server` `npm test` covers:
+
+- brainstorm server HTTP/WebSocket behavior
+- launch-wrapper smoke for `start-server`/`stop-server` shell and PowerShell entrypoints
 
 ### Rust Runtime Tests
 
@@ -57,6 +63,12 @@ Editing skill templates or generated skill docs:
 ```bash
 node scripts/gen-skill-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
+```
+
+Editing brainstorm-server runtime scripts or launch wrappers:
+
+```bash
+npm --prefix tests/brainstorm-server test
 ```
 
 Editing reviewer sources or generated reviewer docs:

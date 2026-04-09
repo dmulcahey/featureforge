@@ -75,6 +75,9 @@ use crate::workflow::late_stage_precedence::{
 };
 use crate::workflow::manifest::{ManifestLoadResult, WorkflowManifest, load_manifest_read_only};
 use crate::workflow::markdown_scan::markdown_files_under;
+use crate::workflow::pivot::{
+    WorkflowPivotRecordIdentity, current_workflow_pivot_record_exists, pivot_decision_reason_codes,
+};
 
 pub const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
@@ -496,6 +499,12 @@ pub struct RecordReviewDispatchOutput {
     pub reason_codes: Vec<String>,
     pub warning_codes: Vec<String>,
     pub diagnostics: Vec<GateDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rederive_via_workflow_operator: Option<bool>,
     pub scope: String,
     pub action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -930,7 +939,15 @@ impl ExecutionRuntime {
                 ensure_review_dispatch_authoritative_bootstrap(&context)?;
                 let reloaded = load_execution_context(self, &args.plan)?;
                 let cycle_target = review_dispatch_cycle_target(&reloaded);
-                validate_review_dispatch_request(&reloaded, args, cycle_target)?;
+                if let Err(error) = validate_review_dispatch_request(&reloaded, args, cycle_target)
+                {
+                    if error.error_class == FailureClass::ExecutionStateNotReady.as_str() {
+                        let mut gate = review_dispatch_out_of_phase_gate(error.message);
+                        apply_out_of_phase_gate_contract(&reloaded, &mut gate);
+                        return Ok(gate);
+                    }
+                    return Err(error);
+                }
                 let gate = review_dispatch_gate_from_context(&reloaded, args, cycle_target);
                 if gate_review_dispatch_should_fail_before_mutation(&gate) {
                     return Ok(gate);
@@ -966,17 +983,7 @@ impl ExecutionRuntime {
             Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
                 return Ok(record_review_dispatch_blocked_output(
                     args,
-                    String::from(FailureClass::PlanNotExecutionReady.as_str()),
-                    vec![String::from("plan_not_execution_ready")],
-                    Vec::new(),
-                    vec![GateDiagnostic {
-                        code: String::from("plan_not_execution_ready"),
-                        severity: String::from("error"),
-                        message: error.message,
-                        remediation: String::from(
-                            "Refresh the approved plan/spec pair before running record-review-dispatch.",
-                        ),
-                    }],
+                    review_dispatch_plan_not_ready_gate(error.message),
                 ));
             }
             Err(error) => return Err(error),
@@ -987,31 +994,26 @@ impl ExecutionRuntime {
             Err(error) if error.error_class == FailureClass::PlanNotExecutionReady.as_str() => {
                 return Ok(record_review_dispatch_blocked_output(
                     args,
-                    String::from(FailureClass::PlanNotExecutionReady.as_str()),
-                    vec![String::from("plan_not_execution_ready")],
-                    Vec::new(),
-                    vec![GateDiagnostic {
-                        code: String::from("plan_not_execution_ready"),
-                        severity: String::from("error"),
-                        message: error.message,
-                        remediation: String::from(
-                            "Refresh the approved plan/spec pair before running record-review-dispatch.",
-                        ),
-                    }],
+                    review_dispatch_plan_not_ready_gate(error.message),
                 ));
             }
             Err(error) => return Err(error),
         };
         let cycle_target = review_dispatch_cycle_target(&context);
-        validate_review_dispatch_request(&context, args, cycle_target)?;
+        if let Err(error) = validate_review_dispatch_request(&context, args, cycle_target) {
+            if error.error_class == FailureClass::ExecutionStateNotReady.as_str() {
+                return Ok(record_review_dispatch_blocked_output_from_gate(
+                    &context,
+                    args,
+                    review_dispatch_out_of_phase_gate(error.message),
+                ));
+            }
+            return Err(error);
+        }
         let gate = review_dispatch_gate_from_context(&context, args, cycle_target);
         if !gate.allowed {
-            return Ok(record_review_dispatch_blocked_output(
-                args,
-                gate.failure_class.clone(),
-                gate.reason_codes.clone(),
-                gate.warning_codes.clone(),
-                gate.diagnostics.clone(),
+            return Ok(record_review_dispatch_blocked_output_from_gate(
+                &context, args, gate,
             ));
         }
         let action = record_review_dispatch_strategy_checkpoint(&context, args, cycle_target)?;
@@ -1030,6 +1032,9 @@ impl ExecutionRuntime {
             reason_codes: gate.reason_codes.clone(),
             warning_codes: gate.warning_codes.clone(),
             diagnostics: gate.diagnostics.clone(),
+            code: None,
+            recommended_command: None,
+            rederive_via_workflow_operator: None,
             scope: review_dispatch_scope_label(args.scope),
             action: match action {
                 ReviewDispatchMutationAction::Recorded => String::from("recorded"),
@@ -1120,22 +1125,43 @@ fn apply_out_of_phase_gate_contract(context: &ExecutionContext, gate: &mut GateR
 
 fn record_review_dispatch_blocked_output(
     args: &RecordReviewDispatchArgs,
-    failure_class: String,
-    reason_codes: Vec<String>,
-    warning_codes: Vec<String>,
-    diagnostics: Vec<GateDiagnostic>,
+    gate: GateResult,
 ) -> RecordReviewDispatchOutput {
+    let GateResult {
+        failure_class,
+        reason_codes,
+        warning_codes,
+        diagnostics,
+        code,
+        recommended_command,
+        rederive_via_workflow_operator,
+        ..
+    } = gate;
     RecordReviewDispatchOutput {
         allowed: false,
         failure_class,
         reason_codes,
         warning_codes,
         diagnostics,
+        code,
+        recommended_command,
+        rederive_via_workflow_operator,
         scope: review_dispatch_scope_label(args.scope),
         action: String::from("blocked"),
         dispatch_id: None,
         recorded_at: None,
     }
+}
+
+fn record_review_dispatch_blocked_output_from_gate(
+    context: &ExecutionContext,
+    args: &RecordReviewDispatchArgs,
+    mut gate: GateResult,
+) -> RecordReviewDispatchOutput {
+    if gate_should_rederive_via_workflow_operator(&gate) {
+        apply_out_of_phase_gate_contract(context, &mut gate);
+    }
+    record_review_dispatch_blocked_output(args, gate)
 }
 
 fn review_dispatch_scope_label(scope: ReviewDispatchScopeArg) -> String {
@@ -1147,6 +1173,28 @@ fn review_dispatch_scope_label(scope: ReviewDispatchScopeArg) -> String {
 
 fn gate_review_dispatch_should_fail_before_mutation(gate: &GateResult) -> bool {
     !gate.allowed
+}
+
+fn review_dispatch_out_of_phase_gate(message: String) -> GateResult {
+    let mut gate = GateState::default();
+    gate.fail(
+        FailureClass::ExecutionStateNotReady,
+        "record_review_dispatch_out_of_phase",
+        message,
+        "Run `featureforge workflow operator --plan <approved-plan-path>` to re-derive the current workflow phase before recording review dispatch.",
+    );
+    gate.finish()
+}
+
+fn review_dispatch_plan_not_ready_gate(message: String) -> GateResult {
+    let mut gate = GateState::default();
+    gate.fail(
+        FailureClass::PlanNotExecutionReady,
+        "plan_not_execution_ready",
+        message,
+        "Refresh the approved plan/spec pair before running record-review-dispatch.",
+    );
+    gate.finish()
 }
 
 enum ReviewDispatchMutationAction {
@@ -3222,44 +3270,21 @@ fn current_workflow_pivot_record_exists_for_status_decision(
         Ok(head_sha) => head_sha,
         Err(_) => return false,
     };
-    let artifact_dir = featureforge_state_dir()
-        .join("projects")
-        .join(&context.runtime.repo_slug);
-    let file_name_fragment = format!("-{}-workflow-pivot-", context.runtime.safe_branch);
-    let expected_decision_reason_codes = render_status_pivot_decision_reason_codes(
-        &status_pivot_decision_reason_codes(reason_codes, qa_requirement),
-    );
-    let mut candidates = match fs::read_dir(&artifact_dir) {
-        Ok(entries) => entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.is_file()
-                    && path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.contains(&file_name_fragment))
-            })
-            .collect::<Vec<_>>(),
-        Err(_) => return false,
-    };
-    candidates.sort();
-    candidates.reverse();
-
-    candidates.into_iter().any(|path| {
-        let source = match fs::read_to_string(&path) {
-            Ok(source) => source,
-            Err(_) => return false,
-        };
-        source.contains(&format!("**Source Plan:** `{}`", context.plan_rel))
-            && source.contains(&format!("**Branch:** {}", context.runtime.branch_name))
-            && source.contains(&format!("**Repo:** {}", context.runtime.repo_slug))
-            && source.contains(&format!("**Head SHA:** {head_sha}"))
-            && source.contains(&format!(
-                "**Decision Reason Codes:** {expected_decision_reason_codes}"
-            ))
-            && source.contains("**Generated By:** featureforge:workflow-record-pivot")
-    })
+    let qa_requirement_missing_or_invalid =
+        !matches!(qa_requirement, Some("required") | Some("not-required"));
+    let decision_reason_codes =
+        pivot_decision_reason_codes(reason_codes, true, qa_requirement_missing_or_invalid);
+    current_workflow_pivot_record_exists(
+        &context.runtime.state_dir,
+        WorkflowPivotRecordIdentity {
+            repo_slug: &context.runtime.repo_slug,
+            safe_branch: &context.runtime.safe_branch,
+            plan_path: &context.plan_rel,
+            branch_name: &context.runtime.branch_name,
+            head_sha: &head_sha,
+            decision_reason_codes: &decision_reason_codes,
+        },
+    )
 }
 
 fn current_workflow_transfer_record_exists_for_status_decision(context: &ExecutionContext) -> bool {
@@ -3280,32 +3305,6 @@ fn current_workflow_transfer_record_exists_for_status_decision(context: &Executi
             head_sha: &head_sha,
         },
     )
-}
-
-fn status_pivot_decision_reason_codes(
-    reason_codes: &[String],
-    qa_requirement: Option<&str>,
-) -> Vec<String> {
-    let mut decision_reason_codes = reason_codes.to_vec();
-    decision_reason_codes.push(String::from("follow_up_override_record_pivot"));
-    if !matches!(qa_requirement, Some("required") | Some("not-required")) {
-        decision_reason_codes.push(String::from("qa_requirement_missing_or_invalid"));
-    }
-    decision_reason_codes.sort();
-    decision_reason_codes.dedup();
-    decision_reason_codes
-}
-
-fn render_status_pivot_decision_reason_codes(reason_codes: &[String]) -> String {
-    let mut normalized = reason_codes
-        .iter()
-        .map(|code| code.trim())
-        .filter(|code| !code.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    normalized.sort();
-    normalized.dedup();
-    normalized.join(", ")
 }
 
 fn derive_stale_unreviewed_closures(
@@ -3690,6 +3689,7 @@ fn context_step_execution_command_fallback_allowed(status: &PlanExecutionStatus)
 #[cfg(test)]
 mod exact_execution_command_tests {
     use super::*;
+    use serde_json::Value;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -3919,6 +3919,129 @@ mod exact_execution_command_tests {
         assert_eq!(
             blocking_records[0].required_follow_up, None,
             "blocking record follow-up must use contract vocabulary only; command guidance belongs in recommended_command",
+        );
+    }
+
+    #[test]
+    fn record_review_dispatch_blocked_output_uses_shared_out_of_phase_contract_when_requery_is_required()
+     {
+        let (_repo_dir, context, plan_rel) = unresolved_execution_context();
+        let args = RecordReviewDispatchArgs {
+            plan: PathBuf::from(&plan_rel),
+            scope: ReviewDispatchScopeArg::Task,
+            task: Some(1),
+        };
+        let gate = gate_result_with_reason("task_closure_not_recording_ready");
+
+        let output = record_review_dispatch_blocked_output_from_gate(&context, &args, gate);
+        let output_json =
+            serde_json::to_value(output).expect("record-review-dispatch output should serialize");
+
+        assert_eq!(
+            output_json["code"],
+            Value::from("out_of_phase_requery_required")
+        );
+        assert_eq!(
+            output_json["recommended_command"],
+            Value::from(format!(
+                "featureforge workflow operator --plan {}",
+                context.plan_rel
+            ))
+        );
+        assert_eq!(
+            output_json["rederive_via_workflow_operator"],
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn derive_public_blocking_records_includes_task_review_dispatch_required_lane() {
+        let mut status = late_stage_status_for_review_state_tests();
+        status.review_state_status = String::from("clean");
+        status.phase_detail = String::from("task_review_dispatch_required");
+        status.blocking_task = Some(2);
+        let gate_finish = gate_result_with_reason("irrelevant");
+
+        let blocking_records = derive_public_blocking_records(&status, &gate_finish);
+        assert_eq!(blocking_records.len(), 1, "{blocking_records:?}");
+        assert_eq!(blocking_records[0].code, "task_review_dispatch_required");
+        assert_eq!(blocking_records[0].scope_type, "task");
+        assert_eq!(blocking_records[0].scope_key, "task-2");
+        assert_eq!(blocking_records[0].record_type, "task_review_dispatch");
+        assert_eq!(
+            blocking_records[0].required_follow_up,
+            Some(String::from("record_review_dispatch"))
+        );
+    }
+
+    #[test]
+    fn derive_public_blocking_records_includes_qa_recording_required_lane() {
+        let mut status = late_stage_status_for_review_state_tests();
+        status.review_state_status = String::from("clean");
+        status.phase_detail = String::from("qa_recording_required");
+        status.current_branch_closure_id = Some(String::from("branch-closure-qa"));
+        let gate_finish = gate_result_with_reason("irrelevant");
+
+        let blocking_records = derive_public_blocking_records(&status, &gate_finish);
+        assert_eq!(blocking_records.len(), 1, "{blocking_records:?}");
+        assert_eq!(blocking_records[0].code, "qa_recording_required");
+        assert_eq!(blocking_records[0].scope_type, "branch");
+        assert_eq!(blocking_records[0].scope_key, "branch-closure-qa");
+        assert_eq!(blocking_records[0].record_type, "qa_result");
+        assert_eq!(blocking_records[0].required_follow_up, None);
+    }
+
+    #[test]
+    fn follow_up_override_pivot_status_check_rejects_body_only_decoy_strings() {
+        let (_repo_dir, context, _plan_rel) = unresolved_execution_context();
+        let head_sha = current_head_sha(&context.runtime.repo_root)
+            .expect("head sha should resolve for pivot override check");
+        let reason_codes = vec![String::from("blocked_on_plan_revision")];
+        let expected_decision_reason_codes =
+            pivot_decision_reason_codes(&reason_codes, true, false).join(", ");
+        let artifact_dir = context
+            .runtime
+            .state_dir
+            .join("projects")
+            .join(&context.runtime.repo_slug);
+        fs::create_dir_all(&artifact_dir).expect("pivot artifact dir should be creatable");
+        let artifact_path = artifact_dir.join(format!(
+            "test-{}-workflow-pivot-999999999.md",
+            context.runtime.safe_branch
+        ));
+        let decoy_source = format!(
+            "# Workflow Pivot Record\n\
+**Source Plan:** `docs/featureforge/plans/wrong.md`\n\
+**Branch:** wrong-branch\n\
+**Repo:** wrong/repo\n\
+**Head SHA:** deadbeef\n\
+**Decision Reason Codes:** wrong\n\
+**Generated By:** featureforge:workflow-record-pivot\n\
+\n\
+mirror **Source Plan:** `{}`\n\
+mirror **Branch:** {}\n\
+mirror **Repo:** {}\n\
+mirror **Head SHA:** {}\n\
+mirror **Decision Reason Codes:** {}\n\
+mirror **Generated By:** featureforge:workflow-record-pivot\n",
+            context.plan_rel,
+            context.runtime.branch_name,
+            context.runtime.repo_slug,
+            head_sha,
+            expected_decision_reason_codes
+        );
+        fs::write(&artifact_path, decoy_source).expect("decoy pivot artifact should write");
+
+        let matched = current_workflow_pivot_record_exists_for_status_decision(
+            &context,
+            &reason_codes,
+            Some("required"),
+        );
+        fs::remove_file(&artifact_path).expect("decoy pivot artifact should clean up");
+
+        assert!(
+            !matched,
+            "pivot follow_up_override clearing must not accept body-only decoy strings"
         );
     }
 }
@@ -4158,6 +4281,41 @@ fn derive_public_blocking_records(
             required_follow_up: Some(String::from("record_review_dispatch")),
             message: String::from(
                 "A fresh final-review dispatch is required before late-stage progression can continue.",
+            ),
+        }];
+    }
+
+    if status.phase_detail == "task_review_dispatch_required"
+        && let Some(task_number) = status.blocking_task
+    {
+        return vec![StatusBlockingRecord {
+            code: String::from("task_review_dispatch_required"),
+            scope_type: String::from("task"),
+            scope_key: format!("task-{task_number}"),
+            record_type: String::from("task_review_dispatch"),
+            record_id: None,
+            review_state_status: status.review_state_status.clone(),
+            required_follow_up: Some(String::from("record_review_dispatch")),
+            message: format!(
+                "Task {task_number} requires a current review-dispatch record before task-closure recording can continue."
+            ),
+        }];
+    }
+
+    if status.phase_detail == "qa_recording_required" {
+        return vec![StatusBlockingRecord {
+            code: String::from("qa_recording_required"),
+            scope_type: String::from("branch"),
+            scope_key: status
+                .current_branch_closure_id
+                .clone()
+                .unwrap_or_else(|| String::from("current")),
+            record_type: String::from("qa_result"),
+            record_id: status.current_branch_closure_id.clone(),
+            review_state_status: status.review_state_status.clone(),
+            required_follow_up: None,
+            message: String::from(
+                "A current QA result for the active branch closure is required before late-stage progression can continue.",
             ),
         }];
     }

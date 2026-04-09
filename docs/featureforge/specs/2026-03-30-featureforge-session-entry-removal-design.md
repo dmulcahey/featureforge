@@ -5,7 +5,7 @@
 **Last Reviewed By:** plan-ceo-review
 **Implementation Target:** Historical
 
-> **Implementation-target notice:** This active source-spec copy exists so historical approved plans continue to resolve to a valid approved spec. The fuller historical design narrative remains archived at [2026-03-30-featureforge-session-entry-removal-design.md](/Users/dmulcahey/development/skills/featureforge/docs/archive/featureforge/specs/2026-03-30-featureforge-session-entry-removal-design.md). The active implementation target is still the April supersession-aware corpus rooted at [ACTIVE_IMPLEMENTATION_TARGET.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md).
+> **Implementation-target notice:** This active source-spec copy exists so historical approved plans continue to resolve to a valid approved spec. The fuller historical design narrative remains archived at [2026-03-30-featureforge-session-entry-removal-design.md](../../archive/featureforge/specs/2026-03-30-featureforge-session-entry-removal-design.md). The active implementation target is still the April supersession-aware corpus rooted at [ACTIVE_IMPLEMENTATION_TARGET.md](ACTIVE_IMPLEMENTATION_TARGET.md).
 
 ## Summary
 
