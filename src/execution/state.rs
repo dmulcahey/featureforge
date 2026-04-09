@@ -893,7 +893,25 @@ impl ExecutionRuntime {
 
     pub fn gate_review(&self, args: &StatusArgs) -> Result<GateResult, JsonFailure> {
         match load_execution_context(self, &args.plan) {
-            Ok(_) => {
+            Ok(context) => {
+                let gate_preview = gate_review_from_context(&context);
+                if let Some(mut gate) = gate_review_command_phase_gate(&context, &gate_preview) {
+                    gate.workspace_state_id = Some(status_workspace_state_id(&context)?);
+                    gate.current_branch_reviewed_state_id =
+                        current_branch_reviewed_state_id(&context);
+                    gate.current_branch_closure_id = current_branch_closure_id(&context);
+                    gate.finish_review_gate_pass_branch_closure_id =
+                        finish_review_gate_pass_branch_closure_id(&context)?;
+                    if !gate.allowed {
+                        if gate_should_rederive_via_workflow_operator(&gate) {
+                            apply_out_of_phase_gate_contract(&context, &mut gate);
+                        } else {
+                            gate.recommended_command =
+                                specific_gate_follow_up_command(&context, &gate);
+                        }
+                    }
+                    return Ok(gate);
+                }
                 let _write_authority = claim_step_write_authority(self)?;
                 let context = load_execution_context(self, &args.plan)?;
                 let mut gate = gate_review_from_context(&context);
@@ -1019,7 +1037,14 @@ impl ExecutionRuntime {
         let action = record_review_dispatch_strategy_checkpoint(&context, args, cycle_target)?;
         let refreshed = load_execution_context(self, &args.plan)?;
         let gate = review_dispatch_gate_from_context(&refreshed, args, cycle_target);
-        let dispatch_id = current_review_dispatch_id_if_still_current(&refreshed, args)?;
+        let dispatch_id = match action {
+            ReviewDispatchMutationAction::Recorded => {
+                current_review_dispatch_id_from_lineage(&refreshed, args)?
+            }
+            ReviewDispatchMutationAction::AlreadyCurrent => {
+                current_review_dispatch_id_if_still_current(&refreshed, args)?
+            }
+        };
         if dispatch_id.is_none() {
             return Err(JsonFailure::new(
                 FailureClass::ExecutionStateNotReady,
@@ -1072,6 +1097,16 @@ fn specific_gate_follow_up_command(
     if gate
         .reason_codes
         .iter()
+        .any(|code| code == "finish_review_gate_already_current")
+    {
+        return Some(format!(
+            "featureforge plan execution gate-finish --plan {}",
+            context.plan_rel
+        ));
+    }
+    if gate
+        .reason_codes
+        .iter()
         .any(|code| code == "finish_review_gate_checkpoint_missing")
     {
         return Some(format!(
@@ -1097,6 +1132,13 @@ fn gate_should_rederive_via_workflow_operator(gate: &GateResult) -> bool {
 }
 
 fn specific_gate_reason_is_direct_follow_up(gate: &GateResult) -> Option<&'static str> {
+    if gate
+        .reason_codes
+        .iter()
+        .any(|code| code == "finish_review_gate_already_current")
+    {
+        return Some("gate_finish");
+    }
     if gate
         .reason_codes
         .iter()
@@ -1202,7 +1244,50 @@ enum ReviewDispatchMutationAction {
     AlreadyCurrent,
 }
 
+fn gate_review_command_phase_gate(
+    context: &ExecutionContext,
+    gate_review: &GateResult,
+) -> Option<GateResult> {
+    if !gate_review.allowed {
+        return None;
+    }
+    let checkpoint_current = matches!(
+        finish_review_gate_checkpoint_matches_current_branch_closure(context),
+        Ok(true)
+    );
+    if !checkpoint_current || !gate_finish_from_context(context).allowed {
+        return None;
+    }
+    let mut gate = GateState::default();
+    gate.fail(
+        FailureClass::ExecutionStateNotReady,
+        "finish_review_gate_already_current",
+        "gate-review is out of phase because the current branch closure already has a fresh persisted finish-review gate checkpoint.",
+        "Run gate-finish for the current branch closure.",
+    );
+    Some(gate.finish())
+}
+
 fn current_review_dispatch_id_if_still_current(
+    context: &ExecutionContext,
+    args: &RecordReviewDispatchArgs,
+) -> Result<Option<String>, JsonFailure> {
+    let lineage_dispatch_id = current_review_dispatch_id_from_lineage(context, args)?;
+    Ok(match args.scope {
+        ReviewDispatchScopeArg::Task => lineage_dispatch_id,
+        ReviewDispatchScopeArg::FinalReview => {
+            let Some(dispatch_id) = lineage_dispatch_id else {
+                return Ok(None);
+            };
+            let gate_review = gate_review_from_context(context);
+            let gate_finish = gate_finish_from_context(context);
+            final_review_dispatch_still_current_for_gates(Some(&gate_review), Some(&gate_finish))
+                .then_some(dispatch_id)
+        }
+    })
+}
+
+fn current_review_dispatch_id_from_lineage(
     context: &ExecutionContext,
     args: &RecordReviewDispatchArgs,
 ) -> Result<Option<String>, JsonFailure> {
@@ -4435,6 +4520,13 @@ fn status_review_truth_blocked(gate_review: &GateResult) -> bool {
 }
 
 fn final_review_dispatch_still_current(gate_finish: &GateResult) -> bool {
+    final_review_dispatch_still_current_for_gates(None, Some(gate_finish))
+}
+
+pub(crate) fn final_review_dispatch_still_current_for_gates(
+    gate_review: Option<&GateResult>,
+    gate_finish: Option<&GateResult>,
+) -> bool {
     const FINAL_REVIEW_DISPATCH_INVALIDATION_CODES: &[&str] = &[
         "review_artifact_authoritative_provenance_invalid",
         "review_artifact_malformed",
@@ -4450,25 +4542,25 @@ fn final_review_dispatch_still_current(gate_finish: &GateResult) -> bool {
         "review_receipt_strategy_checkpoint_fingerprint_missing",
         "review_receipt_strategy_checkpoint_fingerprint_mismatch",
     ];
-    if gate_finish.failure_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
+    const FINAL_REVIEW_STATE_PENDING_CODES: &[&str] = &[
+        "final_review_state_missing",
+        "final_review_state_stale",
+        "final_review_state_not_fresh",
+    ];
+
+    if gate_has_any_reason(gate_review, FINAL_REVIEW_DISPATCH_INVALIDATION_CODES)
+        || gate_has_any_reason(gate_finish, FINAL_REVIEW_DISPATCH_INVALIDATION_CODES)
+    {
         return false;
     }
-    if gate_finish.reason_codes.iter().any(|code| {
-        FINAL_REVIEW_DISPATCH_INVALIDATION_CODES
-            .iter()
-            .any(|expected| code == expected)
-    }) {
+    if gate_finish
+        .is_some_and(|gate| gate.failure_class == FailureClass::ArtifactIntegrityMismatch.as_str())
+    {
         return false;
     }
-    if gate_finish.failure_class == FailureClass::ReviewArtifactNotFresh.as_str()
-        && !gate_finish.reason_codes.iter().any(|code| {
-            matches!(
-                code.as_str(),
-                "final_review_state_missing"
-                    | "final_review_state_stale"
-                    | "final_review_state_not_fresh"
-            )
-        })
+    if gate_finish
+        .is_some_and(|gate| gate.failure_class == FailureClass::ReviewArtifactNotFresh.as_str())
+        && !gate_has_any_reason(gate_finish, FINAL_REVIEW_STATE_PENDING_CODES)
     {
         return false;
     }

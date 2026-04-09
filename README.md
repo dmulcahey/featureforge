@@ -70,7 +70,7 @@ Planning chain in plain language:
 
 `brainstorming -> plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> implementation`
 
-Generated `using-featureforge` preambles call `featureforge workflow status --refresh` before normal planning/spec/plan status work begins.
+The generated `using-featureforge` skill routes through `featureforge workflow status --refresh` before normal planning/spec/plan status work begins; that call happens in the routing flow, not inside the shell preamble block itself.
 
 Execution starts from an engineering-approved plan and the exact approved plan path. `featureforge plan execution recommend --plan <approved-plan-path>` selects between:
 

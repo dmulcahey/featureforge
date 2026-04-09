@@ -57,12 +57,13 @@ use crate::execution::state::{
     NO_REPO_FILES_MARKER, PacketFingerprintInput, PlanExecutionStatus, PlanStepState,
     RebuildEvidenceCandidate, RebuildEvidenceCounts, RebuildEvidenceFilter, RebuildEvidenceOutput,
     RebuildEvidenceTarget, compute_packet_fingerprint, current_file_proof, current_head_sha,
-    current_test_plan_artifact_path_for_finish, discover_rebuild_candidates, hash_contract_plan,
-    load_execution_context, load_execution_context_for_mutation, normalize_begin_request,
-    normalize_complete_request, normalize_note_request, normalize_rebuild_evidence_request,
-    normalize_reopen_request, normalize_source, normalize_transfer_request,
-    require_normalized_text, require_preflight_acceptance, require_prior_task_closure_for_begin,
-    status_from_context, task_completion_lineage_fingerprint, validate_expected_fingerprint,
+    current_test_plan_artifact_path_for_finish, discover_rebuild_candidates,
+    gate_finish_from_context, gate_review_from_context, hash_contract_plan, load_execution_context,
+    load_execution_context_for_mutation, normalize_begin_request, normalize_complete_request,
+    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
+    normalize_source, normalize_transfer_request, require_normalized_text,
+    require_preflight_acceptance, require_prior_task_closure_for_begin, status_from_context,
+    task_completion_lineage_fingerprint, validate_expected_fingerprint,
 };
 use crate::execution::topology::persist_preflight_acceptance;
 use crate::execution::transitions::{
@@ -875,29 +876,8 @@ pub fn close_current_task(
             )
         })?;
     ensure_task_dispatch_id_matches(&context, args.task, &args.dispatch_id)?;
-    let review_summary = read_nonempty_summary_file(&args.review_summary_file, "review summary")?;
-    let review_summary_hash = summary_hash(&review_summary);
     let verification_result = args.verification_result.as_str();
-    let verification_summary = if matches!(
-        args.verification_result,
-        VerificationOutcomeArg::Pass | VerificationOutcomeArg::Fail
-    ) {
-        Some(read_nonempty_summary_file(
-            args.verification_summary_file.as_ref().ok_or_else(|| {
-                JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    "verification_summary_required: close-current-task requires --verification-summary-file when --verification-result=pass|fail.",
-                )
-            })?,
-            "verification summary",
-        )?)
-    } else {
-        None
-    };
-    let verification_summary_hash = verification_summary
-        .as_deref()
-        .map(summary_hash)
-        .unwrap_or_default();
+    let mut summary_hashes: Option<(String, String)> = None;
     let reviewed_state_id = current_task_reviewed_state_id(&context, args.task)?;
     let contract_identity = current_task_contract_identity(&context, args.task);
     let closure_record_id = current_task_closure_record_id(&context, args.task)?;
@@ -973,10 +953,16 @@ pub fn close_current_task(
             && current_record.closure_record_id == closure_record_id
             && current_record.dispatch_id == args.dispatch_id
         {
+            if summary_hashes.is_none() {
+                summary_hashes = Some(close_current_task_summary_hashes(args)?);
+            }
+            let (review_summary_hash, verification_summary_hash) = summary_hashes
+                .as_ref()
+                .expect("summary hashes should exist after summary validation");
             if current_record.review_result == args.review_result.as_str()
-                && current_record.review_summary_hash == review_summary_hash
+                && current_record.review_summary_hash == review_summary_hash.as_str()
                 && current_record.verification_result == verification_result
-                && current_record.verification_summary_hash == verification_summary_hash
+                && current_record.verification_summary_hash == verification_summary_hash.as_str()
             {
                 return Ok(CloseCurrentTaskOutput {
                     action: String::from("already_current"),
@@ -1063,6 +1049,11 @@ pub fn close_current_task(
             ),
         });
     }
+    if summary_hashes.is_none() {
+        summary_hashes = Some(close_current_task_summary_hashes(args)?);
+    }
+    let (review_summary_hash, verification_summary_hash) =
+        summary_hashes.expect("summary hashes should exist after summary validation");
     match close_current_task_outcome_class(args.review_result, args.verification_result) {
         CloseCurrentTaskOutcomeClass::Positive => {
             let effective_reviewed_surface_paths =
@@ -4210,6 +4201,31 @@ fn ensure_final_review_dispatch_id_matches(
     Ok(())
 }
 
+fn close_current_task_summary_hashes(
+    args: &CloseCurrentTaskArgs,
+) -> Result<(String, String), JsonFailure> {
+    let review_summary = read_nonempty_summary_file(&args.review_summary_file, "review summary")?;
+    let review_summary_hash = summary_hash(&review_summary);
+    let verification_summary_hash = if matches!(
+        args.verification_result,
+        VerificationOutcomeArg::Pass | VerificationOutcomeArg::Fail
+    ) {
+        let verification_summary = read_nonempty_summary_file(
+            args.verification_summary_file.as_ref().ok_or_else(|| {
+                JsonFailure::new(
+                    FailureClass::InvalidCommandInput,
+                    "verification_summary_required: close-current-task requires --verification-summary-file when --verification-result=pass|fail.",
+                )
+            })?,
+            "verification summary",
+        )?;
+        summary_hash(&verification_summary)
+    } else {
+        String::new()
+    };
+    Ok((review_summary_hash, verification_summary_hash))
+}
+
 fn superseded_branch_closure_ids_from_previous_current(
     overlay: Option<&StatusAuthoritativeOverlay>,
     branch_closure_id: &str,
@@ -5007,6 +5023,18 @@ fn normalize_late_stage_surface_entry(entry: &str) -> Result<String, JsonFailure
     }
     if normalized.is_empty()
         || normalized.starts_with('/')
+        || normalized
+            .as_bytes()
+            .get(1)
+            .is_some_and(|separator| *separator == b':')
+            && normalized
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic)
+            && normalized
+                .as_bytes()
+                .get(2)
+                .is_some_and(|slash| *slash == b'/')
         || normalized.split('/').any(|segment| segment == "..")
         || normalized.contains('*')
         || normalized.contains('?')
@@ -5425,7 +5453,56 @@ fn current_final_review_record_is_still_authoritative(
     if record.base_branch != current_base_branch {
         return Ok(false);
     }
+    if !final_review_dispatch_lineage_is_current_for_rerun(context, check.dispatch_id)? {
+        return Ok(false);
+    }
     Ok(true)
+}
+
+fn final_review_dispatch_lineage_is_current_for_rerun(
+    context: &ExecutionContext,
+    expected_dispatch_id: &str,
+) -> Result<bool, JsonFailure> {
+    const FINAL_REVIEW_RERUN_INVALIDATION_CODES: &[&str] = &[
+        "review_artifact_authoritative_provenance_invalid",
+        "review_artifact_malformed",
+        "review_artifact_plan_mismatch",
+        "review_receipt_reviewer_identity_missing",
+        "review_receipt_reviewer_source_not_independent",
+        "review_receipt_reviewer_artifact_path_missing",
+        "review_receipt_reviewer_artifact_unreadable",
+        "review_receipt_reviewer_artifact_not_runtime_owned",
+        "review_receipt_reviewer_fingerprint_invalid",
+        "review_receipt_reviewer_fingerprint_mismatch",
+        "review_receipt_reviewer_artifact_contract_mismatch",
+        "review_receipt_strategy_checkpoint_fingerprint_missing",
+        "review_receipt_strategy_checkpoint_fingerprint_mismatch",
+    ];
+    match ensure_final_review_dispatch_id_matches(context, expected_dispatch_id) {
+        Ok(()) => {}
+        Err(error)
+            if matches!(
+                error.error_class.as_str(),
+                "ExecutionStateNotReady" | "InvalidCommandInput"
+            ) =>
+        {
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    }
+
+    let gate_review = gate_review_from_context(context);
+    let gate_finish = gate_finish_from_context(context);
+    let gate_has_any_reason = |gate: &crate::execution::state::GateResult| {
+        gate.reason_codes.iter().any(|code| {
+            FINAL_REVIEW_RERUN_INVALIDATION_CODES
+                .iter()
+                .any(|expected| code == expected)
+        })
+    };
+    Ok(!gate_has_any_reason(&gate_review)
+        && !gate_has_any_reason(&gate_finish)
+        && gate_finish.failure_class != FailureClass::ArtifactIntegrityMismatch.as_str())
 }
 
 struct FinalReviewRenderedArtifacts {
@@ -6698,7 +6775,11 @@ mod unit_tests {
         )
         .expect("base branch should resolve for the current repo");
         let branch_closure_id = "unit-test-branch-closure";
-        let reviewed_state_id = "git_tree:unit-test";
+        let reviewed_state_id = format!(
+            "git_tree:{}",
+            super::current_repo_tracked_tree_sha(&context.runtime.repo_root)
+                .expect("tracked tree sha should resolve for unit coverage")
+        );
         let dispatch_id = "unit-test-final-review-dispatch";
         let reviewer_source = "fresh-context-subagent";
         let reviewer_id = "unit-reviewer-001";
@@ -6726,7 +6807,7 @@ mod unit_tests {
             &runtime,
             &context,
             branch_closure_id,
-            reviewed_state_id,
+            reviewed_state_id.as_str(),
             &base_branch,
             FinalReviewArtifactInputs {
                 dispatch_id,
@@ -6773,8 +6854,14 @@ mod unit_tests {
                 "harness_phase": "ready_for_branch_completion",
                 "last_strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
                 "current_branch_closure_id": branch_closure_id,
-                "current_branch_closure_reviewed_state_id": reviewed_state_id,
+                "current_branch_closure_reviewed_state_id": reviewed_state_id.as_str(),
                 "current_branch_closure_contract_identity": "unit-test-branch-contract",
+                "branch_closure_records": {
+                    (branch_closure_id): {
+                        "reviewed_state_id": reviewed_state_id.as_str(),
+                        "contract_identity": "unit-test-branch-contract"
+                    }
+                },
                 "current_final_review_record_id": "unit-final-review-record",
                 "current_final_review_branch_closure_id": branch_closure_id,
                 "current_final_review_dispatch_id": dispatch_id,
@@ -6782,6 +6869,11 @@ mod unit_tests {
                 "current_final_review_reviewer_id": reviewer_id,
                 "current_final_review_result": "pass",
                 "current_final_review_summary_hash": summary_hash,
+                "final_review_dispatch_lineage": {
+                    "execution_run_id": "run-unit-test",
+                    "dispatch_id": dispatch_id,
+                    "branch_closure_id": branch_closure_id
+                },
                 "final_review_record_history": {
                     "unit-final-review-record": {
                         "record_id": "unit-final-review-record",
@@ -6793,7 +6885,7 @@ mod unit_tests {
                         "repo_slug": runtime.repo_slug,
                         "branch_name": runtime.branch_name,
                         "base_branch": base_branch,
-                        "reviewed_state_id": reviewed_state_id,
+                        "reviewed_state_id": reviewed_state_id.as_str(),
                         "dispatch_id": dispatch_id,
                         "reviewer_source": reviewer_source,
                         "reviewer_id": reviewer_id,
@@ -6937,6 +7029,8 @@ mod unit_tests {
         for invalid in [
             "/README.md",
             "../README.md",
+            "C:/README.md",
+            "C:\\README.md",
             "docs/*.md",
             "docs/?",
             "docs/[a]",

@@ -3613,6 +3613,17 @@ fn prepare_finished_single_step_finish_gate_fixture_with_plan_qa_requirement(
             "active_worktree_lease_bindings": [],
         }),
     );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "final_review_dispatch_lineage": {
+                "execution_run_id": execution_run_id,
+                "dispatch_id": "fixture-final-review-dispatch",
+                "branch_closure_id": branch_closure_id
+            }
+        }),
+    );
     write_serial_unit_review_receipt_artifact(repo, state, &execution_run_id, 1, 1, &current_head);
     (
         authoritative_test_plan,
@@ -3697,7 +3708,7 @@ fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) -> Valu
 }
 
 #[test]
-fn direct_helper_defers_aggregate_workflow_commands_to_real_cli() {
+fn direct_helper_attempts_aggregate_workflow_commands_without_real_cli_oracle() {
     let (repo_dir, state_dir) = init_repo("plan-execution-direct-helper-aggregate-routing");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -3793,16 +3804,13 @@ fn direct_helper_defers_aggregate_workflow_commands_to_real_cli() {
             state,
             args,
             "direct helper aggregate command routing",
-        )
-        .unwrap_or_else(|error| {
-            panic!("direct helper should not execute aggregate command {command}: {error}")
-        });
+        );
         assert!(
-            matches!(
+            !matches!(
                 direct,
-                plan_execution_direct_support::DirectPlanExecutionRun::Unsupported
+                Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported)
             ),
-            "direct helper should defer aggregate command {command} to real CLI execution"
+            "direct helper should attempt aggregate command {command} directly"
         );
     }
 }
@@ -8683,6 +8691,7 @@ fn write_authoritative_downstream_fixture_state(
         &active_contract_source,
     );
 
+    let execution_run_id = format!("run-{safe_branch}-finish");
     write_harness_state_payload(
         repo,
         state,
@@ -8690,7 +8699,7 @@ fn write_authoritative_downstream_fixture_state(
             "schema_version": 1,
             "harness_phase": "ready_for_branch_completion",
             "run_identity": {
-                "execution_run_id": format!("run-{safe_branch}-finish"),
+                "execution_run_id": execution_run_id,
                 "source_plan_path": PLAN_REL,
                 "source_plan_revision": 1
             },
@@ -8732,6 +8741,17 @@ fn write_authoritative_downstream_fixture_state(
             "active_contract_fingerprint": active_contract_fingerprint,
             "active_worktree_lease_fingerprints": [],
             "active_worktree_lease_bindings": [],
+        }),
+    );
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "final_review_dispatch_lineage": {
+                "execution_run_id": execution_run_id,
+                "dispatch_id": "fixture-final-review-dispatch",
+                "branch_closure_id": branch_closure_id
+            }
         }),
     );
     write_serial_unit_review_receipt_artifact(
@@ -18555,7 +18575,12 @@ fn rebuild_evidence_refuses_historical_late_gate_truth_refresh_after_successful_
     );
     assert_eq!(
         gate_review_before["allowed"],
-        Value::Bool(true),
+        Value::Bool(false),
+        "json: {gate_review_before}"
+    );
+    assert_eq!(
+        gate_review_before["reason_codes"],
+        Value::from(vec![String::from("finish_review_gate_already_current")]),
         "json: {gate_review_before}"
     );
 

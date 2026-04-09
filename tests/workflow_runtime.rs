@@ -6,6 +6,8 @@ mod files_support;
 mod json_support;
 #[path = "../src/workflow/markdown_scan.rs"]
 mod markdown_scan_support;
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/workflow.rs"]
@@ -344,6 +346,13 @@ fn remove_origin_remote(repo: &Path) {
 }
 
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
+    match plan_execution_direct_support::try_run_plan_execution_json_direct(
+        repo, state_dir, args, context,
+    ) {
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => return value,
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {}
+        Err(error) => panic!("{error}"),
+    }
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)

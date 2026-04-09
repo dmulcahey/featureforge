@@ -1,10 +1,8 @@
-use assert_cmd::cargo::CommandCargoExt;
 use std::path::PathBuf;
 
 #[test]
 fn featureforge_help_and_version_exist() {
-    let mut help = std::process::Command::cargo_bin("featureforge")
-        .expect("featureforge binary should be available for tests");
+    let mut help = std::process::Command::new(env!("CARGO_BIN_EXE_featureforge"));
     let help_output = help
         .arg("--help")
         .output()
@@ -20,8 +18,7 @@ fn featureforge_help_and_version_exist() {
         "expected help output to mention the featureforge binary name, got:\n{help_stdout}"
     );
 
-    let mut version = std::process::Command::cargo_bin("featureforge")
-        .expect("featureforge binary should be available for tests");
+    let mut version = std::process::Command::new(env!("CARGO_BIN_EXE_featureforge"));
     let version_output = version
         .arg("--version")
         .output()

@@ -1478,9 +1478,22 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   const documentRelease = readUtf8(getSkillPath('document-release'));
   assert.match(documentRelease, /does not own `git commit`, `git merge`, or `git push`/);
   assert.match(documentRelease, /workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone\./);
+  assert.match(
+    documentRelease,
+    /For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first and then `featureforge plan execution status --plan <approved-plan-path>`; workflow\/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`, while status is supporting diagnostic detail\./,
+  );
   assert.match(documentRelease, /Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness\./);
   assert.match(documentRelease, /If workflow\/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution record-branch-closure --plan <approved-plan-path>` and rerun workflow\/operator before recording release-readiness\./);
   assert.match(documentRelease, /When workflow\/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready\|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone\./);
+  assert.match(
+    documentRelease,
+    /When workflow\/operator reports `phase_detail=release_blocker_resolution_required`, resolve the blocker and then run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready\|blocked --summary-file <release-summary>` to record the updated runtime-owned release-readiness milestone\./,
+  );
+  assert.match(
+    documentRelease,
+    /if \[ "\$PHASE_DETAIL" != "release_readiness_recording_ready" \] && \[ "\$PHASE_DETAIL" != "release_blocker_resolution_required" \]; then/,
+  );
+  assert.doesNotMatch(documentRelease, /if \[ "\$PHASE_DETAIL" != "release_readiness_recording_ready" \]; then/);
   assert.match(documentRelease, /If workflow\/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions\./);
   assert.doesNotMatch(documentRelease, /\[--write-target git-commit\]/);
 

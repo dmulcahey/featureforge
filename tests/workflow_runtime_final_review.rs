@@ -4,6 +4,8 @@ mod bin_support;
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/repo_template.rs"]
@@ -684,6 +686,13 @@ fn run_featureforge_with_env(
 }
 
 fn run_plan_execution(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
+    match plan_execution_direct_support::try_run_plan_execution_json_direct(
+        repo, state_dir, args, context,
+    ) {
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => return value,
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {}
+        Err(error) => panic!("{error}"),
+    }
     let mut command_args = Vec::with_capacity(args.len() + 2);
     command_args.push("plan");
     command_args.push("execution");

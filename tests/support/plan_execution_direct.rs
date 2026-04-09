@@ -41,28 +41,12 @@ pub fn try_run_plan_execution_json_direct(
     ) {
         return Ok(DirectPlanExecutionRun::Unsupported);
     }
-    if requires_real_cli_oracle(&command) {
-        return Ok(DirectPlanExecutionRun::Unsupported);
-    }
-
     let runtime = execution_runtime(repo, state).map_err(|error| {
         format!("{context} should discover runtime for direct execution: {error}")
     })?;
     let value = execute_plan_execution_command_json(&runtime, command)
         .map_err(|failure| format_direct_failure(context, &failure))?;
     Ok(DirectPlanExecutionRun::Json(value))
-}
-
-fn requires_real_cli_oracle(command: &PlanExecutionCommand) -> bool {
-    matches!(
-        command,
-        PlanExecutionCommand::CloseCurrentTask(_)
-            | PlanExecutionCommand::RecordBranchClosure(_)
-            | PlanExecutionCommand::RecordReleaseReadiness(_)
-            | PlanExecutionCommand::AdvanceLateStage(_)
-            | PlanExecutionCommand::RecordFinalReview(_)
-            | PlanExecutionCommand::RecordQa(_)
-    )
 }
 
 fn normalize_path_args(repo: &Path, args: &[&str]) -> Vec<String> {
