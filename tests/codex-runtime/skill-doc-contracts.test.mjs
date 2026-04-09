@@ -247,10 +247,19 @@ function parseLateStageReferenceRows(markdown) {
 }
 
 const LATE_STAGE_PHASE_TO_ACTION = new Map([
-  ['document_release_pending', 'advance_late_stage'],
-  ['final_review_pending', 'dispatch_final_review'],
-  ['qa_pending', 'run_qa'],
-  ['ready_for_branch_completion', 'run_finish_review_gate'],
+  [
+    'document_release_pending',
+    'derived from phase_detail: record branch closure; advance late stage; resolve release blocker',
+  ],
+  [
+    'final_review_pending',
+    'derived from phase_detail: dispatch final review; wait for external review result; advance late stage',
+  ],
+  ['qa_pending', 'derived from phase_detail: run QA; refresh test plan'],
+  [
+    'ready_for_branch_completion',
+    'derived from phase_detail: run finish review gate; run finish completion gate',
+  ],
 ]);
 
 const LATE_STAGE_PHASE_TO_SKILL = new Map([
@@ -1601,6 +1610,19 @@ test('late-stage precedence reference rows stay in row-level parity with runtime
       expectedAction,
       `late-stage reference next action should match runtime mapping for phase ${row.phase}`,
     );
+    for (const internalActionToken of [
+      'advance_late_stage',
+      'dispatch_final_review',
+      'run_qa',
+      'run_finish_review_gate',
+      'run_finish_completion_gate',
+    ]) {
+      assert.doesNotMatch(
+        row.nextAction,
+        new RegExp(escapeRegex(internalActionToken)),
+        `late-stage reference next action should use public wording instead of internal token ${internalActionToken} for ${row.phase}`,
+      );
+    }
     assert.equal(
       row.recommendedSkill,
       expectedSkill,

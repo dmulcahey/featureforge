@@ -7,16 +7,16 @@ This reference is runtime-owned and must stay aligned with:
 
 Use this table when skill/docs wording needs an explicit late-stage routing source.
 
-| Release Gate | Review Gate | QA Gate | Phase | Next Action | Recommended Skill | Reason Family |
+| Release Gate | Review Gate | QA Gate | Phase | Next Action (Public Contract) | Recommended Skill | Reason Family |
 | --- | --- | --- | --- | --- | --- | --- |
-| blocked | blocked | blocked | `document_release_pending` | `advance_late_stage` | `featureforge:document-release` | `release_readiness` |
-| blocked | blocked | ready | `document_release_pending` | `advance_late_stage` | `featureforge:document-release` | `release_readiness` |
-| blocked | ready | blocked | `document_release_pending` | `advance_late_stage` | `featureforge:document-release` | `release_readiness` |
-| blocked | ready | ready | `document_release_pending` | `advance_late_stage` | `featureforge:document-release` | `release_readiness` |
-| ready | blocked | blocked | `final_review_pending` | `dispatch_final_review` | `featureforge:requesting-code-review` | `final_review_freshness` |
-| ready | blocked | ready | `final_review_pending` | `dispatch_final_review` | `featureforge:requesting-code-review` | `final_review_freshness` |
-| ready | ready | blocked | `qa_pending` | `run_qa` | `featureforge:qa-only` | `qa_freshness` |
-| ready | ready | ready | `ready_for_branch_completion` | `run_finish_review_gate` | `featureforge:finishing-a-development-branch` | `all_fresh` |
+| blocked | blocked | blocked | `document_release_pending` | derived from phase_detail: record branch closure; advance late stage; resolve release blocker | `featureforge:document-release` | `release_readiness` |
+| blocked | blocked | ready | `document_release_pending` | derived from phase_detail: record branch closure; advance late stage; resolve release blocker | `featureforge:document-release` | `release_readiness` |
+| blocked | ready | blocked | `document_release_pending` | derived from phase_detail: record branch closure; advance late stage; resolve release blocker | `featureforge:document-release` | `release_readiness` |
+| blocked | ready | ready | `document_release_pending` | derived from phase_detail: record branch closure; advance late stage; resolve release blocker | `featureforge:document-release` | `release_readiness` |
+| ready | blocked | blocked | `final_review_pending` | derived from phase_detail: dispatch final review; wait for external review result; advance late stage | `featureforge:requesting-code-review` | `final_review_freshness` |
+| ready | blocked | ready | `final_review_pending` | derived from phase_detail: dispatch final review; wait for external review result; advance late stage | `featureforge:requesting-code-review` | `final_review_freshness` |
+| ready | ready | blocked | `qa_pending` | derived from phase_detail: run QA; refresh test plan | `featureforge:qa-only` | `qa_freshness` |
+| ready | ready | ready | `ready_for_branch_completion` | derived from phase_detail: run finish review gate; run finish completion gate | `featureforge:finishing-a-development-branch` | `all_fresh` |
 
 ## Command-Boundary Semantics
 
@@ -24,6 +24,10 @@ Use this table when skill/docs wording needs an explicit late-stage routing sour
 - `record-review-dispatch` is the dispatch-proof minting boundary.
 - For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`.
 - `requesting-code-review` also supports non-terminal checkpoint/task-boundary reviews when runtime reason codes require it (for example `prior_task_review_*`).
+- `document_release_pending` keeps three distinct public next actions by `phase_detail`: `record branch closure`, `advance late stage`, and `resolve release blocker`.
+- `final_review_pending` keeps three distinct public next actions by `phase_detail`: `dispatch final review`, `wait for external review result`, and `advance late stage`.
+- `qa_pending` keeps two distinct public next actions by `phase_detail`: `run QA` and `refresh test plan`.
+- `ready_for_branch_completion` keeps two distinct public next actions by `phase_detail`: `run finish review gate` and `run finish completion gate`.
 
 ## Notes
 

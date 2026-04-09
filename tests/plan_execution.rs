@@ -25923,6 +25923,107 @@ fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
 }
 
 #[test]
+fn late_stage_primitive_rerun_equivalence_requires_matching_supplied_bindings() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-late-stage-rerun-binding-mismatch");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let _ = accept_execution_preflight(repo, state, PLAN_REL);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "last_strategy_checkpoint_fingerprint": FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT
+        }),
+    );
+
+    let release_summary_path = repo.join("release-summary-mismatch.md");
+    write_file(
+        &release_summary_path,
+        "Release-readiness artifact fixture for finish-gate coverage.\n",
+    );
+    let final_summary_path = repo.join("final-review-summary-mismatch.md");
+    write_file(
+        &final_summary_path,
+        "Final whole-diff review artifact fixture for finish-gate coverage.\n",
+    );
+
+    let mismatched_release = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-release-readiness",
+            "--plan",
+            PLAN_REL,
+            "--branch-closure-id",
+            "branch-closure-stale",
+            "--result",
+            "ready",
+            "--summary-file",
+            release_summary_path
+                .to_str()
+                .expect("release summary path should be utf-8"),
+        ],
+        "record-release-readiness should fail closed when supplied branch closure id is not current",
+    );
+    assert_eq!(mismatched_release["action"], Value::from("blocked"));
+    assert_eq!(
+        mismatched_release["code"],
+        Value::from("out_of_phase_requery_required")
+    );
+    assert_eq!(
+        mismatched_release["recommended_command"],
+        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+    );
+    assert_eq!(
+        mismatched_release["rederive_via_workflow_operator"],
+        Value::Bool(true)
+    );
+
+    let mismatched_final = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-final-review",
+            "--plan",
+            PLAN_REL,
+            "--branch-closure-id",
+            "branch-closure-stale",
+            "--dispatch-id",
+            "fixture-final-review-dispatch",
+            "--reviewer-source",
+            "fresh-context-subagent",
+            "--reviewer-id",
+            "reviewer-fixture-001",
+            "--result",
+            "pass",
+            "--summary-file",
+            final_summary_path
+                .to_str()
+                .expect("final summary path should be utf-8"),
+        ],
+        "record-final-review should fail closed when supplied branch closure id does not match the current dispatch lineage",
+    );
+    assert_eq!(mismatched_final["action"], Value::from("blocked"));
+    assert_eq!(
+        mismatched_final["code"],
+        Value::from("out_of_phase_requery_required")
+    );
+    assert_eq!(
+        mismatched_final["recommended_command"],
+        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+    );
+    assert_eq!(
+        mismatched_final["rederive_via_workflow_operator"],
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn record_qa_test_plan_refresh_reroute_returns_blocked_instead_of_hard_error() {
     let (repo_dir, state_dir) = init_repo("plan-execution-record-qa-refresh-reroute");
     let repo = repo_dir.path();

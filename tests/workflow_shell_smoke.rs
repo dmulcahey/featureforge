@@ -3290,6 +3290,93 @@ fn plan_execution_close_current_task_records_failed_review_outcomes() {
 }
 
 #[test]
+fn plan_execution_close_current_task_records_failed_review_with_passing_verification() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-close-current-task-review-fail-verification-pass");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
+    let dispatch = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "record-review-dispatch",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
+        "plan execution task review dispatch for review-fail verification-pass fixture",
+    );
+    let dispatch_id = dispatch["dispatch_id"]
+        .as_str()
+        .expect("review-fail verification-pass fixture should expose dispatch id")
+        .to_owned();
+    let review_summary_path = repo.join("task-1-review-failed-verification-passed-summary.md");
+    let verification_summary_path =
+        repo.join("task-1-review-failed-verification-passed-verification-summary.md");
+    write_file(
+        &review_summary_path,
+        "Task 1 review found blocking issues that require remediation.\n",
+    );
+    write_file(
+        &verification_summary_path,
+        "Task 1 verification still passes for the current reviewed state.\n",
+    );
+
+    let close_json = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--dispatch-id",
+            &dispatch_id,
+            "--review-result",
+            "fail",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("failed review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("verification summary path should be utf-8"),
+        ],
+        "close-current-task should record failed review with passing verification",
+    );
+    assert_eq!(close_json["action"], "blocked");
+    assert_eq!(close_json["closure_action"], "blocked");
+    assert_eq!(close_json["task_closure_status"], "not_current");
+    assert_eq!(close_json["required_follow_up"], "execution_reentry");
+
+    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
+    let authoritative_state: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path)
+            .expect("review-fail verification-pass authoritative state should be readable"),
+    )
+    .expect("review-fail verification-pass authoritative state should remain valid json");
+    let record = &authoritative_state["task_closure_negative_result_records"]["task-1"];
+    assert_eq!(record["dispatch_id"], Value::from(dispatch_id.clone()));
+    assert_eq!(record["review_result"], "fail");
+    assert_eq!(record["verification_result"], "pass");
+    assert_eq!(record["closure_record_id"], Value::Null);
+    assert_eq!(
+        authoritative_state["task_closure_negative_result_history"]
+            [format!("task-1:{dispatch_id}")]["dispatch_id"],
+        Value::from(dispatch_id),
+    );
+}
+
+#[test]
 fn plan_execution_close_current_task_failed_review_prefers_handoff_override() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) = init_repo("plan-execution-close-current-task-handoff-override");

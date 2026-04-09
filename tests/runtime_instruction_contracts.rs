@@ -363,14 +363,20 @@ fn parse_reference_late_stage_rows(source: &str) -> Vec<LateStageReferenceRow> {
 
 fn expected_phase_action_and_skill(phase: &str) -> (&'static str, &'static str) {
     match phase {
-        "document_release_pending" => ("advance_late_stage", "featureforge:document-release"),
+        "document_release_pending" => (
+            "derived from phase_detail: record branch closure; advance late stage; resolve release blocker",
+            "featureforge:document-release",
+        ),
         "final_review_pending" => (
-            "dispatch_final_review",
+            "derived from phase_detail: dispatch final review; wait for external review result; advance late stage",
             "featureforge:requesting-code-review",
         ),
-        "qa_pending" => ("run_qa", "featureforge:qa-only"),
+        "qa_pending" => (
+            "derived from phase_detail: run QA; refresh test plan",
+            "featureforge:qa-only",
+        ),
         "ready_for_branch_completion" => (
-            "run_finish_review_gate",
+            "derived from phase_detail: run finish review gate; run finish completion gate",
             "featureforge:finishing-a-development-branch",
         ),
         _ => panic!("unexpected late-stage phase in precedence row: {phase}"),
@@ -867,17 +873,22 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
 
     assert_contains(
         &docs_testing_content,
-        "cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill",
+        "--test runtime_instruction_contracts --test using_featureforge_skill",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "cargo clippy --all-targets --all-features -- -D warnings",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "--test packet_and_schema --test contracts_execution_runtime_boundaries",
         "docs/testing.md",
     );
     assert_contains(
         &docs_testing_content,
         "node scripts/gen-agent-docs.mjs --check",
-        "docs/testing.md",
-    );
-    assert_not_contains(
-        &docs_testing_content,
-        "cargo nextest run --test contracts_spec_plan --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill",
         "docs/testing.md",
     );
     assert_contains(
@@ -2296,6 +2307,20 @@ fn late_stage_precedence_reference_rows_match_runtime_rows_and_operator_phase_ma
             "late-stage reference next action should match runtime phase mapping for {}",
             reference_row.phase
         );
+        for internal_action_token in [
+            "advance_late_stage",
+            "dispatch_final_review",
+            "run_qa",
+            "run_finish_review_gate",
+            "run_finish_completion_gate",
+        ] {
+            assert!(
+                !reference_row.next_action.contains(internal_action_token),
+                "late-stage reference next action should use public wording instead of internal token {:?} for {}",
+                internal_action_token,
+                reference_row.phase
+            );
+        }
         assert_eq!(
             reference_row.recommended_skill, expected_skill,
             "late-stage reference recommended skill should match runtime phase mapping for {}",

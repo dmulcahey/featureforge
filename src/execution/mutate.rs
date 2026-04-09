@@ -2105,6 +2105,7 @@ pub fn record_release_readiness(
         || current_branch_closure.branch_closure_id != args.branch_closure_id
     {
         if operator.review_state_status == "clean"
+            && current_branch_closure.branch_closure_id == args.branch_closure_id
             && let Some(output) = equivalent_current_release_readiness_rerun(
                 &context,
                 &current_branch_closure,
@@ -2305,6 +2306,7 @@ pub fn record_final_review(
         || current_branch_closure.branch_closure_id != args.branch_closure_id
     {
         if operator.review_state_status == "clean"
+            && current_branch_closure.branch_closure_id == args.branch_closure_id
             && let Some(output) = equivalent_current_final_review_rerun(
                 &context,
                 &current_branch_closure,
