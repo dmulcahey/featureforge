@@ -10,7 +10,7 @@
 **Last Reviewed By:** plan-eng-review
 **Implementation Target:** Historical
 
-> **Implementation-target notice:** This approved March plan remains historical execution record only. It is superseded as the future implementation target by the April supersession-aware roadmap and spec corpus rooted at [2026-04-01-supersession-aware-review-identity.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/2026-04-01-supersession-aware-review-identity.md) and [future-process-explained.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/future-process-explained.md). Legacy references here to `next_skill`, `implementation_ready`, and older routing behavior are not normative for the current implementation target.
+> **Implementation-target notice:** This approved March plan remains historical execution record only. It is superseded as the future implementation target by the April supersession-aware roadmap and spec corpus rooted at [2026-04-01-supersession-aware-review-identity.md](../specs/2026-04-01-supersession-aware-review-identity.md) and [future-process-explained.md](../specs/future-process-explained.md). Legacy references here to `next_skill`, `implementation_ready`, and older routing behavior are not normative for the current implementation target.
 
 **Goal:** Make `featureforge:plan-fidelity-review` a first-class public workflow stage with correct routing, explicit independent-review guidance, and deterministic contract coverage.
 

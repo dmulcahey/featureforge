@@ -24,8 +24,8 @@ Seven layers matter:
 
 Repo-visible artifacts remain authoritative:
 
-- spec approval truth lives in `docs/featureforge/specs/*.md`
-- plan approval truth lives in `docs/featureforge/plans/*.md`
+- for this repository's shipped work packages, approved specs and plans are preserved under `docs/archive/featureforge/specs/*.md` and `docs/archive/featureforge/plans/*.md`
+- for new FeatureForge-managed project work, approved specs and plans still live under `docs/featureforge/specs/*.md` and `docs/featureforge/plans/*.md`
 - execution progress truth for operators lives in the approved plan checklist
 - runtime-owned reviewed-closure, milestone, and strategy state is authoritative for routing and gates
 - execution evidence plus release/review markdown artifacts are derived operator handoff surfaces, not the primary gate-truth source
@@ -140,8 +140,8 @@ Reviewers should treat this strategy-checkpoint layer as intentional runtime con
 - `skills/` holds the checked-in public skills and their templates
 - `agents/` holds generated reviewer artifacts and reviewer source material
 - `review/` holds shared review references
-- `docs/featureforge/` holds active specs and plans
-- `docs/archive/` holds preserved historical project artifacts
+- `docs/featureforge/` holds reference docs and workflow support material for this package
+- `docs/archive/` holds preserved historical project artifacts, including the shipped approved specs, plans, and execution evidence for this repo
 - `tests/codex-runtime/fixtures/workflow-artifacts/` holds stable workflow-fixture inputs used by routing and contract tests
 
 ## Development

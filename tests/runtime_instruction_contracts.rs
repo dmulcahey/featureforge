@@ -696,7 +696,7 @@ fn shipped_runtime_docs_never_reintroduce_runtime_binary_fallbacks() {
 fn future_process_explained_uses_current_execution_command_shapes() {
     let label = "future-process-explained execution command examples";
     let content =
-        read_utf8(repo_root().join("docs/featureforge/specs/future-process-explained.md"));
+        read_utf8(repo_root().join("docs/archive/featureforge/specs/future-process-explained.md"));
 
     assert_contains(
         &content,
@@ -1781,12 +1781,12 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         "gh pr view --json baseRefName",
     );
     assert_file_contains(
-        root.join("docs/featureforge/specs")
+        root.join("docs/archive/featureforge/specs")
             .join("2026-04-01-gate-diagnostics-and-runtime-semantics.md"),
         "harness_phase",
     );
     assert_file_not_contains(
-        root.join("docs/featureforge/specs")
+        root.join("docs/archive/featureforge/specs")
             .join("2026-04-01-gate-diagnostics-and-runtime-semantics.md"),
         "verbose_available",
     );

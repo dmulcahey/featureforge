@@ -6734,7 +6734,7 @@ mod unit_tests {
         fs::create_dir_all(&runtime.state_dir).expect("state dir should be creatable");
 
         let plan_rel =
-            "docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
+            "docs/archive/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
         let plan_abs = repo_root.join(plan_rel);
         let plan_document = parse_plan_file(&plan_abs).expect("plan document should parse");
         let plan_source = fs::read_to_string(&plan_abs).expect("plan source should read");
@@ -6757,7 +6757,7 @@ mod unit_tests {
                 plan_revision: 0,
                 plan_fingerprint: None,
                 source_spec_path: String::from(
-                    "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md",
+                    "docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md",
                 ),
                 source_spec_revision: 0,
                 source_spec_fingerprint: None,
@@ -6766,7 +6766,7 @@ mod unit_tests {
             },
             source_spec_source: String::new(),
             source_spec_path: repo_root
-                .join("docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md"),
+                .join("docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md"),
             execution_fingerprint: String::from("unit-test-execution-fingerprint"),
         };
         let base_branch = super::resolve_release_base_branch(

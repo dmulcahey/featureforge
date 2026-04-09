@@ -5,7 +5,7 @@
 **Last Reviewed By:** plan-ceo-review
 **Implementation Target:** Historical
 
-> **Implementation-target notice:** This approved March spec remains historical context, but it is superseded as the implementation target by the April supersession-aware architecture corpus rooted at [2026-04-01-supersession-aware-review-identity.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/2026-04-01-supersession-aware-review-identity.md), [2026-04-01-workflow-public-phase-contract.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/2026-04-01-workflow-public-phase-contract.md), and [future-process-explained.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/future-process-explained.md). Its simplification intent still matters, but older command/output deltas here are not the normative public contract for the current implementation target.
+> **Implementation-target notice:** This approved March spec remains historical context, but it is superseded as the implementation target by the April supersession-aware architecture corpus rooted at [2026-04-01-supersession-aware-review-identity.md](2026-04-01-supersession-aware-review-identity.md), [2026-04-01-workflow-public-phase-contract.md](2026-04-01-workflow-public-phase-contract.md), and [future-process-explained.md](future-process-explained.md). Its simplification intent still matters, but older command/output deltas here are not the normative public contract for the current implementation target.
 
 ## Problem Statement
 

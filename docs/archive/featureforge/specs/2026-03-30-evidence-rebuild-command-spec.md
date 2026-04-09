@@ -5,7 +5,7 @@
 **Last Reviewed By:** plan-ceo-review
 **Implementation Target:** Historical
 
-> **Implementation-target notice:** This approved March spec remains historical context, but it is superseded as the implementation target by the April supersession-aware review-state corpus rooted at [2026-04-01-execution-repair-and-state-reconcile.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/2026-04-01-execution-repair-and-state-reconcile.md). `rebuild-evidence` remains compatibility history only; the future implementation target is `repair-review-state` plus explicit query/reconcile and closure-recording surfaces.
+> **Implementation-target notice:** This approved March spec remains historical context, but it is superseded as the implementation target by the April supersession-aware review-state corpus rooted at [2026-04-01-execution-repair-and-state-reconcile.md](2026-04-01-execution-repair-and-state-reconcile.md). `rebuild-evidence` remains compatibility history only; the future implementation target is `repair-review-state` plus explicit query/reconcile and closure-recording surfaces.
 
 ## Problem Statement
 

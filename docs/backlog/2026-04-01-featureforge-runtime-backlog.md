@@ -9,21 +9,21 @@
 
 #### U1. Supersession-aware review identity core model
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-supersession-aware-review-identity.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-supersession-aware-review-identity.md`
 - **Reason:** every other fix is downstream of this decision; without a current/superseded/stale closure model, the runtime will keep preserving obsolete proof as if it were still authoritative
 - **Depends on:** none
 - **Blocks:** `U2` through `U12`
 
 #### U2. Task closure recording on current reviewed closures
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-execution-task-closure-command-surface.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-execution-task-closure-command-surface.md`
 - **Reason:** removes the most immediate execution dead end and redefines task closure around current reviewed closure state instead of stale receipt permanence
 - **Depends on:** `U1`
 - **Blocks:** `U7`, `U10`, `U11`
 
 #### U3. Branch-closure recording on current reviewed branch state
 
-- **Spec:** `docs/featureforge/specs/2026-04-02-branch-closure-recording-and-binding.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-02-branch-closure-recording-and-binding.md`
 - **Reason:** late-stage progression cannot be implemented cleanly while the branch-closure producer contract remains implicit
 - **Depends on:** `U1`
 - **Blocks:** `U4`, `U5`, `U6`, `U7`, `U10`, `U11`
@@ -32,42 +32,42 @@
 
 #### U8. Gate diagnostics and runtime semantics
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-gate-diagnostics-and-runtime-semantics.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-gate-diagnostics-and-runtime-semantics.md`
 - **Reason:** makes current reviewed state, current branch closure, dispatch readiness, superseded state, and stale-unreviewed state explicit and actionable
 - **Depends on:** `U1` through `U3`
 - **Blocks:** `U4`, `U5`, `U6`, `U7`, `U9`, `U10`
 
 #### U9. Workflow public phase and routing contract
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-workflow-public-phase-contract.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-workflow-public-phase-contract.md`
 - **Reason:** workflow outputs need to expose exact next actions and exact next command families without phase/command ambiguity
 - **Depends on:** `U8`
 - **Blocks:** `U4`, `U5`, `U6`, `U7`, `U10`
 
 #### U7. Supersession-aware reconcile and stale-closure repair
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-execution-repair-and-state-reconcile.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-execution-repair-and-state-reconcile.md`
 - **Reason:** turns repair into append-only supersession and reconcile instead of proof rewriting
 - **Depends on:** `U1`, `U2`, `U3`, `U8`, `U9`
 - **Blocks:** `U4`, `U5`, `U6`, `U10`, `U11`
 
 #### U4. Release-readiness recording on current reviewed branch closures
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-release-readiness-recording-and-binding.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-release-readiness-recording-and-binding.md`
 - **Reason:** removes a major manual late-stage loop and binds release-readiness to current reviewed branch state instead of hand-authored markdown
 - **Depends on:** `U1`, `U3`, `U7`, `U8`, `U9`
 - **Blocks:** `U5`, `U6`, `U10`, `U11`
 
 #### U5. Final-review recording on current reviewed branch closures
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-final-review-recording-and-binding.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-final-review-recording-and-binding.md`
 - **Reason:** moves final review onto the same current reviewed branch closure model and stops treating paired markdown artifacts as the primary truth surface
 - **Depends on:** `U1`, `U2`, `U3`, `U4`, `U7`, `U8`, `U9`
 - **Blocks:** `U6`, `U10`, `U11`
 
 #### U6. QA recording on current reviewed branch closures
 
-- **Spec:** `docs/featureforge/specs/2026-04-02-qa-recording-and-routing.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-02-qa-recording-and-routing.md`
 - **Reason:** `qa_pending` is part of the active workflow contract and cannot remain a prose placeholder or implicit side effect
 - **Depends on:** `U1`, `U3`, `U4`, `U5`, `U7`, `U8`, `U9`
 - **Blocks:** `U10`, `U11`
@@ -76,14 +76,14 @@
 
 #### U10. Skill and reference hardening
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-execution-review-skill-contract-hardening.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-execution-review-skill-contract-hardening.md`
 - **Reason:** agents must be taught current versus superseded versus stale closure semantics and the exact runtime-owned commands that manage them
 - **Depends on:** `U1` through `U9`
 - **Blocks:** `U11`
 
 #### U11. Runtime-path coverage and doc-contract rehab
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-runtime-path-coverage-and-doc-contract-rehab.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-runtime-path-coverage-and-doc-contract-rehab.md`
 - **Reason:** the new model needs behavioral proofs for supersession, stale-unreviewed state, branch closure, QA, and current-closure gating, not more phrase-lock theater
 - **Depends on:** `U1` through `U10`
 - **Blocks:** `U12`
@@ -92,7 +92,7 @@
 
 #### U12. Runtime boundary separation
 
-- **Spec:** `docs/featureforge/specs/2026-04-01-execution-runtime-boundary-separation.md`
+- **Spec:** `docs/archive/featureforge/specs/2026-04-01-execution-runtime-boundary-separation.md`
 - **Reason:** once behavior is stable, ownership must be reorganized around closure records, supersession, milestones, repair, routing, and rendering so the churn does not come back
 - **Depends on:** `U11`
 - **Blocks:** none

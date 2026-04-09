@@ -11,7 +11,7 @@ Use these examples to keep `docs/project_notes/*` short, source-backed, and non-
   Root cause: `reopen` refuses a second interrupted step while `begin` refuses to bypass a different interrupted step.
   Fix: clear the parked downstream note, then reopen and rebuild the stale Task 1 evidence.
   Prevention / verification: keep the per-step review-gate TODO active and add contract coverage for review-before-advance execution.
-  Source: `docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`, `TODOS.md`
+  Source: `docs/archive/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`, `TODOS.md`
 ```
 
 ### Bad: `OversizedDuplication`
@@ -36,7 +36,7 @@ Use these examples to keep `docs/project_notes/*` short, source-backed, and non-
   Decision: keep repo-visible project memory supportive and non-authoritative.
   Alternatives considered: making project memory a required gate or pushing durable memory into repo instructions.
   Consequence: rediscovery gets cheaper without letting memory outrank approved workflow artifacts.
-  Source: `docs/featureforge/specs/featureforge-project-memory-integration-spec.md`
+  Source: `docs/archive/featureforge/specs/featureforge-project-memory-integration-spec.md`
 ```
 
 ### Bad: `AuthorityConflict`
@@ -108,7 +108,7 @@ Approved plan and execution evidence explain the full workflow for project-memor
 ```markdown
 - 2026-03-29: Project-memory integration is intentionally split into one foundation slice, three isolated middle lanes, and a final validation seam.
   Why it matters: later changes should preserve the narrow authority boundary instead of bolting on runtime state.
-  Source: `docs/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md`, `docs/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`
+  Source: `docs/archive/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md`, `docs/archive/featureforge/execution-evidence/2026-03-29-featureforge-project-memory-integration-r4-evidence.md`
 ```
 
 ### Bad: `OversizedDuplication`

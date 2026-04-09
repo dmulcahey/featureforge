@@ -162,7 +162,9 @@ fn public_harness_phases_from_spec() -> Vec<String> {
         |trimmed| trimmed.starts_with("### "),
     );
     phases.extend(parse_phases(
-        include_str!("../docs/featureforge/specs/2026-04-01-workflow-public-phase-contract.md"),
+        include_str!(
+            "../docs/archive/featureforge/specs/2026-04-01-workflow-public-phase-contract.md"
+        ),
         "The public `phase` should cover these operator moments:",
         |trimmed| trimmed.is_empty() || trimmed.starts_with("The public API shape"),
     ));

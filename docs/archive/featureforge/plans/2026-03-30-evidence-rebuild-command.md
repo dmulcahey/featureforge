@@ -10,7 +10,7 @@
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
 
-> **Implementation-target notice:** This engineering-approved March plan remains historical record only. The current implementation target is the April supersession-aware review-state corpus rooted at [2026-04-01-execution-repair-and-state-reconcile.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/2026-04-01-execution-repair-and-state-reconcile.md). Do not treat `rebuild-evidence` as the normative future recovery surface.
+> **Implementation-target notice:** This engineering-approved March plan remains historical record only. The current implementation target is the April supersession-aware review-state corpus rooted at [2026-04-01-execution-repair-and-state-reconcile.md](../specs/2026-04-01-execution-repair-and-state-reconcile.md). Do not treat `rebuild-evidence` as the normative future recovery surface.
 
 **Goal:** Add a single command path to detect and rebuild stale or invalidated FeatureForge evidence in one pass.
 

@@ -10,7 +10,7 @@
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
 
-> **Implementation-target notice:** This engineering-approved March plan remains historical record only. The current implementation target is the April supersession-aware architecture corpus rooted at [2026-04-01-supersession-aware-review-identity.md](/Users/dmulcahey/development/skills/featureforge/docs/featureforge/specs/2026-04-01-supersession-aware-review-identity.md). Do not treat this plan's command and routing contract as normative for the future implementation target.
+> **Implementation-target notice:** This engineering-approved March plan remains historical record only. The current implementation target is the April supersession-aware architecture corpus rooted at [2026-04-01-supersession-aware-review-identity.md](../specs/2026-04-01-supersession-aware-review-identity.md). Do not treat this plan's command and routing contract as normative for the future implementation target.
 
 **Goal:** Make late-stage workflow routing enforce document-release before terminal final review, while preserving strict freshness and fail-closed provenance boundaries.
 
