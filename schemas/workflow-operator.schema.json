@@ -1,0 +1,364 @@
+{
+  "$defs": {
+    "WorkflowOperatorCommandKindSchema": {
+      "enum": [
+        "begin",
+        "complete",
+        "reopen"
+      ],
+      "type": "string"
+    },
+    "WorkflowOperatorExecutionCommandContext": {
+      "additionalProperties": false,
+      "properties": {
+        "command_kind": {
+          "$ref": "#/$defs/WorkflowOperatorCommandKindSchema"
+        },
+        "step_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task_number": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command_kind",
+        "task_number",
+        "step_id"
+      ],
+      "type": "object"
+    },
+    "WorkflowOperatorFollowUpOverrideSchema": {
+      "enum": [
+        "none",
+        "record_handoff",
+        "record_pivot"
+      ],
+      "type": "string"
+    },
+    "WorkflowOperatorNextActionSchema": {
+      "enum": [
+        "advance late stage",
+        "close current task",
+        "continue execution",
+        "dispatch review",
+        "dispatch final review",
+        "execution reentry required",
+        "hand off",
+        "pivot / return to planning",
+        "record branch closure",
+        "refresh test plan",
+        "repair review state / reenter execution",
+        "resolve release blocker",
+        "run QA",
+        "run finish completion gate",
+        "run finish review gate",
+        "wait for external review result"
+      ],
+      "type": "string"
+    },
+    "WorkflowOperatorPhaseDetailSchema": {
+      "enum": [
+        "execution_in_progress",
+        "execution_reentry_required",
+        "task_review_dispatch_required",
+        "task_review_result_pending",
+        "task_closure_recording_ready",
+        "branch_closure_recording_required_for_release_readiness",
+        "release_readiness_recording_ready",
+        "release_blocker_resolution_required",
+        "final_review_dispatch_required",
+        "final_review_outcome_pending",
+        "final_review_recording_ready",
+        "qa_recording_required",
+        "test_plan_refresh_required",
+        "finish_review_gate_ready",
+        "finish_completion_gate_ready",
+        "handoff_recording_required",
+        "planning_reentry_required"
+      ],
+      "type": "string"
+    },
+    "WorkflowOperatorPhaseSchema": {
+      "enum": [
+        "executing",
+        "task_closure_pending",
+        "document_release_pending",
+        "final_review_pending",
+        "qa_pending",
+        "ready_for_branch_completion",
+        "handoff_required",
+        "pivot_required"
+      ],
+      "type": "string"
+    },
+    "WorkflowOperatorQaRequirementSchema": {
+      "enum": [
+        "required",
+        "not-required"
+      ],
+      "type": "string"
+    },
+    "WorkflowOperatorRecordingContext": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "branch_closure_id"
+          ]
+        },
+        {
+          "required": [
+            "task_number",
+            "dispatch_id"
+          ]
+        }
+      ],
+      "minProperties": 1,
+      "properties": {
+        "branch_closure_id": {
+          "type": "string"
+        },
+        "dispatch_id": {
+          "type": "string"
+        },
+        "task_number": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "WorkflowOperatorReviewStateStatusSchema": {
+      "enum": [
+        "clean",
+        "stale_unreviewed",
+        "missing_current_closure"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "task_closure_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "task_number",
+              "dispatch_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "release_readiness_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "release_blocker_resolution_required"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "final_review_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "dispatch_id",
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "else": {
+        "not": {
+          "required": [
+            "recording_context"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "enum": [
+              "task_closure_recording_ready",
+              "release_readiness_recording_ready",
+              "release_blocker_resolution_required",
+              "final_review_recording_ready"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "not": {
+          "required": [
+            "execution_command_context"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "executing"
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "required": [
+          "recommended_command"
+        ]
+      },
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "enum": [
+              "task_review_result_pending",
+              "final_review_outcome_pending",
+              "test_plan_refresh_required"
+            ]
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "recommended_command"
+          ]
+        }
+      }
+    }
+  ],
+  "properties": {
+    "execution_command_context": {
+      "$ref": "#/$defs/WorkflowOperatorExecutionCommandContext"
+    },
+    "finish_review_gate_pass_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "follow_up_override": {
+      "$ref": "#/$defs/WorkflowOperatorFollowUpOverrideSchema"
+    },
+    "next_action": {
+      "$ref": "#/$defs/WorkflowOperatorNextActionSchema"
+    },
+    "phase": {
+      "$ref": "#/$defs/WorkflowOperatorPhaseSchema"
+    },
+    "phase_detail": {
+      "$ref": "#/$defs/WorkflowOperatorPhaseDetailSchema"
+    },
+    "plan_path": {
+      "type": "string"
+    },
+    "qa_requirement": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowOperatorQaRequirementSchema"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recommended_command": {
+      "type": "string"
+    },
+    "recording_context": {
+      "$ref": "#/$defs/WorkflowOperatorRecordingContext"
+    },
+    "review_state_status": {
+      "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema"
+    },
+    "schema_version": {
+      "const": 1,
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "spec_path": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "phase",
+    "phase_detail",
+    "review_state_status",
+    "follow_up_override",
+    "next_action",
+    "spec_path",
+    "plan_path"
+  ],
+  "title": "WorkflowOperator",
+  "type": "object"
+}

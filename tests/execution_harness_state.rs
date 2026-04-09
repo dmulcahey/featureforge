@@ -4,6 +4,8 @@ mod bin_support;
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 
@@ -13,7 +15,8 @@ use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, STABLE_EVENT_KINDS,
 };
 use featureforge::execution::state::{
-    ExecutionRuntime, PacketFingerprintInput, compute_packet_fingerprint, hash_contract_plan,
+    ExecutionRuntime, PacketFingerprintInput, compute_packet_fingerprint, current_head_sha,
+    hash_contract_plan,
 };
 use featureforge::paths::{
     harness_authoritative_artifact_path, harness_dependency_index_path, harness_state_path,
@@ -222,6 +225,13 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
+    match plan_execution_direct_support::try_run_plan_execution_json_direct(
+        repo, state, args, context,
+    ) {
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => return value,
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {}
+        Err(error) => panic!("{error}"),
+    }
     parse_json(&run_plan_execution(repo, state, args, context), context)
 }
 
@@ -262,13 +272,7 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
 }
 
 fn git_head_sha(repo: &Path) -> String {
-    let mut command = Command::new("git");
-    command.args(["rev-parse", "HEAD"]).current_dir(repo);
-    let output = run_checked_output(command, "git rev-parse HEAD");
-    String::from_utf8(output.stdout)
-        .expect("git rev-parse HEAD should emit utf8")
-        .trim()
-        .to_owned()
+    current_head_sha(repo).expect("git head sha should resolve")
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

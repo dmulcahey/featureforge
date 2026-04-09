@@ -46,7 +46,7 @@ fn review_skill_docs_keep_final_review_dedicated_and_gate_aware() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "**Reviewer Artifact Path:** `$_SP_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-independent-review-{datetime}.md`",
+        "**Reviewer Artifact Path:** `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-independent-review-{datetime}.md`",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),

@@ -26,7 +26,7 @@ use crate::execution::harness::{
     ChunkId, HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE, RunIdentitySnapshot,
     WorktreeLeaseBindingSnapshot,
 };
-use crate::execution::leases::validate_worktree_lease;
+use crate::execution::leases::{process_is_running, validate_worktree_lease};
 use crate::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters,
 };
@@ -422,6 +422,9 @@ impl MutableHarnessState {
         if self.strategy_checkpoint_kind.is_none() {
             self.strategy_checkpoint_kind = Some(String::from("none"));
         }
+        self.extra
+            .entry(String::from("strategy_checkpoints"))
+            .or_insert_with(|| Value::Array(Vec::new()));
     }
 }
 
@@ -1646,6 +1649,29 @@ enum MutableStateLoadError {
 }
 
 fn load_mutable_harness_state(path: &Path) -> Result<MutableHarnessState, MutableStateLoadError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == ErrorKind::NotFound {
+            MutableStateLoadError::MissingState
+        } else {
+            MutableStateLoadError::Unreadable(format!(
+                "Could not inspect authoritative harness state {}: {error}",
+                path.display()
+            ))
+        }
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(MutableStateLoadError::Unreadable(format!(
+            "Authoritative harness state path must not be a symlink in {}.",
+            path.display()
+        )));
+    }
+    if !metadata.is_file() {
+        return Err(MutableStateLoadError::Unreadable(format!(
+            "Authoritative harness state must be a regular file in {}.",
+            path.display()
+        )));
+    }
+
     let source = fs::read_to_string(path).map_err(|error| {
         if error.kind() == ErrorKind::NotFound {
             MutableStateLoadError::MissingState
@@ -2019,20 +2045,72 @@ impl WriteAuthorityLock {
             })?;
         }
 
-        let mut file = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(file) => file,
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
-                return Err(AuthorityLockAcquireError::Conflict);
-            }
-            Err(error) => {
-                return Err(AuthorityLockAcquireError::Io(format!(
-                    "Could not acquire write-authority lock {}: {error}",
-                    lock_path.display()
-                )));
+        let mut file = loop {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(file) => break file,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    let metadata = match fs::symlink_metadata(&lock_path) {
+                        Ok(metadata) => metadata,
+                        Err(metadata_error) if metadata_error.kind() == ErrorKind::NotFound => {
+                            continue;
+                        }
+                        Err(metadata_error) => {
+                            return Err(AuthorityLockAcquireError::Io(format!(
+                                "Another runtime writer currently holds authoritative mutation authority, and the lock {} could not be inspected: {metadata_error}",
+                                lock_path.display()
+                            )));
+                        }
+                    };
+                    if metadata.file_type().is_symlink() {
+                        return Err(AuthorityLockAcquireError::Io(format!(
+                            "Write-authority lock path must not be a symlink in {}.",
+                            lock_path.display()
+                        )));
+                    }
+                    if !metadata.is_file() {
+                        return Err(AuthorityLockAcquireError::Io(format!(
+                            "Write-authority lock must be a regular file in {}.",
+                            lock_path.display()
+                        )));
+                    }
+                    let source = fs::read_to_string(&lock_path).map_err(|read_error| {
+                        AuthorityLockAcquireError::Io(format!(
+                            "Another runtime writer currently holds authoritative mutation authority, and the lock {} could not be inspected: {read_error}",
+                            lock_path.display()
+                        ))
+                    })?;
+                    let holder_pid = source.lines().find_map(|line| {
+                        line.trim()
+                            .strip_prefix("pid=")
+                            .and_then(|value| value.trim().parse::<u32>().ok())
+                    });
+                    let Some(holder_pid) = holder_pid else {
+                        return Err(AuthorityLockAcquireError::Conflict);
+                    };
+                    if process_is_running(holder_pid) {
+                        return Err(AuthorityLockAcquireError::Conflict);
+                    }
+                    match fs::remove_file(&lock_path) {
+                        Ok(()) => continue,
+                        Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => continue,
+                        Err(remove_error) => {
+                            return Err(AuthorityLockAcquireError::Io(format!(
+                                "Could not reclaim stale write-authority lock {}: {remove_error}",
+                                lock_path.display()
+                            )));
+                        }
+                    }
+                }
+                Err(error) => {
+                    return Err(AuthorityLockAcquireError::Io(format!(
+                        "Could not acquire write-authority lock {}: {error}",
+                        lock_path.display()
+                    )));
+                }
             }
         };
 
@@ -2050,5 +2128,86 @@ impl WriteAuthorityLock {
 impl Drop for WriteAuthorityLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AuthorityLockAcquireError, MutableStateLoadError, WriteAuthorityLock,
+        load_mutable_harness_state,
+    };
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+    use std::path::Path;
+
+    use crate::execution::state::ExecutionRuntime;
+    use crate::paths::harness_branch_root;
+
+    fn test_runtime(state_dir: &Path) -> ExecutionRuntime {
+        ExecutionRuntime {
+            repo_root: state_dir.to_path_buf(),
+            git_dir: state_dir.join(".git"),
+            branch_name: String::from("feature"),
+            repo_slug: String::from("repo"),
+            safe_branch: String::from("feature"),
+            state_dir: state_dir.to_path_buf(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_authority_lock_acquire_fails_closed_when_lock_path_is_symlink() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let runtime = test_runtime(tempdir.path());
+        let lock_path =
+            harness_branch_root(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name)
+                .join("write-authority.lock");
+        fs::create_dir_all(
+            lock_path
+                .parent()
+                .expect("lock path should have a parent directory"),
+        )
+        .expect("lock parent should be creatable");
+        let lock_target_path = tempdir.path().join("lock-target.pid");
+        fs::write(&lock_target_path, format!("pid={}\n", std::process::id()))
+            .expect("lock target should be writable");
+        symlink(&lock_target_path, &lock_path)
+            .expect("symlink lock path fixture should be creatable");
+
+        let error = match WriteAuthorityLock::acquire(&runtime) {
+            Ok(_lock) => panic!("symlink write-authority lock path must fail closed"),
+            Err(error) => error,
+        };
+        let AuthorityLockAcquireError::Io(message) = error else {
+            panic!("symlink write-authority lock path must surface an IO trust-boundary error");
+        };
+        assert!(
+            message.contains("must not be a symlink"),
+            "symlink lock failure should explain trust-boundary rejection"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mutable_harness_state_load_fails_closed_when_state_path_is_symlink() {
+        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let state_path = tempdir.path().join("state.json");
+        let state_target_path = tempdir.path().join("state-target.json");
+        fs::write(&state_target_path, r#"{"schema_version":1}"#)
+            .expect("state target should be writable");
+        symlink(&state_target_path, &state_path)
+            .expect("symlink authoritative state fixture should be creatable");
+
+        let error = load_mutable_harness_state(&state_path)
+            .expect_err("mutable authoritative state loading must reject symlink paths");
+        let MutableStateLoadError::Unreadable(message) = error else {
+            panic!("symlink authoritative state should fail as unreadable trust-boundary input");
+        };
+        assert!(
+            message.contains("must not be a symlink"),
+            "symlink authoritative state failure should explain trust-boundary rejection"
+        );
     }
 }

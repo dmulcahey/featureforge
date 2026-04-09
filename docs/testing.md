@@ -13,7 +13,9 @@ Run these commands from the repo root for the core contract surface:
 node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
-cargo nextest run --test runtime_instruction_contracts --test using_featureforge_skill --test contracts_spec_plan --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
+npm --prefix tests/brainstorm-server test
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
 ```
 
 ## What Each Layer Covers
@@ -27,11 +29,17 @@ cargo nextest run --test runtime_instruction_contracts --test using_featureforge
 - workflow-fixture invariants
 - routing and eval-document contract assertions
 
+`tests/brainstorm-server` `npm test` covers:
+
+- brainstorm server HTTP/WebSocket behavior
+- launch-wrapper smoke for `start-server`/`stop-server` shell and PowerShell entrypoints
+
 ### Rust Runtime Tests
 
 The main Rust suites cover:
 
 - workflow artifact resolution and failure contracts
+- packet/schema and workflow routing-boundary contracts (`packet_and_schema`, `contracts_execution_runtime_boundaries`)
 - `using-featureforge` and direct workflow routing without session-entry prerequisites, including regression coverage for inert legacy gate files and env inputs
 - repo-safety and protected-branch write guarantees
 - install, state, and update-check runtime behavior
@@ -59,6 +67,12 @@ node scripts/gen-skill-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 ```
 
+Editing brainstorm-server runtime scripts or launch wrappers:
+
+```bash
+npm --prefix tests/brainstorm-server test
+```
+
 Editing reviewer sources or generated reviewer docs:
 
 ```bash
@@ -68,7 +82,8 @@ node scripts/gen-agent-docs.mjs --check
 Editing workflow routing, runtime docs, or execution contracts:
 
 ```bash
-cargo nextest run --test contracts_spec_plan --test runtime_instruction_contracts --test using_featureforge_skill --test workflow_runtime --test workflow_shell_smoke --test plan_execution
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test workflow_runtime --test workflow_shell_smoke --test plan_execution
 ```
 
 Editing runtime strategy-checkpoint, topology recommendation, or final-review deviation contracts:

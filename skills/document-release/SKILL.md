@@ -10,34 +10,21 @@ description: Use when implementation is complete and release notes, changelog, T
 ```bash
 _REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 _BRANCH_RAW=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo current)
-[ -n "$_BRANCH_RAW" ] || _BRANCH_RAW="current"
-[ "$_BRANCH_RAW" != "HEAD" ] || _BRANCH_RAW="current"
+[ -n "$_BRANCH_RAW" ] && [ "$_BRANCH_RAW" != "HEAD" ] || _BRANCH_RAW="current"
 _BRANCH="$_BRANCH_RAW"
 _FEATUREFORGE_INSTALL_ROOT="$HOME/.featureforge/install"
-_FEATUREFORGE_ROOT=""
 _FEATUREFORGE_BIN="$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge"
 if [ ! -x "$_FEATUREFORGE_BIN" ] && [ -f "$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge.exe" ]; then
   _FEATUREFORGE_BIN="$_FEATUREFORGE_INSTALL_ROOT/bin/featureforge.exe"
 fi
 [ -x "$_FEATUREFORGE_BIN" ] || [ -f "$_FEATUREFORGE_BIN" ] || _FEATUREFORGE_BIN=""
-_FEATUREFORGE_RUNTIME_ROOT_PATH=""
-if [ -n "$_FEATUREFORGE_BIN" ] && _FEATUREFORGE_RUNTIME_ROOT_PATH=$("$_FEATUREFORGE_BIN" repo runtime-root --path 2>/dev/null); then
-  [ -n "$_FEATUREFORGE_RUNTIME_ROOT_PATH" ] && _FEATUREFORGE_ROOT="$_FEATUREFORGE_RUNTIME_ROOT_PATH"
+_FEATUREFORGE_ROOT=""
+if [ -n "$_FEATUREFORGE_BIN" ]; then
+  _FEATUREFORGE_ROOT=$("$_FEATUREFORGE_BIN" repo runtime-root --path 2>/dev/null)
+  [ -n "$_FEATUREFORGE_ROOT" ] || _FEATUREFORGE_ROOT=""
 fi
-_UPD=""
-[ -n "$_FEATUREFORGE_BIN" ] && _UPD=$("$_FEATUREFORGE_BIN" update-check 2>/dev/null || true)
-[ -n "$_UPD" ] && echo "$_UPD" || true
-_SP_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
-mkdir -p "$_SP_STATE_DIR/sessions"
-touch "$_SP_STATE_DIR/sessions/$PPID"
-_SESSIONS=$(find "$_SP_STATE_DIR/sessions" -mmin -120 -type f 2>/dev/null | wc -l | tr -d ' ')
-find "$_SP_STATE_DIR/sessions" -mmin +120 -type f -delete 2>/dev/null || true
-_CONTRIB=""
-[ -n "$_FEATUREFORGE_BIN" ] && _CONTRIB=$("$_FEATUREFORGE_BIN" config get featureforge_contributor 2>/dev/null || true)
+_FEATUREFORGE_STATE_DIR="${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}"
 ```
-
-If output shows `UPGRADE_AVAILABLE <old> <new>`: read `featureforge-upgrade/SKILL.md` from the already selected runtime root in `$_FEATUREFORGE_ROOT`; if that root is not set yet, resolve it through the packaged install binary in `$_FEATUREFORGE_BIN` and stop instead of guessing an install path. Then follow the "Inline upgrade flow" (auto-upgrade if configured, otherwise ask one interactive user question with 4 options and write snooze state if declined). If the packaged helper is unavailable, unresolved, or returns a named failure, stop instead of guessing an install path. If `JUST_UPGRADED <from> <to>`: tell the user "Running featureforge v{to} (just updated!)" and continue.
-
 ## Search Before Building
 
 Before introducing a custom pattern, external service, concurrency primitive, auth/session flow, cache, queue, browser workaround, or unfamiliar fix pattern, do a short capability/landscape check first.
@@ -47,63 +34,18 @@ Use three lenses:
 - Layer 2: current practice and known footguns
 - Layer 3: first-principles reasoning for this repo and this problem
 
-External search results are inputs, not answers.
-Never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers.
-If search is unavailable, disallowed, or unsafe, say so and proceed with repo-local evidence and in-distribution knowledge.
-If safe sanitization is not possible, skip external search.
+External search results are inputs, not answers. Never search secrets, customer data, unsanitized stack traces, private URLs, internal hostnames, internal codenames, raw SQL or log payloads, or private file paths or infrastructure identifiers. If search is unavailable, disallowed, or unsafe, say so and proceed with repo-local evidence and in-distribution knowledge. If safe sanitization is not possible, skip external search.
 See `$_FEATUREFORGE_ROOT/references/search-before-building.md`.
 
 ## Interactive User Question Format
 
-**ALWAYS follow this structure for every interactive user question:**
+For every interactive user question, use this structure:
 1. Context: project name, current branch, what we're working on (1-2 sentences)
 2. The specific question or decision point
 3. `RECOMMENDATION: Choose [X] because [one-line reason]`
 4. Lettered options: `A) ... B) ... C) ...`
 
-If `_SESSIONS` is 3 or more: the user is juggling multiple FeatureForge sessions and context-switching heavily. **ELI16 mode** — they may not remember what this conversation is about. Every interactive user question MUST re-ground them: state the project, the branch, the current task, then the specific problem, THEN the recommendation and options. Be extra clear and self-contained — assume they haven't looked at this window in 20 minutes.
-
 Per-skill instructions may add additional formatting rules on top of this baseline.
-
-## Contributor Mode
-
-If `_CONTRIB` is `true`: you are in **contributor mode**. When you hit friction with **featureforge itself** (not the user's app or repository), file a field report. Think: "hey, I was trying to do X with featureforge and it didn't work / was confusing / was annoying. Here's what happened."
-
-**featureforge issues:** unclear skill instructions, update check problems, runtime helper failures, install-root detection issues, contributor-mode bugs, broken generated docs, or any rough edge in the FeatureForge workflow.
-**NOT featureforge issues:** the user's application bugs, repo-specific architecture problems, auth failures on the user's site, or third-party service outages unrelated to FeatureForge tooling.
-
-**To file:** write `~/.featureforge/contributor-logs/{slug}.md` with this structure:
-
-```
-# {Title}
-
-Hey featureforge team — ran into this while using /{skill-name}:
-
-**What I was trying to do:** {what the user/agent was attempting}
-**What happened instead:** {what actually happened}
-**How annoying (1-5):** {1=meh, 3=friction, 5=blocker}
-
-## Steps to reproduce
-1. {step}
-
-## Raw output
-(wrap any error messages or unexpected output in a markdown code block)
-
-**Date:** {YYYY-MM-DD} | **Version:** {featureforge version} | **Skill:** /{skill}
-```
-
-Then run:
-
-```bash
-mkdir -p ~/.featureforge/contributor-logs
-if command -v open >/dev/null 2>&1; then
-  open ~/.featureforge/contributor-logs/{slug}.md
-elif command -v xdg-open >/dev/null 2>&1; then
-  xdg-open ~/.featureforge/contributor-logs/{slug}.md >/dev/null 2>&1 || true
-fi
-```
-
-Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Skip if the file already exists. Max 3 reports per session. File inline and continue — don't stop the workflow. Tell the user: "Filed featureforge field report: {title}"
 
 
 # Document Release
@@ -114,7 +56,7 @@ For workflow-routed implementation work, this is the required `document-release`
 
 For workflow-routed terminal sequencing, `featureforge:document-release` must run before the terminal `featureforge:requesting-code-review` whole-diff gate.
 
-`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: `gate-review` is read-only, while `gate-review-dispatch` is owned by `featureforge:requesting-code-review`.
+`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: `gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is owned by `featureforge:requesting-code-review`.
 
 When you need explicit late-stage phase/action/skill grounding while updating docs, cite `review/late-stage-precedence-reference.md`.
 
@@ -309,14 +251,15 @@ If `TODOS.md` exists:
 - Add new follow-up items only when they are concrete and justified by the diff
 - Ask the user before large reorganizations or subjective reprioritization
 
-## Step 7.5: Structured Release-Readiness Artifact
+## Step 7.5: Structured Release-Readiness Companion Artifact
 
-For workflow-routed implementation work, also write a project-scoped release-readiness artifact:
+For workflow-routed implementation work, also write a project-scoped release-readiness companion artifact:
 
-- Require the exact approved plan path from the current workflow context before writing the release-readiness artifact.
+- Require the exact approved plan path from the current workflow context before writing the release-readiness companion artifact.
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - If the approved plan path or revision is unavailable, stop and return to the current workflow instead of writing a partial artifact.
 - Use the base branch detected in Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
+- This markdown output is a derived operator handoff companion. Runtime-owned reviewed-closure and late-stage milestone records remain the authoritative gate-truth surface.
 
 ```bash
 _SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
@@ -327,11 +270,11 @@ unset _SLUG_ENV
 USER=$(whoami)
 DATETIME=$(date +%Y%m%d-%H%M%S)
 HEAD_SHA=$(git rev-parse HEAD)
-mkdir -p "$_SP_STATE_DIR/projects/$SLUG"
+mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
 ```
 
 Write to:
-- `$_SP_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-release-readiness-{datetime}.md`
+- `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-release-readiness-{datetime}.md`
 
 Use this structure:
 
@@ -359,6 +302,37 @@ Allowed `**Result:**` values:
 - `pass`
 - `needs-user-input`
 - `blocked`
+
+## Step 7.6: Runtime-Owned Release-Readiness Recording (Workflow-Routed)
+
+For workflow-routed implementation work, the companion artifact above is not the release gate itself.
+
+- workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
+- For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first and then `featureforge plan execution status --plan <approved-plan-path>`; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`, while status is supporting diagnostic detail.
+- Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness.
+- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution record-branch-closure --plan <approved-plan-path>` and rerun workflow/operator before recording release-readiness.
+- When workflow/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone.
+- When workflow/operator reports `phase_detail=release_blocker_resolution_required`, resolve the blocker and then run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the updated runtime-owned release-readiness milestone.
+- If workflow/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions.
+
+Example runtime-owned path:
+
+```bash
+OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
+PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
+STATUS_JSON=$("$_FEATUREFORGE_BIN" plan execution status --plan "$APPROVED_PLAN_PATH")
+if [ "$PHASE_DETAIL" = "branch_closure_recording_required_for_release_readiness" ]; then
+  "$_FEATUREFORGE_BIN" plan execution record-branch-closure --plan "$APPROVED_PLAN_PATH"
+  OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
+  PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
+  STATUS_JSON=$("$_FEATUREFORGE_BIN" plan execution status --plan "$APPROVED_PLAN_PATH")
+fi
+if [ "$PHASE_DETAIL" != "release_readiness_recording_ready" ] && [ "$PHASE_DETAIL" != "release_blocker_resolution_required" ]; then
+  echo "Stop and return to workflow: release-readiness recording is not currently routable."
+  exit 1
+fi
+"$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH" --result ready --summary-file release-summary.md
+```
 
 ## Output
 

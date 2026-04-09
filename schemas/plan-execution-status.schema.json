@@ -1,7 +1,454 @@
 {
+  "$defs": {
+    "AggregateEvaluationState": {
+      "enum": [
+        "pass",
+        "pending",
+        "fail",
+        "blocked"
+      ],
+      "type": "string"
+    },
+    "ChunkId": {
+      "type": "string"
+    },
+    "ChunkingStrategy": {
+      "enum": [
+        "task",
+        "task-group",
+        "whole-run"
+      ],
+      "type": "string"
+    },
+    "DownstreamFreshnessState": {
+      "enum": [
+        "not_required",
+        "missing",
+        "fresh",
+        "stale"
+      ],
+      "type": "string"
+    },
+    "EvaluationVerdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "blocked"
+      ],
+      "type": "string"
+    },
+    "EvaluatorKind": {
+      "enum": [
+        "spec_compliance",
+        "code_quality"
+      ],
+      "type": "string"
+    },
+    "EvaluatorPolicyName": {
+      "type": "string"
+    },
+    "ExecutionCommandKindSchema": {
+      "enum": [
+        "begin",
+        "complete",
+        "reopen"
+      ],
+      "type": "string"
+    },
+    "ExecutionRunId": {
+      "type": "string"
+    },
+    "FollowUpOverrideSchema": {
+      "enum": [
+        "none",
+        "record_handoff",
+        "record_pivot"
+      ],
+      "type": "string"
+    },
+    "HarnessPhase": {
+      "enum": [
+        "implementation_handoff",
+        "execution_preflight",
+        "contract_drafting",
+        "contract_pending_approval",
+        "contract_approved",
+        "executing",
+        "evaluating",
+        "repairing",
+        "pivot_required",
+        "handoff_required",
+        "final_review_pending",
+        "qa_pending",
+        "document_release_pending",
+        "ready_for_branch_completion"
+      ],
+      "type": "string"
+    },
+    "NextActionSchema": {
+      "enum": [
+        "advance late stage",
+        "close current task",
+        "continue execution",
+        "dispatch review",
+        "dispatch final review",
+        "execution reentry required",
+        "hand off",
+        "pivot / return to planning",
+        "record branch closure",
+        "refresh test plan",
+        "repair review state / reenter execution",
+        "resolve release blocker",
+        "run QA",
+        "run finish completion gate",
+        "run finish review gate",
+        "wait for external review result"
+      ],
+      "type": "string"
+    },
+    "PhaseDetailSchema": {
+      "enum": [
+        "branch_closure_recording_required_for_release_readiness",
+        "execution_in_progress",
+        "execution_reentry_required",
+        "final_review_dispatch_required",
+        "final_review_outcome_pending",
+        "final_review_recording_ready",
+        "finish_completion_gate_ready",
+        "finish_review_gate_ready",
+        "handoff_recording_required",
+        "planning_reentry_required",
+        "qa_recording_required",
+        "release_blocker_resolution_required",
+        "release_readiness_recording_ready",
+        "task_closure_recording_ready",
+        "task_review_dispatch_required",
+        "task_review_result_pending",
+        "test_plan_refresh_required"
+      ],
+      "type": "string"
+    },
+    "PublicExecutionCommandContext": {
+      "additionalProperties": false,
+      "properties": {
+        "command_kind": {
+          "$ref": "#/$defs/ExecutionCommandKindSchema"
+        },
+        "step_id": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task_number": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command_kind",
+        "task_number",
+        "step_id"
+      ],
+      "type": "object"
+    },
+    "PublicRecordingContext": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "branch_closure_id"
+          ]
+        },
+        {
+          "required": [
+            "task_number",
+            "dispatch_id"
+          ]
+        }
+      ],
+      "minProperties": 1,
+      "properties": {
+        "branch_closure_id": {
+          "type": "string"
+        },
+        "dispatch_id": {
+          "type": "string"
+        },
+        "task_number": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "PublicReviewStateTaskClosure": {
+      "properties": {
+        "closure_record_id": {
+          "type": "string"
+        },
+        "contract_identity": {
+          "type": "string"
+        },
+        "effective_reviewed_surface_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reviewed_state_id": {
+          "type": "string"
+        },
+        "task": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task",
+        "closure_record_id",
+        "reviewed_state_id",
+        "contract_identity",
+        "effective_reviewed_surface_paths"
+      ],
+      "type": "object"
+    },
+    "QaRequirementSchema": {
+      "enum": [
+        "required",
+        "not-required"
+      ],
+      "type": "string"
+    },
+    "RequiredFollowUpSchema": {
+      "enum": [
+        "execution_reentry",
+        "repair_review_state",
+        "record_review_dispatch",
+        "record_branch_closure",
+        "resolve_release_blocker",
+        "record_handoff",
+        "record_pivot"
+      ],
+      "type": "string"
+    },
+    "ResetPolicy": {
+      "enum": [
+        "none",
+        "chunk-boundary",
+        "adaptive"
+      ],
+      "type": "string"
+    },
+    "ReviewStateStatusSchema": {
+      "enum": [
+        "clean",
+        "stale_unreviewed",
+        "missing_current_closure"
+      ],
+      "type": "string"
+    },
+    "StatusBlockingRecord": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "record_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record_type": {
+          "type": "string"
+        },
+        "required_follow_up": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequiredFollowUpSchema"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review_state_status": {
+          "type": "string"
+        },
+        "scope_key": {
+          "type": "string"
+        },
+        "scope_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "scope_type",
+        "scope_key",
+        "record_type",
+        "review_state_status",
+        "message"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "PlanExecutionStatus",
-  "type": "object",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "task_closure_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "task_number",
+              "dispatch_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "release_readiness_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "release_blocker_resolution_required"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "final_review_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "dispatch_id",
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "else": {
+        "not": {
+          "required": [
+            "recording_context"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "enum": [
+              "task_closure_recording_ready",
+              "release_readiness_recording_ready",
+              "release_blocker_resolution_required",
+              "final_review_recording_ready"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "not": {
+          "required": [
+            "execution_command_context"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "harness_phase": {
+            "const": "executing"
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "required": [
+          "recommended_command"
+        ]
+      },
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "enum": [
+              "task_review_result_pending",
+              "final_review_outcome_pending",
+              "test_plan_refresh_required"
+            ]
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "recommended_command"
+          ]
+        }
+      }
+    }
+  ],
   "properties": {
     "active_contract_fingerprint": {
       "type": [
@@ -16,39 +463,45 @@
       ]
     },
     "active_step": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "active_task": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "aggregate_evaluation_state": {
       "$ref": "#/$defs/AggregateEvaluationState"
     },
+    "blocking_records": {
+      "items": {
+        "$ref": "#/$defs/StatusBlockingRecord"
+      },
+      "type": "array"
+    },
     "blocking_step": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "blocking_task": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "browser_qa_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"
@@ -67,25 +520,79 @@
       ]
     },
     "completed_evaluator_kinds": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
-      }
+      },
+      "type": "array"
+    },
+    "current_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_branch_reviewed_state_id": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "current_chunk_pivot_threshold": {
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "current_chunk_retry_budget": {
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "current_chunk_retry_count": {
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
+    },
+    "current_final_review_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_final_review_result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_final_review_state": {
+      "type": "string"
+    },
+    "current_qa_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_qa_result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_qa_state": {
+      "type": "string"
+    },
+    "current_release_readiness_state": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_task_closures": {
+      "items": {
+        "$ref": "#/$defs/PublicReviewStateTaskClosure"
+      },
+      "type": "array"
     },
     "dependency_index_state": {
       "type": "string"
@@ -102,6 +609,9 @@
     },
     "evidence_path": {
       "type": "string"
+    },
+    "execution_command_context": {
+      "$ref": "#/$defs/PublicExecutionCommandContext"
     },
     "execution_fingerprint": {
       "type": "string"
@@ -124,6 +634,15 @@
     },
     "final_review_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"
+    },
+    "finish_review_gate_pass_branch_closure_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "follow_up_override": {
+      "$ref": "#/$defs/FollowUpOverrideSchema"
     },
     "handoff_required": {
       "type": "boolean"
@@ -188,56 +707,60 @@
       ]
     },
     "latest_authoritative_sequence": {
-      "type": "integer",
       "format": "uint64",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
-    "latest_base_sha": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "latest_head_sha": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "latest_packet_fingerprint": {
-      "type": [
-        "string",
-        "null"
-      ]
+    "next_action": {
+      "$ref": "#/$defs/NextActionSchema"
     },
     "non_passing_evaluator_kinds": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
-      }
+      },
+      "type": "array"
     },
     "open_failed_criteria": {
-      "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
     },
     "pending_evaluator_kinds": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
-      }
+      },
+      "type": "array"
+    },
+    "phase_detail": {
+      "$ref": "#/$defs/PhaseDetailSchema"
     },
     "plan_revision": {
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
+    },
+    "qa_requirement": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/QaRequirementSchema"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "reason_codes": {
-      "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
+    },
+    "recommended_command": {
+      "type": "string"
+    },
+    "recording_context": {
+      "$ref": "#/$defs/PublicRecordingContext"
     },
     "release_docs_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"
@@ -258,10 +781,10 @@
       "type": "string"
     },
     "required_evaluator_kinds": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
-      }
+      },
+      "type": "array"
     },
     "reset_policy": {
       "anyOf": [
@@ -274,29 +797,38 @@
       ]
     },
     "resume_step": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "resume_task": {
+      "format": "uint32",
+      "minimum": 0,
       "type": [
         "integer",
         "null"
-      ],
-      "format": "uint32",
-      "minimum": 0
+      ]
     },
     "review_stack": {
+      "items": {
+        "type": "string"
+      },
       "type": [
         "array",
         "null"
-      ],
+      ]
+    },
+    "review_state_status": {
+      "$ref": "#/$defs/ReviewStateStatusSchema"
+    },
+    "stale_unreviewed_closures": {
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
     },
     "strategy_checkpoint_kind": {
       "type": "string"
@@ -307,11 +839,20 @@
     "strategy_state": {
       "type": "string"
     },
-    "warning_codes": {
-      "type": "array",
+    "superseded_closures_summary": {
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
+    },
+    "warning_codes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "workspace_state_id": {
+      "type": "string"
     },
     "write_authority_holder": {
       "type": [
@@ -331,6 +872,13 @@
   },
   "required": [
     "plan_revision",
+    "workspace_state_id",
+    "current_task_closures",
+    "superseded_closures_summary",
+    "stale_unreviewed_closures",
+    "current_final_review_state",
+    "current_qa_state",
+    "follow_up_override",
     "latest_authoritative_sequence",
     "harness_phase",
     "chunk_id",
@@ -353,6 +901,10 @@
     "strategy_state",
     "strategy_checkpoint_kind",
     "strategy_reset_required",
+    "phase_detail",
+    "review_state_status",
+    "blocking_records",
+    "next_action",
     "reason_codes",
     "execution_mode",
     "execution_fingerprint",
@@ -360,83 +912,6 @@
     "execution_started",
     "warning_codes"
   ],
-  "$defs": {
-    "AggregateEvaluationState": {
-      "type": "string",
-      "enum": [
-        "pass",
-        "pending",
-        "fail",
-        "blocked"
-      ]
-    },
-    "ChunkId": {
-      "type": "string"
-    },
-    "ChunkingStrategy": {
-      "type": "string",
-      "enum": [
-        "task",
-        "task-group",
-        "whole-run"
-      ]
-    },
-    "DownstreamFreshnessState": {
-      "type": "string",
-      "enum": [
-        "not_required",
-        "missing",
-        "fresh",
-        "stale"
-      ]
-    },
-    "EvaluationVerdict": {
-      "type": "string",
-      "enum": [
-        "pass",
-        "fail",
-        "blocked"
-      ]
-    },
-    "EvaluatorKind": {
-      "type": "string",
-      "enum": [
-        "spec_compliance",
-        "code_quality"
-      ]
-    },
-    "EvaluatorPolicyName": {
-      "type": "string"
-    },
-    "ExecutionRunId": {
-      "type": "string"
-    },
-    "HarnessPhase": {
-      "type": "string",
-      "enum": [
-        "implementation_handoff",
-        "execution_preflight",
-        "contract_drafting",
-        "contract_pending_approval",
-        "contract_approved",
-        "executing",
-        "evaluating",
-        "repairing",
-        "pivot_required",
-        "handoff_required",
-        "final_review_pending",
-        "qa_pending",
-        "document_release_pending",
-        "ready_for_branch_completion"
-      ]
-    },
-    "ResetPolicy": {
-      "type": "string",
-      "enum": [
-        "none",
-        "chunk-boundary",
-        "adaptive"
-      ]
-    }
-  }
+  "title": "PlanExecutionStatus",
+  "type": "object"
 }

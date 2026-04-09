@@ -6,6 +6,10 @@ use featureforge::workflow::status::WorkflowRuntime;
 
 fn main() {
     let config = common::parse_args("workflow_status");
+    if let Some(message) = common::render_run_gate_message(&config) {
+        eprintln!("{message}");
+        return;
+    }
     let (repo_dir, state_dir) = common::create_workflow_fixture_repo();
     let repo = repo_dir.path();
     let state = state_dir.path();

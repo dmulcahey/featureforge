@@ -170,7 +170,6 @@ fn canonical_config_uses_userprofile_when_home_is_missing() {
     );
 }
 
-
 #[test]
 fn canonical_config_set_get_and_list_use_canonical_path() {
     let (_repo_dir, state_dir) = init_repo("config-canonical");

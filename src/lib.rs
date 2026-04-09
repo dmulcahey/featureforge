@@ -1,5 +1,5 @@
-use std::ffi::OsString;
-use std::path::PathBuf;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
 use clap::{CommandFactory, Parser};
 use cli::runtime_root::RuntimeRootFieldCli;
@@ -7,8 +7,8 @@ use cli::{Command, PlanCommand, RepoCommand};
 use diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use serde_json::{Value, json};
 
+pub mod benchmarking;
 pub mod cli;
-pub mod compat;
 pub mod config;
 pub mod contracts;
 pub mod diagnostics;
@@ -33,7 +33,10 @@ impl ExitCodeJson for execution::state::RebuildEvidenceOutput {
 }
 
 pub fn run() -> std::process::ExitCode {
-    let args = canonicalized_args();
+    let args = match canonicalized_args() {
+        Ok(args) => args,
+        Err(error) => return emit_json::<Value, JsonFailure>(Err(error)),
+    };
     let cli = match cli::Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(error) => match error.kind() {
@@ -97,9 +100,12 @@ pub fn run() -> std::process::ExitCode {
                                         eprintln!(
                                             "error error_class={} message={}",
                                             serde_json::to_string(&failure.error_class)
-                                                .unwrap_or_else(|_| String::from("\"<serialization-error>\"")),
-                                            serde_json::to_string(&failure.message)
-                                                .unwrap_or_else(|_| String::from("\"<serialization-error>\"")),
+                                                .unwrap_or_else(|_| String::from(
+                                                    "\"<serialization-error>\""
+                                                )),
+                                            serde_json::to_string(&failure.message).unwrap_or_else(
+                                                |_| String::from("\"<serialization-error>\"")
+                                            ),
                                         );
                                         std::process::ExitCode::from(1)
                                     }
@@ -127,11 +133,44 @@ pub fn run() -> std::process::ExitCode {
                         cli::plan_execution::PlanExecutionCommand::GateReview(args) => {
                             emit_json(runtime.gate_review(&args))
                         }
-                        cli::plan_execution::PlanExecutionCommand::GateReviewDispatch(args) => {
-                            emit_json(runtime.gate_review_dispatch(&args))
+                        cli::plan_execution::PlanExecutionCommand::RecordReviewDispatch(args) => {
+                            emit_json(runtime.record_review_dispatch(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RepairReviewState(args) => {
+                            emit_json(execution::review_state::repair_review_state(
+                                &runtime, &args,
+                            ))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::ExplainReviewState(args) => {
+                            emit_json(execution::review_state::explain_review_state(
+                                &runtime, &args,
+                            ))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::ReconcileReviewState(args) => {
+                            emit_json(execution::review_state::reconcile_review_state(
+                                &runtime, &args,
+                            ))
                         }
                         cli::plan_execution::PlanExecutionCommand::GateFinish(args) => {
                             emit_json(runtime.gate_finish(&args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::CloseCurrentTask(args) => {
+                            emit_json(execution::mutate::close_current_task(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RecordBranchClosure(args) => {
+                            emit_json(execution::mutate::record_branch_closure(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RecordReleaseReadiness(args) => {
+                            emit_json(execution::mutate::record_release_readiness(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::AdvanceLateStage(args) => {
+                            emit_json(execution::mutate::advance_late_stage(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RecordFinalReview(args) => {
+                            emit_json(execution::mutate::record_final_review(&runtime, &args))
+                        }
+                        cli::plan_execution::PlanExecutionCommand::RecordQa(args) => {
+                            emit_json(execution::mutate::record_qa(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::Begin(args) => {
                             emit_json(execution::mutate::begin(&runtime, &args))
@@ -301,6 +340,22 @@ pub fn run() -> std::process::ExitCode {
                         )
                     }
                 }
+                cli::workflow::WorkflowCommand::Operator(args) => {
+                    let result = workflow::operator::operator(&current_dir, &args);
+                    if args.json {
+                        emit_json(result.map_err(map_read_only_workflow_failure))
+                    } else {
+                        emit_text(result.map(workflow::operator::render_operator))
+                    }
+                }
+                cli::workflow::WorkflowCommand::RecordPivot(args) => {
+                    let result = workflow::pivot::record_pivot(&current_dir, &args);
+                    if args.json {
+                        emit_json(result)
+                    } else {
+                        emit_text(result.map(workflow::pivot::render_pivot_record))
+                    }
+                }
                 cli::workflow::WorkflowCommand::Preflight(args) => {
                     let result = workflow::operator::preflight(&current_dir, &args);
                     if args.json {
@@ -346,28 +401,26 @@ pub fn run() -> std::process::ExitCode {
     }
 }
 
-fn canonicalized_args() -> Vec<OsString> {
-    let mut args = std::env::args_os();
+fn canonicalized_args() -> Result<Vec<OsString>, JsonFailure> {
+    let args = std::env::args_os().collect::<Vec<_>>();
     let argv0 = args
-        .next()
+        .first()
+        .cloned()
         .unwrap_or_else(|| OsString::from("featureforge"));
-    let user_args = args.collect::<Vec<_>>();
-    let injected = compat::argv0::canonical_command_from_argv0(&argv0.to_string_lossy());
-    let mut canonicalized = vec![argv0.clone()];
-    canonicalized.extend(injected.iter().map(OsString::from));
-
-    let overlap = (0..=std::cmp::min(injected.len(), user_args.len()))
-        .rev()
-        .find(|overlap| {
-            injected[injected.len().saturating_sub(*overlap)..]
-                .iter()
-                .zip(user_args.iter().take(*overlap))
-                .all(|(expected, actual)| actual.to_string_lossy() == *expected)
-        })
-        .unwrap_or(0);
-
-    canonicalized.extend(user_args.into_iter().skip(overlap));
-    canonicalized
+    let file_name = Path::new(&argv0)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("featureforge");
+    let normalized = file_name.strip_suffix(".exe").unwrap_or(file_name);
+    if normalized.starts_with("featureforge-") && normalized != "featureforge" {
+        return Err(JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            format!(
+                "legacy argv0 alias `{normalized}` is not supported; invoke `featureforge <subcommand>` instead."
+            ),
+        ));
+    }
+    Ok(args)
 }
 
 fn emit_json<T, E>(result: Result<T, E>) -> std::process::ExitCode
@@ -501,7 +554,7 @@ fn emit_workflow_resolve_json(
     }
 }
 
-fn render_slug_output(current_dir: &std::path::Path) -> Result<String, DiagnosticError> {
+fn render_slug_output(current_dir: &Path) -> Result<String, DiagnosticError> {
     let identity = git::discover_slug_identity(current_dir);
     Ok(format!(
         "SLUG={}\nBRANCH={}\n",

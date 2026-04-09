@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+use featureforge::benchmarking::BenchConfig;
 use serde::Serialize;
 use tempfile::TempDir;
 
@@ -15,13 +16,6 @@ pub const PLAN_CONTRACT_PLAN_REL: &str =
     "docs/featureforge/plans/2026-03-22-plan-contract-fixture.md";
 pub const PLAN_CONTRACT_SPEC_REL: &str =
     "docs/featureforge/specs/2026-03-22-plan-contract-fixture-design.md";
-
-pub struct BenchConfig {
-    pub benchmark: &'static str,
-    pub iterations: u32,
-    pub warmup_iterations: u32,
-    pub output_path: Option<PathBuf>,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BenchReport {
@@ -35,45 +29,11 @@ pub struct BenchReport {
 }
 
 pub fn parse_args(benchmark: &'static str) -> BenchConfig {
-    let mut iterations = 50_u32;
-    let mut warmup_iterations = 5_u32;
-    let mut output_path = None;
+    featureforge::benchmarking::parse_args(benchmark)
+}
 
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--iterations" => {
-                let value = args
-                    .next()
-                    .unwrap_or_else(|| panic!("--iterations requires a numeric value"));
-                iterations = value
-                    .parse::<u32>()
-                    .unwrap_or_else(|_| panic!("invalid --iterations value: {value}"));
-            }
-            "--warmup" => {
-                let value = args
-                    .next()
-                    .unwrap_or_else(|| panic!("--warmup requires a numeric value"));
-                warmup_iterations = value
-                    .parse::<u32>()
-                    .unwrap_or_else(|_| panic!("invalid --warmup value: {value}"));
-            }
-            "--output" => {
-                let value = args
-                    .next()
-                    .unwrap_or_else(|| panic!("--output requires a file path"));
-                output_path = Some(PathBuf::from(value));
-            }
-            _ => {}
-        }
-    }
-
-    BenchConfig {
-        benchmark,
-        iterations,
-        warmup_iterations,
-        output_path,
-    }
+pub fn render_run_gate_message(config: &BenchConfig) -> Option<String> {
+    featureforge::benchmarking::render_run_gate_message(config)
 }
 
 pub fn run_benchmark<F>(config: &BenchConfig, mut op: F) -> BenchReport

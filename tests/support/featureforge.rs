@@ -1,4 +1,3 @@
-use assert_cmd::cargo::CommandCargoExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -24,8 +23,7 @@ pub fn run_rust_featureforge_with_env_control(
     args: &[&str],
     context: &str,
 ) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge cargo binary should be available");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_featureforge"));
     if let Some(repo) = repo {
         command.current_dir(repo);
     }

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import {
   REPO_ROOT,
@@ -30,21 +29,6 @@ const REQUIRED_HARNESS_AWARE_DOWNSTREAM_PHASES = [
   'qa_pending',
   'document_release_pending',
   'ready_for_branch_completion',
-];
-const REQUIRED_DOWNSTREAM_FRESHNESS_FIELDS = [
-  'final_review_state',
-  'browser_qa_state',
-  'release_docs_state',
-  'last_final_review_artifact_fingerprint',
-  'last_browser_qa_artifact_fingerprint',
-  'last_release_docs_artifact_fingerprint',
-];
-const REQUIRED_EVALUATOR_VISIBILITY_FIELDS = [
-  'last_evaluation_evaluator_kind',
-  'required_evaluator_kinds',
-  'completed_evaluator_kinds',
-  'pending_evaluator_kinds',
-  'non_passing_evaluator_kinds',
 ];
 const ACTIVE_DOC_PATHS = [
   'RELEASE-NOTES.md',
@@ -130,23 +114,43 @@ function getExactHeaderLine(content, label) {
 
 test('all workflow fixture files exist', () => {
   for (const relPath of [...SPEC_FIXTURES, ...PLAN_FIXTURES, STALE_PATH_PLAN_FIXTURE]) {
-    const filePath = path.join(FIXTURE_ROOT, relPath);
-    assert.equal(true, readUtf8(filePath).length > 0, `${relPath} should exist`);
+    const content = readUtf8(path.join(FIXTURE_ROOT, relPath));
+    assert.match(content, /^# /m, `${relPath} should keep a markdown title`);
+    assert.notEqual(
+      getExactHeaderLine(content, 'Workflow State'),
+      null,
+      `${relPath} should keep a parseable workflow-state header`,
+    );
   }
 });
 
-test('task 8 harness fixture matrix files exist by exact filename before runtime assertions run', () => {
+test('task 8 harness fixture matrix preserves parseable contract content', () => {
   for (const relPath of TASK8_HARNESS_MATRIX_FIXTURES) {
-    const filePath = path.join(FIXTURE_ROOT, relPath);
-    assert.equal(true, fs.existsSync(filePath), `${relPath} should exist`);
+    const content = readUtf8(path.join(FIXTURE_ROOT, relPath));
+    if (relPath.endsWith('.json')) {
+      const payload = JSON.parse(content);
+      assert.equal(typeof payload, 'object', `${relPath} should contain a JSON object`);
+      assert.notEqual(payload, null, `${relPath} should not be null`);
+      assert.notEqual(
+        payload.status ?? payload.dependency_index_state ?? payload.harness_phase,
+        undefined,
+        `${relPath} should preserve at least one harness status surface`,
+      );
+      continue;
+    }
+
+    assert.match(content, /^# /m, `${relPath} should keep a markdown title`);
+    assert.match(
+      content,
+      /\*\*[A-Za-z0-9 _-]+:\*\* /,
+      `${relPath} should keep parseable markdown metadata headers`,
+    );
   }
 });
 
 test('task 8 dependency-index fixtures pin minimum status key and canonical state vocabulary', () => {
   for (const relPath of DEPENDENCY_INDEX_STATUS_FIXTURES) {
     const filePath = path.join(FIXTURE_ROOT, relPath);
-    assert.equal(true, fs.existsSync(filePath), `${relPath} should exist`);
-
     const payload = JSON.parse(readUtf8(filePath));
     assert.equal(typeof payload, 'object', `${relPath} should contain a JSON object`);
     assert.notEqual(payload, null, `${relPath} should not be null`);
@@ -240,85 +244,52 @@ test('fixture README documents provenance and intent', () => {
   assert.match(content, /full approved-plan-contract pair/i);
 });
 
-test('runtime fixture coverage points at the fixture directory', () => {
-  const content = readUtf8(path.join(REPO_ROOT, 'tests/runtime_instruction_contracts.rs'));
-  assert.match(content, /tests\/codex-runtime\/fixtures\/workflow-artifacts/);
-});
+test('workflow fixture bundle pins downstream phase and operator metadata semantics', () => {
+  const pivot = JSON.parse(readUtf8(path.join(FIXTURE_ROOT, 'harness/pivot-required-status.json')));
+  assert.equal(pivot.harness_phase, 'execution_preflight');
+  assert.equal(pivot.status, 'pivot_required');
+  assert.deepEqual(pivot.reason_codes, ['retry_budget_exhausted']);
+  assert.equal(pivot.next_action, 'pivot_plan');
 
-test('public workflow rust smoke coverage exercises the canonical featureforge CLI', () => {
-  const content = readUtf8(path.join(REPO_ROOT, 'tests/workflow_shell_smoke.rs'));
-  assert.match(content, /standalone_binary_has_no_separate_workflow_wrapper_files/);
-  assert.match(content, /workflow_help_outside_repo_mentions_the_public_surfaces/);
-  assert.match(content, /workflow_status_summary_matches_json_semantics_for_ready_plans/);
-});
+  const handoff = JSON.parse(readUtf8(path.join(FIXTURE_ROOT, 'harness/handoff-required-status.json')));
+  assert.equal(handoff.harness_phase, 'handoff_required');
+  assert.equal(handoff.status, 'waiting_for_downstream_gates');
+  assert.deepEqual(handoff.reason_codes, ['handoff_submission_pending']);
+  assert.equal(handoff.next_action, 'submit_handoff');
 
-test('workflow runtime coverage retains argv0 alias and public operator parity', () => {
-  const content = readUtf8(path.join(REPO_ROOT, 'tests/workflow_runtime.rs'));
-  assert.match(content, /workflow_status_argv0_alias_dispatches_to_canonical_tree/);
-  assert.match(content, /canonical_workflow_public_json_commands_work_for_ready_plan/);
-});
+  const candidateHandoff = readUtf8(path.join(FIXTURE_ROOT, 'harness/candidate-execution-handoff.md'));
+  assert.equal(getExactHeaderLine(candidateHandoff, 'Harness Phase'), '**Harness Phase:** handoff_required');
+  assert.equal(getExactHeaderLine(candidateHandoff, 'Next Action'), '**Next Action:** final_review_pending');
 
-test('workflow fixture coverage pins harness-aware downstream phase/freshness/operator surfaces', () => {
-  const runtime = readUtf8(path.join(REPO_ROOT, 'tests/workflow_runtime.rs'));
-  const shellSmoke = readUtf8(path.join(REPO_ROOT, 'tests/workflow_shell_smoke.rs'));
+  const candidateEvaluation = readUtf8(path.join(FIXTURE_ROOT, 'harness/candidate-evaluation-report.md'));
+  assert.equal(getExactHeaderLine(candidateEvaluation, 'Evaluator Kind'), '**Evaluator Kind:** spec_compliance');
+  assert.equal(getExactHeaderLine(candidateEvaluation, 'Verdict'), '**Verdict:** pass');
 
+  const indexedFinalReview = readUtf8(path.join(FIXTURE_ROOT, 'harness/indexed-final-review-artifact.md'));
+  const indexedQa = readUtf8(path.join(FIXTURE_ROOT, 'harness/indexed-browser-qa-artifact.md'));
+  const indexedReleaseDocs = readUtf8(path.join(FIXTURE_ROOT, 'harness/indexed-release-doc-artifact.md'));
+  assert.equal(getExactHeaderLine(indexedFinalReview, 'Artifact Kind'), '**Artifact Kind:** final_review');
+  assert.equal(getExactHeaderLine(indexedQa, 'Artifact Kind'), '**Artifact Kind:** browser_qa');
+  assert.equal(getExactHeaderLine(indexedReleaseDocs, 'Artifact Kind'), '**Artifact Kind:** release_docs');
+  assert.equal(getExactHeaderLine(indexedFinalReview, 'Indexed By Harness'), '**Indexed By Harness:** true');
+  assert.equal(getExactHeaderLine(indexedQa, 'Indexed By Harness'), '**Indexed By Harness:** true');
+  assert.equal(getExactHeaderLine(indexedReleaseDocs, 'Indexed By Harness'), '**Indexed By Harness:** true');
+
+  const fixtureReadme = readUtf8(path.join(FIXTURE_ROOT, 'README.md'));
   for (const phase of REQUIRED_HARNESS_AWARE_DOWNSTREAM_PHASES) {
     assert.match(
-      runtime,
-      new RegExp(`"${phase}"`),
-      `workflow runtime coverage should exercise harness-aware downstream phase ${phase}`,
+      fixtureReadme,
+      new RegExp(`\\\`${phase}\\\``),
+      `fixture README should pin downstream phase ${phase}`,
     );
   }
-  assert.doesNotMatch(
-    runtime,
-    /"review_blocked"/,
-    'workflow runtime coverage should stop using the legacy review_blocked public phase label',
-  );
-
-  for (const field of REQUIRED_DOWNSTREAM_FRESHNESS_FIELDS) {
-    assert.match(
-      runtime,
-      new RegExp(`"${field}"`),
-      `workflow runtime coverage should expose downstream freshness/status field ${field}`,
-    );
-  }
-
-  for (const field of REQUIRED_EVALUATOR_VISIBILITY_FIELDS) {
-    assert.match(
-      runtime,
-      new RegExp(`"${field}"`),
-      `workflow runtime coverage should expose evaluator-kind surface ${field}`,
-    );
-  }
-
-  assert.match(runtime, /"next_action"/, 'workflow runtime coverage should keep next_action visible');
-  assert.match(runtime, /"reason_codes"/, 'workflow runtime coverage should keep reason_codes visible');
-  assert.match(
-    runtime,
-    /write_authority_holder/,
-    'workflow runtime coverage should keep write-authority metadata visible',
-  );
-  assert.match(
-    runtime,
-    /write_authority_conflict/,
-    'workflow runtime coverage should keep writer conflict visible through metadata and reason codes',
-  );
-  assert.doesNotMatch(
-    runtime,
-    /writer_conflict_pending|writer_conflict_phase|phase.*writer_conflict/,
-    'workflow runtime coverage should not introduce a dedicated writer-conflict public phase',
-  );
-
-  assert.match(
-    shellSmoke,
-    /workflow_phase_text_and_json_surfaces_match_harness_downstream_freshness/,
-    'workflow shell smoke coverage should pin phase text/JSON parity for harness downstream freshness',
-  );
-  assert.match(
-    shellSmoke,
-    /workflow_handoff_and_doctor_text_and_json_surfaces_match_harness_evaluator_and_reason_metadata/,
-    'workflow shell smoke coverage should pin handoff/doctor text/JSON parity for evaluator and reason metadata',
-  );
+  assert.match(fixtureReadme, /downstream freshness\/status surfaces/i);
+  assert.match(fixtureReadme, /evaluator-kind visibility/i);
+  assert.match(fixtureReadme, /next_action/);
+  assert.match(fixtureReadme, /reason_codes/);
+  assert.match(fixtureReadme, /write-authority metadata/i);
+  assert.match(fixtureReadme, /write-authority conflict/i);
+  assert.doesNotMatch(fixtureReadme, /review_blocked/);
 });
 
 test('active docs reserve legacy attribution to the README provenance section only', () => {
@@ -340,12 +311,25 @@ test('active docs reserve legacy attribution to the README provenance section on
 });
 
 test('repo-local config and historical docs use the featureforge archive layout', () => {
-  assert.equal(fs.existsSync(path.join(REPO_ROOT, '.featureforge/config.yaml')), true, '.featureforge/config.yaml should exist');
-  assert.equal(fs.existsSync(path.join(REPO_ROOT, `.${RETIRED_PRODUCT}/config.yaml`)), false, `.${RETIRED_PRODUCT}/config.yaml should be removed from the active repo`);
+  const repoConfig = readUtf8(path.join(REPO_ROOT, '.featureforge/config.yaml'));
+  assert.notEqual(repoConfig.trim().length, 0, '.featureforge/config.yaml should be non-empty');
+  assert.match(repoConfig, /update_check:/);
+  assert.throws(
+    () => readUtf8(path.join(REPO_ROOT, `.${RETIRED_PRODUCT}/config.yaml`)),
+    /ENOENT/,
+    `.${RETIRED_PRODUCT}/config.yaml should be removed from the active repo`,
+  );
 
   const archiveRoot = path.join(REPO_ROOT, 'docs/archive', RETIRED_PRODUCT);
-  assert.equal(fs.existsSync(path.join(archiveRoot, 'specs/2026-03-22-runtime-integration-hardening-design.md')), true, `archived historical specs should move under docs/archive/${RETIRED_PRODUCT}/specs`);
-  assert.equal(fs.existsSync(path.join(archiveRoot, 'plans/2026-03-22-runtime-integration-hardening.md')), true, `archived historical plans should move under docs/archive/${RETIRED_PRODUCT}/plans`);
-  assert.equal(fs.existsSync(path.join(archiveRoot, 'execution-evidence/2026-03-22-runtime-integration-hardening-r1-evidence.md')), true, `archived historical execution evidence should move under docs/archive/${RETIRED_PRODUCT}/execution-evidence`);
-  assert.equal(fs.existsSync(path.join(REPO_ROOT, 'docs', RETIRED_PRODUCT)), false, `docs/${RETIRED_PRODUCT} should be removed after the archive move`);
+  const archivedSpec = readUtf8(path.join(archiveRoot, 'specs/2026-03-22-runtime-integration-hardening-design.md'));
+  const archivedPlan = readUtf8(path.join(archiveRoot, 'plans/2026-03-22-runtime-integration-hardening.md'));
+  const archivedEvidence = readUtf8(path.join(archiveRoot, 'execution-evidence/2026-03-22-runtime-integration-hardening-r1-evidence.md'));
+  assert.match(archivedSpec, /^# /m, `archived historical specs should live under docs/archive/${RETIRED_PRODUCT}/specs`);
+  assert.match(archivedPlan, /^# /m, `archived historical plans should live under docs/archive/${RETIRED_PRODUCT}/plans`);
+  assert.match(archivedEvidence, /^# /m, `archived historical execution evidence should live under docs/archive/${RETIRED_PRODUCT}/execution-evidence`);
+  assert.throws(
+    () => readUtf8(path.join(REPO_ROOT, 'docs', RETIRED_PRODUCT, 'README.md')),
+    /ENOENT/,
+    `docs/${RETIRED_PRODUCT} should be removed after the archive move`,
+  );
 });

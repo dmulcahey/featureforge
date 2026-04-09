@@ -4,18 +4,26 @@ mod bin_support;
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/repo_template.rs"]
+mod repo_template_support;
 
-use assert_cmd::cargo::CommandCargoExt;
 use bin_support::compiled_featureforge_path;
-use featureforge::execution::final_review::parse_final_review_receipt;
+use featureforge::execution::final_review::{
+    parse_final_review_receipt, resolve_release_base_branch,
+};
+use featureforge::execution::state::current_head_sha as runtime_current_head_sha;
+use featureforge::git::discover_slug_identity;
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
+use repo_template_support::populate_repo_from_template;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -33,51 +41,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
 
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.arg("init").current_dir(repo);
-            command
-        },
-        "git init",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.name", "FeatureForge Test"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.name",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.email", "featureforge-tests@example.com"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.email",
-    );
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["add", "README.md"]).current_dir(repo);
-            command
-        },
-        "git add README",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["commit", "-m", "init"]).current_dir(repo);
-            command
-        },
-        "git commit init",
-    );
+    populate_repo_from_template(repo);
     run_checked(
         {
             let mut command = Command::new("git");
@@ -241,168 +205,30 @@ fn sha256_hex(contents: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn canonical_unit_review_receipt_fingerprint(source: &str) -> String {
-    let filtered = source
-        .lines()
-        .filter(|line| !line.trim().starts_with("**Receipt Fingerprint:**"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    sha256_hex(filtered.as_bytes())
-}
-
-fn write_authoritative_active_contract_and_serial_unit_review_receipt(
-    repo: &Path,
-    state: &Path,
-) -> (String, String, String) {
-    let branch = branch_name(repo);
-    let execution_run_id = "execution-run-fixture-001";
-    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, 1, 1);
-    let execution_unit_id = "task-1-step-1";
-    let reviewed_checkpoint_commit_sha = current_head_sha(repo);
-    let active_contract_fingerprint =
-        "1111111111111111111111111111111111111111111111111111111111111111";
-    let active_contract_path = format!("contract-{active_contract_fingerprint}.md");
-    write_file(
-        &harness_authoritative_artifact_path(
-            state,
-            &repo_slug(repo),
-            &branch,
-            &active_contract_path,
-        ),
-        &format!("# Execution Contract\n**Contract Fingerprint:** {active_contract_fingerprint}\n"),
-    );
-
-    let execution_context_key = sha256_hex(
-        format!(
-            "run={execution_run_id}\nunit={execution_unit_id}\nplan={PLAN_REL}\nplan_revision=1\nbranch={branch}\nreviewed_checkpoint={reviewed_checkpoint_commit_sha}\n"
-        )
-        .as_bytes(),
-    );
-    let approved_unit_contract_fingerprint = sha256_hex(
-        format!(
-            "approved-unit-contract:{active_contract_fingerprint}:{approved_task_packet_fingerprint}:{execution_unit_id}"
-        )
-        .as_bytes(),
-    );
-    let reconcile_result_proof_fingerprint = {
-        let mut command = Command::new("git");
-        command
-            .args(["cat-file", "commit", &reviewed_checkpoint_commit_sha])
-            .current_dir(repo);
-        let output = run_checked(
-            command,
-            "git cat-file commit for authoritative serial unit-review fixture",
-        );
-        sha256_hex(&output.stdout)
-    };
-    let lease_fingerprint = sha256_hex(
-        format!(
-            "serial-unit-review:{execution_run_id}:{execution_unit_id}:{execution_context_key}:{reviewed_checkpoint_commit_sha}:{approved_task_packet_fingerprint}:{approved_unit_contract_fingerprint}"
-        )
-        .as_bytes(),
-    );
-    let reviewed_worktree = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
-    let unsigned_source = format!(
-        "# Unit Review Result\n**Review Stage:** featureforge:unit-review\n**Reviewer Provenance:** dedicated-independent\n**Source Plan:** {PLAN_REL}\n**Source Plan Revision:** 1\n**Execution Run ID:** {execution_run_id}\n**Execution Unit ID:** {execution_unit_id}\n**Lease Fingerprint:** {lease_fingerprint}\n**Execution Context Key:** {execution_context_key}\n**Approved Task Packet Fingerprint:** {approved_task_packet_fingerprint}\n**Approved Unit Contract Fingerprint:** {approved_unit_contract_fingerprint}\n**Reconciled Result SHA:** {reviewed_checkpoint_commit_sha}\n**Reconcile Result Proof Fingerprint:** {reconcile_result_proof_fingerprint}\n**Reconcile Mode:** identity_preserving\n**Reviewed Worktree:** {}\n**Reviewed Checkpoint SHA:** {reviewed_checkpoint_commit_sha}\n**Result:** pass\n**Generated By:** featureforge:unit-review\n**Generated At:** 2026-03-28T12:00:00Z\n",
-        reviewed_worktree.display()
-    );
-    let receipt_fingerprint = canonical_unit_review_receipt_fingerprint(&unsigned_source);
-    let receipt_source = format!(
-        "# Unit Review Result\n**Receipt Fingerprint:** {receipt_fingerprint}\n{}",
-        unsigned_source.trim_start_matches("# Unit Review Result\n")
-    );
-    write_file(
-        &harness_authoritative_artifact_path(
-            state,
-            &repo_slug(repo),
-            &branch,
-            &format!("unit-review-{execution_run_id}-{execution_unit_id}.md"),
-        ),
-        &receipt_source,
-    );
-
-    (
-        execution_run_id.to_string(),
-        active_contract_path,
-        active_contract_fingerprint.to_string(),
-    )
-}
-
 fn current_head_sha(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["rev-parse", "HEAD"]).current_dir(repo);
-            command
-        },
-        "git rev-parse HEAD",
-    );
-    String::from_utf8(output.stdout)
-        .expect("head sha should be utf-8")
-        .trim()
-        .to_owned()
+    runtime_current_head_sha(repo).expect("head sha should resolve")
+}
+
+fn current_head_tree_sha(repo: &Path) -> String {
+    gix::discover(repo)
+        .expect("head tree helper should discover repository")
+        .head_tree_id_or_empty()
+        .expect("head tree helper should resolve HEAD tree")
+        .detach()
+        .to_string()
 }
 
 fn branch_name(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["rev-parse", "--abbrev-ref", "HEAD"])
-                .current_dir(repo);
-            command
-        },
-        "git rev-parse branch",
-    );
-    String::from_utf8(output.stdout)
-        .expect("branch should be utf-8")
-        .trim()
-        .to_owned()
+    discover_slug_identity(repo).branch_name
 }
 
 fn expected_base_branch(repo: &Path) -> String {
     let current = branch_name(repo);
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
-                .current_dir(repo);
-            command
-        },
-        "git for-each-ref refs/heads",
-    );
-    let mut branches = String::from_utf8(output.stdout)
-        .expect("branch list should be utf-8")
-        .lines()
-        .map(str::trim)
-        .filter(|branch| !branch.is_empty() && *branch != current)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    branches.sort();
-    branches.dedup();
-    if branches.len() == 1 {
-        return branches.remove(0);
-    }
-    current
+    resolve_release_base_branch(&repo.join(".git"), &current).unwrap_or(current)
 }
 
 fn repo_slug(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command =
-                Command::cargo_bin("featureforge").expect("featureforge binary should exist");
-            command.current_dir(repo).args(["repo", "slug"]);
-            command
-        },
-        "featureforge repo slug",
-    );
-    String::from_utf8(output.stdout)
-        .expect("repo slug output should be utf-8")
-        .lines()
-        .find_map(|line| line.strip_prefix("SLUG="))
-        .unwrap_or_else(|| panic!("repo slug output should include SLUG=..."))
-        .to_owned()
+    discover_slug_identity(repo).repo_slug
 }
 
 fn project_artifact_dir(repo: &Path, state: &Path) -> PathBuf {
@@ -466,7 +292,8 @@ fn write_task_boundary_unit_review_receipt(
     reviewed_checkpoint_sha: &str,
 ) -> PathBuf {
     let execution_unit_id = format!("task-{task_number}-step-{step_number}");
-    let approved_task_packet_fingerprint = expected_packet_fingerprint(repo, task_number, step_number);
+    let approved_task_packet_fingerprint =
+        expected_packet_fingerprint(repo, task_number, step_number);
     let path = harness_authoritative_artifact_path(
         state,
         &repo_slug(repo),
@@ -524,11 +351,12 @@ fn write_code_review_artifact(repo: &Path, state: &Path, base_branch: &str) -> P
     let branch = branch_name(repo);
     let safe_branch = branch_storage_key(&branch);
     let head_sha = current_head_sha(repo);
+    let strategy_checkpoint_fingerprint = FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT;
     let reviewer_artifact_path = project_artifact_dir(repo, state).join(format!(
         "tester-{safe_branch}-independent-review-20260322-170950.md"
     ));
     let reviewer_artifact_source = format!(
-        "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** reviewer-fixture-001\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Recorded Execution Deviations:** none\n**Deviation Review Verdict:** not_required\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-22T17:09:50Z\n\n## Summary\n- dedicated independent reviewer artifact fixture.\n",
+        "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** reviewer-fixture-001\n**Strategy Checkpoint Fingerprint:** {strategy_checkpoint_fingerprint}\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Recorded Execution Deviations:** none\n**Deviation Review Verdict:** not_required\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-22T17:09:50Z\n\n## Summary\n- dedicated independent reviewer artifact fixture.\n",
         repo_slug(repo)
     );
     write_file(&reviewer_artifact_path, &reviewer_artifact_source);
@@ -540,7 +368,7 @@ fn write_code_review_artifact(repo: &Path, state: &Path, base_branch: &str) -> P
     write_file(
         &artifact_path,
         &format!(
-            "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** reviewer-fixture-001\n**Reviewer Artifact Path:** `{}`\n**Reviewer Artifact Fingerprint:** {reviewer_artifact_fingerprint}\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Recorded Execution Deviations:** none\n**Deviation Review Verdict:** not_required\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-22T17:11:00Z\n",
+            "# Code Review Result\n**Review Stage:** featureforge:requesting-code-review\n**Reviewer Provenance:** dedicated-independent\n**Reviewer Source:** fresh-context-subagent\n**Reviewer ID:** reviewer-fixture-001\n**Strategy Checkpoint Fingerprint:** {strategy_checkpoint_fingerprint}\n**Reviewer Artifact Path:** `{}`\n**Reviewer Artifact Fingerprint:** {reviewer_artifact_fingerprint}\n**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development\n**Recorded Execution Deviations:** none\n**Deviation Review Verdict:** not_required\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Base Branch:** {base_branch}\n**Head SHA:** {head_sha}\n**Result:** pass\n**Generated By:** featureforge:requesting-code-review\n**Generated At:** 2026-03-22T17:11:00Z\n",
             reviewer_artifact_path.display(),
             repo_slug(repo)
         ),
@@ -582,6 +410,263 @@ fn write_release_readiness_artifact(repo: &Path, state: &Path, base_branch: &str
     artifact_path
 }
 
+fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&str, Value)]) {
+    let branch = branch_name(repo);
+    let state_path = harness_state_path(state, &repo_slug(repo), &branch);
+    let mut payload: Value = match fs::read_to_string(&state_path) {
+        Ok(source) => serde_json::from_str(&source).expect("harness state should be valid json"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(error) => panic!("harness state should be readable for fixture mutation: {error}"),
+    };
+    let object = payload
+        .as_object_mut()
+        .expect("harness state payload should remain a json object");
+    object
+        .entry("schema_version".to_string())
+        .or_insert_with(|| Value::from(1));
+    object.entry("run_identity".to_string()).or_insert_with(|| {
+        json!({
+            "execution_run_id": "run-fixture",
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1
+        })
+    });
+    object
+        .entry("active_worktree_lease_fingerprints".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    object
+        .entry("active_worktree_lease_bindings".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    object
+        .entry("dependency_index_state".to_string())
+        .or_insert_with(|| Value::from("fresh"));
+    object
+        .entry("final_review_state".to_string())
+        .or_insert_with(|| Value::from("not_required"));
+    object
+        .entry("browser_qa_state".to_string())
+        .or_insert_with(|| Value::from("not_required"));
+    object
+        .entry("release_docs_state".to_string())
+        .or_insert_with(|| Value::from("not_required"));
+    object
+        .entry("strategy_state".to_string())
+        .or_insert_with(|| Value::from("ready"));
+    object
+        .entry("strategy_checkpoint_kind".to_string())
+        .or_insert_with(|| Value::from("review_remediation"));
+    object
+        .entry("last_strategy_checkpoint_fingerprint".to_string())
+        .or_insert_with(|| Value::from(FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT));
+    object
+        .entry("strategy_reset_required".to_string())
+        .or_insert_with(|| Value::Bool(false));
+    for (key, value) in updates {
+        object.insert((*key).to_string(), value.clone());
+    }
+    write_file(
+        &state_path,
+        &serde_json::to_string(&payload).expect("harness state payload should serialize"),
+    );
+}
+
+fn seed_current_branch_closure_truth(repo: &Path, state: &Path) {
+    let branch = branch_name(repo);
+    let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            (
+                "current_branch_closure_id",
+                Value::from("branch-release-closure"),
+            ),
+            (
+                "current_branch_closure_reviewed_state_id",
+                Value::from(reviewed_state_id.clone()),
+            ),
+            (
+                "current_branch_closure_contract_identity",
+                Value::from("branch-contract-ready"),
+            ),
+            (
+                "branch_closure_records",
+                json!({
+                    "branch-release-closure": {
+                        "reviewed_state_id": reviewed_state_id,
+                        "contract_identity": "branch-contract-ready",
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "repo_slug": repo_slug(repo),
+                        "branch_name": branch,
+                    }
+                }),
+            ),
+        ],
+    );
+}
+
+fn publish_authoritative_release_truth(
+    repo: &Path,
+    state: &Path,
+    release_path: &Path,
+    base_branch: &str,
+) {
+    seed_current_branch_closure_truth(repo, state);
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+    let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
+    let release_source =
+        fs::read_to_string(release_path).expect("release artifact should be readable");
+    let release_fingerprint = sha256_hex(release_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug,
+            &branch,
+            &format!("release-docs-{release_fingerprint}.md"),
+        ),
+        &release_source,
+    );
+    let release_summary = "Final-review fixture release-readiness milestone.";
+    let release_summary_hash = sha256_hex(release_summary.as_bytes());
+    let release_record_id = format!("release-readiness-record-{release_fingerprint}");
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("release_docs_state", Value::from("fresh")),
+            (
+                "last_release_docs_artifact_fingerprint",
+                Value::from(release_fingerprint.clone()),
+            ),
+            ("current_release_readiness_result", Value::from("ready")),
+            (
+                "current_release_readiness_summary_hash",
+                Value::from(release_summary_hash.clone()),
+            ),
+            (
+                "current_release_readiness_record_id",
+                Value::from(release_record_id.clone()),
+            ),
+            (
+                "release_readiness_record_history",
+                json!({
+                    release_record_id.clone(): {
+                        "record_id": release_record_id,
+                        "record_sequence": 1,
+                        "record_status": "current",
+                        "branch_closure_id": "branch-release-closure",
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "repo_slug": repo_slug,
+                        "branch_name": branch,
+                        "base_branch": base_branch,
+                        "reviewed_state_id": reviewed_state_id,
+                        "result": "ready",
+                        "release_docs_fingerprint": release_fingerprint,
+                        "summary": release_summary,
+                        "summary_hash": release_summary_hash,
+                        "generated_by_identity": "featureforge/release-readiness"
+                    }
+                }),
+            ),
+        ],
+    );
+}
+
+fn publish_authoritative_final_review_truth(
+    repo: &Path,
+    state: &Path,
+    review_path: &Path,
+    base_branch: &str,
+) {
+    seed_current_branch_closure_truth(repo, state);
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+    let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
+    let review_source =
+        fs::read_to_string(review_path).expect("review artifact should be readable");
+    let review_fingerprint = sha256_hex(review_source.as_bytes());
+    write_file(
+        &harness_authoritative_artifact_path(
+            state,
+            &repo_slug,
+            &branch,
+            &format!("final-review-{review_fingerprint}.md"),
+        ),
+        &review_source,
+    );
+    let final_review_summary = "Final-review fixture authoritative milestone.";
+    let final_review_summary_hash = sha256_hex(final_review_summary.as_bytes());
+    let final_review_record_id = format!("final-review-record-{review_fingerprint}");
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("final_review_state", Value::from("fresh")),
+            (
+                "last_final_review_artifact_fingerprint",
+                Value::from(review_fingerprint.clone()),
+            ),
+            (
+                "current_final_review_branch_closure_id",
+                Value::from("branch-release-closure"),
+            ),
+            (
+                "current_final_review_dispatch_id",
+                Value::from("fixture-final-review-dispatch"),
+            ),
+            (
+                "current_final_review_reviewer_source",
+                Value::from("fresh-context-subagent"),
+            ),
+            (
+                "current_final_review_reviewer_id",
+                Value::from("reviewer-fixture-001"),
+            ),
+            ("current_final_review_result", Value::from("pass")),
+            (
+                "current_final_review_summary_hash",
+                Value::from(final_review_summary_hash.clone()),
+            ),
+            (
+                "current_final_review_record_id",
+                Value::from(final_review_record_id.clone()),
+            ),
+            (
+                "final_review_record_history",
+                json!({
+                    final_review_record_id.clone(): {
+                        "record_id": final_review_record_id,
+                        "record_sequence": 1,
+                        "record_status": "current",
+                        "branch_closure_id": "branch-release-closure",
+                        "dispatch_id": "fixture-final-review-dispatch",
+                        "reviewer_source": "fresh-context-subagent",
+                        "reviewer_id": "reviewer-fixture-001",
+                        "result": "pass",
+                        "final_review_fingerprint": review_fingerprint,
+                        "browser_qa_required": Value::Null,
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "repo_slug": repo_slug,
+                        "branch_name": branch,
+                        "base_branch": base_branch,
+                        "reviewed_state_id": reviewed_state_id,
+                        "summary": final_review_summary,
+                        "summary_hash": final_review_summary_hash
+                    }
+                }),
+            ),
+            (
+                "finish_review_gate_pass_branch_closure_id",
+                Value::from("branch-release-closure"),
+            ),
+        ],
+    );
+}
+
 fn run_featureforge_with_env(
     repo: &Path,
     state_dir: &Path,
@@ -601,6 +686,13 @@ fn run_featureforge_with_env(
 }
 
 fn run_plan_execution(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
+    match plan_execution_direct_support::try_run_plan_execution_json_direct(
+        repo, state_dir, args, context,
+    ) {
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => return value,
+        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {}
+        Err(error) => panic!("{error}"),
+    }
     let mut command_args = Vec::with_capacity(args.len() + 2);
     command_args.push("plan");
     command_args.push("execution");
@@ -612,7 +704,15 @@ fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel:
     run_plan_execution(
         repo,
         state_dir,
-        &["gate-review-dispatch", "--plan", plan_rel],
+        &[
+            "record-review-dispatch",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
         "record task-boundary review dispatch lineage for final-review fixture",
     );
     run_plan_execution(
@@ -624,19 +724,6 @@ fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel:
         .as_str()
         .expect("status should expose strategy checkpoint fingerprint after review dispatch")
         .to_owned()
-}
-
-fn write_authoritative_strategy_checkpoint_state(repo: &Path, state: &Path) {
-    let branch = branch_name(repo);
-    let (execution_run_id, active_contract_path, active_contract_fingerprint) =
-        write_authoritative_active_contract_and_serial_unit_review_receipt(repo, state);
-    let authoritative_state_path = harness_state_path(state, &repo_slug(repo), &branch);
-    write_file(
-        &authoritative_state_path,
-        &format!(
-            "{{\"schema_version\":1,\"run_identity\":{{\"execution_run_id\":\"{execution_run_id}\",\"source_plan_path\":\"{PLAN_REL}\",\"source_plan_revision\":1}},\"active_worktree_lease_fingerprints\":[],\"active_worktree_lease_bindings\":[],\"active_contract_path\":\"{active_contract_path}\",\"active_contract_fingerprint\":\"{active_contract_fingerprint}\",\"dependency_index_state\":\"fresh\",\"final_review_state\":\"not_required\",\"browser_qa_state\":\"not_required\",\"release_docs_state\":\"not_required\",\"strategy_state\":\"ready\",\"strategy_checkpoint_kind\":\"review_remediation\",\"last_strategy_checkpoint_fingerprint\":\"{FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT}\",\"strategy_reset_required\":false}}"
-        ),
-    );
 }
 
 fn write_task_boundary_strategy_checkpoint_state(
@@ -658,7 +745,8 @@ fn write_task_boundary_strategy_checkpoint_state(
     });
     payload["strategy_state"] = json!("executing");
     payload["strategy_checkpoint_kind"] = json!("initial_dispatch");
-    payload["last_strategy_checkpoint_fingerprint"] = json!(FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT);
+    payload["last_strategy_checkpoint_fingerprint"] =
+        json!(FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT);
     payload["strategy_reset_required"] = json!(false);
     payload["active_worktree_lease_fingerprints"] = json!([]);
     payload["active_worktree_lease_bindings"] = json!([]);
@@ -890,36 +978,35 @@ fn mutate_reviewer_artifact_contract_mismatch(
 }
 
 fn mutate_strategy_checkpoint_fingerprint_missing(
-    repo: &Path,
-    state: &Path,
-    _review_path: &Path,
-    _base_branch: &str,
-) {
-    write_authoritative_strategy_checkpoint_state(repo, state);
-}
-
-fn mutate_strategy_checkpoint_fingerprint_mismatch(
-    repo: &Path,
-    state: &Path,
+    _repo: &Path,
+    _state: &Path,
     review_path: &Path,
     _base_branch: &str,
 ) {
-    write_authoritative_strategy_checkpoint_state(repo, state);
-    let source = fs::read_to_string(review_path).expect("review artifact should be readable");
-    fs::write(
+    replace_in_file(
         review_path,
-        source.replace(
-            &format!("**Source Plan:** `{PLAN_REL}`"),
-            &format!(
-                "**Strategy Checkpoint Fingerprint:** bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n**Source Plan:** `{PLAN_REL}`"
-            ),
+        &format!(
+            "**Strategy Checkpoint Fingerprint:** {FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT}\n"
         ),
-    )
-    .expect("review artifact should be writable");
+        "",
+    );
+}
+
+fn mutate_strategy_checkpoint_fingerprint_mismatch(
+    _repo: &Path,
+    _state: &Path,
+    review_path: &Path,
+    _base_branch: &str,
+) {
+    replace_in_file(
+        review_path,
+        &format!("**Strategy Checkpoint Fingerprint:** {FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT}"),
+        "**Strategy Checkpoint Fingerprint:** bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    );
 }
 
 #[test]
-fn workflow_phase_routes_missing_final_review_back_to_requesting_code_review() {
+fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-final-review");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -929,7 +1016,9 @@ fn workflow_phase_routes_missing_final_review_back_to_requesting_code_review() {
     mark_all_plan_steps_checked(repo);
     write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
     write_test_plan_artifact(repo, state, "no");
-    write_release_readiness_artifact(repo, state, &expected_base_branch(repo));
+    let base_branch = expected_base_branch(repo);
+    let release_path = write_release_readiness_artifact(repo, state, &base_branch);
+    publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
 
     let phase_json = run_featureforge_with_env(
         repo,
@@ -957,7 +1046,7 @@ fn workflow_phase_routes_missing_final_review_back_to_requesting_code_review() {
         phase_json["phase"], "final_review_pending",
         "task-boundary final-review fixture should route to final_review_pending; phase payload: {phase_json:?}; handoff payload: {handoff_json:?}; gate-finish payload: {gate_finish_json:?}"
     );
-    assert_eq!(phase_json["next_action"], "request_code_review");
+    assert_eq!(phase_json["next_action"], "dispatch final review");
     assert_eq!(handoff_json["phase"], "final_review_pending");
     assert_eq!(
         handoff_json["recommended_skill"],
@@ -965,7 +1054,7 @@ fn workflow_phase_routes_missing_final_review_back_to_requesting_code_review() {
     );
     assert_eq!(
         handoff_json["recommendation_reason"],
-        "Finish readiness requires a final code-review artifact."
+        "Finish readiness requires a current final-review milestone for the current branch closure."
     );
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
@@ -976,7 +1065,7 @@ fn workflow_phase_routes_missing_final_review_back_to_requesting_code_review() {
 }
 
 #[test]
-fn task_boundary_final_review_remains_required_after_task_closure_gates() {
+fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-task-boundary-final-review-required");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1060,6 +1149,20 @@ fn task_boundary_final_review_remains_required_after_task_closure_gates() {
         1,
         &strategy_checkpoint_fingerprint,
     );
+    run_plan_execution(
+        repo,
+        state,
+        &[
+            "record-review-dispatch",
+            "--plan",
+            PLAN_REL,
+            "--scope",
+            "task",
+            "--task",
+            "1",
+        ],
+        "record task review dispatch before task 2 begin for task-boundary final-review fixture",
+    );
 
     let status_before_task2 = run_plan_execution(
         repo,
@@ -1067,11 +1170,14 @@ fn task_boundary_final_review_remains_required_after_task_closure_gates() {
         &["status", "--plan", PLAN_REL],
         "status before task 2 begin for task-boundary final-review fixture execution",
     );
-    assert_eq!(status_before_task2["blocking_task"], Value::Null);
-    let begin_task2 = run_plan_execution(
-        repo,
-        state,
-        &[
+    assert_eq!(status_before_task2["blocking_task"], Value::from(1));
+    let mut begin_task2_command = Command::new(compiled_featureforge_path());
+    begin_task2_command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args([
+            "plan",
+            "execution",
             "begin",
             "--plan",
             PLAN_REL,
@@ -1085,62 +1191,22 @@ fn task_boundary_final_review_remains_required_after_task_closure_gates() {
             status_before_task2["execution_fingerprint"]
                 .as_str()
                 .expect("status should expose execution fingerprint before task 2 begin"),
-        ],
+        ]);
+    let begin_task2_output = run(
+        begin_task2_command,
         "begin task 2 for task-boundary final-review fixture execution",
     );
-    run_plan_execution(
-        repo,
-        state,
-        &[
-            "complete",
-            "--plan",
-            PLAN_REL,
-            "--task",
-            "2",
-            "--step",
-            "1",
-            "--source",
-            "featureforge:executing-plans",
-            "--claim",
-            "Completed task 2 step 1 for task-boundary final-review fixture.",
-            "--manual-verify-summary",
-            "Verified by task-boundary final-review fixture setup.",
-            "--file",
-            "docs/example-output.md",
-            "--expect-execution-fingerprint",
-            begin_task2["execution_fingerprint"]
-                .as_str()
-                .expect("begin should expose execution fingerprint for complete"),
-        ],
-        "complete task 2 for task-boundary final-review fixture execution",
-    );
-
-    write_test_plan_artifact(repo, state, "no");
-    write_release_readiness_artifact(repo, state, &expected_base_branch(repo));
-
-    let phase_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "phase", "--json"],
-        &[],
-        "workflow phase for task-boundary final-review-required shard",
-    );
-    let handoff_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "handoff", "--json"],
-        &[],
-        "workflow handoff for task-boundary final-review-required shard",
-    );
+    let begin_task2 = serde_json::from_slice::<Value>(&begin_task2_output.stderr)
+        .expect("blocked task 2 begin should emit json failure on stderr");
     assert_eq!(
-        phase_json["phase"], "final_review_pending",
-        "task-boundary final-review fixture should route to final_review_pending; phase payload: {phase_json:?}; handoff payload: {handoff_json:?}"
+        begin_task2["error_class"],
+        Value::from("ExecutionStateNotReady"),
+        "task 2 begin should stay blocked until task closure is recorded, got {begin_task2:?}"
     );
-    assert_eq!(handoff_json["phase"], "final_review_pending");
 }
 
 #[test]
-fn workflow_phase_routes_stale_review_back_to_requesting_code_review() {
+fn workflow_phase_routes_stale_review_back_to_execution_flow() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-stale-final-review");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1152,12 +1218,14 @@ fn workflow_phase_routes_stale_review_back_to_requesting_code_review() {
     write_test_plan_artifact(repo, state, "no");
     let base_branch = expected_base_branch(repo);
     let review_path = write_code_review_artifact(repo, state, &base_branch);
-    write_release_readiness_artifact(repo, state, &base_branch);
+    let release_path = write_release_readiness_artifact(repo, state, &base_branch);
+    publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
     replace_in_file(
         &review_path,
         &format!("**Head SHA:** {}", current_head_sha(repo)),
         "**Head SHA:** 0000000000000000000000000000000000000000",
     );
+    publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
 
     let phase_json = run_featureforge_with_env(
         repo,
@@ -1182,7 +1250,7 @@ fn workflow_phase_routes_stale_review_back_to_requesting_code_review() {
     );
 
     assert_eq!(phase_json["phase"], "final_review_pending");
-    assert_eq!(phase_json["next_action"], "request_code_review");
+    assert_eq!(phase_json["next_action"], "dispatch final review");
     assert_eq!(
         handoff_json["recommended_skill"],
         "featureforge:requesting-code-review"
@@ -1200,7 +1268,7 @@ fn workflow_phase_routes_stale_review_back_to_requesting_code_review() {
 }
 
 #[test]
-fn workflow_phase_routes_non_independent_reviewer_source_back_to_requesting_code_review() {
+fn workflow_phase_routes_non_independent_reviewer_source_back_to_execution_flow() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-non-independent-reviewer-source");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1212,12 +1280,14 @@ fn workflow_phase_routes_non_independent_reviewer_source_back_to_requesting_code
     write_test_plan_artifact(repo, state, "no");
     let base_branch = expected_base_branch(repo);
     let review_path = write_code_review_artifact(repo, state, &base_branch);
-    write_release_readiness_artifact(repo, state, &base_branch);
+    let release_path = write_release_readiness_artifact(repo, state, &base_branch);
+    publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
     replace_in_file(
         &review_path,
         "**Reviewer Source:** fresh-context-subagent",
         "**Reviewer Source:** implementation-context",
     );
+    publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
 
     let phase_json = run_featureforge_with_env(
         repo,
@@ -1242,7 +1312,7 @@ fn workflow_phase_routes_non_independent_reviewer_source_back_to_requesting_code
     );
 
     assert_eq!(phase_json["phase"], "final_review_pending");
-    assert_eq!(phase_json["next_action"], "request_code_review");
+    assert_eq!(phase_json["next_action"], "dispatch final review");
     assert_eq!(
         handoff_json["recommended_skill"],
         "featureforge:requesting-code-review"
@@ -1256,7 +1326,7 @@ fn workflow_phase_routes_non_independent_reviewer_source_back_to_requesting_code
 }
 
 #[test]
-fn workflow_phase_routes_unreadable_reviewer_artifact_back_to_requesting_code_review() {
+fn workflow_phase_routes_unreadable_reviewer_artifact_back_to_execution_flow() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-unreadable-reviewer-artifact");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1268,9 +1338,11 @@ fn workflow_phase_routes_unreadable_reviewer_artifact_back_to_requesting_code_re
     write_test_plan_artifact(repo, state, "no");
     let base_branch = expected_base_branch(repo);
     let review_path = write_code_review_artifact(repo, state, &base_branch);
-    write_release_readiness_artifact(repo, state, &base_branch);
+    let release_path = write_release_readiness_artifact(repo, state, &base_branch);
+    publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
     let reviewer_artifact_path = reviewer_artifact_path_from_review(&review_path);
     fs::remove_file(&reviewer_artifact_path).expect("reviewer artifact should remove");
+    publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
 
     let phase_json = run_featureforge_with_env(
         repo,
@@ -1295,7 +1367,7 @@ fn workflow_phase_routes_unreadable_reviewer_artifact_back_to_requesting_code_re
     );
 
     assert_eq!(phase_json["phase"], "final_review_pending");
-    assert_eq!(phase_json["next_action"], "request_code_review");
+    assert_eq!(phase_json["next_action"], "dispatch final review");
     assert_eq!(
         handoff_json["recommended_skill"],
         "featureforge:requesting-code-review"
@@ -1309,9 +1381,12 @@ fn workflow_phase_routes_unreadable_reviewer_artifact_back_to_requesting_code_re
 }
 
 #[test]
-fn workflow_phase_routes_all_reviewer_failure_families_back_to_requesting_code_review() {
+fn workflow_phase_routes_all_reviewer_failure_families_back_to_execution_flow() {
     struct ReviewerFailureCase {
         name: &'static str,
+        expected_phase: &'static str,
+        expected_next_action: &'static str,
+        failure_class: &'static str,
         reason_code: &'static str,
         mutate: fn(&Path, &Path, &Path, &str),
     }
@@ -1319,56 +1394,89 @@ fn workflow_phase_routes_all_reviewer_failure_families_back_to_requesting_code_r
     let cases = [
         ReviewerFailureCase {
             name: "reviewer-identity-missing",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
             reason_code: "review_receipt_reviewer_identity_missing",
             mutate: mutate_reviewer_identity_missing,
         },
         ReviewerFailureCase {
             name: "reviewer-source-not-independent",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
             reason_code: "review_receipt_reviewer_source_not_independent",
             mutate: mutate_reviewer_source_not_independent,
         },
         ReviewerFailureCase {
             name: "reviewer-artifact-path-missing",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
             reason_code: "review_receipt_reviewer_artifact_path_missing",
             mutate: mutate_reviewer_artifact_path_missing,
         },
         ReviewerFailureCase {
             name: "reviewer-artifact-unreadable",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
             reason_code: "review_receipt_reviewer_artifact_unreadable",
             mutate: mutate_reviewer_artifact_unreadable,
         },
         ReviewerFailureCase {
             name: "reviewer-artifact-not-runtime-owned",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
             reason_code: "review_receipt_reviewer_artifact_not_runtime_owned",
             mutate: mutate_reviewer_artifact_not_runtime_owned,
         },
         ReviewerFailureCase {
             name: "reviewer-fingerprint-invalid",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ArtifactIntegrityMismatch",
             reason_code: "review_receipt_reviewer_fingerprint_invalid",
             mutate: mutate_reviewer_fingerprint_invalid,
         },
         ReviewerFailureCase {
             name: "reviewer-fingerprint-mismatch",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ArtifactIntegrityMismatch",
             reason_code: "review_receipt_reviewer_fingerprint_mismatch",
             mutate: mutate_reviewer_fingerprint_mismatch,
         },
         ReviewerFailureCase {
             name: "reviewer-identity-mismatch",
-            reason_code: "review_receipt_reviewer_identity_mismatch",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
+            reason_code: "review_receipt_reviewer_artifact_contract_mismatch",
             mutate: mutate_reviewer_identity_mismatch,
         },
         ReviewerFailureCase {
             name: "reviewer-artifact-contract-mismatch",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
             reason_code: "review_receipt_reviewer_artifact_contract_mismatch",
             mutate: mutate_reviewer_artifact_contract_mismatch,
         },
         ReviewerFailureCase {
             name: "reviewer-strategy-checkpoint-fingerprint-missing",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
             reason_code: "review_receipt_strategy_checkpoint_fingerprint_missing",
             mutate: mutate_strategy_checkpoint_fingerprint_missing,
         },
         ReviewerFailureCase {
             name: "reviewer-strategy-checkpoint-fingerprint-mismatch",
+            expected_phase: "final_review_pending",
+            expected_next_action: "dispatch final review",
+            failure_class: "ReviewArtifactNotFresh",
             reason_code: "review_receipt_strategy_checkpoint_fingerprint_mismatch",
             mutate: mutate_strategy_checkpoint_fingerprint_mismatch,
         },
@@ -1387,8 +1495,10 @@ fn workflow_phase_routes_all_reviewer_failure_families_back_to_requesting_code_r
         write_test_plan_artifact(repo, state, "no");
         let base_branch = expected_base_branch(repo);
         let review_path = write_code_review_artifact(repo, state, &base_branch);
-        write_release_readiness_artifact(repo, state, &base_branch);
+        let release_path = write_release_readiness_artifact(repo, state, &base_branch);
+        publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
         (case.mutate)(repo, state, &review_path, &base_branch);
+        publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
 
         let phase_json = run_featureforge_with_env(
             repo,
@@ -1412,9 +1522,15 @@ fn workflow_phase_routes_all_reviewer_failure_families_back_to_requesting_code_r
             &format!("workflow finish gate for {}", case.name),
         );
 
-        assert_eq!(phase_json["phase"], "final_review_pending", "{}", case.name);
+        assert_eq!(phase_json["phase"], case.expected_phase, "{}", case.name);
         assert_eq!(
-            phase_json["next_action"], "request_code_review",
+            phase_json["next_action"], case.expected_next_action,
+            "{}",
+            case.name
+        );
+        assert_eq!(handoff_json["phase"], case.expected_phase, "{}", case.name);
+        assert_eq!(
+            handoff_json["next_action"], case.expected_next_action,
             "{}",
             case.name
         );
@@ -1425,7 +1541,7 @@ fn workflow_phase_routes_all_reviewer_failure_families_back_to_requesting_code_r
         );
         assert_eq!(gate_finish_json["allowed"], false, "{}", case.name);
         assert_eq!(
-            gate_finish_json["failure_class"], "ReviewArtifactNotFresh",
+            gate_finish_json["failure_class"], case.failure_class,
             "{}",
             case.name
         );

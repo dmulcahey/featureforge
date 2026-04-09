@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use featureforge::compat::argv0::canonical_command_from_argv0;
 use featureforge::paths::{
     RepoPath, atomic_publish_temp_path, branch_storage_key, harness_authoritative_artifact_path,
     harness_authoritative_artifact_publish_temp_path, harness_authoritative_artifacts_dir,
@@ -28,23 +27,6 @@ fn repo_paths_reject_absolute_and_traversing_inputs() {
         let err = RepoPath::parse(input).unwrap_err();
         assert_eq!(err.failure_class(), "InvalidRepoPath", "input: {input}");
     }
-}
-
-#[test]
-fn argv0_dispatch_preserves_canonical_command_tree() {
-    assert_eq!(canonical_command_from_argv0("featureforge"), &[] as &[&str]);
-    assert_eq!(
-        canonical_command_from_argv0("featureforge-workflow-status"),
-        &["workflow", "status"]
-    );
-    assert_eq!(
-        canonical_command_from_argv0("featureforge-plan-contract"),
-        &["plan", "contract"]
-    );
-    assert_eq!(
-        canonical_command_from_argv0("featureforge-repo-safety"),
-        &["repo-safety"]
-    );
 }
 
 #[test]

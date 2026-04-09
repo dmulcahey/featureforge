@@ -19,6 +19,10 @@ pub(crate) struct StrategyReviewDispatchLineageRecord {
     #[serde(default)]
     pub(crate) execution_run_id: Option<String>,
     #[serde(default)]
+    pub(crate) dispatch_id: Option<String>,
+    #[serde(default)]
+    pub(crate) reviewed_state_id: Option<String>,
+    #[serde(default)]
     pub(crate) source_task: Option<u32>,
     #[serde(default)]
     pub(crate) source_step: Option<u32>,
@@ -26,6 +30,16 @@ pub(crate) struct StrategyReviewDispatchLineageRecord {
     pub(crate) strategy_checkpoint_fingerprint: Option<String>,
     #[serde(default)]
     pub(crate) task_completion_lineage_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct FinalReviewDispatchLineageRecord {
+    #[serde(default)]
+    pub(crate) execution_run_id: Option<String>,
+    #[serde(default)]
+    pub(crate) dispatch_id: Option<String>,
+    #[serde(default)]
+    pub(crate) branch_closure_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -107,6 +121,16 @@ pub(crate) struct StatusAuthoritativeOverlay {
     #[serde(default)]
     pub(crate) strategy_review_dispatch_lineage:
         BTreeMap<String, StrategyReviewDispatchLineageRecord>,
+    #[serde(default)]
+    pub(crate) final_review_dispatch_lineage: Option<FinalReviewDispatchLineageRecord>,
+    #[serde(default)]
+    pub(crate) current_branch_closure_id: Option<String>,
+    #[serde(default)]
+    pub(crate) current_branch_closure_reviewed_state_id: Option<String>,
+    #[serde(default)]
+    pub(crate) current_branch_closure_contract_identity: Option<String>,
+    #[serde(default)]
+    pub(crate) current_release_readiness_result: Option<String>,
     #[serde(default)]
     pub(crate) reason_codes: Vec<String>,
 }
@@ -570,22 +594,59 @@ pub(crate) fn preflight_write_authority_state(
 }
 
 pub(crate) fn process_is_running(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
     #[cfg(unix)]
     {
-        std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(true)
+        let probe_result = Some(
+            std::process::Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(true),
+        );
+        process_is_running_from_probe_result(pid, probe_result)
     }
     #[cfg(not(unix))]
     {
-        true
+        process_is_running_from_probe_result(pid, non_unix_process_probe(pid))
     }
+}
+
+pub(crate) fn process_is_running_from_probe_result(pid: u32, probe_result: Option<bool>) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    probe_result.unwrap_or(false)
+}
+
+#[cfg(all(not(unix), windows))]
+fn non_unix_process_probe(pid: u32) -> Option<bool> {
+    let filter = format!("PID eq {pid}");
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", filter.as_str(), "/FO", "CSV", "/NH"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.contains("No tasks are running") {
+        return Some(false);
+    }
+    let process_found = stdout.lines().any(|line| {
+        let mut parts = line.trim().trim_matches('"').split("\",\"");
+        let _image_name = parts.next();
+        parts
+            .next()
+            .and_then(|candidate| candidate.parse::<u32>().ok())
+            == Some(pid)
+    });
+    Some(process_found)
+}
+
+#[cfg(all(not(unix), not(windows)))]
+fn non_unix_process_probe(_pid: u32) -> Option<bool> {
+    None
 }
 
 pub fn worktree_lease_states() -> &'static [WorktreeLeaseState] {
@@ -717,4 +778,26 @@ fn require_non_empty(value: &str, field_name: &str) -> Result<(), JsonFailure> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::process_is_running_from_probe_result;
+
+    #[test]
+    fn process_probe_returns_false_for_zero_pid() {
+        assert!(!process_is_running_from_probe_result(0, Some(true)));
+        assert!(!process_is_running_from_probe_result(0, Some(false)));
+    }
+
+    #[test]
+    fn process_probe_returns_probe_result_for_non_zero_pid() {
+        assert!(process_is_running_from_probe_result(42, Some(true)));
+        assert!(!process_is_running_from_probe_result(42, Some(false)));
+    }
+
+    #[test]
+    fn missing_non_unix_probe_fails_open_for_stale_lock_recovery() {
+        assert!(!process_is_running_from_probe_result(42, None));
+    }
 }

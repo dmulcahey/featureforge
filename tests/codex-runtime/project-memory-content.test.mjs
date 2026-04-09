@@ -48,7 +48,7 @@ function bulletEntries(name) {
 }
 
 const APPROVED_ARTIFACT_SOURCE_REFERENCE =
-  /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md)$/;
+  /^(?:docs\/featureforge\/specs\/.+\.md|docs\/featureforge\/plans\/.+\.md|docs\/featureforge\/execution-evidence\/.+\.md|docs\/archive\/featureforge\/specs\/.+\.md|docs\/archive\/featureforge\/plans\/.+\.md|docs\/archive\/featureforge\/execution-evidence\/.+\.md|\.featureforge\/reviews\/.+\.md)$/;
 const STABLE_REPO_DOC_SOURCE_REFERENCE =
   /^(?:(?:README|AGENTS|TODOS)\.md|docs\/(?!featureforge\/|project_notes\/|archive\/).+\.md|review\/.+\.md|skills\/.+\.md)$/;
 
@@ -212,6 +212,6 @@ test('project-memory examples cover the positive and negative matrix for all mem
   const examples = readExamples();
   assert.match(examples, /## Worked Distillation Example/, 'examples.md should include the distillation example');
   assert.match(examples, /### Good Memory Entry/, 'examples.md should include a worked good memory entry');
-  assert.match(examples, /Source:\s*`docs\/featureforge\/plans\/2026-03-29-featureforge-project-memory-integration\.md`,\s*`docs\/featureforge\/execution-evidence\/2026-03-29-featureforge-project-memory-integration-r4-evidence\.md`/, 'worked distillation example should backlink the approved plan and execution evidence on one Source line');
-  assert.match(examples, /`docs\/featureforge\/execution-evidence\/2026-03-29-featureforge-project-memory-integration-r4-evidence\.md`/, 'worked distillation example should backlink execution evidence');
+  assert.match(examples, /Source:\s*`docs\/archive\/featureforge\/plans\/2026-03-29-featureforge-project-memory-integration\.md`,\s*`docs\/archive\/featureforge\/execution-evidence\/2026-03-29-featureforge-project-memory-integration-r4-evidence\.md`/, 'worked distillation example should backlink the approved plan and execution evidence on one Source line');
+  assert.match(examples, /`docs\/archive\/featureforge\/execution-evidence\/2026-03-29-featureforge-project-memory-integration-r4-evidence\.md`/, 'worked distillation example should backlink execution evidence');
 });

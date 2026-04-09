@@ -4,6 +4,19 @@
 
 - No unreleased changes yet.
 
+## v1.8.0 - 2026-04-09
+
+Late-stage routing hardening release focused on reviewed-closure authority, exact operator sequencing, and release-ready contract parity across runtime, docs, and tests.
+
+- fail closed when branch-closure truth exists only in overlays, and require authoritative current branch-closure records before release-readiness, final-review, or QA reruns can reuse prior late-stage state
+- reroute malformed, plan-mismatched, or authoritative-provenance-invalid final-review artifacts back through fresh final-review dispatch instead of treating those reruns as idempotent success
+- preserve negative follow-up overrides for failing final-review and QA reruns while still invalidating stale dispatch lineage for authoritative artifact integrity defects
+- align `workflow operator`, `plan execution status`, `document-release`, and branch-finishing guidance on the April late-stage order: document release first, terminal final review second, QA only when operator still requires it, then `gate-review` and `gate-finish`
+- harden active runtime/docs contracts for QA `test_plan_refresh_required`, release-blocker recording, supporting `status --plan` diagnostics, and reviewed-closure repair/requery semantics
+- expand runtime, shell-smoke, execution-query, and contract coverage for final-review invalidation routing, release/readiness authority, close-current-task follow-up overrides, and stale exact-command fail-closed behavior
+- trim remaining shared test binary lookup overhead on the Rust side while keeping the same CLI surface and assertions
+- refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for `1.8.0`
+
 ## v1.7.0 - 2026-04-01
 
 First-class plan-fidelity stage release focused on making `featureforge:plan-fidelity-review` a canonical workflow stage with explicit draft-plan routing ownership, independent-review guidance, and cross-surface contract parity.
@@ -32,9 +45,9 @@ Independent-review dispatch hard-gate release focused on explicit task-boundary 
 - `workflow handoff --json`: remove top-level `session_entry`; remove `phase` values `needs_user_choice` and `bypassed`; remove `next_action` values `session_entry_gate` and `continue_outside_featureforge`; new `schema_version` is `2`
 - `workflow status --refresh` JSON: remove strict-gate `status` outcomes `needs_user_choice` and `bypassed`; remove strict-gate `reason_codes` `session_entry_unresolved` and `session_entry_bypassed`; retained route `schema_version` is `3`
 
-- enforce explicit `featureforge plan execution gate-review-dispatch --plan <approved-plan-path>` dispatch proof at task boundaries before next-task begin can proceed
+- enforce explicit `featureforge plan execution record-review-dispatch --plan <approved-plan-path>` dispatch proof at task boundaries before next-task begin can proceed
 - keep task-boundary fail-closed behavior for stale or missing dispatch lineage, non-independent review receipts, and missing task verification receipts
-- align workflow operator surfaces and execution skill docs on the exact runnable `gate-review-dispatch` command text for blocked task-boundary remediation
+- align workflow operator surfaces and execution skill docs on the exact runnable `record-review-dispatch` command text for blocked task-boundary remediation
 - harden execution guidance so repo-writing work records runtime begin before mutation and treats backfill as recovery-only workflow repair
 - expand runtime, workflow, final-review, and instruction-contract coverage for dispatch hard-gate semantics and preserved final-review behavior
 - refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for `1.6.0`

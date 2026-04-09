@@ -4,6 +4,8 @@ mod files_support;
 mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/repo_template.rs"]
+mod repo_template_support;
 
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::cli::plan_execution::ExecutionTopologyArg;
@@ -13,6 +15,7 @@ use featureforge::execution::topology::recommend_topology;
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
+use repo_template_support::populate_repo_from_template;
 use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -26,51 +29,8 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
 
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.arg("init").current_dir(repo);
-            command
-        },
-        "git init",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.name", "FeatureForge Test"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.name",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.email", "featureforge-tests@example.com"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.email",
-    );
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["add", "README.md"]).current_dir(repo);
-            command
-        },
-        "git add README",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["commit", "-m", "init"]).current_dir(repo);
-            command
-        },
-        "git commit init",
-    );
+    let _ = name;
+    populate_repo_from_template(repo);
     run_checked(
         {
             let mut command = Command::new("git");

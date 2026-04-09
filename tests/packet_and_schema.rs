@@ -149,6 +149,10 @@ fn schema_resolved_variants<'a>(schema: &'a Value, value: &'a Value) -> Option<V
             return false;
         };
         let mut found = false;
+        if resolved.get("type").is_some() || resolved.get("enum").is_some() {
+            out.push(resolved);
+            found = true;
+        }
         for keyword in ["anyOf", "oneOf"] {
             let Some(variants) = resolved.get(keyword).and_then(Value::as_array) else {
                 continue;
@@ -331,6 +335,320 @@ fn assert_schema_array_items_enum(
     }
 }
 
+fn assert_schema_pointer_enum(
+    schema: &Value,
+    pointer: &str,
+    expected_values: &[&str],
+    issues: &mut Vec<String>,
+) {
+    let Some(value) = schema.pointer(pointer) else {
+        issues.push(format!("schema is missing pointer `{pointer}`"));
+        return;
+    };
+    let Some(actual_enum) = schema_enum_set(schema, value) else {
+        issues.push(format!(
+            "schema pointer `{pointer}` is missing a usable `enum` definition"
+        ));
+        return;
+    };
+    let expected_enum: BTreeSet<String> = expected_values
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect();
+    if actual_enum != expected_enum {
+        issues.push(format!(
+            "schema pointer `{pointer}` has enum {actual_enum:?}, expected {expected_enum:?}"
+        ));
+    }
+}
+
+fn assert_schema_pointer_types(
+    schema: &Value,
+    pointer: &str,
+    expected_types: &[&str],
+    issues: &mut Vec<String>,
+) {
+    let Some(value) = schema.pointer(pointer) else {
+        issues.push(format!("schema is missing pointer `{pointer}`"));
+        return;
+    };
+    let Some(actual_types) = schema_type_set(schema, value) else {
+        issues.push(format!(
+            "schema pointer `{pointer}` is missing a usable `type` definition"
+        ));
+        return;
+    };
+    let expected_types: BTreeSet<String> = expected_types
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect();
+    if actual_types != expected_types {
+        issues.push(format!(
+            "schema pointer `{pointer}` has types {actual_types:?}, expected {expected_types:?}"
+        ));
+    }
+}
+
+fn assert_schema_pointer_required(
+    schema: &Value,
+    pointer: &str,
+    expected_required: &[&str],
+    issues: &mut Vec<String>,
+) {
+    let Some(value) = schema.pointer(pointer) else {
+        issues.push(format!("schema is missing pointer `{pointer}`"));
+        return;
+    };
+    let Some(required) = value.get("required").and_then(Value::as_array) else {
+        issues.push(format!("schema pointer `{pointer}` is missing `required`"));
+        return;
+    };
+    let actual_required: BTreeSet<String> = required
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let expected_required: BTreeSet<String> = expected_required
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect();
+    if actual_required != expected_required {
+        issues.push(format!(
+            "schema pointer `{pointer}` has required {actual_required:?}, expected {expected_required:?}"
+        ));
+    }
+}
+
+fn assert_phase_detail_recording_context_required(
+    schema: &Value,
+    phase_detail: &str,
+    expected_required: &[&str],
+    issues: &mut Vec<String>,
+) {
+    let Some(conditions) = schema.get("allOf").and_then(Value::as_array) else {
+        issues.push(String::from(
+            "schema is missing top-level `allOf` phase-bound conditions",
+        ));
+        return;
+    };
+    let Some(condition) = conditions.iter().find(|condition| {
+        condition
+            .pointer("/if/properties/phase_detail/const")
+            .and_then(Value::as_str)
+            == Some(phase_detail)
+    }) else {
+        issues.push(format!(
+            "schema is missing phase-bound recording_context condition for `{phase_detail}`"
+        ));
+        return;
+    };
+
+    let actual_top_level_required: BTreeSet<String> = condition
+        .pointer("/then/required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let expected_top_level_required = BTreeSet::from([String::from("recording_context")]);
+    if actual_top_level_required != expected_top_level_required {
+        issues.push(format!(
+            "phase-bound recording_context condition `{phase_detail}` has required {actual_top_level_required:?}, expected {expected_top_level_required:?}"
+        ));
+    }
+
+    let actual_required: BTreeSet<String> = condition
+        .pointer("/then/properties/recording_context/required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let expected_required: BTreeSet<String> = expected_required
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect();
+    if actual_required != expected_required {
+        issues.push(format!(
+            "phase-bound recording_context condition `{phase_detail}` has required {actual_required:?}, expected {expected_required:?}"
+        ));
+    }
+}
+
+fn assert_phase_detail_field_forbidden_outside_allowed_phase_details(
+    schema: &Value,
+    field: &str,
+    allowed_phase_details: &[&str],
+    issues: &mut Vec<String>,
+) {
+    let Some(conditions) = schema.get("allOf").and_then(Value::as_array) else {
+        issues.push(String::from(
+            "schema is missing top-level `allOf` phase-bound conditions",
+        ));
+        return;
+    };
+
+    let expected_allowed: BTreeSet<String> = allowed_phase_details
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect();
+    let Some(condition) = conditions.iter().find(|condition| {
+        let actual_allowed: BTreeSet<String> = condition
+            .pointer("/if/properties/phase_detail/enum")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        actual_allowed == expected_allowed
+    }) else {
+        issues.push(format!(
+            "schema is missing phase_detail omission contract for `{field}` outside {expected_allowed:?}"
+        ));
+        return;
+    };
+
+    let actual_else_required: BTreeSet<String> = condition
+        .pointer("/else/not/required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let expected_else_required = BTreeSet::from([field.to_owned()]);
+    if actual_else_required != expected_else_required {
+        issues.push(format!(
+            "phase_detail omission contract for `{field}` has else/not/required {actual_else_required:?}, expected {expected_else_required:?}"
+        ));
+    }
+}
+
+fn assert_phase_field_field_forbidden_outside_const_phase(
+    schema: &Value,
+    phase_field: &str,
+    phase_value: &str,
+    field: &str,
+    issues: &mut Vec<String>,
+) {
+    let Some(conditions) = schema.get("allOf").and_then(Value::as_array) else {
+        issues.push(String::from(
+            "schema is missing top-level `allOf` phase-bound conditions",
+        ));
+        return;
+    };
+
+    let selector_pointer = format!("/if/properties/{phase_field}/const");
+    let Some(condition) = conditions.iter().find(|condition| {
+        condition.pointer(&selector_pointer).and_then(Value::as_str) == Some(phase_value)
+    }) else {
+        issues.push(format!(
+            "schema is missing `{field}` omission contract outside {phase_field}={phase_value}"
+        ));
+        return;
+    };
+
+    let actual_else_required: BTreeSet<String> = condition
+        .pointer("/else/not/required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let expected_else_required = BTreeSet::from([field.to_owned()]);
+    if actual_else_required != expected_else_required {
+        issues.push(format!(
+            "phase-bound omission contract for `{field}` has else/not/required {actual_else_required:?}, expected {expected_else_required:?}"
+        ));
+    }
+}
+
+fn assert_phase_detail_field_omitted_only_in_lanes(
+    schema: &Value,
+    field: &str,
+    omission_phase_details: &[&str],
+    issues: &mut Vec<String>,
+) {
+    let Some(conditions) = schema.get("allOf").and_then(Value::as_array) else {
+        issues.push(String::from(
+            "schema is missing top-level `allOf` phase-bound conditions",
+        ));
+        return;
+    };
+
+    let expected_omission_lanes: BTreeSet<String> = omission_phase_details
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect();
+    let Some(condition) = conditions.iter().find(|condition| {
+        let actual_omission_lanes: BTreeSet<String> = condition
+            .pointer("/if/properties/phase_detail/enum")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        actual_omission_lanes == expected_omission_lanes
+    }) else {
+        issues.push(format!(
+            "schema is missing phase_detail omission-lane contract for `{field}` in {expected_omission_lanes:?}"
+        ));
+        return;
+    };
+
+    let actual_then_required: BTreeSet<String> = condition
+        .pointer("/then/not/required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let expected_then_required = BTreeSet::from([field.to_owned()]);
+    if actual_then_required != expected_then_required {
+        issues.push(format!(
+            "omission-lane contract for `{field}` has then/not/required {actual_then_required:?}, expected {expected_then_required:?}"
+        ));
+    }
+
+    let actual_else_required: BTreeSet<String> = condition
+        .pointer("/else/required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let expected_else_required = BTreeSet::from([field.to_owned()]);
+    if actual_else_required != expected_else_required {
+        issues.push(format!(
+            "omission-lane contract for `{field}` has else/required {actual_else_required:?}, expected {expected_else_required:?}"
+        ));
+    }
+}
+
+fn assert_schema_pointer_value(
+    schema: &Value,
+    pointer: &str,
+    expected_value: Value,
+    issues: &mut Vec<String>,
+) {
+    let Some(actual_value) = schema.pointer(pointer) else {
+        issues.push(format!("schema is missing pointer `{pointer}`"));
+        return;
+    };
+    if actual_value != &expected_value {
+        issues.push(format!(
+            "schema pointer `{pointer}` has value {actual_value:?}, expected {expected_value:?}"
+        ));
+    }
+}
+
 fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     let schema: Value = serde_json::from_str(schema_json).expect("schema should parse");
     let properties = schema_properties(&schema);
@@ -440,6 +758,36 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_types!("chunk_id", ["string"], required);
     check_types!("chunking_strategy", ["string", "null"], optional);
     check_enum!("chunking_strategy", ["task", "task-group", "whole-run"]);
+    check_types!("workspace_state_id", ["string"], required);
+    check_types!(
+        "current_branch_reviewed_state_id",
+        ["string", "null"],
+        optional
+    );
+    check_types!("current_branch_closure_id", ["string", "null"], optional);
+    check_types!("current_task_closures", ["array"], required);
+    check_array_items!("current_task_closures", ["object"]);
+    check_types!("superseded_closures_summary", ["array"], required);
+    check_array_items!("superseded_closures_summary", ["string"]);
+    check_types!("stale_unreviewed_closures", ["array"], required);
+    check_array_items!("stale_unreviewed_closures", ["string"]);
+    check_types!(
+        "current_release_readiness_state",
+        ["string", "null"],
+        optional
+    );
+    check_types!("current_final_review_state", ["string"], required);
+    check_types!("current_qa_state", ["string"], required);
+    check_types!(
+        "current_final_review_branch_closure_id",
+        ["string", "null"],
+        optional
+    );
+    check_types!("current_final_review_result", ["string", "null"], optional);
+    check_types!("current_qa_branch_closure_id", ["string", "null"], optional);
+    check_types!("current_qa_result", ["string", "null"], optional);
+    check_types!("qa_requirement", ["string", "null"], optional);
+    check_enum!("qa_requirement", ["required", "not-required"]);
     check_types!("evaluator_policy", ["string", "null"], optional);
     check_types!("reset_policy", ["string", "null"], optional);
     check_enum!("reset_policy", ["none", "chunk-boundary", "adaptive"]);
@@ -548,6 +896,194 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     );
     check_types!("strategy_checkpoint_kind", ["string"], required);
     check_types!("strategy_reset_required", ["boolean"], required);
+    check_types!("phase_detail", ["string"], required);
+    check_enum!(
+        "phase_detail",
+        [
+            "branch_closure_recording_required_for_release_readiness",
+            "execution_in_progress",
+            "execution_reentry_required",
+            "final_review_dispatch_required",
+            "final_review_outcome_pending",
+            "final_review_recording_ready",
+            "finish_completion_gate_ready",
+            "finish_review_gate_ready",
+            "handoff_recording_required",
+            "planning_reentry_required",
+            "qa_recording_required",
+            "release_blocker_resolution_required",
+            "release_readiness_recording_ready",
+            "task_closure_recording_ready",
+            "task_review_dispatch_required",
+            "task_review_result_pending",
+            "test_plan_refresh_required"
+        ]
+    );
+    check_types!("review_state_status", ["string"], required);
+    check_enum!(
+        "review_state_status",
+        ["clean", "stale_unreviewed", "missing_current_closure"]
+    );
+    check_types!("blocking_records", ["array"], required);
+    check_array_items!("blocking_records", ["object"]);
+    check_types!("next_action", ["string"], required);
+    check_enum!(
+        "next_action",
+        [
+            "advance late stage",
+            "close current task",
+            "continue execution",
+            "dispatch review",
+            "dispatch final review",
+            "execution reentry required",
+            "hand off",
+            "pivot / return to planning",
+            "record branch closure",
+            "refresh test plan",
+            "repair review state / reenter execution",
+            "resolve release blocker",
+            "run QA",
+            "run finish completion gate",
+            "run finish review gate",
+            "wait for external review result"
+        ]
+    );
+    check_types!("recommended_command", ["string"], optional);
+    check_enum!(
+        "follow_up_override",
+        ["none", "record_handoff", "record_pivot"]
+    );
+    check_types!("recording_context", ["object"], optional);
+    check_types!("execution_command_context", ["object"], optional);
+    assert_schema_pointer_enum(
+        &schema,
+        "/$defs/PublicExecutionCommandContext/properties/command_kind",
+        &["begin", "complete", "reopen"],
+        &mut issues,
+    );
+    assert_schema_pointer_required(
+        &schema,
+        "/$defs/PublicExecutionCommandContext",
+        &["command_kind", "task_number", "step_id"],
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &schema,
+        "/$defs/PublicExecutionCommandContext/properties/task_number",
+        &["integer"],
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &schema,
+        "/$defs/PublicExecutionCommandContext/properties/step_id",
+        &["integer"],
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &schema,
+        "/$defs/PublicExecutionCommandContext/additionalProperties",
+        Value::Bool(false),
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &schema,
+        "/$defs/PublicRecordingContext/properties/branch_closure_id",
+        &["string"],
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &schema,
+        "/$defs/PublicRecordingContext/properties/dispatch_id",
+        &["string"],
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &schema,
+        "/$defs/PublicRecordingContext/properties/task_number",
+        &["integer"],
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &schema,
+        "/$defs/PublicRecordingContext/minProperties",
+        Value::from(1),
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &schema,
+        "/$defs/PublicRecordingContext/additionalProperties",
+        Value::Bool(false),
+        &mut issues,
+    );
+    assert_schema_pointer_required(
+        &schema,
+        "/$defs/PublicRecordingContext/anyOf/0",
+        &["branch_closure_id"],
+        &mut issues,
+    );
+    assert_schema_pointer_required(
+        &schema,
+        "/$defs/PublicRecordingContext/anyOf/1",
+        &["task_number", "dispatch_id"],
+        &mut issues,
+    );
+    assert_phase_detail_recording_context_required(
+        &schema,
+        "task_closure_recording_ready",
+        &["task_number", "dispatch_id"],
+        &mut issues,
+    );
+    assert_phase_detail_recording_context_required(
+        &schema,
+        "release_readiness_recording_ready",
+        &["branch_closure_id"],
+        &mut issues,
+    );
+    assert_phase_detail_recording_context_required(
+        &schema,
+        "release_blocker_resolution_required",
+        &["branch_closure_id"],
+        &mut issues,
+    );
+    assert_phase_detail_recording_context_required(
+        &schema,
+        "final_review_recording_ready",
+        &["dispatch_id", "branch_closure_id"],
+        &mut issues,
+    );
+    assert_phase_detail_field_forbidden_outside_allowed_phase_details(
+        &schema,
+        "recording_context",
+        &[
+            "task_closure_recording_ready",
+            "release_readiness_recording_ready",
+            "release_blocker_resolution_required",
+            "final_review_recording_ready",
+        ],
+        &mut issues,
+    );
+    assert_phase_field_field_forbidden_outside_const_phase(
+        &schema,
+        "harness_phase",
+        "executing",
+        "execution_command_context",
+        &mut issues,
+    );
+    assert_phase_detail_field_omitted_only_in_lanes(
+        &schema,
+        "recommended_command",
+        &[
+            "task_review_result_pending",
+            "final_review_outcome_pending",
+            "test_plan_refresh_required",
+        ],
+        &mut issues,
+    );
+    check_types!(
+        "finish_review_gate_pass_branch_closure_id",
+        ["string", "null"],
+        optional
+    );
     check_types!("execution_mode", ["string"], required);
     check_types!("execution_fingerprint", ["string"], required);
     check_types!("evidence_path", ["string"], required);
@@ -556,9 +1092,6 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_array_items!("reason_codes", ["string"]);
     check_types!("warning_codes", ["array"], required);
     check_array_items!("warning_codes", ["string"]);
-    check_types!("latest_packet_fingerprint", ["string", "null"], optional);
-    check_types!("latest_head_sha", ["string", "null"], optional);
-    check_types!("latest_base_sha", ["string", "null"], optional);
     check_types!("active_task", ["integer", "null"], optional);
     check_types!("active_step", ["integer", "null"], optional);
     check_types!("blocking_task", ["integer", "null"], optional);
@@ -651,7 +1184,9 @@ fn checked_in_repo_safety_schema_matches_generated_output_and_session_entry_sche
     );
 
     assert!(
-        !schemas_dir.join("session-entry-resolve.schema.json").exists(),
+        !schemas_dir
+            .join("session-entry-resolve.schema.json")
+            .exists(),
         "active schema writers should not emit a session-entry schema artifact"
     );
 
@@ -692,21 +1227,19 @@ fn checked_in_workflow_schemas_match_generated_output() {
     let schemas_dir = unique_temp_dir("workflow-schemas");
     write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
 
-    let generated_status =
-        fs::read_to_string(schemas_dir.join("workflow-status.schema.json"))
-            .expect("generated workflow-status schema should read");
+    let generated_status = fs::read_to_string(schemas_dir.join("workflow-status.schema.json"))
+        .expect("generated workflow-status schema should read");
     let checked_in_status =
         fs::read_to_string(repo_fixture_path("schemas/workflow-status.schema.json"))
             .expect("checked-in workflow-status schema should read");
-    let generated_status_json: Value =
-        serde_json::from_str(&generated_status).expect("generated workflow-status schema should parse");
-    let checked_in_status_json: Value =
-        serde_json::from_str(&checked_in_status).expect("checked-in workflow-status schema should parse");
+    let generated_status_json: Value = serde_json::from_str(&generated_status)
+        .expect("generated workflow-status schema should parse");
+    let checked_in_status_json: Value = serde_json::from_str(&checked_in_status)
+        .expect("checked-in workflow-status schema should parse");
     assert_eq!(generated_status_json, checked_in_status_json);
 
-    let generated_resolve =
-        fs::read_to_string(schemas_dir.join("workflow-resolve.schema.json"))
-            .expect("generated workflow-resolve schema should read");
+    let generated_resolve = fs::read_to_string(schemas_dir.join("workflow-resolve.schema.json"))
+        .expect("generated workflow-resolve schema should read");
     let checked_in_resolve =
         fs::read_to_string(repo_fixture_path("schemas/workflow-resolve.schema.json"))
             .expect("checked-in workflow-resolve schema should read");
@@ -715,6 +1248,177 @@ fn checked_in_workflow_schemas_match_generated_output() {
     let checked_in_resolve_json: Value = serde_json::from_str(&checked_in_resolve)
         .expect("checked-in workflow-resolve schema should parse");
     assert_eq!(generated_resolve_json, checked_in_resolve_json);
+
+    let generated_operator = fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
+        .expect("generated workflow-operator schema should read");
+    let checked_in_operator =
+        fs::read_to_string(repo_fixture_path("schemas/workflow-operator.schema.json"))
+            .expect("checked-in workflow-operator schema should read");
+    let generated_operator_json: Value = serde_json::from_str(&generated_operator)
+        .expect("generated workflow-operator schema should parse");
+    let checked_in_operator_json: Value = serde_json::from_str(&checked_in_operator)
+        .expect("checked-in workflow-operator schema should parse");
+    assert_eq!(generated_operator_json, checked_in_operator_json);
+}
+
+#[test]
+fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
+    let schemas_dir = unique_temp_dir("workflow-operator-schema-vocab");
+    write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
+
+    let generated_operator = fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
+        .expect("generated workflow-operator schema should read");
+    let generated_operator_json: Value = serde_json::from_str(&generated_operator)
+        .expect("generated workflow-operator schema should parse");
+    let properties = generated_operator_json["properties"]
+        .as_object()
+        .expect("workflow-operator schema should contain properties");
+
+    assert_eq!(properties["schema_version"]["const"], Value::from(1));
+    for phase in [
+        "executing",
+        "task_closure_pending",
+        "document_release_pending",
+        "final_review_pending",
+        "qa_pending",
+        "ready_for_branch_completion",
+        "handoff_required",
+        "pivot_required",
+    ] {
+        assert!(
+            generated_operator.contains(&format!("\"{phase}\"")),
+            "workflow-operator schema should include phase '{phase}' in the public phase vocabulary"
+        );
+    }
+    for value in ["none", "record_handoff", "record_pivot"] {
+        assert!(
+            generated_operator.contains(&format!("\"{value}\"")),
+            "workflow-operator schema should include follow_up_override '{value}'"
+        );
+    }
+    let mut issues = Vec::new();
+    assert_schema_pointer_required(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorExecutionCommandContext",
+        &["command_kind", "task_number", "step_id"],
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorExecutionCommandContext/properties/task_number",
+        &["integer"],
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorExecutionCommandContext/properties/step_id",
+        &["integer"],
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorExecutionCommandContext/additionalProperties",
+        Value::Bool(false),
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorRecordingContext/properties/branch_closure_id",
+        &["string"],
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorRecordingContext/properties/dispatch_id",
+        &["string"],
+        &mut issues,
+    );
+    assert_schema_pointer_types(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorRecordingContext/properties/task_number",
+        &["integer"],
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorRecordingContext/minProperties",
+        Value::from(1),
+        &mut issues,
+    );
+    assert_schema_pointer_value(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorRecordingContext/additionalProperties",
+        Value::Bool(false),
+        &mut issues,
+    );
+    assert_schema_pointer_required(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorRecordingContext/anyOf/0",
+        &["branch_closure_id"],
+        &mut issues,
+    );
+    assert_schema_pointer_required(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorRecordingContext/anyOf/1",
+        &["task_number", "dispatch_id"],
+        &mut issues,
+    );
+    assert_phase_detail_recording_context_required(
+        &generated_operator_json,
+        "task_closure_recording_ready",
+        &["task_number", "dispatch_id"],
+        &mut issues,
+    );
+    assert_phase_detail_recording_context_required(
+        &generated_operator_json,
+        "release_readiness_recording_ready",
+        &["branch_closure_id"],
+        &mut issues,
+    );
+    assert_phase_detail_recording_context_required(
+        &generated_operator_json,
+        "release_blocker_resolution_required",
+        &["branch_closure_id"],
+        &mut issues,
+    );
+    assert_phase_detail_recording_context_required(
+        &generated_operator_json,
+        "final_review_recording_ready",
+        &["dispatch_id", "branch_closure_id"],
+        &mut issues,
+    );
+    assert_phase_detail_field_forbidden_outside_allowed_phase_details(
+        &generated_operator_json,
+        "recording_context",
+        &[
+            "task_closure_recording_ready",
+            "release_readiness_recording_ready",
+            "release_blocker_resolution_required",
+            "final_review_recording_ready",
+        ],
+        &mut issues,
+    );
+    assert_phase_field_field_forbidden_outside_const_phase(
+        &generated_operator_json,
+        "phase",
+        "executing",
+        "execution_command_context",
+        &mut issues,
+    );
+    assert_phase_detail_field_omitted_only_in_lanes(
+        &generated_operator_json,
+        "recommended_command",
+        &[
+            "task_review_result_pending",
+            "final_review_outcome_pending",
+            "test_plan_refresh_required",
+        ],
+        &mut issues,
+    );
+    assert!(
+        issues.is_empty(),
+        "workflow-operator schema should lock non-null context ids and non-empty recording_context shapes: {issues:?}"
+    );
 }
 
 #[test]
