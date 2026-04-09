@@ -47,6 +47,47 @@ fn repo_fixture_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
 }
 
+#[test]
+fn active_engineering_approved_plans_reference_existing_source_specs() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let plans_dir = repo_root.join("docs/featureforge/plans");
+    let mut missing = Vec::new();
+
+    for entry in fs::read_dir(&plans_dir).expect("active plans directory should be readable") {
+        let entry = entry.expect("plan directory entry should be readable");
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("md") {
+            continue;
+        }
+
+        let plan = parse_plan_file(&path).unwrap_or_else(|error| {
+            panic!(
+                "active approved plan fixture should parse: {}: {error}",
+                path.display()
+            )
+        });
+        if plan.workflow_state != "Engineering Approved" {
+            continue;
+        }
+
+        let source_spec_path = repo_root.join(&plan.source_spec_path);
+        if !source_spec_path.is_file() {
+            missing.push(format!(
+                "{} -> {}",
+                path.strip_prefix(repo_root)
+                    .unwrap_or(path.as_path())
+                    .display(),
+                plan.source_spec_path
+            ));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "every active Engineering Approved plan should point at an existing source spec, missing: {missing:?}"
+    );
+}
+
 fn install_fixture(repo_root: &Path, fixture_name: &str, destination_rel: &str) {
     let destination = repo_root.join(destination_rel);
     if let Some(parent) = destination.parent() {

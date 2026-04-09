@@ -205,9 +205,11 @@ pub struct WorkflowOperator {
     pub follow_up_override: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "WorkflowOperatorRecordingContext")]
     pub recording_context: Option<WorkflowOperatorRecordingContext>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "WorkflowOperatorExecutionCommandContext")]
     pub execution_command_context: Option<WorkflowOperatorExecutionCommandContext>,
     #[schemars(with = "WorkflowOperatorNextActionSchema")]
     pub next_action: String,
@@ -1087,6 +1089,7 @@ fn finish_requires_test_plan_refresh(context: &OperatorContext) -> bool {
 
 fn review_requires_execution_reentry(context: &OperatorContext) -> bool {
     context.phase == "final_review_pending"
+        && context.operator_phase_detail != "final_review_dispatch_required"
         && context
             .gate_review
             .as_ref()

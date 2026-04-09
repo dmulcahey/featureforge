@@ -33,6 +33,9 @@ use crate::execution::final_review::{
     authoritative_test_plan_artifact_path_checked, parse_artifact_document,
     parse_final_review_receipt, resolve_release_base_branch, validate_final_review_receipt,
 };
+use crate::execution::handoff::{
+    WorkflowTransferRecordIdentity, current_workflow_transfer_record_exists,
+};
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
     EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
@@ -117,6 +120,34 @@ enum FollowUpOverrideSchema {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+enum QaRequirementSchema {
+    #[serde(rename = "required")]
+    Required,
+    #[serde(rename = "not-required")]
+    NotRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExecutionCommandKindSchema {
+    Begin,
+    Complete,
+    Reopen,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum RequiredFollowUpSchema {
+    ExecutionReentry,
+    RepairReviewState,
+    RecordReviewDispatch,
+    RecordBranchClosure,
+    ResolveReleaseBlocker,
+    RecordHandoff,
+    RecordPivot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 enum NextActionSchema {
     #[serde(rename = "advance late stage")]
     AdvanceLateStage,
@@ -173,6 +204,7 @@ pub struct PlanExecutionStatus {
     pub current_qa_branch_closure_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_qa_result: Option<String>,
+    #[schemars(with = "Option<QaRequirementSchema>")]
     pub qa_requirement: Option<String>,
     #[schemars(with = "FollowUpOverrideSchema")]
     pub follow_up_override: String,
@@ -360,6 +392,7 @@ pub struct StatusBlockingRecord {
     pub record_type: String,
     pub record_id: Option<String>,
     pub review_state_status: String,
+    #[schemars(with = "Option<RequiredFollowUpSchema>")]
     pub required_follow_up: Option<String>,
     pub message: String,
 }
@@ -385,6 +418,7 @@ pub struct PublicRecordingContext {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PublicExecutionCommandContext {
+    #[schemars(with = "ExecutionCommandKindSchema")]
     pub command_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_number: Option<u32>,
@@ -649,11 +683,22 @@ pub struct ReopenRequest {
 
 #[derive(Debug, Clone)]
 pub struct TransferRequest {
-    pub repair_task: u32,
-    pub repair_step: u32,
-    pub source: String,
     pub reason: String,
-    pub expect_execution_fingerprint: String,
+    pub mode: TransferRequestMode,
+}
+
+#[derive(Debug, Clone)]
+pub enum TransferRequestMode {
+    RepairStep {
+        repair_task: u32,
+        repair_step: u32,
+        source: String,
+        expect_execution_fingerprint: String,
+    },
+    WorkflowHandoff {
+        scope: String,
+        to: String,
+    },
 }
 
 impl ExecutionRuntime {
@@ -1587,6 +1632,9 @@ pub fn write_plan_execution_schema(output_dir: &Path) -> Result<(), JsonFailure>
             )
         });
     }
+    tighten_plan_execution_public_context_schemas(&mut schema_json)?;
+    tighten_plan_execution_routing_field_schemas(&mut schema_json)?;
+    tighten_plan_execution_phase_bound_recording_context_contracts(&mut schema_json)?;
     let payload = serde_json::to_string_pretty(&schema_json).map_err(|error| {
         JsonFailure::new(
             FailureClass::EvidenceWriteFailed,
@@ -1603,6 +1651,348 @@ pub fn write_plan_execution_schema(output_dir: &Path) -> Result<(), JsonFailure>
             format!("Could not write plan execution schema: {error}"),
         )
     })?;
+    Ok(())
+}
+
+fn tighten_plan_execution_public_context_schemas(
+    schema_json: &mut serde_json::Value,
+) -> Result<(), JsonFailure> {
+    let defs = schema_json
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `$defs`.",
+            )
+        })?;
+    let execution_context = defs
+        .get_mut("PublicExecutionCommandContext")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `PublicExecutionCommandContext`.",
+            )
+        })?;
+    tighten_public_execution_command_context_schema(execution_context)?;
+    let recording_context = defs
+        .get_mut("PublicRecordingContext")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing `PublicRecordingContext`.",
+            )
+        })?;
+    tighten_public_recording_context_schema(recording_context)?;
+    Ok(())
+}
+
+fn tighten_plan_execution_routing_field_schemas(
+    schema_json: &mut serde_json::Value,
+) -> Result<(), JsonFailure> {
+    let properties = schema_json
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema is missing top-level `properties`.",
+            )
+        })?;
+    tighten_schema_property_type(properties, "recommended_command", "string")?;
+    Ok(())
+}
+
+fn tighten_plan_execution_phase_bound_recording_context_contracts(
+    schema_json: &mut serde_json::Value,
+) -> Result<(), JsonFailure> {
+    append_phase_bound_recording_context_requirements(
+        schema_json,
+        "task_closure_recording_ready",
+        &["task_number", "dispatch_id"],
+    )?;
+    append_phase_bound_recording_context_requirements(
+        schema_json,
+        "release_readiness_recording_ready",
+        &["branch_closure_id"],
+    )?;
+    append_phase_bound_recording_context_requirements(
+        schema_json,
+        "release_blocker_resolution_required",
+        &["branch_closure_id"],
+    )?;
+    append_phase_bound_recording_context_requirements(
+        schema_json,
+        "final_review_recording_ready",
+        &["dispatch_id", "branch_closure_id"],
+    )?;
+    append_phase_detail_field_forbidden_outside_allowed_phase_details(
+        schema_json,
+        "recording_context",
+        &[
+            "task_closure_recording_ready",
+            "release_readiness_recording_ready",
+            "release_blocker_resolution_required",
+            "final_review_recording_ready",
+        ],
+    )?;
+    append_phase_field_forbidden_outside_const_phase(
+        schema_json,
+        "harness_phase",
+        "executing",
+        "execution_command_context",
+    )?;
+    append_phase_detail_field_omitted_only_in_lanes(
+        schema_json,
+        "recommended_command",
+        &[
+            "task_review_result_pending",
+            "final_review_outcome_pending",
+            "test_plan_refresh_required",
+        ],
+    )?;
+    Ok(())
+}
+
+fn tighten_public_execution_command_context_schema(
+    schema: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<(), JsonFailure> {
+    let properties = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Execution command context schema is missing `properties`.",
+            )
+        })?;
+    tighten_schema_property_type(properties, "task_number", "integer")?;
+    tighten_schema_property_type(properties, "step_id", "integer")?;
+    schema.insert(
+        String::from("required"),
+        serde_json::json!(["command_kind", "task_number", "step_id"]),
+    );
+    schema.insert(
+        String::from("additionalProperties"),
+        serde_json::Value::Bool(false),
+    );
+    Ok(())
+}
+
+fn tighten_public_recording_context_schema(
+    schema: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<(), JsonFailure> {
+    let properties = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Recording context schema is missing `properties`.",
+            )
+        })?;
+    tighten_schema_property_type(properties, "branch_closure_id", "string")?;
+    tighten_schema_property_type(properties, "dispatch_id", "string")?;
+    tighten_schema_property_type(properties, "task_number", "integer")?;
+    schema.insert(
+        String::from("additionalProperties"),
+        serde_json::Value::Bool(false),
+    );
+    schema.insert(String::from("minProperties"), serde_json::Value::from(1));
+    schema.insert(
+        String::from("anyOf"),
+        serde_json::json!([
+            {"required": ["branch_closure_id"]},
+            {"required": ["task_number", "dispatch_id"]}
+        ]),
+    );
+    Ok(())
+}
+
+fn tighten_schema_property_type(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    expected_type: &str,
+) -> Result<(), JsonFailure> {
+    let property = properties
+        .get_mut(field)
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                format!("Schema is missing property `{field}`."),
+            )
+        })?;
+    property.insert(
+        String::from("type"),
+        serde_json::Value::String(String::from(expected_type)),
+    );
+    Ok(())
+}
+
+pub(crate) fn resolve_public_follow_up_override(
+    raw_pivot_required: bool,
+    raw_handoff_required: bool,
+) -> String {
+    if raw_pivot_required {
+        String::from("record_pivot")
+    } else if raw_handoff_required {
+        String::from("record_handoff")
+    } else {
+        String::from("none")
+    }
+}
+
+fn append_phase_bound_recording_context_requirements(
+    schema_json: &mut serde_json::Value,
+    phase_detail: &str,
+    required_fields: &[&str],
+) -> Result<(), JsonFailure> {
+    let root = schema_json.as_object_mut().ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            "Plan execution schema root is not an object.",
+        )
+    })?;
+    let all_of = root
+        .entry(String::from("allOf"))
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema `allOf` is not an array.",
+            )
+        })?;
+    all_of.push(serde_json::json!({
+        "if": {
+            "properties": {
+                "phase_detail": { "const": phase_detail }
+            }
+        },
+        "then": {
+            "required": ["recording_context"],
+            "properties": {
+                "recording_context": {
+                    "required": required_fields
+                }
+            }
+        }
+    }));
+    Ok(())
+}
+
+fn append_phase_detail_field_forbidden_outside_allowed_phase_details(
+    schema_json: &mut serde_json::Value,
+    field: &str,
+    allowed_phase_details: &[&str],
+) -> Result<(), JsonFailure> {
+    let root = schema_json.as_object_mut().ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            "Plan execution schema root is not an object.",
+        )
+    })?;
+    let all_of = root
+        .entry(String::from("allOf"))
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema `allOf` is not an array.",
+            )
+        })?;
+    all_of.push(serde_json::json!({
+        "if": {
+            "properties": {
+                "phase_detail": { "enum": allowed_phase_details }
+            }
+        },
+        "else": {
+            "not": {
+                "required": [field]
+            }
+        }
+    }));
+    Ok(())
+}
+
+fn append_phase_field_forbidden_outside_const_phase(
+    schema_json: &mut serde_json::Value,
+    phase_field: &str,
+    phase_value: &str,
+    field: &str,
+) -> Result<(), JsonFailure> {
+    let root = schema_json.as_object_mut().ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            "Plan execution schema root is not an object.",
+        )
+    })?;
+    let all_of = root
+        .entry(String::from("allOf"))
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema `allOf` is not an array.",
+            )
+        })?;
+    all_of.push(serde_json::json!({
+        "if": {
+            "properties": {
+                (phase_field): { "const": phase_value }
+            }
+        },
+        "else": {
+            "not": {
+                "required": [field]
+            }
+        }
+    }));
+    Ok(())
+}
+
+fn append_phase_detail_field_omitted_only_in_lanes(
+    schema_json: &mut serde_json::Value,
+    field: &str,
+    omission_phase_details: &[&str],
+) -> Result<(), JsonFailure> {
+    let root = schema_json.as_object_mut().ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::EvidenceWriteFailed,
+            "Plan execution schema root is not an object.",
+        )
+    })?;
+    let all_of = root
+        .entry(String::from("allOf"))
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::EvidenceWriteFailed,
+                "Plan execution schema `allOf` is not an array.",
+            )
+        })?;
+    all_of.push(serde_json::json!({
+        "if": {
+            "properties": {
+                "phase_detail": { "enum": omission_phase_details }
+            }
+        },
+        "then": {
+            "not": {
+                "required": [field]
+            }
+        },
+        "else": {
+            "required": [field]
+        }
+    }));
     Ok(())
 }
 
@@ -2760,8 +3150,6 @@ fn derive_public_review_state_status(
                     | "browser_qa_state_not_fresh"
                     | "release_docs_state_stale"
                     | "release_docs_state_not_fresh"
-                    | "review_receipt_reviewer_fingerprint_invalid"
-                    | "review_receipt_reviewer_fingerprint_mismatch"
             )
         })
         || gate_finish.reason_codes.iter().any(|code| {
@@ -2775,8 +3163,6 @@ fn derive_public_review_state_status(
                     | "browser_qa_state_not_fresh"
                     | "release_docs_state_stale"
                     | "release_docs_state_not_fresh"
-                    | "review_receipt_reviewer_fingerprint_invalid"
-                    | "review_receipt_reviewer_fingerprint_mismatch"
             )
         })
     {
@@ -2804,7 +3190,7 @@ fn derive_public_follow_up_override(
                 "blocked_on_plan_revision" | "qa_requirement_missing_or_invalid"
             )
         });
-    let raw_handoff_required =
+    let mut raw_handoff_required =
         status.harness_phase == HarnessPhase::HandoffRequired || status.handoff_required;
 
     if raw_pivot_required
@@ -2816,14 +3202,12 @@ fn derive_public_follow_up_override(
     {
         raw_pivot_required = false;
     }
-
-    if raw_pivot_required {
-        String::from("record_pivot")
-    } else if raw_handoff_required {
-        String::from("record_handoff")
-    } else {
-        String::from("none")
+    if raw_handoff_required && current_workflow_transfer_record_exists_for_status_decision(context)
+    {
+        raw_handoff_required = false;
     }
+
+    resolve_public_follow_up_override(raw_pivot_required, raw_handoff_required)
 }
 
 fn current_workflow_pivot_record_exists_for_status_decision(
@@ -2876,6 +3260,26 @@ fn current_workflow_pivot_record_exists_for_status_decision(
             ))
             && source.contains("**Generated By:** featureforge:workflow-record-pivot")
     })
+}
+
+fn current_workflow_transfer_record_exists_for_status_decision(context: &ExecutionContext) -> bool {
+    if context.plan_rel.trim().is_empty() {
+        return false;
+    }
+    let head_sha = match current_head_sha(&context.runtime.repo_root) {
+        Ok(head_sha) => head_sha,
+        Err(_) => return false,
+    };
+    current_workflow_transfer_record_exists(
+        &context.runtime.state_dir,
+        WorkflowTransferRecordIdentity {
+            repo_slug: &context.runtime.repo_slug,
+            safe_branch: &context.runtime.safe_branch,
+            plan_path: &context.plan_rel,
+            branch_name: &context.runtime.branch_name,
+            head_sha: &head_sha,
+        },
+    )
 }
 
 fn status_pivot_decision_reason_codes(
@@ -3071,7 +3475,9 @@ fn derive_public_phase_detail(
                 } else {
                     String::from("release_readiness_recording_ready")
                 }
-            } else if final_review_dispatch_id.is_some() {
+            } else if final_review_dispatch_id.is_some()
+                && final_review_dispatch_still_current(gate_finish)
+            {
                 String::from("final_review_outcome_pending")
             } else {
                 String::from("final_review_dispatch_required")
@@ -3212,6 +3618,17 @@ pub(crate) fn resolve_exact_execution_command(
             ),
         });
     }
+    None
+}
+
+pub(crate) fn resolve_exact_execution_command_from_context(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    plan_path: &str,
+) -> Option<ExactExecutionCommand> {
+    if let Some(resolved) = resolve_exact_execution_command(status, plan_path) {
+        return Some(resolved);
+    }
     if let Some(task_number) = status
         .blocking_task
         .filter(|_| status.blocking_step.is_none())
@@ -3223,25 +3640,22 @@ pub(crate) fn resolve_exact_execution_command(
                 .max()
         })
     {
+        let step_id = latest_attempted_step_for_task(context, task_number).or_else(|| {
+            context
+                .steps
+                .iter()
+                .find(|step| step.task_number == task_number)
+                .map(|step| step.step_number)
+        })?;
         return Some(ExactExecutionCommand {
             command_kind: "reopen",
             task_number,
-            step_id: None,
+            step_id: Some(step_id),
             recommended_command: format!(
-                "featureforge plan execution reopen --plan {plan_path} --task {task_number} --reason <reason>"
+                "featureforge plan execution reopen --plan {plan_path} --task {task_number} --step {step_id} --source {} --reason <reason> --expect-execution-fingerprint {}",
+                status.execution_mode, status.execution_fingerprint
             ),
         });
-    }
-    None
-}
-
-pub(crate) fn resolve_exact_execution_command_from_context(
-    context: &ExecutionContext,
-    status: &PlanExecutionStatus,
-    plan_path: &str,
-) -> Option<ExactExecutionCommand> {
-    if let Some(resolved) = resolve_exact_execution_command(status, plan_path) {
-        return Some(resolved);
     }
     if !context_step_execution_command_fallback_allowed(status) {
         return None;
@@ -3435,6 +3849,39 @@ mod exact_execution_command_tests {
             resolve_exact_execution_command_from_context(&context, &status, plan_rel.as_str())
                 .is_none(),
             "malformed active execution markers must fail closed instead of synthesizing a begin command"
+        );
+    }
+
+    #[test]
+    fn resolve_exact_execution_command_from_context_derives_exact_reopen_command_for_task_boundary_reentry()
+     {
+        let (_repo_dir, context, plan_rel) = unresolved_execution_context();
+        let mut status =
+            status_from_context(&context).expect("status should derive for exact-command test");
+        status.execution_started = String::from("yes");
+        status.review_state_status = String::from("clean");
+        status.phase_detail = String::from("execution_reentry_required");
+        status.harness_phase = HarnessPhase::Executing;
+        status.execution_mode = String::from("featureforge:executing-plans");
+        status.blocking_task = Some(1);
+        status.blocking_step = None;
+        status
+            .reason_codes
+            .push(String::from("prior_task_review_not_green"));
+
+        let resolved =
+            resolve_exact_execution_command_from_context(&context, &status, plan_rel.as_str())
+                .expect("task-boundary execution reentry should derive an exact reopen command");
+
+        assert_eq!(resolved.command_kind, "reopen");
+        assert_eq!(resolved.task_number, 1);
+        assert_eq!(resolved.step_id, Some(1));
+        assert_eq!(
+            resolved.recommended_command,
+            format!(
+                "featureforge plan execution reopen --plan {plan_rel} --task 1 --step 1 --source featureforge:executing-plans --reason <reason> --expect-execution-fingerprint {}",
+                status.execution_fingerprint
+            )
         );
     }
 
@@ -3690,9 +4137,27 @@ fn derive_public_blocking_records(
             record_type: String::from("release_readiness"),
             record_id: status.current_branch_closure_id.clone(),
             review_state_status: status.review_state_status.clone(),
-            required_follow_up: Some(String::from("record_release_readiness")),
+            required_follow_up: None,
             message: String::from(
                 "A current release-readiness result for the active branch closure is required before late-stage progression can continue.",
+            ),
+        }];
+    }
+
+    if status.phase_detail == "final_review_dispatch_required" {
+        return vec![StatusBlockingRecord {
+            code: String::from("final_review_dispatch_required"),
+            scope_type: String::from("branch"),
+            scope_key: status
+                .current_branch_closure_id
+                .clone()
+                .unwrap_or_else(|| String::from("current")),
+            record_type: String::from("final_review_dispatch"),
+            record_id: None,
+            review_state_status: status.review_state_status.clone(),
+            required_follow_up: Some(String::from("record_review_dispatch")),
+            message: String::from(
+                "A fresh final-review dispatch is required before late-stage progression can continue.",
             ),
         }];
     }
@@ -3809,6 +4274,47 @@ fn status_review_truth_blocked(gate_review: &GateResult) -> bool {
                 | "review_receipt_reviewer_fingerprint_mismatch"
         )
     })
+}
+
+fn final_review_dispatch_still_current(gate_finish: &GateResult) -> bool {
+    const FINAL_REVIEW_DISPATCH_INVALIDATION_CODES: &[&str] = &[
+        "review_artifact_authoritative_provenance_invalid",
+        "review_artifact_malformed",
+        "review_artifact_plan_mismatch",
+        "review_receipt_reviewer_identity_missing",
+        "review_receipt_reviewer_source_not_independent",
+        "review_receipt_reviewer_artifact_path_missing",
+        "review_receipt_reviewer_artifact_unreadable",
+        "review_receipt_reviewer_artifact_not_runtime_owned",
+        "review_receipt_reviewer_fingerprint_invalid",
+        "review_receipt_reviewer_fingerprint_mismatch",
+        "review_receipt_reviewer_artifact_contract_mismatch",
+        "review_receipt_strategy_checkpoint_fingerprint_missing",
+        "review_receipt_strategy_checkpoint_fingerprint_mismatch",
+    ];
+    if gate_finish.failure_class == FailureClass::ArtifactIntegrityMismatch.as_str() {
+        return false;
+    }
+    if gate_finish.reason_codes.iter().any(|code| {
+        FINAL_REVIEW_DISPATCH_INVALIDATION_CODES
+            .iter()
+            .any(|expected| code == expected)
+    }) {
+        return false;
+    }
+    if gate_finish.failure_class == FailureClass::ReviewArtifactNotFresh.as_str()
+        && !gate_finish.reason_codes.iter().any(|code| {
+            matches!(
+                code.as_str(),
+                "final_review_state_missing"
+                    | "final_review_state_stale"
+                    | "final_review_state_not_fresh"
+            )
+        })
+    {
+        return false;
+    }
+    true
 }
 
 fn status_qa_blocked(gate_finish: &GateResult) -> bool {
@@ -4522,7 +5028,6 @@ fn evaluate_pre_checkpoint_finish_gate(context: &ExecutionContext, gate: &mut Ga
         }
     };
     if browser_qa_required
-        && authoritative_state.current_browser_qa_record().is_none()
         && !require_current_branch_test_plan_for_finish(context, &current_head, gate)
     {
         return false;
@@ -8135,8 +8640,14 @@ fn require_current_browser_qa_pass_for_finish(
 pub fn gate_finish_from_context(context: &ExecutionContext) -> GateResult {
     let mut gate = GateState::default();
     enforce_finish_dependency_index_truth(context, &mut gate);
-    merge_gate_result(&mut gate, gate_review_from_context_internal(context, true));
+    merge_gate_result(&mut gate, gate_review_base_result(context, false));
     if !gate.allowed {
+        return gate.finish();
+    }
+    let mut review_truth_gate = GateState::default();
+    enforce_review_authoritative_late_gate_truth(context, &mut review_truth_gate);
+    merge_gate_result(&mut gate, review_truth_gate.finish());
+    if !evaluate_pre_checkpoint_finish_gate(context, &mut gate) || !gate.allowed {
         return gate.finish();
     }
 
@@ -8480,16 +8991,79 @@ pub fn normalize_reopen_request(args: &ReopenArgs) -> Result<ReopenRequest, Json
 }
 
 pub fn normalize_transfer_request(args: &TransferArgs) -> Result<TransferRequest, JsonFailure> {
-    Ok(TransferRequest {
-        repair_task: args.repair_task,
-        repair_step: args.repair_step,
-        source: args.source.as_str().to_owned(),
-        reason: require_normalized_text(
-            &args.reason,
+    let reason = require_normalized_text(
+        &args.reason,
+        FailureClass::InvalidCommandInput,
+        "Transfer reasons may not be blank after whitespace normalization.",
+    )?;
+    let routed_shape_present = args.scope.is_some() || args.to.is_some();
+    let legacy_shape_present = args.repair_task.is_some()
+        || args.repair_step.is_some()
+        || args.source.is_some()
+        || args.expect_execution_fingerprint.is_some();
+
+    if routed_shape_present && legacy_shape_present {
+        return Err(JsonFailure::new(
             FailureClass::InvalidCommandInput,
-            "Transfer reasons may not be blank after whitespace normalization.",
-        )?,
-        expect_execution_fingerprint: args.expect_execution_fingerprint.clone(),
+            "transfer accepts either the routed handoff shape (--scope/--to/--reason) or the legacy repair-step shape (--repair-task/--repair-step/--source/--expect-execution-fingerprint), but not both at once.",
+        ));
+    }
+
+    if routed_shape_present {
+        let scope = args.scope.ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "transfer routed handoff mode requires --scope.",
+            )
+        })?;
+        let to = require_normalized_text(
+            args.to.as_deref().unwrap_or_default(),
+            FailureClass::InvalidCommandInput,
+            "transfer routed handoff mode requires --to.",
+        )?;
+        return Ok(TransferRequest {
+            reason,
+            mode: TransferRequestMode::WorkflowHandoff {
+                scope: scope.as_str().to_owned(),
+                to,
+            },
+        });
+    }
+
+    let repair_task = args.repair_task.ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            "transfer legacy repair-step mode requires --repair-task.",
+        )
+    })?;
+    let repair_step = args.repair_step.ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            "transfer legacy repair-step mode requires --repair-step.",
+        )
+    })?;
+    let source = args.source.ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::InvalidCommandInput,
+            "transfer legacy repair-step mode requires --source.",
+        )
+    })?;
+    let expect_execution_fingerprint =
+        args.expect_execution_fingerprint.clone().ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "transfer legacy repair-step mode requires --expect-execution-fingerprint.",
+            )
+        })?;
+
+    Ok(TransferRequest {
+        reason,
+        mode: TransferRequestMode::RepairStep {
+            repair_task,
+            repair_step,
+            source: source.as_str().to_owned(),
+            expect_execution_fingerprint,
+        },
     })
 }
 

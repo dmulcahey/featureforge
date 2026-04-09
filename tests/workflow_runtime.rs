@@ -15,11 +15,13 @@ use assert_cmd::cargo::cargo_bin;
 use bin_support::compiled_featureforge_path;
 use featureforge::contracts::plan::parse_plan_file;
 use featureforge::contracts::spec::parse_spec_file;
+use featureforge::execution::final_review::resolve_release_base_branch;
 use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters, STABLE_EVENT_KINDS,
     STABLE_REASON_CODES,
 };
-use featureforge::git::{RepositoryIdentity, discover_repo_identity};
+use featureforge::execution::state::current_head_sha as runtime_current_head_sha;
+use featureforge::git::{RepositoryIdentity, discover_repo_identity, discover_slug_identity};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
@@ -352,85 +354,29 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
 }
 
 fn current_branch_name(repo: &Path) -> String {
-    let mut command = Command::new("git");
-    command
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo);
-    let output = run_checked(command, "git rev-parse --abbrev-ref HEAD");
-    String::from_utf8(output.stdout)
-        .expect("branch output should be utf-8")
-        .trim()
-        .to_owned()
+    discover_slug_identity(repo).branch_name
 }
 
 fn expected_release_base_branch(repo: &Path) -> String {
-    const COMMON_BASE_BRANCHES: [&str; 5] = ["main", "master", "develop", "dev", "trunk"];
-
     let current_branch = current_branch_name(repo);
-    if COMMON_BASE_BRANCHES.contains(&current_branch.as_str()) {
-        return current_branch;
-    }
-
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
-                .current_dir(repo);
-            command
-        },
-        "git for-each-ref refs/heads for expected base branch",
-    );
-    let branches = String::from_utf8(output.stdout)
-        .expect("branch listing output should be utf-8")
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    for candidate in COMMON_BASE_BRANCHES {
-        if branches.contains(candidate) {
-            return candidate.to_owned();
-        }
-    }
-    current_branch
+    resolve_release_base_branch(&repo.join(".git"), &current_branch).unwrap_or(current_branch)
 }
 
 fn current_head_sha(repo: &Path) -> String {
-    let mut command = Command::new("git");
-    command.args(["rev-parse", "HEAD"]).current_dir(repo);
-    let output = run_checked(command, "git rev-parse HEAD");
-    String::from_utf8(output.stdout)
-        .expect("head sha output should be utf-8")
-        .trim()
-        .to_owned()
+    runtime_current_head_sha(repo).expect("head sha should resolve")
 }
 
 fn current_head_tree_sha(repo: &Path) -> String {
-    let mut command = Command::new("git");
-    command.args(["rev-parse", "HEAD^{tree}"]).current_dir(repo);
-    let output = run_checked(command, "git rev-parse HEAD^{tree}");
-    String::from_utf8(output.stdout)
-        .expect("head tree sha output should be utf-8")
-        .trim()
-        .to_owned()
+    gix::discover(repo)
+        .expect("head tree helper should discover repository")
+        .head_tree_id_or_empty()
+        .expect("head tree helper should resolve HEAD tree")
+        .detach()
+        .to_string()
 }
 
 fn repo_slug(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::new(compiled_featureforge_path());
-            command.current_dir(repo).args(["repo", "slug"]);
-            command
-        },
-        "featureforge repo slug",
-    );
-    String::from_utf8(output.stdout)
-        .expect("repo slug output should be utf-8")
-        .lines()
-        .find_map(|line| line.strip_prefix("SLUG="))
-        .unwrap_or_else(|| panic!("repo slug output should include SLUG=..., got missing slug"))
-        .to_owned()
+    discover_slug_identity(repo).repo_slug
 }
 
 fn sha256_hex(contents: &[u8]) -> String {
@@ -7566,7 +7512,7 @@ fn canonical_workflow_phase_routes_mixed_stale_matrix() {
             true,
             "final_review_pending",
             "dispatch final review",
-            "featureforge:executing-plans",
+            "featureforge:requesting-code-review",
             "final_review_freshness",
         ),
         (
@@ -7576,7 +7522,7 @@ fn canonical_workflow_phase_routes_mixed_stale_matrix() {
             false,
             "final_review_pending",
             "dispatch final review",
-            "featureforge:executing-plans",
+            "featureforge:requesting-code-review",
             "final_review_freshness",
         ),
         (

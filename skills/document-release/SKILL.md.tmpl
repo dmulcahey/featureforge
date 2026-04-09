@@ -261,6 +261,33 @@ Allowed `**Result:**` values:
 - `needs-user-input`
 - `blocked`
 
+## Step 7.6: Runtime-Owned Release-Readiness Recording (Workflow-Routed)
+
+For workflow-routed implementation work, the companion artifact above is not the release gate itself.
+
+- workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
+- Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness.
+- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution record-branch-closure --plan <approved-plan-path>` and rerun workflow/operator before recording release-readiness.
+- When workflow/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone.
+- If workflow/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions.
+
+Example runtime-owned path:
+
+```bash
+OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
+PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
+if [ "$PHASE_DETAIL" = "branch_closure_recording_required_for_release_readiness" ]; then
+  "$_FEATUREFORGE_BIN" plan execution record-branch-closure --plan "$APPROVED_PLAN_PATH"
+  OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
+  PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
+fi
+if [ "$PHASE_DETAIL" != "release_readiness_recording_ready" ]; then
+  echo "Stop and return to workflow: release-readiness recording is not currently routable."
+  exit 1
+fi
+"$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH" --result ready --summary-file release-summary.md
+```
+
 ## Output
 
 Provide:

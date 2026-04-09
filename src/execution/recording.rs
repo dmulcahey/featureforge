@@ -355,3 +355,18 @@ pub(crate) fn clear_task_review_dispatch_lineage_for_execution_reentry(
     authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(true)
 }
+
+pub(crate) fn persist_review_state_repair_follow_up(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    follow_up: Option<&str>,
+) -> Result<(), JsonFailure> {
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(());
+    };
+    authoritative_state.set_review_state_repair_follow_up(follow_up)?;
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(())
+}

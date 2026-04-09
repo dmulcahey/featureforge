@@ -112,7 +112,7 @@ The default status surface should be concrete enough to implement consistently:
 workspace_state_id
 current_branch_reviewed_state_id
 current_branch_closure_id
-phase
+harness_phase
 phase_detail
 review_state_status
 recording_context
@@ -128,14 +128,13 @@ finish_review_gate_pass_branch_closure_id
 blocking_records[]
 next_action
 recommended_command
-verbose_available
 ```
 
 Frozen status enums:
 
 - `review_state_status`: `clean` | `stale_unreviewed` | `missing_current_closure`
-- `phase_detail`: `execution_in_progress` | `execution_reentry_required` | `task_review_dispatch_required` | `task_review_result_pending` | `task_closure_recording_ready` | `branch_closure_recording_required_for_release_readiness` | `release_readiness_recording_ready` | `release_blocker_resolution_required` | `final_review_dispatch_required` | `final_review_outcome_pending` | `final_review_recording_ready` | `qa_recording_required` | `finish_review_gate_ready` | `finish_completion_gate_ready` | `handoff_recording_required` | `planning_reentry_required`
-- `next_action`: `continue execution` | `execution reentry required` | `dispatch review` | `wait for external review result` | `close current task` | `repair review state / reenter execution` | `record branch closure` | `advance late stage` | `resolve release blocker` | `dispatch final review` | `run QA` | `run finish review gate` | `run finish completion gate` | `hand off` | `pivot / return to planning`
+- `phase_detail`: `execution_in_progress` | `execution_reentry_required` | `task_review_dispatch_required` | `task_review_result_pending` | `task_closure_recording_ready` | `branch_closure_recording_required_for_release_readiness` | `release_readiness_recording_ready` | `release_blocker_resolution_required` | `final_review_dispatch_required` | `final_review_outcome_pending` | `final_review_recording_ready` | `qa_recording_required` | `test_plan_refresh_required` | `finish_review_gate_ready` | `finish_completion_gate_ready` | `handoff_recording_required` | `planning_reentry_required`
+- `next_action`: `continue execution` | `execution reentry required` | `dispatch review` | `wait for external review result` | `close current task` | `repair review state / reenter execution` | `record branch closure` | `advance late stage` | `resolve release blocker` | `dispatch final review` | `run QA` | `refresh test plan` | `run finish review gate` | `run finish completion gate` | `hand off` | `pivot / return to planning`
 
 Default summarization policy:
 
@@ -144,7 +143,7 @@ Default summarization policy:
 3. Fully enumerated historical superseded closures are available only in expanded or verbose output.
 4. `stale_unreviewed` blockers are always surfaced explicitly in default output.
 5. `recommended_command` must point to exactly one runtime command string or command template whenever the next runtime mutation or inspection command is actionable. It must never be a conjunction or disjunction of multiple commands.
-6. `recommended_command` may be omitted only for external-review wait substates where `next_action=wait for external review result` and no runtime mutation is actionable until external review input arrives.
+6. `recommended_command` may be omitted only for external-review wait substates where `next_action=wait for external review result` and no runtime mutation is actionable until external review input arrives, or for `phase_detail=test_plan_refresh_required` where the current-branch test-plan artifact must be refreshed through `featureforge:plan-eng-review` before direct QA recording becomes actionable.
 7. when present, `recommended_command` must point to a single concrete or template form of `close-current-task`, `repair-review-state`, `record-review-dispatch`, `record-branch-closure`, `advance-late-stage`, `record-qa`, `gate-review`, `gate-finish`, `transfer`, `featureforge workflow operator --plan <path>`, `featureforge workflow record-pivot`, or the exact step-oriented execution command that the operator is expected to run next.
 8. `phase_detail` must carry dispatch-versus-recording readiness when `phase` alone is insufficient.
 9. `current_task_closures` entries must each carry their own `reviewed_state_id` and effective reviewed-surface summary; there is no singular task-wide current reviewed state outside that collection.
@@ -153,6 +152,7 @@ Default summarization policy:
 12. when `phase_detail=release_readiness_recording_ready` or `phase_detail=release_blocker_resolution_required`, `recording_context.branch_closure_id` must be exposed for authoritative binding context, transparency, and primitive fallback to `record-release-readiness` even though the aggregate release-readiness command still takes only `--plan`, `--result`, and `--summary-file`.
 13. in `final_review_recording_ready`, `recording_context.branch_closure_id` is exposed for authoritative binding context, transparency, and primitive fallback even though the aggregate final-review command still takes only `--dispatch-id`.
 14. when `phase=executing` and the routed `recommended_command` is a step-oriented execution command, the runtime must expose `execution_command_context` with a deterministic `command_kind = begin|complete|reopen`; `note` remains auxiliary and must not be surfaced as the singular routed command.
+15. the supporting `plan execution status` surface exposes the harness-owned phase field as `harness_phase`; `phase` is reserved for the authoritative `workflow operator` route contract.
 
 `blocking_records[]` must be a structured summary of active public blockers, with each element carrying at least:
 

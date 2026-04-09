@@ -97,6 +97,7 @@ The runtime should expose one authoritative routing surface plus supporting diag
    - current closure summaries, including per-task `reviewed_state_id` in `current_task_closures`
    - current milestone summaries
    - blocking records
+   - `harness_phase`
    - `phase_detail`
    - `recommended_command`
    This is supporting diagnostic detail. If it ever appears to disagree with workflow/operator about routing, workflow/operator wins.
@@ -173,7 +174,10 @@ flowchart TD
     Z -->|No| ZP[Phase = pivot_required]
     Z -->|Yes| ZQ{QA Requirement: required?}
     ZQ -->|Yes| AA[Phase = qa_pending]
-    AA --> AB[record-qa]
+    AA --> AAR{phase_detail = test_plan_refresh_required?}
+    AAR -->|Yes| AAP[featureforge:plan-eng-review refreshes current-branch test-plan artifact]
+    AAP --> AA
+    AAR -->|No| AB[record-qa]
     ZQ -->|No| AC[Phase = ready_for_branch_completion]
     AB --> AC
     AC --> AD[gate-review]
@@ -241,20 +245,20 @@ For the current task:
 ```bash
 featureforge workflow operator --plan docs/featureforge/plans/<plan>.md
 # if recommended_command is begin:
-featureforge plan execution begin --plan docs/featureforge/plans/<plan>.md --task <n>
+featureforge plan execution begin --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --execution-mode <mode> --expect-execution-fingerprint <fingerprint>
 
-# auxiliary progress logging, not the routed recommended_command:
-featureforge plan execution note --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --message "<progress note>"
+# auxiliary blocked/interrupted logging, not the routed recommended_command:
+featureforge plan execution note --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --state blocked|interrupted --message "<status note>" --expect-execution-fingerprint <fingerprint>
 
 featureforge workflow operator --plan docs/featureforge/plans/<plan>.md
 # if recommended_command is complete:
-featureforge plan execution complete --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id>
+featureforge plan execution complete --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --source <source> --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint <fingerprint>
 ```
 
 If the task needs to be reopened:
 
 ```bash
-featureforge plan execution reopen --plan docs/featureforge/plans/<plan>.md --task <n>
+featureforge plan execution reopen --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --source <source> --reason <reason> --expect-execution-fingerprint <fingerprint>
 ```
 
 If responsibility must move:
@@ -301,8 +305,8 @@ featureforge plan execution record-review-dispatch --plan docs/featureforge/plan
 
 - validating that review-dispatch lineage can be recorded
 - failing before mutation if blocked
-- appending the review-dispatch checkpoint only if allowed
-- returning a `dispatch_id` that later review-recording commands must reference explicitly
+- returning explicit dispatch action semantics: `action=recorded|already_current|blocked`
+- returning a `dispatch_id` whenever `action` is `recorded` or `already_current`; later review-recording commands must reference that exact dispatch id explicitly
 
 ### Checkpoint at the end of this step
 
@@ -640,20 +644,23 @@ This stage is conditional.
 
 - `phase=qa_pending`
 - `review_state_status=clean`
-- `phase_detail=qa_recording_required`
-- `recommended_command=featureforge plan execution record-qa --plan <path> --result pass|fail --summary-file <qa-report>`
-- `next_action=run QA`
+- `phase_detail=qa_recording_required` when the current-branch test-plan artifact is fresh and direct QA recording is actionable, or `phase_detail=test_plan_refresh_required` when that artifact must be refreshed first
+- `recommended_command=featureforge plan execution record-qa --plan <path> --result pass|fail --summary-file <qa-report>` only when `phase_detail=qa_recording_required`
+- `recommended_command` omitted when `phase_detail=test_plan_refresh_required` because plan-eng-review must refresh the current-branch test-plan artifact before direct QA recording can resume
+- `next_action=run QA` when `phase_detail=qa_recording_required`, or `next_action=refresh test plan` when `phase_detail=test_plan_refresh_required`
 
-`qa_pending` only exists when current branch closure, current release-readiness result `ready`, and current final-review result `pass` already exist for the same branch closure and approved-plan metadata says `QA Requirement: required`. If those prerequisite milestones are missing, workflow/operator must reroute to the earlier authoritative late-stage phase instead of staying in `qa_pending`. If current reviewed state is `stale_unreviewed`, workflow/operator must reroute to `executing` with exact next command `repair-review-state`.
+`qa_pending` only exists when current branch closure, current release-readiness result `ready`, and current final-review result `pass` already exist for the same branch closure and approved-plan metadata says `QA Requirement: required`. If those prerequisite milestones are missing, workflow/operator must reroute to the earlier authoritative late-stage phase instead of staying in `qa_pending`. If current reviewed state is `stale_unreviewed`, workflow/operator must reroute to `executing` with exact next command `repair-review-state`. When current-branch test-plan freshness or provenance is invalid, workflow/operator must stay in `qa_pending` but switch to `phase_detail=test_plan_refresh_required` with `next_action=refresh test plan` and no direct `recommended_command` until `featureforge:plan-eng-review` regenerates the current-branch test-plan artifact.
 If `QA Requirement` metadata is missing or invalid when the runtime must decide between `qa_pending` and `ready_for_branch_completion`, workflow/operator must fail closed to `phase=pivot_required` with `phase_detail=planning_reentry_required`.
 
 ### What the agent does
 
-The QA contract is separate from `advance-late-stage`.
+The QA contract is separate from `advance-late-stage` and only applies when workflow/operator reports `phase_detail=qa_recording_required`.
 
 ```bash
 featureforge plan execution record-qa --plan docs/featureforge/plans/<plan>.md --result pass|fail --summary-file <qa-report>
 ```
+
+If workflow/operator instead reports `phase_detail=test_plan_refresh_required`, do not run `record-qa`. Route through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact first, then rerun workflow/operator and status before returning to QA recording.
 
 The agent then rechecks workflow state:
 
@@ -789,7 +796,7 @@ featureforge workflow record-pivot --plan docs/featureforge/plans/<plan>.md --re
 | --- | --- | --- |
 | `document_release_pending` | release-facing docs/readiness work is next | phase-detail-driven `record-branch-closure` or `advance-late-stage` |
 | `final_review_pending` | independent final review is next | phase-detail-driven `record-review-dispatch`, then waiting for external reviewer result, then `advance-late-stage` |
-| `qa_pending` | QA is next and all earlier late-stage branch milestones are already current for the same branch closure | QA recording |
+| `qa_pending` | QA policy still governs the next step and all earlier late-stage branch milestones are already current for the same branch closure | phase-detail-driven QA recording or test-plan refresh reroute |
 | `ready_for_branch_completion` | branch can finish through the remaining finish gates | finish-gate progression |
 
 ## Agent Command Playbook By Phase
@@ -798,13 +805,13 @@ This table is a multi-step operator playbook. It is not the literal `recommended
 
 | phase | typical command bundle |
 | --- | --- |
-| `executing` | `featureforge workflow operator --plan <path>`, then the exact routed execution command returned in `recommended_command` (`begin`, `complete`, or `reopen`); `featureforge plan execution note --plan <path> ...` remains auxiliary progress logging and is not the routed `recommended_command` |
+| `executing` | `featureforge workflow operator --plan <path>`, then the exact routed execution command returned in `recommended_command` (`begin`, `complete`, or `reopen`); `featureforge plan execution note --plan <path> --state blocked|interrupted ... --expect-execution-fingerprint <fingerprint>` remains auxiliary blocked/interrupted logging and is not the routed `recommended_command` |
 | review dispatch checkpoint | `featureforge plan execution record-review-dispatch --plan <path> --scope task --task <n>` or `featureforge plan execution record-review-dispatch --plan <path> --scope final-review`, then wait while workflow/operator reports the corresponding external-review-pending phase detail |
 | task closure | `featureforge plan execution close-current-task --plan <path> --task <n> --dispatch-id ... --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` |
 | review-state repair | `featureforge plan execution status --plan <path>`, then `featureforge plan execution repair-review-state --plan <path>`, then follow its exact returned `recommended_command`; rerun `featureforge workflow operator --plan <path>` next only when the repair command itself returns that as the immediate reroute or after completing the returned follow-up step |
 | `document_release_pending` | `featureforge plan execution record-branch-closure --plan <path>` when `phase_detail=branch_closure_recording_required_for_release_readiness`, then `featureforge plan execution advance-late-stage --plan <path> --result ready|blocked --summary-file <path>` when `phase_detail=release_readiness_recording_ready` or when `phase_detail=release_blocker_resolution_required` after the blocker has been resolved |
 | `final_review_pending` | `featureforge plan execution record-review-dispatch --plan <path> --scope final-review` when `phase_detail=final_review_dispatch_required`, then wait while `phase_detail=final_review_outcome_pending`, then `featureforge plan execution advance-late-stage --plan <path> --dispatch-id <id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>` after the reviewer result arrives |
-| `qa_pending` | `featureforge plan execution record-qa --plan <path> --result pass|fail --summary-file <path>` when `phase_detail=qa_recording_required` |
+| `qa_pending` | `featureforge plan execution record-qa --plan <path> --result pass|fail --summary-file <path>` when `phase_detail=qa_recording_required`; route through `featureforge:plan-eng-review` to refresh the current-branch test-plan artifact when `phase_detail=test_plan_refresh_required`, then rerun `featureforge workflow operator --plan <path>` |
 | `ready_for_branch_completion` | `featureforge plan execution gate-review --plan <path>`, then `featureforge workflow operator --plan <path>`, then `featureforge plan execution gate-finish --plan <path>` once workflow/operator advances to `phase_detail=finish_completion_gate_ready` |
 | `handoff_required` | `featureforge plan execution transfer --plan <path> --scope <task|branch> --to <owner> --reason <reason>` |
 | `pivot_required` | `featureforge workflow record-pivot --plan <path> --reason <reason>` |
@@ -819,7 +826,7 @@ This is the reduced-burden version of the future process.
 | close a reviewed task | `featureforge plan execution record-review-dispatch --plan <path> --scope task --task <n>` + review + `featureforge workflow operator --plan <path> --external-review-result-ready` + `featureforge plan execution close-current-task --plan <path> --task <n> --dispatch-id ... --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` |
 | repair stale review state | `featureforge workflow operator --plan <path>` + `featureforge plan execution status --plan <path>` + `featureforge plan execution repair-review-state --plan <path>` + follow the exact reroute returned by `repair-review-state` before attempting more review or late-stage recording |
 | move into late stages | `featureforge workflow operator --plan <path>` + phase-detail-driven `featureforge plan execution record-branch-closure --plan <path>` or `featureforge plan execution advance-late-stage --plan <path> --result ready|blocked --summary-file <path>` + `featureforge workflow operator --plan <path>` + phase-detail-driven `featureforge plan execution record-review-dispatch --plan <path> --scope final-review`, then wait for the external reviewer result, then `featureforge workflow operator --plan <path> --external-review-result-ready` + `featureforge plan execution advance-late-stage --plan <path> --dispatch-id <id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>` + `featureforge workflow operator --plan <path>` |
-| satisfy QA | `featureforge workflow operator --plan <path>` + `featureforge plan execution record-qa --plan <path> --result pass|fail --summary-file <path>`, then `featureforge workflow operator --plan <path>` |
+| satisfy QA | `featureforge workflow operator --plan <path>` + either `featureforge plan execution record-qa --plan <path> --result pass|fail --summary-file <path>` when `phase_detail=qa_recording_required` or `featureforge:plan-eng-review` when `phase_detail=test_plan_refresh_required`, then `featureforge workflow operator --plan <path>` |
 | finish safely | `featureforge workflow operator --plan <path>` + `featureforge plan execution gate-review --plan <path>` + `featureforge workflow operator --plan <path>` + `featureforge plan execution gate-finish --plan <path>` |
 
 The process stays explicit, but the repeated review-state orchestration is now internalized into the runtime instead of being recreated in every skill example.
@@ -920,9 +927,9 @@ sequenceDiagram
 featureforge workflow operator --plan docs/featureforge/plans/my-plan.md
 featureforge plan execution status --plan docs/featureforge/plans/my-plan.md
 
-featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task 1
-featureforge plan execution note --plan docs/featureforge/plans/my-plan.md --task 1 --step step-1 --message "implemented parser support"
-featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task 1 --step step-1
+featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <fingerprint-1>
+featureforge plan execution note --plan docs/featureforge/plans/my-plan.md --task 1 --step 1 --state blocked --message "waiting on parser clarification" --expect-execution-fingerprint <fingerprint-2>
+featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task 1 --step 1 --source featureforge:executing-plans --claim "implemented parser support" --manual-verify-summary "verified parser support" --expect-execution-fingerprint <fingerprint-2>
 
 featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/my-plan.md --scope task --task 1
 # runtime returns dispatch_id=task-1-review-1
@@ -962,6 +969,7 @@ featureforge workflow operator --plan docs/featureforge/plans/my-plan.md --exter
 featureforge plan execution advance-late-stage --plan docs/featureforge/plans/my-plan.md --dispatch-id <recording_context.dispatch_id> --reviewer-source fresh-context-subagent --reviewer-id reviewer-1 --result pass --summary-file final-review.md
 
 featureforge workflow operator --plan docs/featureforge/plans/my-plan.md
+# if phase_detail=test_plan_refresh_required, reroute to featureforge:plan-eng-review to regenerate the current-branch test-plan artifact, then rerun workflow/operator
 # run this only when phase=qa_pending and phase_detail=qa_recording_required
 featureforge plan execution record-qa --plan docs/featureforge/plans/my-plan.md --result pass --summary-file qa-report.md
 
@@ -1000,8 +1008,8 @@ featureforge plan execution gate-finish --plan docs/featureforge/plans/my-plan.m
 ### What the agent does
 
 ```bash
-featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task 2
-featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task 2 --step step-1
+featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task 2 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <fingerprint-3>
+featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task 2 --step 1 --source featureforge:executing-plans --claim "completed task 2" --manual-verify-summary "verified task 2" --expect-execution-fingerprint <fingerprint-4>
 featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/my-plan.md --scope task --task 2
 # runtime returns dispatch_id=task-2-review-1
 featureforge workflow operator --plan docs/featureforge/plans/my-plan.md --external-review-result-ready
@@ -1127,6 +1135,7 @@ featureforge workflow operator --plan docs/featureforge/plans/my-plan.md --exter
 # workflow/operator now reports phase_detail=final_review_recording_ready
 featureforge plan execution advance-late-stage --plan docs/featureforge/plans/my-plan.md --dispatch-id final-review-3 --reviewer-source fresh-context-subagent --reviewer-id reviewer-1 --result pass --summary-file final-review.md
 featureforge workflow operator --plan docs/featureforge/plans/my-plan.md
+# if phase_detail=test_plan_refresh_required, reroute to featureforge:plan-eng-review to regenerate the current-branch test-plan artifact, then rerun workflow/operator
 # run the next line only when phase=qa_pending and phase_detail=qa_recording_required
 featureforge plan execution record-qa --plan docs/featureforge/plans/my-plan.md --result pass --summary-file qa-report.md
 featureforge workflow operator --plan docs/featureforge/plans/my-plan.md
@@ -1161,8 +1170,8 @@ featureforge plan execution gate-finish --plan docs/featureforge/plans/my-plan.m
 ### What the agent does
 
 ```bash
-featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task 5
-featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task 5 --step step-1
+featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task 5 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <fingerprint-5>
+featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task 5 --step 1 --source featureforge:executing-plans --claim "completed stabilization task" --manual-verify-summary "verified stabilization task" --expect-execution-fingerprint <fingerprint-6>
 featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/my-plan.md --scope task --task 5
 # runtime returns dispatch_id=task-5-review-1
 featureforge workflow operator --plan docs/featureforge/plans/my-plan.md --external-review-result-ready
@@ -1197,8 +1206,8 @@ featureforge plan execution repair-review-state --plan docs/featureforge/plans/m
 # repair-review-state returned recommended_command=featureforge workflow operator --plan ...
 featureforge workflow operator --plan docs/featureforge/plans/my-plan.md
 
-featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task <repair-task>
-featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task <repair-task> --step <repair-step>
+featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task <repair-task> --step <repair-step> --execution-mode featureforge:executing-plans --expect-execution-fingerprint <repair-fingerprint-1>
+featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task <repair-task> --step <repair-step> --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint <repair-fingerprint-2>
 featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/my-plan.md --scope task --task <repair-task>
 # runtime returns dispatch_id=repair-task-review-1
 featureforge workflow operator --plan docs/featureforge/plans/my-plan.md --external-review-result-ready

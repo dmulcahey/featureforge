@@ -1,23 +1,30 @@
+#[path = "support/bin.rs"]
+mod bin_support;
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/repo_template.rs"]
+mod repo_template_support;
 
-use assert_cmd::cargo::CommandCargoExt;
+use bin_support::compiled_featureforge_path;
 use featureforge::execution::final_review::{
     FinalReviewReceipt, FinalReviewReceiptExpectations, FinalReviewReceiptIssue,
     latest_branch_artifact_path, parse_final_review_receipt, resolve_release_base_branch,
     validate_final_review_receipt,
 };
+use featureforge::execution::state::current_head_sha as runtime_current_head_sha;
 use featureforge::execution::state::hash_contract_plan;
+use featureforge::git::discover_slug_identity;
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifacts_dir, harness_state_path,
 };
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
+use repo_template_support::populate_repo_from_template;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -54,34 +61,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
 
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.arg("init").current_dir(repo);
-            command
-        },
-        "git init",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.name", "FeatureForge Test"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.name",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.email", "featureforge-tests@example.com"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.email",
-    );
+    populate_repo_from_template(repo);
     write_file(&repo.join("README.md"), &format!("# {name}\n"));
     run_checked(
         {
@@ -94,10 +74,12 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     run_checked(
         {
             let mut command = Command::new("git");
-            command.args(["commit", "-m", "init"]).current_dir(repo);
+            command
+                .args(["commit", "-m", "rename fixture"])
+                .current_dir(repo);
             command
         },
-        "git commit init",
+        "git commit rename fixture",
     );
     run_checked(
         {
@@ -191,116 +173,36 @@ fn sha256_hex(contents: &[u8]) -> String {
 }
 
 fn current_head_sha(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["rev-parse", "HEAD"]).current_dir(repo);
-            command
-        },
-        "git rev-parse HEAD",
-    );
-    String::from_utf8(output.stdout)
-        .expect("head sha should be utf-8")
-        .trim()
-        .to_owned()
+    runtime_current_head_sha(repo).expect("head sha should resolve")
 }
 
 fn current_head_tree_sha(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["rev-parse", "HEAD^{tree}"]).current_dir(repo);
-            command
-        },
-        "git rev-parse HEAD^{tree}",
-    );
-    String::from_utf8(output.stdout)
-        .expect("head tree sha should be utf-8")
-        .trim()
-        .to_owned()
+    gix::discover(repo)
+        .expect("head tree helper should discover repository")
+        .head_tree_id_or_empty()
+        .expect("head tree helper should resolve HEAD tree")
+        .detach()
+        .to_string()
 }
 
 fn git_dir_path(repo: &Path) -> PathBuf {
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["rev-parse", "--git-dir"]).current_dir(repo);
-            command
-        },
-        "git rev-parse --git-dir",
-    );
-    let git_dir = String::from_utf8(output.stdout)
-        .expect("git dir should be utf-8")
-        .trim()
-        .to_owned();
-    let git_dir_path = PathBuf::from(&git_dir);
-    if git_dir_path.is_absolute() {
-        git_dir_path
-    } else {
-        repo.join(git_dir_path)
-    }
+    gix::discover(repo)
+        .expect("git dir helper should discover repository")
+        .path()
+        .to_path_buf()
 }
 
 fn branch_name(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["rev-parse", "--abbrev-ref", "HEAD"])
-                .current_dir(repo);
-            command
-        },
-        "git rev-parse branch",
-    );
-    String::from_utf8(output.stdout)
-        .expect("branch should be utf-8")
-        .trim()
-        .to_owned()
+    discover_slug_identity(repo).branch_name
 }
 
 fn expected_base_branch(repo: &Path) -> String {
     let current = branch_name(repo);
-    let output = run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
-                .current_dir(repo);
-            command
-        },
-        "git for-each-ref refs/heads",
-    );
-    let mut branches = String::from_utf8(output.stdout)
-        .expect("branch list should be utf-8")
-        .lines()
-        .map(str::trim)
-        .filter(|branch| !branch.is_empty() && *branch != current)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    branches.sort();
-    branches.dedup();
-    if branches.len() == 1 {
-        return branches.remove(0);
-    }
-    current
+    resolve_release_base_branch(&repo.join(".git"), &current).unwrap_or(current)
 }
 
 fn repo_slug(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command =
-                Command::cargo_bin("featureforge").expect("featureforge binary should exist");
-            command.current_dir(repo).args(["repo", "slug"]);
-            command
-        },
-        "featureforge repo slug",
-    );
-    String::from_utf8(output.stdout)
-        .expect("repo slug output should be utf-8")
-        .lines()
-        .find_map(|line| line.strip_prefix("SLUG="))
-        .unwrap_or_else(|| panic!("repo slug output should include SLUG=..."))
-        .to_owned()
+    discover_slug_identity(repo).repo_slug
 }
 
 fn project_artifact_dir(repo: &Path, state: &Path) -> PathBuf {
@@ -1739,8 +1641,7 @@ fn latest_branch_artifact_path_prefers_timestamp_over_username_prefix() {
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)

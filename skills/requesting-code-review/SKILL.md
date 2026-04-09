@@ -93,7 +93,10 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 - For terminal whole-diff review, only dispatch a fresh final review when workflow/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`.
 - For terminal whole-diff review, if workflow/operator already reports `phase_detail=final_review_outcome_pending`, do not dispatch a second reviewer; wait for the current final-review result or return to the current execution flow.
 - For terminal whole-diff review, when workflow/operator reports `final_review_dispatch_required`, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review` before dispatching the reviewer.
-- For terminal whole-diff review, if the review-dispatch command returns `allowed` `false`, stop and return to the current execution flow; do not dispatch review against stale, drifted, or mismatched execution evidence.
+- For terminal whole-diff review, treat review-dispatch results as `action=recorded|already_current|blocked` plus `dispatch_id` (when action is `recorded` or `already_current`); do not use stale `allowed`-flag interpretation.
+- For terminal whole-diff review, if `action=blocked`, stop and return to the current execution flow; do not dispatch review against stale, drifted, or mismatched execution evidence.
+- For terminal whole-diff review, if `action` is anything other than `recorded` or `already_current`, stop and return to the current execution flow.
+- For terminal whole-diff review, require a non-empty `dispatch_id` whenever `action` is `recorded` or `already_current`; this `dispatch_id` is the required binding input for later final-review recording.
 - After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and require `phase_detail=final_review_recording_ready` before recording the result with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>`.
 - For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: `gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is the dispatch-proof minting path when the runtime requires it for the current boundary.
 - If the review gate returns warning codes such as `legacy_evidence_format`, keep the warning in the review context but do not treat it as a blocker when `allowed` remains `true`.
@@ -140,7 +143,7 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base aligned with `featureforge:document-release` and `gate-finish`.
 
-The reviewer should use the shared review checklist from `review/checklist.md` in the repo when available, otherwise fall back to the installed FeatureForge copy.
+The reviewer MUST use the shared review checklist from `review/checklist.md` in the repo when available, otherwise fall back to the installed FeatureForge copy.
 
 **3. Dispatch the code-reviewer agent:**
 
@@ -312,13 +315,21 @@ if [ "$PHASE" != "final_review_pending" ] || [ "$PHASE_DETAIL" != "final_review_
   echo "Stop and return to execution: workflow/operator did not expose final-review dispatch as the current route."
   exit 1
 fi
-REVIEW_GATE_JSON=$("$_FEATUREFORGE_BIN" plan execution record-review-dispatch --plan "$APPROVED_PLAN_PATH" --scope final-review)
-REVIEW_ALLOWED=$(printf '%s\n' "$REVIEW_GATE_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.allowed ? "true" : "false")')
-if [ "$REVIEW_ALLOWED" != "true" ]; then
-  echo "Stop and return to execution: review gate rejected the current execution evidence."
+REVIEW_DISPATCH_JSON=$("$_FEATUREFORGE_BIN" plan execution record-review-dispatch --plan "$APPROVED_PLAN_PATH" --scope final-review)
+REVIEW_DISPATCH_ACTION=$(printf '%s\n' "$REVIEW_DISPATCH_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(String(parsed.action ?? ""))')
+DISPATCH_ID=$(printf '%s\n' "$REVIEW_DISPATCH_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.dispatch_id || "")')
+if [ "$REVIEW_DISPATCH_ACTION" = "blocked" ]; then
+  echo "Stop and return to execution: review-dispatch minting rejected the current execution evidence."
   exit 1
 fi
-DISPATCH_ID=$(printf '%s\n' "$REVIEW_GATE_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.dispatch_id || "")')
+if [ "$REVIEW_DISPATCH_ACTION" != "recorded" ] && [ "$REVIEW_DISPATCH_ACTION" != "already_current" ]; then
+  echo "Stop and return to execution: review-dispatch returned an unexpected action."
+  exit 1
+fi
+if [ -z "$DISPATCH_ID" ]; then
+  echo "Stop and return to execution: review-dispatch returned no dispatch_id."
+  exit 1
+fi
 TASK_PACKET_CONTEXT_TASK_1=$("$_FEATUREFORGE_BIN" plan contract build-task-packet --plan "$APPROVED_PLAN_PATH" --task 1 --format markdown --persist yes)
 TASK_PACKET_CONTEXT_TASK_2=$("$_FEATUREFORGE_BIN" plan contract build-task-packet --plan "$APPROVED_PLAN_PATH" --task 2 --format markdown --persist yes)
 BASE_BRANCH=<same locally derived review base branch from Step 2>

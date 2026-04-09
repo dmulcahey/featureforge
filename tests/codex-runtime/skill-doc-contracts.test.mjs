@@ -620,8 +620,14 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /if \[ -n "\$ACTIVE_TASK\$BLOCKING_TASK\$RESUME_TASK" \]; then/);
   assert.match(reviewSkill, /OPERATOR_JSON=\$\("\$_FEATUREFORGE_BIN" workflow operator --plan "\$APPROVED_PLAN_PATH" --json\)/);
   assert.match(reviewSkill, /if \[ "\$PHASE" != "final_review_pending" \] \|\| \[ "\$PHASE_DETAIL" != "final_review_dispatch_required" \]; then/);
-  assert.match(reviewSkill, /REVIEW_GATE_JSON=\$\("\$_FEATUREFORGE_BIN" plan execution record-review-dispatch --plan "\$APPROVED_PLAN_PATH" --scope final-review\)/);
-  assert.match(reviewSkill, /if \[ "\$REVIEW_ALLOWED" != "true" \]; then/);
+  assert.match(reviewSkill, /REVIEW_DISPATCH_JSON=\$\("\$_FEATUREFORGE_BIN" plan execution record-review-dispatch --plan "\$APPROVED_PLAN_PATH" --scope final-review\)/);
+  assert.match(reviewSkill, /REVIEW_DISPATCH_ACTION=\$\(printf '%s\\n' "\$REVIEW_DISPATCH_JSON" \| node -e 'const fs = require\("fs"\); const parsed = JSON\.parse\(fs\.readFileSync\(0, "utf8"\)\); process\.stdout\.write\(String\(parsed\.action \?\? ""\)\)'\)/);
+  assert.match(reviewSkill, /if \[ "\$REVIEW_DISPATCH_ACTION" = "blocked" \]; then/);
+  assert.match(reviewSkill, /if \[ "\$REVIEW_DISPATCH_ACTION" != "recorded" \] && \[ "\$REVIEW_DISPATCH_ACTION" != "already_current" \]; then/);
+  assert.match(reviewSkill, /if \[ -z "\$DISPATCH_ID" \]; then/);
+  assert.doesNotMatch(reviewSkill, /REVIEW_DISPATCH_ALLOWED=/);
+  assert.doesNotMatch(reviewSkill, /REVIEW_GATE_JSON/);
+  assert.doesNotMatch(reviewSkill, /review gate rejected the current execution evidence/);
   assert.match(reviewSkill, /RECORDING_READY_JSON=\$\("\$_FEATUREFORGE_BIN" workflow operator --plan "\$APPROVED_PLAN_PATH" --external-review-result-ready --json\)/);
   assert.match(reviewSkill, /if \[ "\$RECORDING_PHASE_DETAIL" != "final_review_recording_ready" \]; then/);
   assert.match(reviewSkill, /"\$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "\$APPROVED_PLAN_PATH" --dispatch-id "\$DISPATCH_ID" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary\.md/);
@@ -634,6 +640,10 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(finishSkill, /If the exact approved plan path is unavailable or helper status fails, stop and return to the current execution flow instead of guessing\./);
   assert.match(finishSkill, /Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON\./);
   assert.match(finishSkill, /If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; branch completion is only valid when all three are `null`\./);
+  assert.match(
+    finishSkill,
+    /keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> `featureforge workflow operator --plan <approved-plan-path>` -> any required `featureforge:qa-only` handoff -> `record-qa` only when `phase_detail=qa_recording_required` -> rerun `featureforge workflow operator --plan <approved-plan-path>` -> `gate-review` only when `phase_detail=finish_review_gate_ready` -> rerun `featureforge workflow operator --plan <approved-plan-path>` -> `gate-finish` only when `phase_detail=finish_completion_gate_ready`\./,
+  );
   assert.match(finishSkill, /If the current work is governed by an approved FeatureForge plan, treat the approved plan's normalized `\*\*QA Requirement:\*\* required\|not-required` metadata as authoritative for workflow-routed finish gating\./);
   assert.match(finishSkill, /Treat the current-branch test-plan artifact as a QA scope\/provenance input only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context\./);
   assert.match(finishSkill, /Match current-branch artifacts by their `\*\*Branch:\*\*` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`\./);
@@ -1458,6 +1468,11 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
 
   const documentRelease = readUtf8(getSkillPath('document-release'));
   assert.match(documentRelease, /does not own `git commit`, `git merge`, or `git push`/);
+  assert.match(documentRelease, /workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone\./);
+  assert.match(documentRelease, /Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness\./);
+  assert.match(documentRelease, /If workflow\/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution record-branch-closure --plan <approved-plan-path>` and rerun workflow\/operator before recording release-readiness\./);
+  assert.match(documentRelease, /When workflow\/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready\|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone\./);
+  assert.match(documentRelease, /If workflow\/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions\./);
   assert.doesNotMatch(documentRelease, /\[--write-target git-commit\]/);
 
   const finishSkill = readUtf8(getSkillPath('finishing-a-development-branch'));

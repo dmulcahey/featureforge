@@ -47,6 +47,14 @@
     "EvaluatorPolicyName": {
       "type": "string"
     },
+    "ExecutionCommandKindSchema": {
+      "enum": [
+        "begin",
+        "complete",
+        "reopen"
+      ],
+      "type": "string"
+    },
     "ExecutionRunId": {
       "type": "string"
     },
@@ -121,53 +129,56 @@
       "type": "string"
     },
     "PublicExecutionCommandContext": {
+      "additionalProperties": false,
       "properties": {
         "command_kind": {
-          "type": "string"
+          "$ref": "#/$defs/ExecutionCommandKindSchema"
         },
         "step_id": {
           "format": "uint32",
           "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": "integer"
         },
         "task_number": {
           "format": "uint32",
           "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": "integer"
         }
       },
       "required": [
-        "command_kind"
+        "command_kind",
+        "task_number",
+        "step_id"
       ],
       "type": "object"
     },
     "PublicRecordingContext": {
-      "properties": {
-        "branch_closure_id": {
-          "type": [
-            "string",
-            "null"
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "branch_closure_id"
           ]
         },
-        "dispatch_id": {
-          "type": [
-            "string",
-            "null"
+        {
+          "required": [
+            "task_number",
+            "dispatch_id"
           ]
+        }
+      ],
+      "minProperties": 1,
+      "properties": {
+        "branch_closure_id": {
+          "type": "string"
+        },
+        "dispatch_id": {
+          "type": "string"
         },
         "task_number": {
           "format": "uint32",
           "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": "integer"
         }
       },
       "type": "object"
@@ -204,6 +215,25 @@
       ],
       "type": "object"
     },
+    "QaRequirementSchema": {
+      "enum": [
+        "required",
+        "not-required"
+      ],
+      "type": "string"
+    },
+    "RequiredFollowUpSchema": {
+      "enum": [
+        "execution_reentry",
+        "repair_review_state",
+        "record_review_dispatch",
+        "record_branch_closure",
+        "resolve_release_blocker",
+        "record_handoff",
+        "record_pivot"
+      ],
+      "type": "string"
+    },
     "ResetPolicy": {
       "enum": [
         "none",
@@ -238,9 +268,13 @@
           "type": "string"
         },
         "required_follow_up": {
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequiredFollowUpSchema"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "review_state_status": {
@@ -265,6 +299,156 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "task_closure_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "task_number",
+              "dispatch_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "release_readiness_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "release_blocker_resolution_required"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "const": "final_review_recording_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "recording_context": {
+            "required": [
+              "dispatch_id",
+              "branch_closure_id"
+            ]
+          }
+        },
+        "required": [
+          "recording_context"
+        ]
+      }
+    },
+    {
+      "else": {
+        "not": {
+          "required": [
+            "recording_context"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "enum": [
+              "task_closure_recording_ready",
+              "release_readiness_recording_ready",
+              "release_blocker_resolution_required",
+              "final_review_recording_ready"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "not": {
+          "required": [
+            "execution_command_context"
+          ]
+        }
+      },
+      "if": {
+        "properties": {
+          "harness_phase": {
+            "const": "executing"
+          }
+        }
+      }
+    },
+    {
+      "else": {
+        "required": [
+          "recommended_command"
+        ]
+      },
+      "if": {
+        "properties": {
+          "phase_detail": {
+            "enum": [
+              "task_review_result_pending",
+              "final_review_outcome_pending",
+              "test_plan_refresh_required"
+            ]
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "recommended_command"
+          ]
+        }
+      }
+    }
+  ],
   "properties": {
     "active_contract_fingerprint": {
       "type": [
@@ -557,9 +741,13 @@
       "type": "integer"
     },
     "qa_requirement": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/QaRequirementSchema"
+        },
+        {
+          "type": "null"
+        }
       ]
     },
     "reason_codes": {
@@ -569,10 +757,7 @@
       "type": "array"
     },
     "recommended_command": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": "string"
     },
     "recording_context": {
       "$ref": "#/$defs/PublicRecordingContext"

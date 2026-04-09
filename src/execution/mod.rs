@@ -7,6 +7,7 @@ pub mod authority;
 pub mod dependency_index;
 pub mod final_review;
 pub mod gates;
+pub mod handoff;
 pub mod harness;
 pub mod leases;
 pub mod mutate;

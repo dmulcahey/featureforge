@@ -6,6 +6,7 @@ mod plan_execution_direct_support;
 mod repo_template_support;
 
 use bin_support::compiled_featureforge_path;
+use featureforge::cli::plan_execution::{ExecutionModeArg, TransferArgs};
 use featureforge::contracts::harness::{WorktreeLease, WorktreeLeaseState};
 use featureforge::execution::authority::{
     persist_active_worktree_lease_index, write_authoritative_unit_review_receipt_artifact,
@@ -16,8 +17,9 @@ use featureforge::execution::harness::{
     ChunkId, ExecutionRunId, RunIdentitySnapshot, WorktreeLeaseBindingSnapshot,
 };
 use featureforge::execution::state::{
-    ExecutionRuntime, current_head_sha as runtime_current_head_sha, gate_finish_from_context,
-    load_execution_context, preflight_from_context,
+    ExecutionRuntime, TransferRequestMode, current_head_sha as runtime_current_head_sha,
+    gate_finish_from_context, load_execution_context, normalize_transfer_request,
+    preflight_from_context,
 };
 use featureforge::git::discover_slug_identity;
 use featureforge::paths::{
@@ -3625,7 +3627,7 @@ fn run_shell(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output 
     let compat_bin = compiled_featureforge_path();
     command
         .current_dir(repo)
-        .env("FEATUREFORGE_COMPAT_BIN", &compat_bin)
+        .env("FEATUREFORGE_COMPAT_BIN", compat_bin)
         .env("FEATUREFORGE_STATE_DIR", state)
         .args(["plan", "execution"])
         .args(args);
@@ -4264,6 +4266,96 @@ fn canonical_preflight_matches_helper_for_clean_plan() {
     assert_eq!(rust["allowed"], helper["allowed"]);
     assert_eq!(rust["failure_class"], helper["failure_class"]);
     assert_eq!(rust["reason_codes"], helper["reason_codes"]);
+}
+
+#[test]
+fn canonical_begin_matches_shell_for_clean_plan() {
+    let (shell_repo_dir, shell_state_dir) = init_repo("plan-execution-begin-shell-parity-shell");
+    let (rust_repo_dir, rust_state_dir) = init_repo("plan-execution-begin-shell-parity-rust");
+    let shell_repo = shell_repo_dir.path();
+    let shell_state = shell_state_dir.path();
+    let rust_repo = rust_repo_dir.path();
+    let rust_state = rust_state_dir.path();
+
+    for repo in [shell_repo, rust_repo] {
+        write_approved_spec(repo);
+        write_single_step_plan(repo, "none");
+    }
+
+    accept_execution_preflight(shell_repo, shell_state, PLAN_REL);
+    accept_execution_preflight(rust_repo, rust_state, PLAN_REL);
+    let shell_status = run_shell_json(
+        shell_repo,
+        shell_state,
+        &["status", "--plan", PLAN_REL],
+        "shell status after preflight acceptance",
+    );
+    let rust_status = run_rust_json(
+        rust_repo,
+        rust_state,
+        &["status", "--plan", PLAN_REL],
+        "rust status after preflight acceptance",
+    );
+    let shell_begin = run_shell_json(
+        shell_repo,
+        shell_state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            shell_status["execution_fingerprint"]
+                .as_str()
+                .expect("shell status fingerprint should exist"),
+        ],
+        "shell begin",
+    );
+    let rust_begin = run_rust_json(
+        rust_repo,
+        rust_state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            rust_status["execution_fingerprint"]
+                .as_str()
+                .expect("rust status fingerprint should exist"),
+        ],
+        "rust begin",
+    );
+
+    for field in [
+        "execution_started",
+        "active_task",
+        "active_step",
+        "blocking_task",
+        "blocking_step",
+        "resume_task",
+        "resume_step",
+        "harness_phase",
+    ] {
+        assert_eq!(
+            rust_begin[field], shell_begin[field],
+            "field {field} should match"
+        );
+    }
+    assert_eq!(
+        rust_begin["execution_command_context"]["command"],
+        shell_begin["execution_command_context"]["command"]
+    );
 }
 
 #[test]
@@ -15247,6 +15339,159 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
 }
 
 #[test]
+fn normalize_transfer_request_rejects_mixed_legacy_and_routed_shapes() {
+    let failure = normalize_transfer_request(&TransferArgs {
+        plan: PathBuf::from(PLAN_REL),
+        scope: Some(featureforge::cli::plan_execution::TransferScopeArg::Task),
+        to: Some(String::from("teammate")),
+        repair_task: Some(1),
+        repair_step: None,
+        source: None,
+        reason: String::from("handoff required"),
+        expect_execution_fingerprint: None,
+    })
+    .expect_err("mixed transfer shapes should fail closed");
+
+    assert_eq!(failure.error_class.as_str(), "InvalidCommandInput");
+    assert!(
+        failure.message.contains("either the routed handoff shape"),
+        "failure should explain the mixed transfer shape contract: {failure:?}"
+    );
+}
+
+#[test]
+fn normalize_transfer_request_requires_routed_fields() {
+    let missing_scope = normalize_transfer_request(&TransferArgs {
+        plan: PathBuf::from(PLAN_REL),
+        scope: None,
+        to: Some(String::from("teammate")),
+        repair_task: None,
+        repair_step: None,
+        source: None,
+        reason: String::from("handoff required"),
+        expect_execution_fingerprint: None,
+    })
+    .expect_err("routed transfer mode should require scope");
+    assert_eq!(missing_scope.error_class.as_str(), "InvalidCommandInput");
+    assert!(
+        missing_scope.message.contains("requires --scope"),
+        "missing scope failure should explain the routed shape requirement: {missing_scope:?}"
+    );
+
+    let missing_to = normalize_transfer_request(&TransferArgs {
+        plan: PathBuf::from(PLAN_REL),
+        scope: Some(featureforge::cli::plan_execution::TransferScopeArg::Branch),
+        to: Some(String::from("   ")),
+        repair_task: None,
+        repair_step: None,
+        source: None,
+        reason: String::from("handoff required"),
+        expect_execution_fingerprint: None,
+    })
+    .expect_err("routed transfer mode should require to");
+    assert_eq!(missing_to.error_class.as_str(), "InvalidCommandInput");
+    assert!(
+        missing_to.message.contains("requires --to"),
+        "missing to failure should explain the routed shape requirement: {missing_to:?}"
+    );
+}
+
+#[test]
+fn normalize_transfer_request_requires_legacy_fields() {
+    for (repair_task, repair_step, source, expect_execution_fingerprint, expected_message) in [
+        (
+            None,
+            Some(2),
+            Some(ExecutionModeArg::ExecutingPlans),
+            Some(String::from("fp")),
+            "--repair-task",
+        ),
+        (
+            Some(1),
+            None,
+            Some(ExecutionModeArg::ExecutingPlans),
+            Some(String::from("fp")),
+            "--repair-step",
+        ),
+        (Some(1), Some(2), None, Some(String::from("fp")), "--source"),
+        (
+            Some(1),
+            Some(2),
+            Some(ExecutionModeArg::ExecutingPlans),
+            None,
+            "--expect-execution-fingerprint",
+        ),
+    ] {
+        let failure = normalize_transfer_request(&TransferArgs {
+            plan: PathBuf::from(PLAN_REL),
+            scope: None,
+            to: None,
+            repair_task,
+            repair_step,
+            source,
+            reason: String::from("repair needed"),
+            expect_execution_fingerprint,
+        })
+        .expect_err("legacy transfer mode should require every legacy field");
+        assert_eq!(failure.error_class.as_str(), "InvalidCommandInput");
+        assert!(
+            failure.message.contains(expected_message),
+            "legacy failure should mention {expected_message}: {failure:?}"
+        );
+    }
+}
+
+#[test]
+fn normalize_transfer_request_accepts_routed_and_legacy_shapes() {
+    let routed = normalize_transfer_request(&TransferArgs {
+        plan: PathBuf::from(PLAN_REL),
+        scope: Some(featureforge::cli::plan_execution::TransferScopeArg::Task),
+        to: Some(String::from("teammate")),
+        repair_task: None,
+        repair_step: None,
+        source: None,
+        reason: String::from("handoff required"),
+        expect_execution_fingerprint: None,
+    })
+    .expect("routed transfer request should normalize");
+    match routed.mode {
+        TransferRequestMode::WorkflowHandoff { scope, to } => {
+            assert_eq!(scope, "task");
+            assert_eq!(to, "teammate");
+            assert_eq!(routed.reason, "handoff required");
+        }
+        other => panic!("expected routed workflow handoff mode, got {other:?}"),
+    }
+
+    let legacy = normalize_transfer_request(&TransferArgs {
+        plan: PathBuf::from(PLAN_REL),
+        scope: None,
+        to: None,
+        repair_task: Some(1),
+        repair_step: Some(2),
+        source: Some(ExecutionModeArg::ExecutingPlans),
+        reason: String::from("repair step reopened"),
+        expect_execution_fingerprint: Some(String::from("fingerprint-123")),
+    })
+    .expect("legacy transfer request should normalize");
+    match legacy.mode {
+        TransferRequestMode::RepairStep {
+            repair_task,
+            repair_step,
+            source,
+            expect_execution_fingerprint,
+        } => {
+            assert_eq!(repair_task, 1);
+            assert_eq!(repair_step, 2);
+            assert_eq!(source, "featureforge:executing-plans");
+            assert_eq!(expect_execution_fingerprint, "fingerprint-123");
+            assert_eq!(legacy.reason, "repair step reopened");
+        }
+        other => panic!("expected legacy repair-step mode, got {other:?}"),
+    }
+}
+
+#[test]
 fn canonical_status_rejects_non_sequential_evidence_attempt_numbers() {
     let (repo_dir, state_dir) = init_repo("plan-execution-malformed-attempt-number");
     let repo = repo_dir.path();
@@ -25549,4 +25794,67 @@ fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
         Value::Bool(true)
     );
     assert_eq!(primitive_final["required_follow_up"], Value::Null);
+}
+
+#[test]
+fn record_qa_test_plan_refresh_reroute_returns_blocked_instead_of_hard_error() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-record-qa-refresh-reroute");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (test_plan_path, qa_path, review_path, release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let qa_path = qa_path.expect("qa artifact should exist for browser-required fixture");
+    write_authoritative_downstream_fixture_state(
+        repo,
+        state,
+        &test_plan_path,
+        &qa_path,
+        &review_path,
+        &release_path,
+    );
+    let _ = accept_execution_preflight(repo, state, PLAN_REL);
+    fs::rename(&test_plan_path, state.join("stale-test-plan.md"))
+        .expect("current authoritative test-plan artifact should be renameable");
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "harness_phase": "qa_pending"
+        }),
+    );
+
+    let summary_path = repo.join("qa-refresh-reroute-summary.md");
+    write_file(
+        &summary_path,
+        "Browser QA artifact fixture for gate-finish coverage.\n",
+    );
+    let qa_json = run_rust_json(
+        repo,
+        state,
+        &[
+            "record-qa",
+            "--plan",
+            PLAN_REL,
+            "--result",
+            "pass",
+            "--summary-file",
+            summary_path
+                .to_str()
+                .expect("QA reroute summary path should be utf-8"),
+        ],
+        "record-qa should fail closed through the shared out-of-phase contract when test-plan refresh is required",
+    );
+
+    assert_eq!(qa_json["action"], Value::from("blocked"));
+    assert_eq!(
+        qa_json["code"],
+        Value::from("out_of_phase_requery_required")
+    );
+    assert_eq!(
+        qa_json["recommended_command"],
+        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+    );
+    assert_eq!(qa_json["rederive_via_workflow_operator"], Value::Bool(true));
+    assert_eq!(qa_json["required_follow_up"], Value::Null);
 }

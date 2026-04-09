@@ -57,7 +57,7 @@ The authoritative public workflow query surface is:
 - `featureforge workflow operator --plan <path>`
 - `featureforge workflow operator --plan <path> --external-review-result-ready` when the caller already has the external task-review or final-review result in hand and needs workflow/operator to surface the matching recording-ready substate
 
-`featureforge plan execution status --plan <path>` is a supporting diagnostic surface. If it ever appears to disagree with workflow/operator about `phase`, `next_action`, or `recommended_command`, workflow/operator is authoritative for public routing and status is treated as supporting detail.
+`featureforge plan execution status --plan <path>` is a supporting diagnostic surface. If it ever appears to disagree with workflow/operator about `harness_phase`, `next_action`, or `recommended_command`, workflow/operator is authoritative for public routing and status is treated as supporting detail.
 
 Explicit usage rule:
 
@@ -73,6 +73,19 @@ When workflow/operator returns a recording-ready substate, it must also surface 
 - `recording_context` is omitted entirely when the current `recommended_command` needs no extra runtime-known identifiers and no documented primitive-fallback or transparency ids need to be surfaced; it is never `null` or an empty object
 - `final_review_recording_ready.recording_context.branch_closure_id` exists for authoritative binding context, transparency, and primitive fallback even though the aggregate final-review command still takes only `--dispatch-id`
 
+`record-review-dispatch` responses use explicit action semantics:
+
+- `action=recorded` when a new dispatch record is appended
+- `action=already_current` when the current dispatch record is already valid for the same boundary
+- `action=blocked` when dispatch recording is rejected for the current boundary
+- `dispatch_id` must be present whenever `action` is `recorded` or `already_current`
+
+When workflow/operator reports `phase=qa_pending` with `phase_detail=test_plan_refresh_required`, direct QA recording is not yet actionable:
+
+- `next_action` becomes `refresh test plan`
+- `recommended_command` remains omitted until the current-branch test-plan artifact is refreshed
+- the agent must route through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before rerunning `featureforge workflow operator --plan <path>` or invoking `record-qa`
+
 | operator intent | preferred aggregate command | lower-level primitive or service boundary |
 | --- | --- | --- |
 | dispatch task review | `featureforge plan execution record-review-dispatch --plan <path> --scope task --task <n>` | `ReviewDispatchService` |
@@ -83,6 +96,7 @@ When workflow/operator returns a recording-ready substate, it must also surface 
 | dispatch final review | `featureforge plan execution record-review-dispatch --plan <path> --scope final-review` | `ReviewDispatchService` |
 | record final-review outcome after dispatch is current and the same branch closure already has a current release-readiness result `ready` | `featureforge plan execution advance-late-stage --plan <path> --dispatch-id <id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>` | `record-final-review` |
 | record QA outcome once current branch closure, current release-readiness result `ready`, and current final-review result `pass` are already current for the same branch closure and `QA Requirement: required` | `featureforge plan execution record-qa --plan <path> --result pass|fail --summary-file <path>` | `QARecordingService` |
+| refresh the current-branch test plan before QA recording when workflow/operator stays in `qa_pending` with `phase_detail=test_plan_refresh_required` | `featureforge:plan-eng-review`, then rerun `featureforge workflow operator --plan <path>` | current-branch test-plan regeneration lane |
 | run first finish gate against the still-current branch closure | `featureforge plan execution gate-review --plan <path>` | finish gate query layer plus gate-pass checkpoint |
 | run final finish gate after `gate-review` already passed for the same still-current branch closure | `featureforge plan execution gate-finish --plan <path>` | finish gate query layer plus `finish_review_gate_pass_branch_closure_id` |
 | record required handoff | `featureforge plan execution transfer --plan <path> --scope <task|branch> --to <owner> --reason <reason>` | execution transfer surface |
@@ -185,8 +199,9 @@ Markdown outputs can still exist, but they are generated from authoritative reco
 2. Release-readiness is recorded.
 3. Final-review dispatch is recorded explicitly through `featureforge plan execution record-review-dispatch --plan <path> --scope final-review`.
 4. Final review is recorded independently only after the same branch closure already has a current release-readiness result `ready` and a current final-review dispatch.
-5. If `QA Requirement: required`, QA is recorded only after current branch closure, current release-readiness result `ready`, and current final-review result `pass` all exist for the same branch closure.
-6. If another change lands, late-stage milestones become stale until `featureforge plan execution repair-review-state --plan <path>` reroutes either to execution reentry or, when drift is confined to `Late-Stage Surface`, back to `featureforge plan execution record-branch-closure --plan <path>`.
+5. If `QA Requirement: required`, workflow/operator may first route to `qa_pending` with `phase_detail=test_plan_refresh_required`; in that lane the agent must reroute through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before any QA recording attempt.
+6. Once workflow/operator reports `qa_pending` with `phase_detail=qa_recording_required`, QA is recorded only after current branch closure, current release-readiness result `ready`, and current final-review result `pass` all exist for the same branch closure.
+7. If another change lands, late-stage milestones become stale until `featureforge plan execution repair-review-state --plan <path>` reroutes either to execution reentry or, when drift is confined to `Late-Stage Surface`, back to `featureforge plan execution record-branch-closure --plan <path>`.
 
 ## Workflow Contract Summary
 
@@ -223,6 +238,7 @@ Preferred future agent-facing `next_action` families:
 - resolve release blocker
 - dispatch final review
 - run QA
+- refresh test plan
 - run finish review gate
 - run finish completion gate
 - hand off

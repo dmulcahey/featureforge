@@ -353,6 +353,22 @@ impl ExecutionTopologyArg {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum TransferScopeArg {
+    Task,
+    Branch,
+}
+
+impl TransferScopeArg {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::Branch => "branch",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct BeginArgs {
     #[arg(long)]
@@ -427,16 +443,20 @@ pub struct ReopenArgs {
 pub struct TransferArgs {
     #[arg(long)]
     pub plan: PathBuf,
-    #[arg(long = "repair-task")]
-    pub repair_task: u32,
-    #[arg(long = "repair-step")]
-    pub repair_step: u32,
+    #[arg(long, value_enum)]
+    pub scope: Option<TransferScopeArg>,
     #[arg(long)]
-    pub source: ExecutionModeArg,
+    pub to: Option<String>,
+    #[arg(long = "repair-task")]
+    pub repair_task: Option<u32>,
+    #[arg(long = "repair-step")]
+    pub repair_step: Option<u32>,
+    #[arg(long)]
+    pub source: Option<ExecutionModeArg>,
     #[arg(long)]
     pub reason: String,
     #[arg(long = "expect-execution-fingerprint")]
-    pub expect_execution_fingerprint: String,
+    pub expect_execution_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

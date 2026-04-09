@@ -1218,6 +1218,9 @@ fn workflow_operator_schema_json(schema_label: &str) -> Result<String, Diagnosti
         )
     })?;
     lock_workflow_operator_schema_version(&mut schema)?;
+    tighten_workflow_operator_public_context_schemas(&mut schema)?;
+    tighten_workflow_operator_routing_field_schemas(&mut schema)?;
+    tighten_workflow_operator_phase_bound_recording_context_contracts(&mut schema)?;
     serde_json::to_string_pretty(&schema).map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
@@ -1265,6 +1268,335 @@ fn lock_workflow_operator_schema_version(
         String::from("const"),
         serde_json::Value::from(WORKFLOW_OPERATOR_SCHEMA_VERSION),
     );
+    Ok(())
+}
+
+fn tighten_workflow_operator_public_context_schemas(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let defs = schema
+        .get_mut("$defs")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema is missing `$defs`.",
+            )
+        })?;
+    let execution_context = defs
+        .get_mut("WorkflowOperatorExecutionCommandContext")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema is missing `WorkflowOperatorExecutionCommandContext`.",
+            )
+        })?;
+    tighten_operator_execution_command_context_schema(execution_context)?;
+    let recording_context = defs
+        .get_mut("WorkflowOperatorRecordingContext")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema is missing `WorkflowOperatorRecordingContext`.",
+            )
+        })?;
+    tighten_operator_recording_context_schema(recording_context)?;
+    Ok(())
+}
+
+fn tighten_workflow_operator_routing_field_schemas(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let properties = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema is missing top-level `properties`.",
+            )
+        })?;
+    tighten_operator_schema_property_type(properties, "recommended_command", "string")?;
+    Ok(())
+}
+
+fn tighten_workflow_operator_phase_bound_recording_context_contracts(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    append_operator_phase_bound_recording_context_requirements(
+        schema,
+        "task_closure_recording_ready",
+        &["task_number", "dispatch_id"],
+    )?;
+    append_operator_phase_bound_recording_context_requirements(
+        schema,
+        "release_readiness_recording_ready",
+        &["branch_closure_id"],
+    )?;
+    append_operator_phase_bound_recording_context_requirements(
+        schema,
+        "release_blocker_resolution_required",
+        &["branch_closure_id"],
+    )?;
+    append_operator_phase_bound_recording_context_requirements(
+        schema,
+        "final_review_recording_ready",
+        &["dispatch_id", "branch_closure_id"],
+    )?;
+    append_operator_phase_detail_field_forbidden_outside_allowed_phase_details(
+        schema,
+        "recording_context",
+        &[
+            "task_closure_recording_ready",
+            "release_readiness_recording_ready",
+            "release_blocker_resolution_required",
+            "final_review_recording_ready",
+        ],
+    )?;
+    append_operator_phase_field_forbidden_outside_const_phase(
+        schema,
+        "phase",
+        "executing",
+        "execution_command_context",
+    )?;
+    append_operator_phase_detail_field_omitted_only_in_lanes(
+        schema,
+        "recommended_command",
+        &[
+            "task_review_result_pending",
+            "final_review_outcome_pending",
+            "test_plan_refresh_required",
+        ],
+    )?;
+    Ok(())
+}
+
+fn tighten_operator_execution_command_context_schema(
+    schema: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<(), DiagnosticError> {
+    let properties = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator execution-command context schema is missing `properties`.",
+            )
+        })?;
+    tighten_operator_schema_property_type(properties, "task_number", "integer")?;
+    tighten_operator_schema_property_type(properties, "step_id", "integer")?;
+    schema.insert(
+        String::from("required"),
+        serde_json::json!(["command_kind", "task_number", "step_id"]),
+    );
+    schema.insert(
+        String::from("additionalProperties"),
+        serde_json::Value::Bool(false),
+    );
+    Ok(())
+}
+
+fn tighten_operator_recording_context_schema(
+    schema: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<(), DiagnosticError> {
+    let properties = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator recording context schema is missing `properties`.",
+            )
+        })?;
+    tighten_operator_schema_property_type(properties, "branch_closure_id", "string")?;
+    tighten_operator_schema_property_type(properties, "dispatch_id", "string")?;
+    tighten_operator_schema_property_type(properties, "task_number", "integer")?;
+    schema.insert(
+        String::from("additionalProperties"),
+        serde_json::Value::Bool(false),
+    );
+    schema.insert(String::from("minProperties"), serde_json::Value::from(1));
+    schema.insert(
+        String::from("anyOf"),
+        serde_json::json!([
+            {"required": ["branch_closure_id"]},
+            {"required": ["task_number", "dispatch_id"]}
+        ]),
+    );
+    Ok(())
+}
+
+fn tighten_operator_schema_property_type(
+    properties: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    expected_type: &str,
+) -> Result<(), DiagnosticError> {
+    let property = properties
+        .get_mut(field)
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("WorkflowOperator schema is missing property `{field}`."),
+            )
+        })?;
+    property.insert(
+        String::from("type"),
+        serde_json::Value::String(String::from(expected_type)),
+    );
+    Ok(())
+}
+
+fn append_operator_phase_bound_recording_context_requirements(
+    schema: &mut serde_json::Value,
+    phase_detail: &str,
+    required_fields: &[&str],
+) -> Result<(), DiagnosticError> {
+    let root = schema.as_object_mut().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "WorkflowOperator schema root is not an object.",
+        )
+    })?;
+    let all_of = root
+        .entry(String::from("allOf"))
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema `allOf` is not an array.",
+            )
+        })?;
+    all_of.push(serde_json::json!({
+        "if": {
+            "properties": {
+                "phase_detail": { "const": phase_detail }
+            }
+        },
+        "then": {
+            "required": ["recording_context"],
+            "properties": {
+                "recording_context": {
+                    "required": required_fields
+                }
+            }
+        }
+    }));
+    Ok(())
+}
+
+fn append_operator_phase_detail_field_forbidden_outside_allowed_phase_details(
+    schema: &mut serde_json::Value,
+    field: &str,
+    allowed_phase_details: &[&str],
+) -> Result<(), DiagnosticError> {
+    let root = schema.as_object_mut().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "WorkflowOperator schema root is not an object.",
+        )
+    })?;
+    let all_of = root
+        .entry(String::from("allOf"))
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema `allOf` is not an array.",
+            )
+        })?;
+    all_of.push(serde_json::json!({
+        "if": {
+            "properties": {
+                "phase_detail": { "enum": allowed_phase_details }
+            }
+        },
+        "else": {
+            "not": {
+                "required": [field]
+            }
+        }
+    }));
+    Ok(())
+}
+
+fn append_operator_phase_field_forbidden_outside_const_phase(
+    schema: &mut serde_json::Value,
+    phase_field: &str,
+    phase_value: &str,
+    field: &str,
+) -> Result<(), DiagnosticError> {
+    let root = schema.as_object_mut().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "WorkflowOperator schema root is not an object.",
+        )
+    })?;
+    let all_of = root
+        .entry(String::from("allOf"))
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema `allOf` is not an array.",
+            )
+        })?;
+    all_of.push(serde_json::json!({
+        "if": {
+            "properties": {
+                (phase_field): { "const": phase_value }
+            }
+        },
+        "else": {
+            "not": {
+                "required": [field]
+            }
+        }
+    }));
+    Ok(())
+}
+
+fn append_operator_phase_detail_field_omitted_only_in_lanes(
+    schema: &mut serde_json::Value,
+    field: &str,
+    omission_phase_details: &[&str],
+) -> Result<(), DiagnosticError> {
+    let root = schema.as_object_mut().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            "WorkflowOperator schema root is not an object.",
+        )
+    })?;
+    let all_of = root
+        .entry(String::from("allOf"))
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowOperator schema `allOf` is not an array.",
+            )
+        })?;
+    all_of.push(serde_json::json!({
+        "if": {
+            "properties": {
+                "phase_detail": { "enum": omission_phase_details }
+            }
+        },
+        "then": {
+            "not": {
+                "required": [field]
+            }
+        },
+        "else": {
+            "required": [field]
+        }
+    }));
     Ok(())
 }
 

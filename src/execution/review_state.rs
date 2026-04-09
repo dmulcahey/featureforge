@@ -14,6 +14,7 @@ use crate::execution::query::{
 };
 use crate::execution::recording::{
     clear_task_review_dispatch_lineage_for_execution_reentry as clear_task_dispatch_lineage,
+    persist_review_state_repair_follow_up,
     restore_current_branch_closure_overlay as persist_current_branch_closure_overlay,
     restore_current_late_stage_overlays, restore_current_task_closure_overlays,
 };
@@ -167,6 +168,7 @@ pub fn repair_review_state(
     args: &StatusArgs,
 ) -> Result<RepairReviewStateOutput, JsonFailure> {
     let mut actions_performed = Vec::new();
+    let context = load_execution_context(runtime, &args.plan)?;
     let mut snapshot = query_review_state(runtime, args)?;
     if !snapshot.missing_derived_overlays.is_empty() {
         let reconcile = reconcile_review_state(runtime, args)?;
@@ -176,6 +178,29 @@ pub fn repair_review_state(
     let unrecoverable_task_scope_task =
         unrecoverable_task_scope_authority_loss_task(runtime, args)?;
     if !snapshot.missing_derived_overlays.is_empty() {
+        if missing_derived_task_scope_overlays(&snapshot.missing_derived_overlays) {
+            clear_task_review_dispatch_lineage_for_execution_reentry(
+                runtime,
+                args,
+                unrecoverable_task_scope_task,
+                &mut actions_performed,
+            )?;
+            persist_review_state_repair_follow_up(runtime, &context, None)?;
+            return Ok(RepairReviewStateOutput {
+                action: String::from("blocked"),
+                current_task_closures: snapshot.current_task_closures,
+                current_branch_closure: snapshot.current_branch_closure,
+                superseded_closures: snapshot.superseded_closures,
+                stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
+                missing_derived_overlays: snapshot.missing_derived_overlays,
+                actions_performed,
+                required_follow_up: Some(String::from("execution_reentry")),
+                recommended_command: recommended_operator_command(args),
+                trace_summary: String::from(
+                    "Repair review state could not derive the missing task-scope overlays from authoritative closure records, so execution reentry is still required before any new closure or milestone can be recorded.",
+                ),
+            });
+        }
         if !snapshot.stale_unreviewed_closures.is_empty() {
             let (required_follow_up, recommended_command, trace_summary) = if snapshot
                 .branch_drift_confined_to_late_stage_surface
@@ -196,6 +221,11 @@ pub fn repair_review_state(
                     ),
                 )
             };
+            persist_review_state_repair_follow_up(
+                runtime,
+                &context,
+                required_follow_up.as_deref(),
+            )?;
             return Ok(RepairReviewStateOutput {
                 action: String::from("blocked"),
                 current_task_closures: snapshot.current_task_closures,
@@ -209,28 +239,7 @@ pub fn repair_review_state(
                 trace_summary,
             });
         }
-        if missing_derived_task_scope_overlays(&snapshot.missing_derived_overlays) {
-            clear_task_review_dispatch_lineage_for_execution_reentry(
-                runtime,
-                args,
-                unrecoverable_task_scope_task,
-                &mut actions_performed,
-            )?;
-            return Ok(RepairReviewStateOutput {
-                action: String::from("blocked"),
-                current_task_closures: snapshot.current_task_closures,
-                current_branch_closure: snapshot.current_branch_closure,
-                superseded_closures: snapshot.superseded_closures,
-                stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
-                missing_derived_overlays: snapshot.missing_derived_overlays,
-                actions_performed,
-                required_follow_up: Some(String::from("execution_reentry")),
-                recommended_command: recommended_operator_command(args),
-                trace_summary: String::from(
-                    "Repair review state could not derive the missing task-scope overlays from authoritative closure records, so execution reentry is still required before any new closure or milestone can be recorded.",
-                ),
-            });
-        }
+        persist_review_state_repair_follow_up(runtime, &context, Some("record_branch_closure"))?;
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -253,6 +262,7 @@ pub fn repair_review_state(
             Some(task_number),
             &mut actions_performed,
         )?;
+        persist_review_state_repair_follow_up(runtime, &context, None)?;
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -289,6 +299,7 @@ pub fn repair_review_state(
                 ),
             )
         };
+        persist_review_state_repair_follow_up(runtime, &context, required_follow_up.as_deref())?;
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -302,6 +313,7 @@ pub fn repair_review_state(
             trace_summary,
         });
     }
+    persist_review_state_repair_follow_up(runtime, &context, None)?;
     Ok(RepairReviewStateOutput {
         action: if repaired_any_overlays {
             String::from("reconciled")
@@ -342,7 +354,6 @@ fn unrecoverable_task_scope_authority_loss_task(
     if status.execution_started != "yes"
         || status.active_task.is_some()
         || status.resume_task.is_some()
-        || status.current_branch_closure_id.is_some()
         || authoritative_sequence == INITIAL_AUTHORITATIVE_SEQUENCE
         || overlay
             .harness_phase

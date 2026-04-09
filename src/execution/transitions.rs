@@ -450,6 +450,30 @@ impl AuthoritativeTransitionState {
         Ok(())
     }
 
+    pub(crate) fn record_runtime_handoff_checkpoint(
+        &mut self,
+        record_path: &str,
+        record_fingerprint: &str,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("harness_phase"),
+            Value::String(String::from("executing")),
+        );
+        root.insert(String::from("handoff_required"), Value::Bool(false));
+        root.insert(
+            String::from("last_handoff_path"),
+            Value::String(record_path.to_owned()),
+        );
+        root.insert(
+            String::from("last_handoff_fingerprint"),
+            Value::String(record_fingerprint.to_owned()),
+        );
+        self.phase = Some(String::from("executing"));
+        self.dirty = true;
+        Ok(())
+    }
+
     pub(crate) fn ensure_initial_dispatch_strategy_checkpoint(
         &mut self,
         context: &ExecutionContext,
@@ -1474,6 +1498,7 @@ impl AuthoritativeTransitionState {
                 String::from("finish_review_gate_pass_branch_closure_id"),
                 Value::Null,
             );
+            root.insert(String::from("review_state_repair_follow_up"), Value::Null);
         }
         self.dirty = true;
 
@@ -1518,6 +1543,29 @@ impl AuthoritativeTransitionState {
         root.insert(
             String::from("current_branch_closure_contract_identity"),
             Value::String(contract_identity.to_owned()),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn review_state_repair_follow_up(&self) -> Option<&str> {
+        self.state_payload
+            .get("review_state_repair_follow_up")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub(crate) fn set_review_state_repair_follow_up(
+        &mut self,
+        follow_up: Option<&str>,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("review_state_repair_follow_up"),
+            follow_up
+                .map(|value| Value::String(value.to_owned()))
+                .unwrap_or(Value::Null),
         );
         self.dirty = true;
         Ok(())
