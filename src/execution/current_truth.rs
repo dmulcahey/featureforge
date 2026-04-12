@@ -13,9 +13,11 @@ use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::handoff::{
     WorkflowTransferRecordIdentity, current_workflow_transfer_record_exists,
 };
-use crate::execution::harness::HarnessPhase;
+use crate::execution::harness::{DownstreamFreshnessState, HarnessPhase};
 use crate::execution::leases::StatusAuthoritativeOverlay;
-use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED;
+use crate::execution::observability::{
+    REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
+};
 use crate::execution::state::{
     ExecutionContext, GateResult, NO_REPO_FILES_MARKER, PlanExecutionStatus,
     branch_closure_record_matches_plan_exemption, resolve_branch_closure_reviewed_tree_sha,
@@ -918,10 +920,29 @@ pub(crate) fn public_late_stage_rederivation_basis_present(status: &PlanExecutio
     status.current_branch_closure_id.is_some()
         || status.finish_review_gate_pass_branch_closure_id.is_some()
         || status.current_release_readiness_state.is_some()
+        || !matches!(
+            status.release_docs_state,
+            DownstreamFreshnessState::NotRequired
+        )
         || status.current_final_review_branch_closure_id.is_some()
         || status.current_final_review_result.is_some()
+        || !matches!(
+            status.final_review_state,
+            DownstreamFreshnessState::NotRequired
+        )
         || status.current_qa_branch_closure_id.is_some()
         || status.current_qa_result.is_some()
+        || !matches!(
+            status.browser_qa_state,
+            DownstreamFreshnessState::NotRequired
+        )
+}
+
+pub(crate) fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {
+    status.active_task.is_some()
+        || status.blocking_task.is_some()
+        || status.resume_task.is_some()
+        || status.execution_command_context.is_some()
 }
 
 pub(crate) fn public_late_stage_stale_unreviewed(
@@ -931,6 +952,23 @@ pub(crate) fn public_late_stage_stale_unreviewed(
 ) -> bool {
     public_late_stage_rederivation_basis_present(status)
         && late_stage_stale_unreviewed(gate_review, gate_finish)
+}
+
+pub(crate) fn late_stage_missing_current_closure_stale_provenance_present(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+) -> Result<bool, JsonFailure> {
+    if branch_closure_refresh_missing_current_closure(status) {
+        return Ok(true);
+    }
+    if !status
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == REASON_CODE_STALE_PROVENANCE)
+    {
+        return Ok(false);
+    }
+    Ok(!tracked_paths_changed_since_record_branch_closure_baseline(context)?.is_empty())
 }
 
 pub(crate) fn current_branch_closure_has_tracked_drift(

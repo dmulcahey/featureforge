@@ -17,8 +17,10 @@ use crate::execution::current_truth::{
     current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings,
     current_task_negative_result_task as shared_current_task_negative_result_task,
     current_task_review_dispatch_id as shared_current_task_review_dispatch_id,
+    execution_state_has_open_steps as shared_execution_state_has_open_steps,
     final_review_dispatch_still_current, finish_requires_test_plan_refresh,
     handoff_decision_scope as shared_handoff_decision_scope,
+    late_stage_missing_current_closure_stale_provenance_present as shared_late_stage_missing_current_closure_stale_provenance_present,
     late_stage_qa_blocked as shared_late_stage_qa_blocked,
     late_stage_release_blocked as shared_late_stage_release_blocked,
     late_stage_release_truth_blocked as shared_late_stage_release_truth_blocked,
@@ -226,6 +228,13 @@ fn review_state_snapshot_from_read_scope(
     let branch_closure_tracked_drift =
         shared_current_branch_closure_has_tracked_drift(context, authoritative_state)?;
     let late_stage_stale_unreviewed = review_state_is_stale_unreviewed(context, status);
+    let late_stage_missing_current_closure_public_truth = status.review_state_status
+        == "missing_current_closure"
+        && shared_late_stage_missing_current_closure_stale_provenance_present(context, status)?;
+    let late_stage_stale_projection_active = ((late_stage_stale_unreviewed
+        || branch_closure_tracked_drift)
+        && status.review_state_status != "missing_current_closure")
+        || late_stage_missing_current_closure_public_truth;
     let task_scope_stale_unreviewed = task_scope_review_state_is_stale_unreviewed(status);
     let task_scope_structural_reason = task_scope_structural_review_state_reason(status);
     let branch_scope_structural_reason =
@@ -270,7 +279,7 @@ fn review_state_snapshot_from_read_scope(
         .unwrap_or_default();
     let stale_unreviewed_closures = if task_scope_structural_reason.is_some() {
         stale_current_task_closure_record_ids(context)?
-    } else if late_stage_stale_unreviewed || branch_closure_tracked_drift {
+    } else if late_stage_stale_projection_active {
         shared_late_stage_stale_unreviewed_closure_ids(
             status,
             overlay.and_then(|overlay| overlay.current_branch_closure_id.as_deref()),
@@ -284,15 +293,14 @@ fn review_state_snapshot_from_read_scope(
         missing_derived_review_state_fields(authoritative_state, overlay);
     let missing_derived_overlays_present = !missing_derived_overlays.is_empty();
     Ok(ReviewStateSnapshot {
-        branch_drift_confined_to_late_stage_surface: (late_stage_stale_unreviewed
-            || branch_closure_tracked_drift)
+        branch_drift_confined_to_late_stage_surface: late_stage_stale_projection_active
             && branch_drift_is_confined_to_late_stage_surface(&context.runtime, context)?,
         current_task_closures,
         current_branch_closure,
         superseded_closures,
         stale_unreviewed_closures,
         missing_derived_overlays,
-        trace_summary: if late_stage_stale_unreviewed || branch_closure_tracked_drift {
+        trace_summary: if late_stage_stale_projection_active {
             String::from("Review state is stale_unreviewed relative to the current workspace.")
         } else if task_scope_stale_unreviewed {
             String::from(
@@ -349,7 +357,7 @@ fn query_workflow_execution_state_internal(
     let mut gate_review = None;
     let mut gate_finish = None;
     if execution_status.execution_started == "yes" {
-        if !execution_state_has_open_steps(&execution_status) {
+        if !shared_execution_state_has_open_steps(&execution_status) {
             let review = gate_review_from_context(&context);
             gate_finish = Some(gate_finish_from_context(&context));
             gate_review = Some(review);
@@ -1875,20 +1883,13 @@ fn review_state_is_stale_unreviewed(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
 ) -> bool {
-    if status.execution_started != "yes" || execution_state_has_open_steps(status) {
+    if status.execution_started != "yes" || shared_execution_state_has_open_steps(status) {
         return false;
     }
 
     let gate_review = gate_review_from_context(context);
     let gate_finish = gate_finish_from_context(context);
     shared_public_late_stage_stale_unreviewed(status, Some(&gate_review), Some(&gate_finish))
-}
-
-fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {
-    status.active_task.is_some()
-        || status.blocking_task.is_some()
-        || status.resume_task.is_some()
-        || status.execution_command_context.is_some()
 }
 
 fn status_has_accepted_preflight(status: &PlanExecutionStatus) -> bool {
@@ -1957,7 +1958,7 @@ fn derive_phase(
         return String::from("task_closure_pending");
     }
 
-    if execution_state_has_open_steps(execution_status) {
+    if shared_execution_state_has_open_steps(execution_status) {
         return String::from("executing");
     }
 
@@ -2130,7 +2131,7 @@ fn authoritative_public_phase(status: &PlanExecutionStatus) -> Option<&'static s
 
     match status.harness_phase {
         HarnessPhase::Repairing | HarnessPhase::Executing => {
-            (execution_state_has_open_steps(status)
+            (shared_execution_state_has_open_steps(status)
                 || !late_stage_rederivation_basis_present(status))
             .then_some(HarnessPhase::Executing.as_str())
         }

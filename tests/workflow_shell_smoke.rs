@@ -14060,6 +14060,101 @@ fn explain_review_state_preserves_stale_branch_closure_target_when_late_stage_st
 }
 
 #[test]
+fn freshness_only_late_stage_basis_keeps_status_explain_and_operator_converged_when_current_ids_are_gone()
+ {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("freshness-only-late-stage-basis-convergence");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_qa_pending_case(repo, state, plan_rel, &base_branch);
+
+    let summary_path = repo.join("freshness-only-late-stage-basis-summary.md");
+    write_file(
+        &summary_path,
+        "Browser QA passed before freshness-only late-stage basis coverage.\n",
+    );
+    let qa_json = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "record-qa",
+            "--plan",
+            plan_rel,
+            "--result",
+            "pass",
+            "--summary-file",
+            summary_path.to_str().expect("summary path should be utf-8"),
+        ],
+        "record-qa should succeed before freshness-only late-stage basis coverage",
+    );
+    assert_eq!(qa_json["action"], "recorded");
+
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("current_branch_closure_reviewed_state_id", Value::Null),
+            ("current_branch_closure_contract_identity", Value::Null),
+            ("branch_closure_records", serde_json::json!({})),
+        ],
+    );
+    append_tracked_repo_line(
+        repo,
+        "README.md",
+        "freshness-only late-stage basis should preserve reroute semantics",
+    );
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status should preserve late-stage reroute semantics from freshness-only truth",
+    );
+    let explain_json = run_plan_execution_json(
+        repo,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "explain-review-state should preserve late-stage stale-target projection from freshness-only truth",
+    );
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator should preserve late-stage reroute semantics from freshness-only truth",
+    );
+
+    assert_eq!(status_json["current_branch_closure_id"], Value::Null);
+    assert_eq!(
+        status_json["review_state_status"],
+        "missing_current_closure"
+    );
+    assert_eq!(
+        status_json["stale_unreviewed_closures"],
+        serde_json::json!(["branch-release-closure"])
+    );
+    assert_eq!(status_json["phase_detail"], operator_json["phase_detail"]);
+    assert_eq!(
+        status_json["review_state_status"],
+        operator_json["review_state_status"]
+    );
+    assert_eq!(
+        status_json["recommended_command"],
+        operator_json["recommended_command"]
+    );
+    assert_eq!(
+        explain_json["stale_unreviewed_closures"],
+        status_json["stale_unreviewed_closures"]
+    );
+    assert_eq!(explain_json["next_action"], operator_json["next_action"]);
+    assert_eq!(
+        explain_json["recommended_command"],
+        operator_json["recommended_command"]
+    );
+}
+
+#[test]
 fn status_and_explain_review_state_share_gate_review_only_final_review_stale_classification() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) =
@@ -16383,12 +16478,29 @@ fn repair_review_state_preserves_branch_reroute_for_structural_branch_damage_wit
         status_json["review_state_status"],
         "missing_current_closure"
     );
+    assert_eq!(
+        status_json["stale_unreviewed_closures"],
+        serde_json::json!([]),
+        "structural branch damage without stale provenance must not project stale_unreviewed closures"
+    );
     assert_eq!(status_json["next_action"], "record branch closure");
     assert_eq!(
         status_json["recommended_command"],
         Value::from(format!(
             "featureforge plan execution record-branch-closure --plan {plan_rel}"
         ))
+    );
+
+    let explain_json = run_plan_execution_json(
+        repo,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "explain-review-state should keep structural branch damage distinct from stale-unreviewed drift when zero paths changed",
+    );
+    assert_eq!(
+        explain_json["stale_unreviewed_closures"],
+        serde_json::json!([]),
+        "structural branch damage without stale provenance must not project stale_unreviewed closures"
     );
 }
 

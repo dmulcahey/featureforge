@@ -38,8 +38,10 @@ use crate::execution::current_truth::{
     current_repo_tracked_tree_sha,
     current_task_negative_result_task as shared_current_task_negative_result_task,
     current_task_review_dispatch_id as shared_current_task_review_dispatch_id,
+    execution_state_has_open_steps as shared_execution_state_has_open_steps,
     final_review_dispatch_still_current as shared_final_review_dispatch_still_current,
     finish_requires_test_plan_refresh, handoff_decision_scope as shared_handoff_decision_scope,
+    late_stage_missing_current_closure_stale_provenance_present as shared_late_stage_missing_current_closure_stale_provenance_present,
     late_stage_qa_blocked as shared_late_stage_qa_blocked,
     late_stage_release_blocked as shared_late_stage_release_blocked,
     late_stage_review_blocked as shared_late_stage_review_blocked,
@@ -3955,8 +3957,20 @@ fn populate_public_status_contract_fields(
         == "missing_current_closure"
         && !branch_reroute_still_valid
         && !branch_closure_refresh_missing_current_closure;
+    let late_stage_missing_current_closure_stale_provenance =
+        shared_late_stage_missing_current_closure_stale_provenance_present(context, status)?;
+    let preserve_canonical_late_stage_harness_phase = branch_closure_recording_basis_missing
+        && is_late_stage_phase(status.harness_phase)
+        && (late_stage_missing_current_closure_stale_provenance
+            || status.latest_authoritative_sequence != INITIAL_AUTHORITATIVE_SEQUENCE)
+        && status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == REASON_CODE_STALE_PROVENANCE);
     if branch_closure_recording_basis_missing {
-        status.harness_phase = HarnessPhase::Executing;
+        if !preserve_canonical_late_stage_harness_phase {
+            status.harness_phase = HarnessPhase::Executing;
+        }
         if persisted_repair_follow_up == Some("execution_reentry") {
             status.review_state_status = String::from("clean");
         }
@@ -4133,8 +4147,8 @@ fn derive_public_review_state_status(
             .reason_codes
             .iter()
             .any(|code| code == REASON_CODE_STALE_PROVENANCE);
-    let late_stage_stale_unreviewed =
-        shared_public_late_stage_stale_unreviewed(status, Some(gate_review), Some(gate_finish));
+    let late_stage_stale_unreviewed = !shared_execution_state_has_open_steps(status)
+        && shared_public_late_stage_stale_unreviewed(status, Some(gate_review), Some(gate_finish));
     if repair_follow_up_requires_execution_reentry {
         return String::from("clean");
     }
@@ -4315,7 +4329,9 @@ fn derive_stale_unreviewed_closures(
     {
         let preserve_late_stage_stale_targets = review_state_status == "stale_unreviewed"
             || (review_state_status == "missing_current_closure"
-                && prerelease_branch_closure_refresh_required(status));
+                && shared_late_stage_missing_current_closure_stale_provenance_present(
+                    context, status,
+                )?);
         if !preserve_late_stage_stale_targets {
             return Ok(Vec::new());
         }
