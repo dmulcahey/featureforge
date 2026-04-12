@@ -1,22 +1,22 @@
 #[path = "support/featureforge.rs"]
 mod featureforge_support;
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/runtime.rs"]
+mod runtime_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use featureforge::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state_for_runtime,
 };
-use featureforge::execution::state::ExecutionRuntime;
-use featureforge::git::discover_slug_identity;
+use runtime_support::execution_runtime;
 use serde_json::Value;
+use tempfile::TempDir;
 use workflow_support::{init_repo, install_full_contract_ready_artifacts};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
@@ -75,47 +75,8 @@ Task 1 -> Task 2
 "#;
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_json_direct(
-        repo, state, args, context,
-    ) {
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => value,
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {
-            let mut command_args = vec!["plan", "execution"];
-            command_args.extend_from_slice(args);
-            let output = featureforge_support::run_rust_featureforge(
-                Some(repo),
-                Some(state),
-                None,
-                &[],
-                &command_args,
-                context,
-            );
-            assert!(
-                output.status.success(),
-                "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            serde_json::from_slice(&output.stdout)
-                .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
-        }
-        Err(error) => panic!("{error}"),
-    }
-}
-
-fn run_workflow_operator_json(
-    repo: &Path,
-    state: &Path,
-    plan: &str,
-    external_review_result_ready: bool,
-    context: &str,
-) -> Value {
-    let mut command_args = vec!["workflow", "operator", "--plan", plan];
-    if external_review_result_ready {
-        command_args.push("--external-review-result-ready");
-    }
-    command_args.push("--json");
+    let mut command_args = vec!["plan", "execution"];
+    command_args.extend_from_slice(args);
     let output = featureforge_support::run_rust_featureforge(
         Some(repo),
         Some(state),
@@ -135,17 +96,82 @@ fn run_workflow_operator_json(
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
-fn execution_runtime(repo: &Path, state: &Path) -> ExecutionRuntime {
-    let git_repo = gix::discover(repo).expect("git repo should be discoverable");
-    let identity = discover_slug_identity(repo);
-    ExecutionRuntime {
-        repo_root: identity.repo_root,
-        git_dir: git_repo.path().to_path_buf(),
-        branch_name: identity.branch_name,
-        repo_slug: identity.repo_slug,
-        safe_branch: identity.safe_branch,
-        state_dir: state.to_path_buf(),
+fn run_workflow_operator_json(
+    repo: &Path,
+    state: &Path,
+    plan: &str,
+    external_review_result_ready: bool,
+    context: &str,
+) -> Value {
+    let mut command_args = vec!["workflow", "operator", "--plan", plan];
+    if external_review_result_ready {
+        command_args.push("--external-review-result-ready");
     }
+    command_args.push("--json");
+    let output = featureforge_support::run_rust_featureforge_real_cli(
+        Some(repo),
+        Some(state),
+        None,
+        &[],
+        &command_args,
+        context,
+    );
+    assert!(
+        output.status.success(),
+        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+}
+
+fn run_featureforge_output(
+    repo: &Path,
+    state: &Path,
+    args: &[&str],
+    real_cli: bool,
+    context: &str,
+) -> Output {
+    if real_cli {
+        featureforge_support::run_rust_featureforge_real_cli(
+            Some(repo),
+            Some(state),
+            None,
+            &[],
+            args,
+            context,
+        )
+    } else {
+        featureforge_support::run_rust_featureforge(
+            Some(repo),
+            Some(state),
+            None,
+            &[],
+            args,
+            context,
+        )
+    }
+}
+
+fn run_featureforge_json(
+    repo: &Path,
+    state: &Path,
+    args: &[&str],
+    real_cli: bool,
+    context: &str,
+) -> Value {
+    let output = run_featureforge_output(repo, state, args, real_cli, context);
+    assert!(
+        output.status.success(),
+        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
 fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
@@ -464,6 +490,10 @@ fn execution_query_boundary_stays_execution_owned() {
         "execution query boundary should expose an execution-owned routing snapshot",
     );
     assert!(
+        query_source.contains("discover_slug_identity_and_head"),
+        "execution query boundary should resolve fallback repository slug+head through shared git helpers instead of re-deriving identity fields independently",
+    );
+    assert!(
         query_source.contains("pub finish_review_gate_pass_branch_closure_id: Option<String>"),
         "execution query boundary should expose finish-review gate pass branch closure identity",
     );
@@ -540,6 +570,88 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
 }
 
 #[test]
+fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-workflow-direct-real-cli-alignment");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_execution_in_progress(repo, state);
+
+    for command in [
+        ["workflow", "next"],
+        ["workflow", "artifacts"],
+        ["workflow", "explain"],
+    ] {
+        let direct = run_featureforge_output(repo, state, &command, false, "direct workflow text");
+        let real = run_featureforge_output(repo, state, &command, true, "real-cli workflow text");
+        assert!(
+            direct.status.success() && real.status.success(),
+            "workflow text command should succeed for direct and real-cli paths\ncommand: {:?}\ndirect status: {:?}\nreal status: {:?}\ndirect stderr:\n{}\nreal stderr:\n{}",
+            command,
+            direct.status,
+            real.status,
+            String::from_utf8_lossy(&direct.stderr),
+            String::from_utf8_lossy(&real.stderr)
+        );
+        assert_eq!(
+            direct.stdout, real.stdout,
+            "workflow text command output must stay aligned between direct and real-cli paths for command {:?}",
+            command
+        );
+    }
+
+    for command in [
+        ["workflow", "phase", "--json"].as_slice(),
+        ["workflow", "doctor", "--json"].as_slice(),
+        ["workflow", "handoff", "--json"].as_slice(),
+        ["workflow", "operator", "--plan", PLAN_REL, "--json"].as_slice(),
+    ] {
+        let direct = run_featureforge_json(repo, state, command, false, "direct workflow json");
+        let real = run_featureforge_json(repo, state, command, true, "real-cli workflow json");
+        assert_eq!(
+            direct, real,
+            "workflow json command output must stay aligned between direct and real-cli paths for command {:?}",
+            command
+        );
+    }
+}
+
+#[test]
+fn workflow_status_summary_failure_stays_aligned_with_real_cli() {
+    let repo_dir = TempDir::new().expect("non-repo tempdir should exist");
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    let direct = run_featureforge_output(
+        repo,
+        state,
+        &["workflow", "status", "--summary"],
+        false,
+        "direct workflow status summary failure",
+    );
+    let real = run_featureforge_output(
+        repo,
+        state,
+        &["workflow", "status", "--summary"],
+        true,
+        "real-cli workflow status summary failure",
+    );
+
+    assert!(
+        !direct.status.success() && !real.status.success(),
+        "workflow status --summary should fail outside a git repo for both direct and real-cli paths",
+    );
+    assert_eq!(
+        direct.stdout, real.stdout,
+        "workflow status --summary failure stdout must stay aligned between direct and real-cli paths",
+    );
+    assert_eq!(
+        direct.stderr, real.stderr,
+        "workflow status --summary failure stderr must stay aligned between direct and real-cli paths",
+    );
+}
+
+#[test]
 fn mutate_and_review_state_use_recording_boundary_for_transition_writes() {
     let mutate_source = fs::read_to_string(repo_root().join("src/execution/mutate.rs"))
         .expect("execution mutate source should be readable");
@@ -551,6 +663,10 @@ fn mutate_and_review_state_use_recording_boundary_for_transition_writes() {
         "mutate.rs should consume the recording boundary for closure writes",
     );
     assert!(
+        mutate_source.contains("crate::execution::command_eligibility::"),
+        "mutate.rs should consume shared command eligibility helpers instead of re-deriving follow-up routing",
+    );
+    assert!(
         mutate_source.contains("query_workflow_routing_state"),
         "mutate.rs should consume the execution-owned routing boundary",
     );
@@ -559,6 +675,9 @@ fn mutate_and_review_state_use_recording_boundary_for_transition_writes() {
         "mutate.rs should not import or call workflow/operator directly",
     );
     for forbidden in [
+        "fn blocked_follow_up_for_operator(",
+        "fn close_current_task_required_follow_up(",
+        "fn late_stage_required_follow_up(",
         "record_task_closure_result(",
         "record_task_closure_negative_result(",
         "remove_current_task_closure_results(",

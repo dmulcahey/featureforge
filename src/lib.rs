@@ -19,6 +19,8 @@ pub mod output;
 pub mod paths;
 pub mod repo_safety;
 pub mod runtime_root;
+#[cfg(test)]
+pub mod test_support;
 pub mod update_check;
 pub mod workflow;
 

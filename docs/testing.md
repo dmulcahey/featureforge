@@ -17,6 +17,40 @@ npm --prefix tests/brainstorm-server test
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
 ```
+## Performance Budget
+
+`cargo test` with no extra args is the canonical full-suite latency budget for this repository. Treat roughly 3 to 4 minutes on a warm local build as the target. If a warm local run regresses past about 240 seconds, stop and profile before merging instead of normalizing the slowdown away.
+
+When the suite slows down:
+
+- do not remove tests or weaken assertions to recover time
+- prefer in-process semantic test helpers over binary subprocesses when stdout/stderr framing and shell behavior are not the contract under test
+- prefer shared runtime helpers and memoized immutable reads over repeated repo discovery, repeated state reloads, or repeated tree/head lookups
+- prefer `gix` or equivalent high-performance libraries over ad hoc `git` subprocesses when semantics can be preserved
+- when a test helper synthesizes CLI output in-process, preserve CLI bytes exactly: exit code semantics, stdout/stderr routing, trailing newlines, JSON field order, and explicit state-dir inputs should match the real binary
+- if a test or helper must keep a subprocess boundary for contract coverage, leave a code comment explaining why that divergence is intentional
+
+Profile the plain suite first:
+
+```bash
+time -p cargo test --quiet
+# macOS detailed memory/context stats:
+/usr/bin/time -lp cargo test --quiet
+```
+
+Then profile the largest binaries individually to find the regression source before changing code. The usual hot set is `workflow_shell_smoke`, `plan_execution`, `workflow_runtime`, and `workflow_runtime_final_review`:
+
+```bash
+time -p cargo test --quiet --test workflow_shell_smoke
+time -p cargo test --quiet --test workflow_runtime
+time -p cargo test --quiet --test workflow_runtime_final_review
+time -p cargo test --quiet --test plan_execution
+# macOS detailed memory/context stats:
+/usr/bin/time -lp cargo test --quiet --test workflow_shell_smoke
+/usr/bin/time -lp cargo test --quiet --test workflow_runtime
+/usr/bin/time -lp cargo test --quiet --test workflow_runtime_final_review
+/usr/bin/time -lp cargo test --quiet --test plan_execution
+```
 
 ## What Each Layer Covers
 

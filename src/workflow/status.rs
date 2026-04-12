@@ -21,7 +21,7 @@ use crate::execution::topology::{
     validate_plan_fidelity_review_artifact,
 };
 use crate::git::{
-    RepositoryIdentity, discover_repo_identity, discover_slug_identity,
+    RepositoryIdentity, derive_repo_slug, discover_repo_identity, discover_slug_identity,
     stored_repo_root_matches_current,
 };
 use crate::paths::{RepoPath, featureforge_state_dir};
@@ -132,6 +132,13 @@ struct WorkflowPlanCandidate {
 impl WorkflowRuntime {
     pub fn discover(current_dir: &Path) -> Result<Self, DiagnosticError> {
         Self::discover_with_loader(current_dir, false)
+    }
+
+    pub fn discover_for_state_dir(
+        current_dir: &Path,
+        state_dir: &Path,
+    ) -> Result<Self, DiagnosticError> {
+        Self::discover_with_loader_and_state_dir(current_dir, state_dir.to_path_buf(), false)
     }
 
     pub fn discover_read_only(current_dir: &Path) -> Result<Self, DiagnosticError> {
@@ -805,7 +812,6 @@ fn resolve_route(
             packet_buildability_failure,
         );
         let reason = compatibility_reason(&reason_codes);
-
         if plan.workflow_state == "Draft" {
             let plan_fidelity_gate =
                 evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
@@ -990,6 +996,180 @@ fn normalize_repo_path(path: &Path) -> Result<String, DiagnosticError> {
     RepoPath::parse(raw).map(|path| path.as_str().to_owned())
 }
 
+pub(crate) fn explicit_plan_override_route(
+    workflow: &WorkflowRuntime,
+    resolved_route: &WorkflowRoute,
+    plan_override: &Path,
+) -> Result<WorkflowRoute, DiagnosticError> {
+    let decorate = |route: WorkflowRoute| workflow.decorate_route_with_manifest_context(route);
+    let plan_path = normalize_repo_path(plan_override)?;
+    let plan_abs = workflow.identity.repo_root.join(&plan_path);
+    if !plan_abs.is_file() {
+        return Err(DiagnosticError::new(
+            FailureClass::InvalidCommandInput,
+            "Workflow plan override file does not exist.",
+        ));
+    }
+
+    let plan = parse_workflow_plan_candidate(&plan_abs)?;
+    let approved_spec_abs = workflow.identity.repo_root.join(&plan.source_spec_path);
+    let approved_spec_exists = approved_spec_abs.is_file();
+    let approved_spec = if approved_spec_exists {
+        parse_workflow_spec_candidate(&approved_spec_abs)?
+    } else {
+        WorkflowSpecCandidate {
+            path: plan.source_spec_path.clone(),
+            workflow_state: String::from("Draft"),
+            spec_revision: 0,
+            malformed_headers: true,
+        }
+    };
+    let stale_source_spec_linkage = !approved_spec_exists
+        || plan.source_spec_path != approved_spec.path
+        || plan
+            .source_spec_revision
+            .is_some_and(|revision| revision != approved_spec.spec_revision);
+    let report =
+        analyze_full_contract(workflow.identity.repo_root.as_path(), &approved_spec, &plan);
+    let packet_buildability_failure = report
+        .as_ref()
+        .is_some_and(needs_packet_buildability_failure);
+    let contract_state = workflow_contract_state(
+        report.as_ref(),
+        stale_source_spec_linkage,
+        packet_buildability_failure,
+    );
+    let reason_codes = workflow_reason_codes(
+        report.as_ref(),
+        stale_source_spec_linkage,
+        packet_buildability_failure,
+    );
+    let diagnostics = workflow_diagnostics(
+        &plan,
+        &approved_spec,
+        report.as_ref(),
+        stale_source_spec_linkage,
+        packet_buildability_failure,
+    );
+    let reason = compatibility_reason(&reason_codes);
+    let base_route = WorkflowRoute {
+        schema_version: WORKFLOW_ROUTE_SCHEMA_VERSION,
+        status: String::new(),
+        next_skill: String::new(),
+        spec_path: approved_spec.path.clone(),
+        plan_path: plan.path.clone(),
+        contract_state,
+        reason_codes: Vec::new(),
+        diagnostics: Vec::new(),
+        scan_truncated: resolved_route.scan_truncated,
+        spec_candidate_count: resolved_route.spec_candidate_count,
+        plan_candidate_count: 1,
+        manifest_path: resolved_route.manifest_path.clone(),
+        root: resolved_route.root.clone(),
+        reason: String::new(),
+        note: String::new(),
+    };
+
+    if plan.workflow_state == "Draft" {
+        let plan_fidelity_gate =
+            evaluate_plan_fidelity_gate(workflow, &approved_spec.path, &plan.path);
+        if plan_fidelity_gate.state != "pass" {
+            let has_non_fidelity_contract_reason = reason_codes
+                .iter()
+                .any(|code| !is_plan_fidelity_reason_code(code));
+            let plan_needs_authoring = stale_source_spec_linkage
+                || packet_buildability_failure
+                || plan.malformed_headers
+                || report.is_none()
+                || has_non_fidelity_contract_reason;
+            let fidelity_next_skill = if plan_needs_authoring {
+                "featureforge:writing-plans"
+            } else {
+                "featureforge:plan-fidelity-review"
+            };
+            let mut combined_reason_codes = plan_fidelity_gate.reason_codes.clone();
+            for code in &reason_codes {
+                if !combined_reason_codes
+                    .iter()
+                    .any(|existing| existing == code)
+                {
+                    combined_reason_codes.push(code.clone());
+                }
+            }
+            let mut combined_diagnostics =
+                plan_fidelity_gate_diagnostics(&plan, &plan_fidelity_gate, fidelity_next_skill);
+            for diagnostic in &diagnostics {
+                if combined_diagnostics
+                    .iter()
+                    .any(|existing| existing.code == diagnostic.code)
+                {
+                    continue;
+                }
+                combined_diagnostics.push(diagnostic.clone());
+            }
+            let reason = compatibility_reason(&combined_reason_codes);
+            return Ok(decorate(WorkflowRoute {
+                status: String::from("plan_draft"),
+                next_skill: String::from(fidelity_next_skill),
+                reason_codes: combined_reason_codes,
+                diagnostics: combined_diagnostics,
+                reason: reason.clone(),
+                note: reason,
+                ..base_route
+            }));
+        }
+        return Ok(decorate(WorkflowRoute {
+            status: String::from("plan_draft"),
+            next_skill: String::from("featureforge:plan-eng-review"),
+            reason_codes,
+            diagnostics,
+            reason: reason.clone(),
+            note: reason,
+            ..base_route
+        }));
+    }
+
+    if !stale_source_spec_linkage
+        && !packet_buildability_failure
+        && plan.workflow_state == "Engineering Approved"
+        && report
+            .as_ref()
+            .is_some_and(|report| report.contract_state == "valid")
+    {
+        return Ok(decorate(WorkflowRoute {
+            status: String::from("implementation_ready"),
+            next_skill: String::new(),
+            reason_codes: vec![String::from("implementation_ready")],
+            diagnostics: Vec::new(),
+            reason: String::from("implementation_ready"),
+            note: String::from("implementation_ready"),
+            ..base_route
+        }));
+    }
+
+    if plan.workflow_state == "Engineering Approved" && base_route.contract_state == "stale" {
+        return Ok(decorate(WorkflowRoute {
+            status: String::from("stale_plan"),
+            next_skill: String::from("featureforge:writing-plans"),
+            reason_codes,
+            diagnostics,
+            reason: reason.clone(),
+            note: reason,
+            ..base_route
+        }));
+    }
+
+    Ok(decorate(WorkflowRoute {
+        status: String::from("plan_draft"),
+        next_skill: String::from("featureforge:plan-eng-review"),
+        reason_codes,
+        diagnostics,
+        reason: reason.clone(),
+        note: reason,
+        ..base_route
+    }))
+}
+
 fn scan_specs(repo_root: &Path) -> (Vec<WorkflowSpecCandidate>, Vec<WorkflowSpecCandidate>) {
     let mut candidates = Vec::new();
     let mut malformed = Vec::new();
@@ -1085,9 +1265,9 @@ pub fn record_plan_fidelity_receipt(
     current_dir: &Path,
     args: &PlanFidelityRecordArgs,
 ) -> Result<PlanFidelityRecord, DiagnosticError> {
-    let repo_root = discover_slug_identity(current_dir).repo_root;
+    let slug_identity = discover_slug_identity(current_dir);
+    let repo_root = slug_identity.repo_root.clone();
     let state_dir = featureforge_state_dir();
-    let slug_identity = discover_slug_identity(repo_root.as_path());
     let plan_path = normalize_repo_path(&args.plan)?;
     let plan_abs = repo_root.join(&plan_path);
     let plan = parse_plan_file(&plan_abs)?;
@@ -1738,6 +1918,9 @@ fn workflow_reason_codes(
     }
     if let Some(report) = report {
         for code in &report.reason_codes {
+            if is_plan_fidelity_reason_code(code) {
+                continue;
+            }
             if !reason_codes.iter().any(|existing| existing == code) {
                 reason_codes.push(code.clone());
             }
@@ -1797,6 +1980,9 @@ fn workflow_diagnostics(
             .iter()
             .any(|code| is_plan_header_reason_code(code));
         for diagnostic in &report.diagnostics {
+            if is_plan_fidelity_reason_code(&diagnostic.code) {
+                continue;
+            }
             if header_reason_present && !is_plan_header_reason_code(&diagnostic.code) {
                 continue;
             }
@@ -1829,7 +2015,10 @@ fn evaluate_plan_fidelity_gate(
     let plan_abs = runtime.identity.repo_root.join(plan_path);
     let receipt_path = plan_fidelity_receipt_path(
         &runtime.state_dir,
-        &discover_slug_identity(runtime.identity.repo_root.as_path()).repo_slug,
+        &derive_repo_slug(
+            &runtime.identity.repo_root,
+            runtime.identity.remote_url.as_deref(),
+        ),
         &runtime.identity.branch_name,
     );
 

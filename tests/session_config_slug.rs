@@ -4,6 +4,8 @@ mod bin_support;
 mod featureforge_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/git.rs"]
+mod git_support;
 #[path = "support/process.rs"]
 mod process_support;
 
@@ -41,62 +43,13 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
 
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(repo);
-    run_checked(git_init, "git init");
-
-    let mut git_config_name = Command::new("git");
-    git_config_name
-        .args(["config", "user.name", "FeatureForge Test"])
-        .current_dir(repo);
-    run_checked(git_config_name, "git config user.name");
-
-    let mut git_config_email = Command::new("git");
-    git_config_email
-        .args(["config", "user.email", "featureforge-tests@example.com"])
-        .current_dir(repo);
-    run_checked(git_config_email, "git config user.email");
-
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-
-    let mut git_add = Command::new("git");
-    git_add.args(["add", "README.md"]).current_dir(repo);
-    run_checked(git_add, "git add README");
-
-    let mut git_commit = Command::new("git");
-    git_commit.args(["commit", "-m", "init"]).current_dir(repo);
-    run_checked(git_commit, "git commit init");
+    git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
 
     (repo_dir, state_dir)
 }
 
 fn init_repo_at(path: &Path, name: &str) {
-    fs::create_dir_all(path).expect("repo path should be creatable");
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(path);
-    run_checked(git_init, "git init");
-
-    let mut git_config_name = Command::new("git");
-    git_config_name
-        .args(["config", "user.name", "FeatureForge Test"])
-        .current_dir(path);
-    run_checked(git_config_name, "git config user.name");
-
-    let mut git_config_email = Command::new("git");
-    git_config_email
-        .args(["config", "user.email", "featureforge-tests@example.com"])
-        .current_dir(path);
-    run_checked(git_config_email, "git config user.email");
-
-    write_file(&path.join("README.md"), &format!("# {name}\n"));
-
-    let mut git_add = Command::new("git");
-    git_add.args(["add", "README.md"]).current_dir(path);
-    run_checked(git_add, "git add README");
-
-    let mut git_commit = Command::new("git");
-    git_commit.args(["commit", "-m", "init"]).current_dir(path);
-    run_checked(git_commit, "git commit init");
+    git_support::init_repo_with_initial_commit(path, &format!("# {name}\n"), "init");
 }
 
 fn run_shell_slug(repo: &Path, context: &str) -> Output {

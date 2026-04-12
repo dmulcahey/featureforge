@@ -19,7 +19,7 @@ use featureforge::execution::final_review::{
 };
 use featureforge::execution::state::current_head_sha as runtime_current_head_sha;
 use featureforge::execution::state::hash_contract_plan;
-use featureforge::git::discover_slug_identity;
+use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifacts_dir, harness_state_path,
 };
@@ -179,7 +179,7 @@ fn current_head_sha(repo: &Path) -> String {
 }
 
 fn current_head_tree_sha(repo: &Path) -> String {
-    gix::discover(repo)
+    discover_repository(repo)
         .expect("head tree helper should discover repository")
         .head_tree_id_or_empty()
         .expect("head tree helper should resolve HEAD tree")
@@ -188,7 +188,7 @@ fn current_head_tree_sha(repo: &Path) -> String {
 }
 
 fn git_dir_path(repo: &Path) -> PathBuf {
-    gix::discover(repo)
+    discover_repository(repo)
         .expect("git dir helper should discover repository")
         .path()
         .to_path_buf()
@@ -205,6 +205,28 @@ fn expected_base_branch(repo: &Path) -> String {
 
 fn repo_slug(repo: &Path) -> String {
     discover_slug_identity(repo).repo_slug
+}
+
+fn branch_contract_identity(
+    plan_rel: &str,
+    plan_revision: u32,
+    repo_slug: &str,
+    branch_name: &str,
+    base_branch: &str,
+) -> String {
+    let payload = format!(
+        "branch-contract\n{plan_rel}\n{plan_revision}\n{repo_slug}\n{branch_name}\n{base_branch}"
+    );
+    format!("branch-contract-{}", &sha256_hex(payload.as_bytes())[..16])
+}
+
+fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
+    let mut payload = String::from(prefix);
+    for part in parts {
+        payload.push('\n');
+        payload.push_str(part);
+    }
+    format!("{prefix}-{}", &sha256_hex(payload.as_bytes())[..16])
 }
 
 fn project_artifact_dir(repo: &Path, state: &Path) -> PathBuf {
@@ -485,7 +507,8 @@ fn write_finish_ready_harness_state_with_reason_codes(
     let artifact_dir = project_artifact_dir(repo, state);
     let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
     let branch_closure_id = "branch-closure-ready";
-    let branch_contract_identity = "branch-contract-ready";
+    let branch_contract_identity =
+        branch_contract_identity(PLAN_REL, 1, &repo_slug(repo), &branch, &base_branch);
     let review_path = latest_branch_artifact_path(&artifact_dir, &branch, "code-review");
     let has_review = review_path.is_some();
     let review_state = if review_path.is_some() {
@@ -570,78 +593,112 @@ fn write_finish_ready_harness_state_with_reason_codes(
     let release_summary = "Release-readiness artifact fixture for final-review gate coverage.";
     let release_summary_hash = sha256_hex(release_summary.as_bytes());
     let release_record_id = format!("release-readiness-record-{release_fingerprint}");
+    let task_review_summary = "Task closure review fixture for final-review gate coverage.";
+    let task_review_summary_hash = sha256_hex(task_review_summary.as_bytes());
+    let task_verification_summary =
+        "Task closure verification fixture for final-review gate coverage.";
+    let task_verification_summary_hash = sha256_hex(task_verification_summary.as_bytes());
+    let task_closure_record = json!({
+        "dispatch_id": "fixture-task-dispatch",
+        "closure_record_id": "task-1-closure",
+        "source_plan_path": PLAN_REL,
+        "source_plan_revision": 1,
+        "execution_run_id": format!("run-{safe_branch}-finish"),
+        "reviewed_state_id": reviewed_state_id.clone(),
+        "contract_identity": deterministic_record_id("task-contract", &[PLAN_REL, "1", "1"]),
+        "effective_reviewed_surface_paths": ["README.md"],
+        "review_result": "pass",
+        "review_summary_hash": task_review_summary_hash,
+        "verification_result": "pass",
+        "verification_summary_hash": task_verification_summary_hash,
+        "closure_status": "current",
+    });
 
-    write_harness_state_payload(
-        repo,
-        state,
-        &json!({
-            "schema_version": 1,
-            "harness_phase": "executing",
-            "run_identity": {
-                "execution_run_id": format!("run-{safe_branch}-finish"),
+    let mut harness_state = json!({
+        "schema_version": 1,
+        "harness_phase": "executing",
+        "run_identity": {
+            "execution_run_id": format!("run-{safe_branch}-finish"),
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1
+        },
+        "chunk_id": format!("chunk-{safe_branch}-finish"),
+        "latest_authoritative_sequence": 17,
+        "repo_state_baseline_head_sha": current_head_sha(repo),
+        "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
+        "repo_state_drift_state": "reconciled",
+        "current_branch_closure_id": branch_closure_id,
+        "current_branch_closure_reviewed_state_id": reviewed_state_id,
+        "current_branch_closure_contract_identity": branch_contract_identity,
+        "branch_closure_records": {
+            branch_closure_id: {
+                "branch_closure_id": branch_closure_id,
                 "source_plan_path": PLAN_REL,
-                "source_plan_revision": 1
-            },
-            "chunk_id": format!("chunk-{safe_branch}-finish"),
-            "latest_authoritative_sequence": 17,
-            "repo_state_baseline_head_sha": current_head_sha(repo),
-            "repo_state_baseline_worktree_fingerprint": "2222222222222222222222222222222222222222222222222222222222222222",
-            "repo_state_drift_state": "reconciled",
-            "current_branch_closure_id": branch_closure_id,
-            "current_branch_closure_reviewed_state_id": reviewed_state_id,
-            "current_branch_closure_contract_identity": branch_contract_identity,
-            "branch_closure_records": {
-                branch_closure_id: {
-                    "reviewed_state_id": reviewed_state_id,
-                    "contract_identity": branch_contract_identity
-                }
-            },
-            "finish_review_gate_pass_branch_closure_id": branch_closure_id,
-            "dependency_index_state": "fresh",
-            "final_review_state": review_state,
-            "browser_qa_state": "not_required",
-            "release_docs_state": "fresh",
-            "current_release_readiness_result": "ready",
-            "current_release_readiness_summary_hash": release_summary_hash,
-            "current_release_readiness_record_id": release_record_id,
-            "release_readiness_record_history": {
-                release_record_id.clone(): {
-                    "record_id": release_record_id,
-                    "record_sequence": 1,
-                    "record_status": "current",
-                    "branch_closure_id": branch_closure_id,
-                    "source_plan_path": PLAN_REL,
-                    "source_plan_revision": 1,
-                    "repo_slug": repo_slug(repo),
-                    "branch_name": branch.clone(),
-                    "base_branch": base_branch.clone(),
-                    "reviewed_state_id": reviewed_state_id.clone(),
-                    "result": "ready",
-                    "release_docs_fingerprint": release_fingerprint,
-                    "summary": release_summary,
-                    "summary_hash": release_summary_hash,
-                    "generated_by_identity": "featureforge/release-readiness"
-                }
-            },
-            "current_final_review_branch_closure_id": if has_review { Value::from(branch_closure_id) } else { Value::Null },
-            "current_final_review_dispatch_id": current_final_review_dispatch_id,
-            "current_final_review_reviewer_source": current_final_review_reviewer_source,
-            "current_final_review_reviewer_id": current_final_review_reviewer_id,
-            "current_final_review_result": current_final_review_result,
-            "current_final_review_summary_hash": current_final_review_summary_hash,
-            "current_final_review_record_id": final_review_record_id,
-            "final_review_record_history": final_review_record_history,
-            "last_final_review_artifact_fingerprint": review_fingerprint,
-            "last_release_docs_artifact_fingerprint": release_fingerprint,
-            "active_worktree_lease_fingerprints": [],
-            "active_worktree_lease_bindings": [],
-            "strategy_state": "ready",
-            "strategy_checkpoint_kind": "initial_dispatch",
-            "last_strategy_checkpoint_fingerprint": STRATEGY_CHECKPOINT_FINGERPRINT,
-            "strategy_reset_required": false,
-            "reason_codes": reason_codes
-        }),
-    );
+                "source_plan_revision": 1,
+                "repo_slug": repo_slug(repo),
+                "branch_name": branch.clone(),
+                "base_branch": base_branch.clone(),
+                "reviewed_state_id": reviewed_state_id,
+                "contract_identity": branch_contract_identity,
+                "effective_reviewed_branch_surface": "repo_tracked_content",
+                "source_task_closure_ids": ["task-1-closure"],
+                "provenance_basis": "task_closure_lineage",
+                "closure_status": "current",
+                "superseded_branch_closure_ids": []
+            }
+        },
+        "finish_review_gate_pass_branch_closure_id": branch_closure_id,
+        "dependency_index_state": "fresh",
+        "final_review_state": review_state,
+        "browser_qa_state": "not_required",
+        "release_docs_state": "fresh",
+        "current_release_readiness_result": "ready",
+        "current_release_readiness_summary_hash": release_summary_hash,
+        "current_release_readiness_record_id": release_record_id,
+        "release_readiness_record_history": {
+            release_record_id.clone(): {
+                "record_id": release_record_id,
+                "record_sequence": 1,
+                "record_status": "current",
+                "branch_closure_id": branch_closure_id,
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1,
+                "repo_slug": repo_slug(repo),
+                "branch_name": branch.clone(),
+                "base_branch": base_branch.clone(),
+                "reviewed_state_id": reviewed_state_id.clone(),
+                "result": "ready",
+                "release_docs_fingerprint": release_fingerprint,
+                "summary": release_summary,
+                "summary_hash": release_summary_hash,
+                "generated_by_identity": "featureforge/release-readiness"
+            }
+        },
+        "current_final_review_branch_closure_id": if has_review { Value::from(branch_closure_id) } else { Value::Null },
+        "current_final_review_dispatch_id": current_final_review_dispatch_id,
+        "current_final_review_reviewer_source": current_final_review_reviewer_source,
+        "current_final_review_reviewer_id": current_final_review_reviewer_id,
+        "current_final_review_result": current_final_review_result,
+        "current_final_review_summary_hash": current_final_review_summary_hash,
+        "current_final_review_record_id": final_review_record_id,
+        "final_review_record_history": final_review_record_history,
+        "last_final_review_artifact_fingerprint": review_fingerprint,
+        "last_release_docs_artifact_fingerprint": release_fingerprint,
+        "active_worktree_lease_fingerprints": [],
+        "active_worktree_lease_bindings": [],
+        "strategy_state": "ready",
+        "strategy_checkpoint_kind": "initial_dispatch",
+        "last_strategy_checkpoint_fingerprint": STRATEGY_CHECKPOINT_FINGERPRINT,
+        "strategy_reset_required": false,
+        "reason_codes": reason_codes
+    });
+    harness_state["current_task_closure_records"] = json!({
+        "task-1": task_closure_record.clone(),
+    });
+    harness_state["task_closure_record_history"] = json!({
+        "task-1-closure": task_closure_record,
+    });
+    write_harness_state_payload(repo, state, &harness_state);
 }
 
 fn write_matching_topology_downgrade_record(repo: &Path, state: &Path, base_branch: &str) {
@@ -1643,11 +1700,11 @@ fn latest_branch_artifact_path_prefers_timestamp_over_username_prefix() {
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_json_direct(
+    match plan_execution_direct_support::try_run_plan_execution_output_direct(
         repo, state, args, context,
     ) {
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => return value,
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {}
+        Ok(Some(output)) => return parse_json(&output, context),
+        Ok(None) => {}
         Err(error) => panic!("{error}"),
     }
     let mut command = Command::new(compiled_featureforge_path());

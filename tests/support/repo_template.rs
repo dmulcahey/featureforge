@@ -1,73 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 
-const TEST_GIT_USER_NAME: &str = "FeatureForge Test";
-const TEST_GIT_USER_EMAIL: &str = "featureforge-tests@example.com";
+#[path = "git.rs"]
+mod git_support;
 
 static TEMPLATE_REPO_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
-fn run_checked(mut command: Command, context: &str) {
-    let output = command
-        .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"));
-    assert!(
-        output.status.success(),
-        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 fn initialize_template_repo(repo: &Path) {
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.arg("init").current_dir(repo);
-            command
-        },
-        "git init template repo",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.name", TEST_GIT_USER_NAME])
-                .current_dir(repo);
-            command
-        },
-        "git config user.name template repo",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.email", TEST_GIT_USER_EMAIL])
-                .current_dir(repo);
-            command
-        },
-        "git config user.email template repo",
-    );
-    fs::write(repo.join("README.md"), "# fixture\n")
-        .expect("template repository README should be writable");
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["add", "README.md"]).current_dir(repo);
-            command
-        },
-        "git add README in template repo",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["commit", "-m", "init"]).current_dir(repo);
-            command
-        },
-        "git commit init in template repo",
-    );
+    git_support::init_repo_with_initial_commit(repo, "# fixture\n", "init");
 }
 
 fn template_repo_root() -> &'static Path {

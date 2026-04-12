@@ -4,6 +4,8 @@
 //! - review_state owns explain/reconcile intent adapters over those boundaries
 
 pub mod authority;
+pub mod command_eligibility;
+pub mod current_truth;
 pub mod dependency_index;
 pub mod final_review;
 pub mod gates;

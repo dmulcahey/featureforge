@@ -10,6 +10,8 @@ mod markdown_scan_support;
 mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/workflow_direct.rs"]
+mod workflow_direct_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
@@ -22,8 +24,12 @@ use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters, STABLE_EVENT_KINDS,
     STABLE_REASON_CODES,
 };
-use featureforge::execution::state::current_head_sha as runtime_current_head_sha;
-use featureforge::git::{RepositoryIdentity, discover_repo_identity, discover_slug_identity};
+use featureforge::execution::state::{
+    current_head_sha as runtime_current_head_sha, derive_evidence_rel_path,
+};
+use featureforge::git::{
+    RepositoryIdentity, discover_repo_identity, discover_repository, discover_slug_identity,
+};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
@@ -42,11 +48,30 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 use tempfile::TempDir;
-use workflow_support::{init_repo as init_workflow_repo, workflow_fixture_root};
+use workflow_support::{
+    copy_workflow_fixture, init_repo as init_workflow_repo, workflow_fixture_root,
+};
 
 const FIXTURE_STRATEGY_CHECKPOINT_FINGERPRINT: &str =
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const FULL_CONTRACT_READY_SPEC_REL: &str =
+    "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
+const FULL_CONTRACT_READY_PLAN_REL: &str =
+    "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+const FULL_CONTRACT_READY_SPEC_FIXTURE_REL: &str =
+    "specs/2026-03-22-runtime-integration-hardening-design.md";
+const FULL_CONTRACT_READY_PLAN_FIXTURE_REL: &str =
+    "plans/2026-03-22-runtime-integration-hardening.md";
+const FULL_CONTRACT_READY_FIXTURE_SPEC_PATH: &str = "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md";
+
+struct FullContractReadyFixtureTemplate {
+    plan: String,
+}
+
+static FULL_CONTRACT_READY_FIXTURE_TEMPLATE: OnceLock<FullContractReadyFixtureTemplate> =
+    OnceLock::new();
 
 fn normalize_workflow_status_snapshot(mut value: Value) -> Value {
     let object = value
@@ -211,33 +236,62 @@ fn inject_current_topology_sections(plan_source: &str) -> String {
     plan_source.replacen(INSERT_AFTER, &format!("{INSERT_AFTER}{TOPOLOGY_BLOCK}"), 1)
 }
 
+fn full_contract_ready_fixture_template() -> &'static FullContractReadyFixtureTemplate {
+    FULL_CONTRACT_READY_FIXTURE_TEMPLATE.get_or_init(|| {
+        let fixture_root = workflow_fixture_root();
+        let plan_source =
+            fs::read_to_string(fixture_root.join(FULL_CONTRACT_READY_PLAN_FIXTURE_REL))
+                .expect("plan fixture should load");
+        let plan = inject_current_topology_sections(&plan_source).replace(
+            FULL_CONTRACT_READY_FIXTURE_SPEC_PATH,
+            FULL_CONTRACT_READY_SPEC_REL,
+        );
+
+        FullContractReadyFixtureTemplate { plan }
+    })
+}
+
 fn install_full_contract_ready_artifacts(repo: &Path) {
-    let spec_rel = "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
-    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
-    let fixture_root = workflow_fixture_root();
+    let spec_rel = FULL_CONTRACT_READY_SPEC_REL;
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    let template = full_contract_ready_fixture_template();
     let spec_path = repo.join(spec_rel);
     let plan_path = repo.join(plan_rel);
 
-    if let Some(parent) = spec_path.parent() {
-        fs::create_dir_all(parent).expect("spec fixture parent should be creatable");
-    }
-    fs::copy(
-        fixture_root.join("specs/2026-03-22-runtime-integration-hardening-design.md"),
-        &spec_path,
-    )
-    .expect("spec fixture should copy");
+    copy_workflow_fixture(FULL_CONTRACT_READY_SPEC_FIXTURE_REL, &spec_path);
 
     if let Some(parent) = plan_path.parent() {
         fs::create_dir_all(parent).expect("plan fixture parent should be creatable");
     }
-    let plan_source =
-        fs::read_to_string(fixture_root.join("plans/2026-03-22-runtime-integration-hardening.md"))
-            .expect("plan fixture should load");
-    let adjusted_plan = inject_current_topology_sections(&plan_source).replace(
-        "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
-        spec_rel,
+    fs::write(&plan_path, &template.plan).expect("plan fixture should write");
+}
+
+#[test]
+fn full_contract_ready_fixture_template_is_memoized_and_contract_ready() {
+    let first = full_contract_ready_fixture_template();
+    let second = full_contract_ready_fixture_template();
+
+    assert!(
+        std::ptr::eq(first, second),
+        "fixture template should be memoized to avoid repeated fixture preparation IO"
     );
-    fs::write(&plan_path, adjusted_plan).expect("plan fixture should write");
+    assert!(
+        first
+            .plan
+            .contains("docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md"),
+        "plan template should reference the repo-relative spec path"
+    );
+    assert!(
+        !first.plan.contains(
+            "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md"
+        ),
+        "plan template should not retain fixture-root absolute references"
+    );
+    assert!(
+        first.plan.contains("## Execution Strategy")
+            && first.plan.contains("## Dependency Diagram"),
+        "plan template should include topology sections required by current contract fixtures"
+    );
 }
 
 #[cfg(unix)]
@@ -251,6 +305,8 @@ fn create_dir_symlink(target: &Path, link: &Path) {
 }
 
 fn run_shell_status_helper(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
+    // Keep this helper on the real binary path because these tests assert the
+    // shell-level failure contract, including out-of-repo routing and stderr framing.
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -266,6 +322,9 @@ fn run_shell_status_json(repo: &Path, state_dir: &Path, args: &[&str], context: 
 }
 
 fn run_rust_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
+    if let Some(output) = try_direct_workflow_output(repo, state_dir, args, &[], context) {
+        return output;
+    }
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -280,6 +339,20 @@ fn run_workflow_plan_fidelity_json(
     args: &[&str],
     context: &str,
 ) -> Value {
+    let direct_args = std::iter::once("workflow")
+        .chain(std::iter::once("plan-fidelity"))
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>();
+    match workflow_direct_support::try_run_workflow_output_direct(
+        repo,
+        state_dir,
+        &direct_args,
+        context,
+    ) {
+        Ok(Some(output)) => return parse_json(&output, context),
+        Ok(None) => {}
+        Err(error) => panic!("{error}"),
+    }
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -311,6 +384,9 @@ fn run_rust_featureforge_with_env(
     extra_env: &[(&str, &str)],
     context: &str,
 ) -> Output {
+    if let Some(output) = try_direct_workflow_output(repo, state_dir, args, extra_env, context) {
+        return output;
+    }
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -320,6 +396,30 @@ fn run_rust_featureforge_with_env(
         command.env(key, value);
     }
     run(command, context)
+}
+
+fn try_direct_workflow_output(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+    context: &str,
+) -> Option<Output> {
+    if args.first().copied() != Some("workflow") || !workflow_runtime_env_is_direct_safe(extra_env)
+    {
+        // Keep all env-influenced workflow checks on the subprocess path so boundary tests keep
+        // exercising the real CLI env wiring.
+        return None;
+    }
+    match workflow_direct_support::try_run_workflow_output_direct(repo, state_dir, args, context) {
+        Ok(Some(output)) => Some(output),
+        Ok(None) => None,
+        Err(error) => panic!("{error}"),
+    }
+}
+
+fn workflow_runtime_env_is_direct_safe(extra_env: &[(&str, &str)]) -> bool {
+    extra_env.is_empty()
 }
 
 fn missing_null_fields(object: &Value, fields: &[&str]) -> Vec<String> {
@@ -348,11 +448,11 @@ fn remove_origin_remote(repo: &Path) {
 }
 
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_json_direct(
+    match plan_execution_direct_support::try_run_plan_execution_output_direct(
         repo, state_dir, args, context,
     ) {
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => return value,
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {}
+        Ok(Some(output)) => return parse_json(&output, context),
+        Ok(None) => {}
         Err(error) => panic!("{error}"),
     }
     let mut command = Command::new(compiled_featureforge_path());
@@ -378,7 +478,7 @@ fn current_head_sha(repo: &Path) -> String {
 }
 
 fn current_head_tree_sha(repo: &Path) -> String {
-    gix::discover(repo)
+    discover_repository(repo)
         .expect("head tree helper should discover repository")
         .head_tree_id_or_empty()
         .expect("head tree helper should resolve HEAD tree")
@@ -394,6 +494,28 @@ fn sha256_hex(contents: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(contents);
     format!("{:x}", hasher.finalize())
+}
+
+fn branch_contract_identity(
+    plan_rel: &str,
+    plan_revision: u32,
+    repo_slug: &str,
+    branch_name: &str,
+    base_branch: &str,
+) -> String {
+    let payload = format!(
+        "branch-contract\n{plan_rel}\n{plan_revision}\n{repo_slug}\n{branch_name}\n{base_branch}"
+    );
+    format!("branch-contract-{}", &sha256_hex(payload.as_bytes())[..16])
+}
+
+fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
+    let mut payload = String::from(prefix);
+    for part in parts {
+        payload.push('\n');
+        payload.push_str(part);
+    }
+    format!("{prefix}-{}", &sha256_hex(payload.as_bytes())[..16])
 }
 
 fn project_artifact_dir(repo: &Path, state_dir: &Path) -> PathBuf {
@@ -788,7 +910,28 @@ fn seed_current_branch_closure_truth(
     plan_revision: u32,
 ) {
     let branch = current_branch_name(repo);
+    let base_branch = expected_release_base_branch(repo);
     let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
+    let execution_run_id = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "workflow runtime status for current task-closure fixture provenance",
+    )["execution_run_id"]
+        .as_str()
+        .expect("status should expose execution_run_id for current task-closure fixtures")
+        .to_owned();
+    let branch_contract_identity = branch_contract_identity(
+        plan_rel,
+        plan_revision,
+        &repo_slug(repo),
+        &branch,
+        &base_branch,
+    );
+    let task_contract_identity = deterministic_record_id(
+        "task-contract",
+        &[plan_rel, &plan_revision.to_string(), "1"],
+    );
     update_authoritative_harness_state(
         repo,
         state,
@@ -807,14 +950,65 @@ fn seed_current_branch_closure_truth(
             ),
             (
                 "current_branch_closure_contract_identity",
-                Value::from("branch-contract-ready"),
+                Value::from(branch_contract_identity.clone()),
             ),
             (
                 "branch_closure_records",
                 json!({
                     "branch-release-closure": {
+                        "branch_closure_id": "branch-release-closure",
+                        "source_plan_path": plan_rel,
+                        "source_plan_revision": plan_revision,
+                        "repo_slug": repo_slug(repo),
+                        "branch_name": branch.clone(),
+                        "base_branch": base_branch,
                         "reviewed_state_id": reviewed_state_id,
-                        "contract_identity": "branch-contract-ready"
+                        "contract_identity": branch_contract_identity,
+                        "effective_reviewed_branch_surface": "repo_tracked_content",
+                        "source_task_closure_ids": ["task-1-closure"],
+                        "provenance_basis": "task_closure_lineage",
+                        "closure_status": "current",
+                        "superseded_branch_closure_ids": []
+                    }
+                }),
+            ),
+            (
+                "current_task_closure_records",
+                json!({
+                    "task-1": {
+                        "dispatch_id": "fixture-task-dispatch",
+                        "closure_record_id": "task-1-closure",
+                        "source_plan_path": plan_rel,
+                        "source_plan_revision": plan_revision,
+                        "execution_run_id": execution_run_id.clone(),
+                        "reviewed_state_id": reviewed_state_id.clone(),
+                        "contract_identity": task_contract_identity.clone(),
+                        "effective_reviewed_surface_paths": ["README.md"],
+                        "review_result": "pass",
+                        "review_summary_hash": sha256_hex(b"workflow runtime task closure review fixture"),
+                        "verification_result": "pass",
+                        "verification_summary_hash": sha256_hex(b"workflow runtime task closure verification fixture"),
+                        "closure_status": "current"
+                    }
+                }),
+            ),
+            (
+                "task_closure_record_history",
+                json!({
+                    "task-1-closure": {
+                        "dispatch_id": "fixture-task-dispatch",
+                        "closure_record_id": "task-1-closure",
+                        "source_plan_path": plan_rel,
+                        "source_plan_revision": plan_revision,
+                        "execution_run_id": execution_run_id,
+                        "reviewed_state_id": reviewed_state_id.clone(),
+                        "contract_identity": task_contract_identity,
+                        "effective_reviewed_surface_paths": ["README.md"],
+                        "review_result": "pass",
+                        "review_summary_hash": sha256_hex(b"workflow runtime task closure review fixture"),
+                        "verification_result": "pass",
+                        "verification_summary_hash": sha256_hex(b"workflow runtime task closure verification fixture"),
+                        "closure_status": "current"
                     }
                 }),
             ),
@@ -1190,6 +1384,54 @@ fn shell_workflow_resolve_failures_use_runtime_failure_contract() {
         .expect("resolve failure should emit valid json on stderr");
     assert_eq!(failure["outcome"], "runtime_failure");
     assert_eq!(failure["failure_class"], "RepoContextUnavailable");
+}
+
+#[test]
+fn direct_workflow_resolve_failures_use_runtime_failure_contract() {
+    let outside_repo = TempDir::new().expect("outside repo tempdir should be available");
+    let state_dir = TempDir::new().expect("state tempdir should be available");
+
+    let output = run_rust_featureforge(
+        outside_repo.path(),
+        state_dir.path(),
+        &["workflow", "resolve"],
+        "direct helper resolve failure contract",
+    );
+    assert!(
+        !output.status.success(),
+        "resolve outside repo should fail, got {:?}",
+        output.status
+    );
+
+    let failure: Value = serde_json::from_slice(&output.stderr)
+        .expect("resolve failure should emit valid json on stderr");
+    assert_eq!(failure["outcome"], "runtime_failure");
+    assert_eq!(failure["failure_class"], "RepoContextUnavailable");
+}
+
+#[test]
+fn direct_read_only_workflow_failures_preserve_cli_text_contract() {
+    let outside_repo = TempDir::new().expect("outside repo tempdir should be available");
+    let state_dir = TempDir::new().expect("state tempdir should be available");
+
+    let output = run_rust_featureforge(
+        outside_repo.path(),
+        state_dir.path(),
+        &["workflow", "next"],
+        "direct helper read-only workflow failure contract",
+    );
+    assert!(
+        !output.status.success(),
+        "workflow next outside repo should fail, got {:?}",
+        output.status
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr
+            .contains("RepoContextUnavailable: Read-only workflow resolution requires a git repo."),
+        "workflow next should preserve the CLI text failure contract, got:\n{stderr}"
+    );
 }
 
 #[test]
@@ -3218,6 +3460,145 @@ fn canonical_workflow_operator_plan_override_selects_explicit_ready_plan_amid_am
     assert_eq!(operator_json["phase"], "executing");
     assert_eq!(operator_json["spec_path"], spec_path);
     assert_eq!(operator_json["plan_path"], plan_path);
+    if let Some(recommended_command) = operator_json["recommended_command"].as_str() {
+        assert!(
+            recommended_command.contains(plan_path),
+            "operator recommended command should remain bound to the explicit --plan override path, got {recommended_command:?}"
+        );
+        assert!(
+            !recommended_command.contains(extra_plan_path),
+            "operator recommended command should not drift to sibling approved plans, got {recommended_command:?}"
+        );
+    }
+}
+
+#[test]
+fn canonical_workflow_operator_rejects_missing_plan_override() {
+    let (repo_dir, state_dir) = init_repo("workflow-operator-missing-plan-override");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
+
+    let output = run_rust_featureforge_with_env(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            "docs/featureforge/plans/does-not-exist.md",
+            "--json",
+        ],
+        &[],
+        "workflow operator should fail closed when --plan override points to a missing file",
+    );
+    assert!(
+        !output.status.success(),
+        "workflow operator should reject missing --plan overrides, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    let error_json: Value =
+        serde_json::from_slice(payload).expect("missing override error should be json");
+    assert_eq!(
+        error_json["error_class"],
+        Value::from("InvalidCommandInput")
+    );
+    assert!(
+        error_json["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Workflow plan override file does not exist.")),
+        "expected missing override message, got {error_json:?}"
+    );
+}
+
+#[test]
+fn canonical_workflow_operator_plan_override_resolves_override_source_spec_instead_of_route_spec() {
+    let (repo_dir, state_dir) = init_repo("workflow-operator-plan-override-source-spec");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let primary_spec_path =
+        "docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md";
+    let primary_plan_path = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let override_spec_path = "docs/featureforge/specs/2026-03-24-override-spec.md";
+    let override_plan_path = "docs/featureforge/plans/2026-03-24-override-plan.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-operator-explicit-source-spec"])
+        .current_dir(repo);
+    run_checked(
+        git_checkout,
+        "git checkout workflow-operator-explicit-source-spec",
+    );
+
+    install_full_contract_ready_artifacts(repo);
+    write_file(
+        &repo.join(override_spec_path),
+        "# Override Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 2\n**Last Reviewed By:** plan-ceo-review\n",
+    );
+    write_file(
+        &repo.join(override_plan_path),
+        &format!(
+            "# Override Approved Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{override_spec_path}`\n**Source Spec Revision:** 2\n**Last Reviewed By:** plan-eng-review\n"
+        ),
+    );
+
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    write_manifest(
+        &manifest_path(&identity, state),
+        &WorkflowManifest {
+            version: 1,
+            repo_root: fs::canonicalize(repo)
+                .expect("repo root should canonicalize")
+                .to_string_lossy()
+                .into_owned(),
+            branch: identity.branch_name.clone(),
+            expected_spec_path: String::from(primary_spec_path),
+            expected_plan_path: String::from(primary_plan_path),
+            status: String::from("implementation_ready"),
+            next_skill: String::new(),
+            reason: String::from("implementation_ready"),
+            note: String::from("implementation_ready"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
+    );
+
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &[
+                "workflow",
+                "operator",
+                "--plan",
+                override_plan_path,
+                "--json",
+            ],
+            &[],
+            "workflow operator should resolve explicit override plan against the override plan source spec",
+        ),
+        "workflow operator should resolve explicit override plan against the override plan source spec",
+    );
+
+    assert_eq!(operator_json["spec_path"], override_spec_path);
+    assert_eq!(operator_json["plan_path"], override_plan_path);
+    if let Some(recommended_command) = operator_json["recommended_command"].as_str() {
+        assert!(
+            recommended_command.contains(override_plan_path),
+            "operator recommended command should remain bound to the explicit override plan path, got {recommended_command:?}"
+        );
+        assert!(
+            !recommended_command.contains(primary_plan_path),
+            "operator recommended command should not drift back to manifest primary plan path, got {recommended_command:?}"
+        );
+    }
 }
 
 #[test]
@@ -4763,6 +5144,752 @@ fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_workt
 }
 
 #[test]
+fn plan_execution_status_and_explain_share_started_state_across_same_branch_worktrees() {
+    let (repo_dir, state_dir) = init_repo("workflow-same-branch-status-and-explain");
+    let repo_a = repo_dir.path();
+    let state = state_dir.path();
+    let linked_worktree_root = TempDir::new().expect("linked worktree tempdir should exist");
+    let repo_b = linked_worktree_root
+        .path()
+        .join("same-branch-status-and-explain");
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-same-branch-status-and-explain"])
+        .current_dir(repo_a);
+    run_checked(
+        git_checkout,
+        "git checkout workflow-same-branch-status-and-explain",
+    );
+
+    let mut git_worktree_add = Command::new("git");
+    git_worktree_add
+        .arg("worktree")
+        .arg("add")
+        .arg("--force")
+        .arg(&repo_b)
+        .arg("workflow-same-branch-status-and-explain")
+        .current_dir(repo_a);
+    run_checked(
+        git_worktree_add,
+        "git worktree add --force same-branch-status-and-explain",
+    );
+
+    install_full_contract_ready_artifacts(repo_a);
+    install_full_contract_ready_artifacts(&repo_b);
+
+    let status_before_begin = run_plan_execution_json(
+        repo_a,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status before same-branch status/explain sharing fixture",
+    );
+    let preflight = run_plan_execution_json(
+        repo_a,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "preflight before same-branch status/explain sharing fixture",
+    );
+    assert_eq!(preflight["allowed"], true);
+    run_plan_execution_json(
+        repo_a,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "plan execution begin for same-branch status/explain sharing fixture",
+    );
+
+    let status_a = run_plan_execution_json(
+        repo_a,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for same-branch status/explain sharing on repo A",
+    );
+    let status_b = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for same-branch status/explain sharing on repo B",
+    );
+
+    for status in [&status_a, &status_b] {
+        assert_eq!(status["execution_started"], "yes", "json: {status}");
+        assert_eq!(status["active_task"], Value::from(1), "json: {status}");
+        assert_eq!(status["active_step"], Value::from(1), "json: {status}");
+    }
+    assert_eq!(
+        status_a["execution_run_id"], status_b["execution_run_id"],
+        "same-branch worktrees should share the started execution run in plan execution status"
+    );
+    assert_eq!(
+        status_a["phase_detail"], status_b["phase_detail"],
+        "same-branch worktrees should agree on phase detail in plan execution status"
+    );
+
+    let explain_a = run_plan_execution_json(
+        repo_a,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "plan execution explain-review-state for same-branch sharing on repo A",
+    );
+    let explain_b = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "plan execution explain-review-state for same-branch sharing on repo B",
+    );
+
+    assert_eq!(
+        explain_a["next_action"], explain_b["next_action"],
+        "same-branch worktrees should agree on explain-review-state next_action"
+    );
+    assert_eq!(
+        explain_a["recommended_command"], explain_b["recommended_command"],
+        "same-branch worktrees should agree on explain-review-state recommended_command"
+    );
+    assert_eq!(
+        explain_a["trace_summary"], explain_b["trace_summary"],
+        "same-branch worktrees should agree on explain-review-state trace_summary"
+    );
+}
+
+#[test]
+fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_worktrees() {
+    let (repo_dir, state_dir) = init_repo("workflow-same-branch-repair-and-reconcile");
+    let repo_a = repo_dir.path();
+    let state = state_dir.path();
+    let linked_worktree_root = TempDir::new().expect("linked worktree tempdir should exist");
+    let repo_b = linked_worktree_root
+        .path()
+        .join("same-branch-repair-and-reconcile");
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args([
+            "checkout",
+            "-B",
+            "workflow-same-branch-repair-and-reconcile",
+        ])
+        .current_dir(repo_a);
+    run_checked(
+        git_checkout,
+        "git checkout workflow-same-branch-repair-and-reconcile",
+    );
+
+    let mut git_worktree_add = Command::new("git");
+    git_worktree_add
+        .arg("worktree")
+        .arg("add")
+        .arg("--force")
+        .arg(&repo_b)
+        .arg("workflow-same-branch-repair-and-reconcile")
+        .current_dir(repo_a);
+    run_checked(
+        git_worktree_add,
+        "git worktree add --force same-branch-repair-and-reconcile",
+    );
+
+    install_full_contract_ready_artifacts(repo_a);
+    install_full_contract_ready_artifacts(&repo_b);
+
+    let status_before_begin = run_plan_execution_json(
+        repo_a,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status before same-branch repair/reconcile fixture",
+    );
+    let preflight = run_plan_execution_json(
+        repo_a,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "preflight before same-branch repair/reconcile fixture",
+    );
+    assert_eq!(preflight["allowed"], true);
+    run_plan_execution_json(
+        repo_a,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "plan execution begin for same-branch repair/reconcile fixture",
+    );
+
+    let status_b_after_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status after begin for same-branch repair/reconcile fixture on repo B",
+    );
+    assert_eq!(status_b_after_begin["execution_started"], "yes");
+
+    seed_current_branch_closure_truth(repo_a, state, plan_rel, 1);
+    let branch = current_branch_name(repo_a);
+    update_authoritative_harness_state(
+        repo_a,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("current_branch_closure_reviewed_state_id", Value::Null),
+            ("current_branch_closure_contract_identity", Value::Null),
+        ],
+    );
+
+    let reconcile_b = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["reconcile-review-state", "--plan", plan_rel],
+        "reconcile-review-state from same-branch non-authoritative worktree",
+    );
+    assert_eq!(
+        reconcile_b["action"], "reconciled",
+        "reconcile-review-state from a same-branch non-authoritative worktree should restore missing derived overlays when recoverable",
+    );
+    assert!(
+        reconcile_b["actions_performed"]
+            .as_array()
+            .is_some_and(|actions| !actions.is_empty()),
+        "reconcile-review-state should report restored overlay actions",
+    );
+
+    let authoritative_state_path = harness_state_path(state, &repo_slug(repo_a), &branch);
+    let reconciled_state: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path)
+            .expect("authoritative state should be readable after reconcile"),
+    )
+    .expect("authoritative state should remain valid json after reconcile");
+    assert!(
+        reconciled_state["current_branch_closure_reviewed_state_id"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "reconcile-review-state should restore current_branch_closure_reviewed_state_id via authoritative records"
+    );
+    assert!(
+        reconciled_state["current_branch_closure_contract_identity"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "reconcile-review-state should restore current_branch_closure_contract_identity via authoritative records"
+    );
+
+    let mut malformed_state = reconciled_state;
+    malformed_state["current_branch_closure_reviewed_state_id"] =
+        Value::from("git_tree:not-a-tree");
+    if let Some(record) = malformed_state
+        .get_mut("branch_closure_records")
+        .and_then(Value::as_object_mut)
+        .and_then(|records| records.get_mut("branch-release-closure"))
+        .and_then(Value::as_object_mut)
+    {
+        record.insert(
+            String::from("reviewed_state_id"),
+            Value::from("git_tree:not-a-tree"),
+        );
+    } else {
+        panic!(
+            "same-branch repair fixture should include branch-release-closure in authoritative branch_closure_records"
+        );
+    }
+    write_file(
+        &authoritative_state_path,
+        &serde_json::to_string(&malformed_state)
+            .expect("malformed authoritative state fixture should serialize"),
+    );
+
+    let repair_b = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "repair-review-state from same-branch non-authoritative worktree",
+    );
+    assert_eq!(
+        repair_b["action"], "blocked",
+        "repair-review-state should fail closed on malformed current branch-closure reviewed state",
+    );
+    let required_follow_up = repair_b["required_follow_up"]
+        .as_str()
+        .expect("repair-review-state should emit required_follow_up");
+    assert!(
+        matches!(
+            required_follow_up,
+            "record_branch_closure" | "execution_reentry"
+        ),
+        "repair-review-state should require an authoritative follow-up route, got {required_follow_up}",
+    );
+
+    let repaired_state: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path)
+            .expect("authoritative state should be readable after repair"),
+    )
+    .expect("authoritative state should remain valid json after repair");
+    assert_eq!(
+        repaired_state["review_state_repair_follow_up"],
+        Value::from(required_follow_up),
+        "repair-review-state from a same-branch non-authoritative worktree should persist the authoritative follow-up reroute",
+    );
+}
+
+#[test]
+fn plan_execution_status_and_explain_do_not_share_started_state_from_detached_worktree() {
+    let (repo_dir, state_dir) = init_repo("workflow-same-branch-detached-status-and-explain");
+    let repo_a = repo_dir.path();
+    let state = state_dir.path();
+    let linked_worktree_root = TempDir::new().expect("linked worktree tempdir should exist");
+    let repo_b = linked_worktree_root
+        .path()
+        .join("same-branch-detached-status-and-explain");
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args([
+            "checkout",
+            "-B",
+            "workflow-same-branch-detached-status-and-explain",
+        ])
+        .current_dir(repo_a);
+    run_checked(
+        git_checkout,
+        "git checkout workflow-same-branch-detached-status-and-explain",
+    );
+
+    let mut git_worktree_add = Command::new("git");
+    git_worktree_add
+        .arg("worktree")
+        .arg("add")
+        .arg("--force")
+        .arg(&repo_b)
+        .arg("workflow-same-branch-detached-status-and-explain")
+        .current_dir(repo_a);
+    run_checked(
+        git_worktree_add,
+        "git worktree add --force same-branch-detached-status-and-explain",
+    );
+
+    install_full_contract_ready_artifacts(repo_a);
+    install_full_contract_ready_artifacts(&repo_b);
+
+    let status_before_begin = run_plan_execution_json(
+        repo_a,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status before detached same-branch status/explain sharing fixture",
+    );
+    let preflight = run_plan_execution_json(
+        repo_a,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "preflight before detached same-branch status/explain sharing fixture",
+    );
+    assert_eq!(preflight["allowed"], true);
+    run_plan_execution_json(
+        repo_a,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "plan execution begin for detached same-branch status/explain sharing fixture",
+    );
+
+    let mut git_detach = Command::new("git");
+    git_detach
+        .args(["checkout", "--detach", "HEAD"])
+        .current_dir(&repo_b);
+    run_checked(
+        git_detach,
+        "git checkout --detach HEAD for same-branch detached sharing fixture",
+    );
+
+    let status_a = run_plan_execution_json(
+        repo_a,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for detached same-branch sharing on repo A",
+    );
+    let status_b = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status for detached same-branch sharing on repo B",
+    );
+
+    assert_eq!(status_a["execution_started"], "yes", "json: {status_a}");
+    assert_eq!(status_a["active_task"], Value::from(1), "json: {status_a}");
+    assert_eq!(status_a["active_step"], Value::from(1), "json: {status_a}");
+    assert_eq!(status_b["execution_started"], "no", "json: {status_b}");
+    assert_eq!(status_b["active_task"], Value::Null, "json: {status_b}");
+    assert_eq!(status_b["active_step"], Value::Null, "json: {status_b}");
+    assert_eq!(
+        status_b["execution_run_id"],
+        Value::Null,
+        "detached worktrees must fail closed instead of borrowing another branch's started execution run"
+    );
+
+    let explain_a = run_plan_execution_json(
+        repo_a,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "plan execution explain-review-state for detached same-branch sharing on repo A",
+    );
+    let explain_b = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "plan execution explain-review-state for detached same-branch sharing on repo B",
+    );
+    assert_ne!(
+        explain_a["recommended_command"], explain_b["recommended_command"],
+        "detached worktrees must not borrow another branch's explain-review-state recommended_command"
+    );
+}
+
+#[test]
+fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_differs() {
+    let (repo_dir, state_dir) = init_repo("workflow-same-branch-fingerprint-guard");
+    let repo_a = repo_dir.path();
+    let state = state_dir.path();
+    let linked_worktree_root = TempDir::new().expect("linked worktree tempdir should exist");
+    let repo_b = linked_worktree_root
+        .path()
+        .join("same-branch-fingerprint-guard");
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let evidence_rel = derive_evidence_rel_path(plan_rel, 1);
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-same-branch-fingerprint-guard"])
+        .current_dir(repo_a);
+    run_checked(
+        git_checkout,
+        "git checkout workflow-same-branch-fingerprint-guard",
+    );
+
+    let mut git_worktree_add = Command::new("git");
+    git_worktree_add
+        .arg("worktree")
+        .arg("add")
+        .arg("--force")
+        .arg(&repo_b)
+        .arg("workflow-same-branch-fingerprint-guard")
+        .current_dir(repo_a);
+    run_checked(
+        git_worktree_add,
+        "git worktree add --force same-branch-fingerprint-guard",
+    );
+
+    install_full_contract_ready_artifacts(repo_a);
+    install_full_contract_ready_artifacts(&repo_b);
+    let repo_b_evidence_path = repo_b.join(&evidence_rel);
+    if let Some(parent) = repo_b_evidence_path.parent() {
+        fs::create_dir_all(parent).expect("evidence fixture parent should be creatable");
+    }
+    fs::write(&repo_b_evidence_path, "### Task 1 Step 1\n")
+        .expect("repo B evidence divergence should write");
+
+    let status_a_before_begin = run_plan_execution_json(
+        repo_a,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status before same-branch fingerprint guard fixture",
+    );
+    let status_b_before_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status before same-branch fingerprint guard fixture on repo B",
+    );
+    let explain_b_before_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "plan execution explain-review-state before same-branch fingerprint guard fixture on repo B",
+    );
+
+    assert_ne!(
+        status_a_before_begin["execution_fingerprint"],
+        status_b_before_begin["execution_fingerprint"],
+        "repo-local evidence divergence should produce a distinct execution fingerprint before same-branch adoption is considered"
+    );
+    assert_eq!(status_b_before_begin["execution_started"], "no");
+
+    let preflight = run_plan_execution_json(
+        repo_a,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "preflight before same-branch fingerprint guard fixture",
+    );
+    assert_eq!(preflight["allowed"], true);
+    run_plan_execution_json(
+        repo_a,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_a_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "plan execution begin for same-branch fingerprint guard fixture",
+    );
+
+    let status_b_after_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status after same-branch fingerprint guard fixture on repo B",
+    );
+    let explain_b_after_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "plan execution explain-review-state after same-branch fingerprint guard fixture on repo B",
+    );
+
+    assert_eq!(status_b_after_begin["execution_started"], "no");
+    assert!(
+        status_b_after_begin["active_task"].is_null(),
+        "repo B should not borrow repo A's active task when execution fingerprints differ"
+    );
+    assert!(
+        status_b_after_begin["active_step"].is_null(),
+        "repo B should not borrow repo A's active step when execution fingerprints differ"
+    );
+    assert_eq!(
+        status_b_before_begin["phase_detail"], status_b_after_begin["phase_detail"],
+        "repo B should preserve its local phase detail when same-branch fingerprints differ"
+    );
+    assert_eq!(
+        explain_b_before_begin["next_action"], explain_b_after_begin["next_action"],
+        "repo B explain-review-state should preserve its local next_action when same-branch fingerprints differ"
+    );
+    assert_eq!(
+        explain_b_before_begin["recommended_command"], explain_b_after_begin["recommended_command"],
+        "repo B explain-review-state should preserve its local recommended command when same-branch fingerprints differ"
+    );
+    assert_eq!(
+        explain_b_before_begin["trace_summary"], explain_b_after_begin["trace_summary"],
+        "repo B explain-review-state should preserve its local trace summary when same-branch fingerprints differ"
+    );
+}
+
+#[test]
+fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_differs() {
+    let (repo_dir, state_dir) = init_repo("workflow-same-branch-workspace-guard");
+    let repo_a = repo_dir.path();
+    let state = state_dir.path();
+    let linked_worktree_root = TempDir::new().expect("linked worktree tempdir should exist");
+    let repo_b = linked_worktree_root
+        .path()
+        .join("same-branch-workspace-guard");
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+
+    let mut git_checkout = Command::new("git");
+    git_checkout
+        .args(["checkout", "-B", "workflow-same-branch-workspace-guard"])
+        .current_dir(repo_a);
+    run_checked(
+        git_checkout,
+        "git checkout workflow-same-branch-workspace-guard",
+    );
+
+    let mut git_worktree_add = Command::new("git");
+    git_worktree_add
+        .arg("worktree")
+        .arg("add")
+        .arg("--force")
+        .arg(&repo_b)
+        .arg("workflow-same-branch-workspace-guard")
+        .current_dir(repo_a);
+    run_checked(
+        git_worktree_add,
+        "git worktree add --force same-branch-workspace-guard",
+    );
+
+    install_full_contract_ready_artifacts(repo_a);
+    install_full_contract_ready_artifacts(&repo_b);
+    let repo_b_readme_path = repo_b.join("README.md");
+    let repo_b_readme = fs::read_to_string(&repo_b_readme_path)
+        .expect("repo B README should be readable before tracked workspace guard");
+    fs::write(
+        &repo_b_readme_path,
+        format!("{repo_b_readme}tracked workspace divergence before same-branch adoption\n"),
+    )
+    .expect("repo B README should accept tracked workspace divergence");
+
+    let status_a_before_begin = run_plan_execution_json(
+        repo_a,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status before same-branch tracked workspace guard fixture",
+    );
+    let status_b_before_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status before same-branch tracked workspace guard fixture on repo B",
+    );
+    let operator_b_before_begin = parse_json(
+        &run_rust_featureforge_with_env(
+            &repo_b,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "workflow operator before same-branch tracked workspace guard fixture on repo B",
+        ),
+        "workflow operator before same-branch tracked workspace guard fixture on repo B",
+    );
+    let explain_b_before_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "explain-review-state before same-branch tracked workspace guard fixture on repo B",
+    );
+
+    assert_ne!(
+        status_a_before_begin["workspace_state_id"], status_b_before_begin["workspace_state_id"],
+        "tracked workspace divergence should produce a distinct workspace_state_id before same-branch adoption is considered"
+    );
+    assert_eq!(status_b_before_begin["execution_started"], "no");
+
+    let preflight = run_plan_execution_json(
+        repo_a,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "preflight before same-branch tracked workspace guard fixture",
+    );
+    assert_eq!(preflight["allowed"], true);
+    run_plan_execution_json(
+        repo_a,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_a_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("status fingerprint should be present"),
+        ],
+        "plan execution begin for same-branch tracked workspace guard fixture",
+    );
+
+    let status_b_after_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["status", "--plan", plan_rel],
+        "plan execution status after same-branch tracked workspace guard fixture on repo B",
+    );
+    let operator_b_after_begin = parse_json(
+        &run_rust_featureforge_with_env(
+            &repo_b,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "workflow operator after same-branch tracked workspace guard fixture on repo B",
+        ),
+        "workflow operator after same-branch tracked workspace guard fixture on repo B",
+    );
+    let explain_b_after_begin = run_plan_execution_json(
+        &repo_b,
+        state,
+        &["explain-review-state", "--plan", plan_rel],
+        "explain-review-state after same-branch tracked workspace guard fixture on repo B",
+    );
+
+    assert_eq!(status_b_after_begin["execution_started"], "no");
+    assert_eq!(
+        status_b_before_begin["workspace_state_id"], status_b_after_begin["workspace_state_id"],
+        "repo B should preserve its own workspace_state_id when tracked workspace divergence blocks same-branch adoption"
+    );
+    assert!(
+        status_b_after_begin["active_task"].is_null(),
+        "repo B should not borrow repo A's active task when tracked workspace state differs"
+    );
+    assert!(
+        status_b_after_begin["active_step"].is_null(),
+        "repo B should not borrow repo A's active step when tracked workspace state differs"
+    );
+    assert_eq!(
+        operator_b_before_begin["phase"], operator_b_after_begin["phase"],
+        "repo B workflow operator phase should remain local when tracked workspace state differs"
+    );
+    assert_eq!(
+        operator_b_before_begin["next_action"], operator_b_after_begin["next_action"],
+        "repo B workflow operator next_action should remain local when tracked workspace state differs"
+    );
+    assert_eq!(
+        operator_b_before_begin["recommended_command"],
+        operator_b_after_begin["recommended_command"],
+        "repo B workflow operator recommended_command should remain local when tracked workspace state differs"
+    );
+    assert_eq!(
+        explain_b_before_begin["next_action"], explain_b_after_begin["next_action"],
+        "repo B explain-review-state next_action should remain local when tracked workspace state differs"
+    );
+    assert_eq!(
+        explain_b_before_begin["recommended_command"], explain_b_after_begin["recommended_command"],
+        "repo B explain-review-state recommended_command should remain local when tracked workspace state differs"
+    );
+    assert_eq!(
+        explain_b_before_begin["trace_summary"], explain_b_after_begin["trace_summary"],
+        "repo B explain-review-state trace_summary should remain local when tracked workspace state differs"
+    );
+}
+
+#[test]
 fn canonical_workflow_doctor_does_not_adopt_started_status_across_different_branch_worktrees() {
     let (repo_dir, state_dir) = init_repo("workflow-public-cross-branch-worktree");
     let repo_a = repo_dir.path();
@@ -5469,31 +6596,35 @@ Task 1 -> Task 2
         ),
         "workflow phase for task-boundary dispatch-blocked fixture",
     );
+    let expected_dispatch_command = format!(
+        "featureforge plan execution record-review-dispatch --plan {plan_rel} --scope task --task 1"
+    );
+    let expected_next_step_dispatch_template = format!(
+        "featureforge plan execution record-review-dispatch --plan {plan_rel} --scope task --task <n>"
+    );
     assert!(
-        phase_json["next_step"]
+        phase_json["recommended_command"]
             .as_str()
-            .is_some_and(|next_step| next_step
-                .contains("featureforge plan execution record-review-dispatch --plan")),
-        "workflow phase json should expose gate-review command guidance for dispatch-blocked repair flow, got {phase_json:?}"
+            .is_some_and(|command| command == expected_dispatch_command),
+        "workflow phase json should expose the exact dispatch remediation command in recommended_command for dispatch-blocked repair flow, got {phase_json:?}"
     );
     assert!(
         phase_json["next_step"]
             .as_str()
-            .is_some_and(|next_step| next_step.contains(plan_rel)),
-        "workflow phase json should include the approved plan path in dispatch-blocked next-step guidance, got {phase_json:?}"
+            .is_some_and(|next_step| next_step.contains(&expected_next_step_dispatch_template)),
+        "workflow phase json should include the exact dispatch remediation command in next_step for dispatch-blocked repair flow, got {phase_json:?}"
+    );
+    assert!(
+        doctor_json["recommended_command"]
+            .as_str()
+            .is_some_and(|command| command == expected_dispatch_command),
+        "workflow doctor should expose the exact dispatch remediation command in recommended_command for dispatch-blocked repair flow, got {doctor_json:?}"
     );
     assert!(
         doctor_json["next_step"]
             .as_str()
-            .is_some_and(|next_step| next_step
-                .contains("featureforge plan execution record-review-dispatch --plan")),
-        "workflow doctor should expose gate-review command guidance for dispatch-blocked repair flow, got {doctor_json:?}"
-    );
-    assert!(
-        doctor_json["next_step"]
-            .as_str()
-            .is_some_and(|next_step| next_step.contains(plan_rel)),
-        "workflow doctor should include the approved plan path in dispatch-blocked next-step guidance, got {doctor_json:?}"
+            .is_some_and(|next_step| next_step.contains(&expected_next_step_dispatch_template)),
+        "workflow doctor should include the exact dispatch remediation command in next_step for dispatch-blocked repair flow, got {doctor_json:?}"
     );
 
     let doctor_output = run_rust_featureforge_with_env(
@@ -5506,11 +6637,7 @@ Task 1 -> Task 2
     assert!(doctor_output.status.success());
     let doctor_stdout = String::from_utf8_lossy(&doctor_output.stdout);
     assert!(
-        doctor_stdout.contains("featureforge plan execution record-review-dispatch --plan"),
-        "workflow doctor text should include gate-review command guidance, got:\n{doctor_stdout}"
-    );
-    assert!(
-        doctor_stdout.contains(plan_rel),
+        doctor_stdout.contains(&expected_dispatch_command),
         "doctor stdout:\n{doctor_stdout}"
     );
 
@@ -5527,8 +6654,7 @@ Task 1 -> Task 2
     assert!(
         handoff_json["recommendation_reason"]
             .as_str()
-            .is_some_and(|reason| reason
-                .contains("featureforge plan execution record-review-dispatch --plan")),
+            .is_some_and(|reason| reason.contains(&expected_next_step_dispatch_template)),
         "workflow handoff should include gate-review command guidance for dispatch-blocked repair flow, got {handoff_json:?}"
     );
     assert!(
@@ -5926,18 +7052,11 @@ fn canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirti
         &repo.join("README.md"),
         "# workflow-doctor-accepted-preflight-dirty\ntracked change after execution preflight acceptance\n",
     );
-    let dirty_status = run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["status", "--porcelain"]).current_dir(repo);
-            command
-        },
-        "git status --porcelain after workspace dirties",
-    );
     assert!(
-        !String::from_utf8_lossy(&dirty_status.stdout)
-            .trim()
-            .is_empty(),
+        discover_repository(repo)
+            .expect("workspace dirtiness helper should discover repository")
+            .is_dirty()
+            .expect("workspace dirtiness helper should compute dirtiness"),
         "workspace should be dirty after introducing tracked change post-preflight acceptance"
     );
 

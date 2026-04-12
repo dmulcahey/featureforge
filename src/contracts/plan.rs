@@ -641,7 +641,7 @@ fn validate_plan_last_reviewed_by(last_reviewed_by: &str) -> Result<(), Diagnost
     }
 }
 
-fn normalize_plan_qa_requirement(value: &str) -> Option<String> {
+pub(crate) fn normalize_plan_qa_requirement(value: &str) -> Option<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "required" => Some(String::from("required")),
         "not-required" => Some(String::from("not-required")),

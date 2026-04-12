@@ -4,6 +4,19 @@
 
 - No unreleased changes yet.
 
+## v1.9.0 - 2026-04-11
+
+Shared-truth convergence release focused on making execution review-state routing, command eligibility, repair/reconcile output, workflow/operator output, and repo/runtime test surfaces derive the same authoritative current state while cutting repeated IO and subprocess overhead out of hot paths.
+
+- centralize reviewed-state selection, routing projection, and command eligibility around shared execution-owned helpers so `workflow operator`, execution status/query surfaces, repair/reconcile, and mutators stop recomputing the same current-truth decisions independently
+- fix the April-contract routing regressions where reopened or unfinished task work could still surface as late-stage `document_release_pending`, and make active task execution/task-closure truth outrank branch-closure requirements until late-stage entry is actually valid
+- align branch-closure, repair-review-state, final-review, gate, and follow-up override behavior on one authoritative interpretation of current task closures, branch baselines, dispatch currentness, and fail-closed repair reroutes
+- harden workflow identity handling so `record-pivot` persists the canonical repo-relative approved-plan path and same-branch worktree adoption refuses detached-worktree state sharing instead of leaking cross-worktree execution truth
+- add direct-vs-real CLI parity coverage and broader cross-surface regression coverage for shared routing/follow-up decisions, detached worktree fail-closed behavior, equivalent plan-path spellings, and authoritative review-state projection boundaries
+- cut full-suite runtime and test overhead by replacing repeated subprocess/repo-discovery paths with shared in-process helpers, `gix`-backed repo inspection, memoized fixture/runtime helpers, and centralized direct-runtime test support while preserving CLI semantics where the boundary is the contract
+- document project-local review/performance expectations in `AGENTS.md` so future reviews treat duplicate truth derivation, repeated immutable IO, avoidable subprocesses, and undocumented direct-vs-real CLI divergence as defects
+- refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for `1.9.0`
+
 ## v1.8.0 - 2026-04-09
 
 Late-stage routing hardening release focused on reviewed-closure authority, exact operator sequencing, and release-ready contract parity across runtime, docs, and tests.

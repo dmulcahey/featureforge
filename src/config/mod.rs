@@ -24,8 +24,22 @@ pub struct ConfigMigration {
 }
 
 pub fn get(args: &ConfigGetArgs) -> Result<String, DiagnosticError> {
-    let state_dir = state_dir();
-    let values = load_config(&state_dir)?;
+    get_for_state_dir(&state_dir(), args)
+}
+
+pub fn set(args: &ConfigSetArgs) -> Result<String, DiagnosticError> {
+    set_for_state_dir(&state_dir(), args)
+}
+
+pub fn list() -> Result<String, DiagnosticError> {
+    list_for_state_dir(&state_dir())
+}
+
+pub fn get_for_state_dir(
+    state_dir: &Path,
+    args: &ConfigGetArgs,
+) -> Result<String, DiagnosticError> {
+    let values = load_config(state_dir)?;
     let value = match normalize_key(&args.key)?.as_str() {
         "update_check" => values.update_check.map(render_bool),
         "featureforge_contributor" => values.featureforge_contributor.map(render_bool),
@@ -34,9 +48,11 @@ pub fn get(args: &ConfigGetArgs) -> Result<String, DiagnosticError> {
     Ok(value.unwrap_or_default())
 }
 
-pub fn set(args: &ConfigSetArgs) -> Result<String, DiagnosticError> {
-    let state_dir = state_dir();
-    let mut values = load_config(&state_dir)?;
+pub fn set_for_state_dir(
+    state_dir: &Path,
+    args: &ConfigSetArgs,
+) -> Result<String, DiagnosticError> {
+    let mut values = load_config(state_dir)?;
     let key = normalize_key(&args.key)?;
     let value = parse_bool(&args.value)?;
 
@@ -50,9 +66,8 @@ pub fn set(args: &ConfigSetArgs) -> Result<String, DiagnosticError> {
     Ok(String::new())
 }
 
-pub fn list() -> Result<String, DiagnosticError> {
-    let state_dir = state_dir();
-    Ok(render_config(&load_config(&state_dir)?))
+pub fn list_for_state_dir(state_dir: &Path) -> Result<String, DiagnosticError> {
+    Ok(render_config(&load_config(state_dir)?))
 }
 
 pub fn read_update_check_preference(state_dir: &Path) -> Result<Option<bool>, DiagnosticError> {

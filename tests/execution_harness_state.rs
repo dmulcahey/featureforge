@@ -2,6 +2,8 @@
 mod bin_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/git.rs"]
+mod git_support;
 #[path = "support/json.rs"]
 mod json_support;
 #[path = "support/plan_execution_direct.rs"]
@@ -145,31 +147,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
 
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(repo);
-    run_checked_output(git_init, "git init");
-
-    let mut git_config_name = Command::new("git");
-    git_config_name
-        .args(["config", "user.name", "FeatureForge Test"])
-        .current_dir(repo);
-    run_checked_output(git_config_name, "git config user.name");
-
-    let mut git_config_email = Command::new("git");
-    git_config_email
-        .args(["config", "user.email", "featureforge-tests@example.com"])
-        .current_dir(repo);
-    run_checked_output(git_config_email, "git config user.email");
-
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-
-    let mut git_add = Command::new("git");
-    git_add.args(["add", "README.md"]).current_dir(repo);
-    run_checked_output(git_add, "git add README");
-
-    let mut git_commit = Command::new("git");
-    git_commit.args(["commit", "-m", "init"]).current_dir(repo);
-    run_checked_output(git_commit, "git commit init");
+    git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
 
     (repo_dir, state_dir)
 }
@@ -225,11 +203,11 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_json_direct(
+    match plan_execution_direct_support::try_run_plan_execution_output_direct(
         repo, state, args, context,
     ) {
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => return value,
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {}
+        Ok(Some(output)) => return parse_json(&output, context),
+        Ok(None) => {}
         Err(error) => panic!("{error}"),
     }
     parse_json(&run_plan_execution(repo, state, args, context), context)

@@ -171,6 +171,8 @@ pub(crate) fn load_status_authoritative_overlay_checked(
         ));
     }
 
+    // Authoritative overlay truth can change multiple times during one in-process command loop.
+    // Read fresh on every call so rewrites cannot leak stale routing or gate state.
     let source = fs::read_to_string(&state_path).map_err(|error| {
         JsonFailure::new(
             FailureClass::MalformedExecutionState,
@@ -600,6 +602,7 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
             std::process::Command::new("kill")
                 .arg("-0")
                 .arg(pid.to_string())
+                .stderr(std::process::Stdio::null())
                 .status()
                 .map(|status| status.success())
                 .unwrap_or(true),
