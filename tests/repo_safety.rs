@@ -1,7 +1,11 @@
 #[path = "support/failure_json.rs"]
 mod failure_json_support;
+#[path = "support/featureforge.rs"]
+mod featureforge_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/git.rs"]
+mod git_support;
 #[path = "support/json.rs"]
 mod json_support;
 #[path = "support/process.rs"]
@@ -22,14 +26,20 @@ use json_support::parse_json;
 use process_support::{run, run_checked};
 
 fn repo_slug(repo: &Path) -> String {
-    let output = run_checked(
-        {
-            let mut command = Command::cargo_bin("featureforge")
-                .expect("featureforge cargo binary should be available");
-            command.current_dir(repo).args(["repo", "slug"]);
-            command
-        },
+    let output = featureforge_support::run_rust_featureforge(
+        Some(repo),
+        None,
+        None,
+        &[],
+        &["repo", "slug"],
         "featureforge repo slug",
+    );
+    assert!(
+        output.status.success(),
+        "featureforge repo slug should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout)
         .expect("repo slug output should be utf-8")
@@ -44,31 +54,7 @@ fn init_repo(name: &str, branch: &str, remote_url: &str) -> (TempDir, TempDir) {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
 
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(repo);
-    run_checked(git_init, "git init");
-
-    let mut git_config_name = Command::new("git");
-    git_config_name
-        .args(["config", "user.name", "FeatureForge Test"])
-        .current_dir(repo);
-    run_checked(git_config_name, "git config user.name");
-
-    let mut git_config_email = Command::new("git");
-    git_config_email
-        .args(["config", "user.email", "featureforge-tests@example.com"])
-        .current_dir(repo);
-    run_checked(git_config_email, "git config user.email");
-
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-
-    let mut git_add = Command::new("git");
-    git_add.args(["add", "README.md"]).current_dir(repo);
-    run_checked(git_add, "git add README");
-
-    let mut git_commit = Command::new("git");
-    git_commit.args(["commit", "-m", "init"]).current_dir(repo);
-    run_checked(git_commit, "git commit init");
+    git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
 
     let mut git_checkout = Command::new("git");
     git_checkout
@@ -139,13 +125,14 @@ fn run_shell_repo_safety(repo: &Path, state_dir: &Path, args: &[&str], context: 
 }
 
 fn run_rust_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge cargo binary should be available");
-    command
-        .current_dir(repo)
-        .env("FEATUREFORGE_STATE_DIR", state_dir)
-        .args(args);
-    run(command, context)
+    featureforge_support::run_rust_featureforge(
+        Some(repo),
+        Some(state_dir),
+        None,
+        &[],
+        args,
+        context,
+    )
 }
 
 fn checkout_branch(repo: &Path, branch: &str) {

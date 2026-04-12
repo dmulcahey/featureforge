@@ -31,7 +31,8 @@ use crate::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters,
 };
 use crate::execution::state::{
-    ExecutionContext, ExecutionRuntime, GateResult, GateState, load_execution_context,
+    ExecutionContext, ExecutionRuntime, GateResult, GateState,
+    load_execution_context_for_exact_plan,
 };
 use crate::git::sha256_hex;
 use crate::paths::{
@@ -44,7 +45,7 @@ pub fn record_contract(
     runtime: &ExecutionRuntime,
     args: &RecordContractArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context(runtime, &args.plan)?;
+    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     let mut gate = GateState::default();
 
     let artifact_rel = normalize_artifact_repo_path(&args.contract, "Contract")?;
@@ -104,7 +105,7 @@ pub fn record_evaluation(
     runtime: &ExecutionRuntime,
     args: &RecordEvaluationArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context(runtime, &args.plan)?;
+    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     let mut gate = GateState::default();
 
     let artifact_rel = normalize_artifact_repo_path(&args.evaluation, "Evaluation")?;
@@ -183,7 +184,7 @@ pub fn record_handoff(
     runtime: &ExecutionRuntime,
     args: &RecordHandoffArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context(runtime, &args.plan)?;
+    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     let mut gate = GateState::default();
 
     let artifact_rel = normalize_artifact_repo_path(&args.handoff, "Handoff")?;

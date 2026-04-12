@@ -10,8 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::cli::repo_safety::{RepoSafetyApproveArgs, RepoSafetyCheckArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::git::{
-    discover_repo_identity, discover_slug_identity, short_sha256_hex,
-    stored_repo_root_matches_current,
+    derive_repo_slug, discover_repo_context, short_sha256_hex, stored_repo_root_matches_current,
 };
 use crate::instructions::{collect_active_instruction_files, parse_protected_branches};
 use crate::paths::{
@@ -93,6 +92,13 @@ pub struct RepoSafetyRuntime {
 
 impl RepoSafetyRuntime {
     pub fn discover(current_dir: &Path) -> Result<Self, DiagnosticError> {
+        Self::discover_for_state_dir(current_dir, &state_dir())
+    }
+
+    pub fn discover_for_state_dir(
+        current_dir: &Path,
+        state_dir: &Path,
+    ) -> Result<Self, DiagnosticError> {
         if env::var("FEATUREFORGE_REPO_SAFETY_TEST_FAILPOINT").as_deref()
             == Ok("instruction_parse_failure")
         {
@@ -101,19 +107,19 @@ impl RepoSafetyRuntime {
                 "Repo-safety test failpoint requested an instruction-parse failure.",
             ));
         }
-        let identity = discover_repo_identity(current_dir)?;
-        let slug_identity = discover_slug_identity(current_dir);
+        let identity = discover_repo_context(current_dir)?.identity;
         let normalized_branch = normalize_identifier_token(&identity.branch_name);
         let safe_branch = branch_storage_key(&identity.branch_name);
+        let repo_slug = derive_repo_slug(&identity.repo_root, identity.remote_url.as_deref());
         let (protected, protected_by) =
             branch_protection(current_dir, &identity.repo_root, &normalized_branch)?;
 
         Ok(Self {
             repo_root: identity.repo_root,
             branch_name: identity.branch_name,
-            repo_slug: slug_identity.repo_slug,
+            repo_slug,
             safe_branch,
-            state_dir: state_dir(),
+            state_dir: state_dir.to_path_buf(),
             protected,
             protected_by,
         })

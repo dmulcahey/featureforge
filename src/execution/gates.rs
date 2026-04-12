@@ -13,7 +13,7 @@ use crate::contracts::harness::{
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, GateResult, GateState, PacketFingerprintInput,
-    compute_packet_fingerprint, hash_contract_plan, load_execution_context,
+    compute_packet_fingerprint, hash_contract_plan, load_execution_context_for_exact_plan,
 };
 use crate::git::sha256_hex;
 use crate::paths::{
@@ -28,7 +28,7 @@ const HARNESS_OWNED_PRODUCERS: &[&str] = &[
     "featureforge:code_quality",
 ];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub(crate) struct GateAuthorityState {
     #[serde(default)]
     pub(crate) harness_phase: Option<String>,
@@ -66,7 +66,7 @@ pub fn gate_contract(
     runtime: &ExecutionRuntime,
     args: &GateContractArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context(runtime, &args.plan)?;
+    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     gate_contract_from_context(&context, &args.contract)
 }
 
@@ -133,7 +133,7 @@ pub fn gate_evaluator(
     runtime: &ExecutionRuntime,
     args: &GateEvaluatorArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context(runtime, &args.plan)?;
+    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     gate_evaluator_from_context(&context, &args.evaluation)
 }
 
@@ -221,7 +221,7 @@ pub fn gate_handoff(
     runtime: &ExecutionRuntime,
     args: &GateHandoffArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context(runtime, &args.plan)?;
+    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     gate_handoff_from_context(&context, &args.handoff)
 }
 

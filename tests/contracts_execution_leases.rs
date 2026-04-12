@@ -1,5 +1,7 @@
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/git.rs"]
+mod git_support;
 #[path = "support/json.rs"]
 mod json_support;
 #[path = "support/process.rs"]
@@ -38,51 +40,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
 
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.arg("init").current_dir(repo);
-            command
-        },
-        "git init",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.name", "FeatureForge Test"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.name",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.email", "featureforge-tests@example.com"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.email",
-    );
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["add", "README.md"]).current_dir(repo);
-            command
-        },
-        "git add README",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["commit", "-m", "init"]).current_dir(repo);
-            command
-        },
-        "git commit init",
-    );
+    git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
     run_checked(
         {
             let mut command = Command::new("git");

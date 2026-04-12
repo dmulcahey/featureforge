@@ -446,7 +446,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "featureforge"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -457,6 +457,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shlex",
  "tempfile",
  "thiserror 2.0.18",
 ]

@@ -25,12 +25,19 @@ fn write_file(path: impl AsRef<Path>, contents: &str) {
 }
 
 fn run_git(repo_dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let output = Command::new("git")
         .args(args)
         .current_dir(repo_dir)
-        .status()
+        .output()
         .expect("git should launch for test setup");
-    assert!(status.success(), "git {:?} should succeed", args);
+    assert!(
+        output.status.success(),
+        "git {:?} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        args,
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -105,7 +112,7 @@ fn detached_head_uses_current_branch_name() {
     let repo_root = unique_temp_dir("detached-head");
     write_file(repo_root.join("README.md"), "# detached head fixture\n");
 
-    run_git(&repo_root, &["init"]);
+    run_git(&repo_root, &["init", "-b", "main"]);
     run_git(&repo_root, &["config", "user.name", "FeatureForge Tests"]);
     run_git(
         &repo_root,

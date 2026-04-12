@@ -4,8 +4,6 @@ mod bin_support;
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/repo_template.rs"]
@@ -16,7 +14,7 @@ use featureforge::execution::final_review::{
     parse_final_review_receipt, resolve_release_base_branch,
 };
 use featureforge::execution::state::current_head_sha as runtime_current_head_sha;
-use featureforge::git::discover_slug_identity;
+use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
 };
@@ -210,7 +208,7 @@ fn current_head_sha(repo: &Path) -> String {
 }
 
 fn current_head_tree_sha(repo: &Path) -> String {
-    gix::discover(repo)
+    discover_repository(repo)
         .expect("head tree helper should discover repository")
         .head_tree_id_or_empty()
         .expect("head tree helper should resolve HEAD tree")
@@ -229,6 +227,28 @@ fn expected_base_branch(repo: &Path) -> String {
 
 fn repo_slug(repo: &Path) -> String {
     discover_slug_identity(repo).repo_slug
+}
+
+fn branch_contract_identity(
+    plan_rel: &str,
+    plan_revision: u32,
+    repo_slug: &str,
+    branch_name: &str,
+    base_branch: &str,
+) -> String {
+    let payload = format!(
+        "branch-contract\n{plan_rel}\n{plan_revision}\n{repo_slug}\n{branch_name}\n{base_branch}"
+    );
+    format!("branch-contract-{}", &sha256_hex(payload.as_bytes())[..16])
+}
+
+fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
+    let mut payload = String::from(prefix);
+    for part in parts {
+        payload.push('\n');
+        payload.push_str(part);
+    }
+    format!("{prefix}-{}", &sha256_hex(payload.as_bytes())[..16])
 }
 
 fn project_artifact_dir(repo: &Path, state: &Path) -> PathBuf {
@@ -472,7 +492,12 @@ fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&st
 
 fn seed_current_branch_closure_truth(repo: &Path, state: &Path) {
     let branch = branch_name(repo);
+    let base_branch = expected_base_branch(repo);
     let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
+    let execution_run_id = String::from("run-fixture");
+    let branch_contract_identity =
+        branch_contract_identity(PLAN_REL, 1, &repo_slug(repo), &branch, &base_branch);
+    let task_contract_identity = deterministic_record_id("task-contract", &[PLAN_REL, "1", "1"]);
     update_authoritative_harness_state(
         repo,
         state,
@@ -487,18 +512,65 @@ fn seed_current_branch_closure_truth(repo: &Path, state: &Path) {
             ),
             (
                 "current_branch_closure_contract_identity",
-                Value::from("branch-contract-ready"),
+                Value::from(branch_contract_identity.clone()),
             ),
             (
                 "branch_closure_records",
                 json!({
                     "branch-release-closure": {
+                        "branch_closure_id": "branch-release-closure",
                         "reviewed_state_id": reviewed_state_id,
-                        "contract_identity": "branch-contract-ready",
+                        "contract_identity": branch_contract_identity,
                         "source_plan_path": PLAN_REL,
                         "source_plan_revision": 1,
                         "repo_slug": repo_slug(repo),
                         "branch_name": branch,
+                        "base_branch": base_branch,
+                        "effective_reviewed_branch_surface": "repo_tracked_content",
+                        "source_task_closure_ids": ["task-1-closure"],
+                        "provenance_basis": "task_closure_lineage",
+                        "closure_status": "current",
+                        "superseded_branch_closure_ids": []
+                    }
+                }),
+            ),
+            (
+                "current_task_closure_records",
+                json!({
+                    "task-1": {
+                        "dispatch_id": "fixture-task-dispatch",
+                        "closure_record_id": "task-1-closure",
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "execution_run_id": execution_run_id.clone(),
+                        "reviewed_state_id": reviewed_state_id.clone(),
+                        "contract_identity": task_contract_identity.clone(),
+                        "effective_reviewed_surface_paths": ["README.md"],
+                        "review_result": "pass",
+                        "review_summary_hash": sha256_hex(b"workflow runtime final-review task closure review fixture"),
+                        "verification_result": "pass",
+                        "verification_summary_hash": sha256_hex(b"workflow runtime final-review task closure verification fixture"),
+                        "closure_status": "current"
+                    }
+                }),
+            ),
+            (
+                "task_closure_record_history",
+                json!({
+                    "task-1-closure": {
+                        "dispatch_id": "fixture-task-dispatch",
+                        "closure_record_id": "task-1-closure",
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "execution_run_id": execution_run_id,
+                        "reviewed_state_id": reviewed_state_id.clone(),
+                        "contract_identity": task_contract_identity,
+                        "effective_reviewed_surface_paths": ["README.md"],
+                        "review_result": "pass",
+                        "review_summary_hash": sha256_hex(b"workflow runtime final-review task closure review fixture"),
+                        "verification_result": "pass",
+                        "verification_summary_hash": sha256_hex(b"workflow runtime final-review task closure verification fixture"),
+                        "closure_status": "current"
                     }
                 }),
             ),
@@ -674,6 +746,7 @@ fn run_featureforge_with_env(
     env: &[(&str, &str)],
     context: &str,
 ) -> Value {
+    // This suite intentionally exercises the real workflow CLI boundary.
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -686,13 +759,7 @@ fn run_featureforge_with_env(
 }
 
 fn run_plan_execution(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_json_direct(
-        repo, state_dir, args, context,
-    ) {
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => return value,
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {}
-        Err(error) => panic!("{error}"),
-    }
+    // This suite intentionally exercises the real plan-execution CLI boundary.
     let mut command_args = Vec::with_capacity(args.len() + 2);
     command_args.push("plan");
     command_args.push("execution");
@@ -1058,9 +1125,13 @@ fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
     );
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "review_artifact_missing"
+    assert!(
+        gate_finish_json["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code.as_str() == Some("review_artifact_missing"))),
+        "workflow finish gate should include review_artifact_missing when final review is pending, got {gate_finish_json:?}"
     );
 }
 

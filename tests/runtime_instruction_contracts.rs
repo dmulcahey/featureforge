@@ -1,3 +1,7 @@
+#[path = "support/generated_docs.rs"]
+mod generated_docs_support;
+#[path = "support/git.rs"]
+mod git_support;
 #[path = "support/install.rs"]
 mod install_support;
 #[path = "support/process.rs"]
@@ -251,6 +255,14 @@ fn assert_file_not_contains(path: impl AsRef<Path>, needle: &str) {
     assert_not_contains(&content, needle, &path_ref.display().to_string());
 }
 
+fn assert_generated_skill_docs_current(root: &Path) {
+    generated_docs_support::assert_generated_skill_docs_current(root);
+}
+
+fn assert_generated_agent_docs_current(root: &Path) {
+    generated_docs_support::assert_generated_agent_docs_current(root);
+}
+
 fn assert_description_contains(path: impl AsRef<Path>, needle: &str) {
     let path_ref = path.as_ref();
     let content = read_utf8(path_ref);
@@ -486,9 +498,7 @@ fn make_runtime_root(dir: &Path) {
 }
 
 fn make_runtime_repo(dir: &Path) {
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(dir);
-    run_checked(git_init, "git init runtime repo");
+    git_support::init_repo_with_initial_commit(dir, "# runtime repo\n", "init");
     make_runtime_root(dir);
 }
 
@@ -1098,17 +1108,8 @@ fn runtime_instruction_surface_contracts_and_generation_checks_hold() {
         "bin/prebuilt/manifest.json",
     );
 
-    let mut gen_skills = Command::new("node");
-    gen_skills
-        .args(["scripts/gen-skill-docs.mjs", "--check"])
-        .current_dir(&root);
-    run_checked(gen_skills, "gen-skill-docs --check");
-
-    let mut gen_agents = Command::new("node");
-    gen_agents
-        .args(["scripts/gen-agent-docs.mjs", "--check"])
-        .current_dir(&root);
-    run_checked(gen_agents, "gen-agent-docs --check");
+    assert_generated_skill_docs_current(&root);
+    assert_generated_agent_docs_current(&root);
 
     assert_file_contains(
         root.join("README.md"),
@@ -2463,9 +2464,7 @@ fn using_featureforge_preamble_uses_only_the_packaged_runtime_binary() {
 
     let non_runtime_repo = tmp_root.path().join("non-runtime-repo");
     fs::create_dir_all(&non_runtime_repo).expect("non-runtime repo should exist");
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(&non_runtime_repo);
-    run_checked(git_init, "git init non-runtime repo");
+    git_support::init_repo_with_initial_commit(&non_runtime_repo, "# non-runtime repo\n", "init");
     let missing_packaged_home = tmp_root.path().join("missing-packaged-home");
     fs::create_dir_all(&missing_packaged_home).expect("missing packaged home should exist");
 
@@ -2516,9 +2515,7 @@ fn generated_skill_preamble_never_executes_repo_or_root_selected_launchers() {
     fs::create_dir_all(&repo_candidate).expect("repo candidate should exist");
     fs::create_dir_all(&resolved_runtime_root).expect("resolved runtime root should exist");
 
-    let mut git_init = Command::new("git");
-    git_init.arg("init").current_dir(&repo_candidate);
-    run_checked(git_init, "git init repo candidate");
+    git_support::init_repo_with_initial_commit(&repo_candidate, "# repo candidate\n", "init");
 
     write_logging_packaged_runtime(
         &canonical_install_bin(&home_dir),

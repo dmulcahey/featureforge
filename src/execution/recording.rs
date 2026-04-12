@@ -3,8 +3,12 @@
 //! intent adapters should delegate authoritative writes here so mutation orchestration
 //! stays separate from workflow routing, artifact rendering, and CLI phrasing.
 
+use std::collections::BTreeSet;
+
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::state::{ExecutionContext, ExecutionRuntime};
+use crate::execution::state::{
+    ExecutionContext, ExecutionRuntime, validated_current_branch_closure_identity,
+};
 use crate::execution::transitions::{
     AuthoritativeTransitionState, BranchClosureResultRecord, BrowserQaResultRecord,
     FinalReviewMilestoneRecord, ReleaseReadinessResultRecord, TaskClosureNegativeResultRecord,
@@ -289,8 +293,7 @@ pub(crate) fn restore_current_branch_closure_overlay(
             "reconcile-review-state requires authoritative harness state.",
         ));
     };
-    let Some(current_identity) = authoritative_state.recoverable_current_branch_closure_identity()
-    else {
+    let Some(current_identity) = validated_current_branch_closure_identity(context) else {
         return Ok(false);
     };
     if current_identity.branch_closure_id != branch_closure_id
@@ -308,10 +311,29 @@ pub(crate) fn restore_current_branch_closure_overlay(
     Ok(true)
 }
 
+pub(crate) fn clear_current_branch_closure_for_structural_repair(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+) -> Result<bool, JsonFailure> {
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(false);
+    };
+    if !authoritative_state.clear_current_branch_closure_for_structural_repair()? {
+        return Ok(false);
+    }
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(true)
+}
+
 pub(crate) fn restore_current_late_stage_overlays(
     runtime: &ExecutionRuntime,
     context: &ExecutionContext,
 ) -> Result<Vec<String>, JsonFailure> {
+    if validated_current_branch_closure_identity(context).is_none() {
+        return Ok(Vec::new());
+    }
     let _write_authority = claim_step_write_authority(runtime)?;
     let mut authoritative_state = load_authoritative_transition_state(context)?;
     let Some(authoritative_state) = authoritative_state.as_mut() else {
@@ -354,6 +376,124 @@ pub(crate) fn clear_task_review_dispatch_lineage_for_execution_reentry(
     }
     authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(true)
+}
+
+pub(crate) fn clear_task_review_dispatch_lineage_for_structural_repair(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    task_number: u32,
+) -> Result<bool, JsonFailure> {
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(false);
+    };
+    if !authoritative_state.clear_task_review_dispatch_lineage_for_structural_repair(task_number)? {
+        return Ok(false);
+    }
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(true)
+}
+
+pub(crate) fn clear_current_task_closure_results_for_execution_reentry(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    tasks: impl IntoIterator<Item = u32>,
+) -> Result<Vec<u32>, JsonFailure> {
+    let tasks = tasks.into_iter().collect::<Vec<_>>();
+    if tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(Vec::new());
+    };
+    let cleared_tasks = tasks
+        .into_iter()
+        .filter(|task| {
+            authoritative_state
+                .raw_current_task_closure_state_entry(*task)
+                .is_some()
+                || authoritative_state
+                    .current_task_closure_result(*task)
+                    .is_some()
+        })
+        .collect::<Vec<_>>();
+    if cleared_tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+    authoritative_state
+        .clear_current_task_closure_results_for_execution_reentry(cleared_tasks.iter().copied())?;
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(cleared_tasks)
+}
+
+pub(crate) fn clear_current_task_closure_results_for_structural_repair(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    tasks: impl IntoIterator<Item = u32>,
+) -> Result<Vec<u32>, JsonFailure> {
+    let tasks = tasks.into_iter().collect::<Vec<_>>();
+    if tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(Vec::new());
+    };
+    let cleared_tasks = tasks
+        .into_iter()
+        .filter(|task| {
+            authoritative_state
+                .raw_current_task_closure_state_entry(*task)
+                .is_some()
+                || authoritative_state
+                    .current_task_closure_result(*task)
+                    .is_some()
+        })
+        .collect::<Vec<_>>();
+    if cleared_tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+    authoritative_state
+        .clear_current_task_closure_results_for_structural_repair(cleared_tasks.iter().copied())?;
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(cleared_tasks)
+}
+
+pub(crate) fn clear_current_task_closure_results_for_structural_repair_scope_keys(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    scope_keys: impl IntoIterator<Item = String>,
+) -> Result<Vec<String>, JsonFailure> {
+    let scope_keys = scope_keys.into_iter().collect::<Vec<_>>();
+    if scope_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(Vec::new());
+    };
+    let available_scope_keys = authoritative_state
+        .raw_current_task_closure_state_entries()
+        .into_iter()
+        .map(|entry| entry.scope_key)
+        .collect::<BTreeSet<_>>();
+    let cleared_scope_keys = scope_keys
+        .into_iter()
+        .filter(|scope_key| available_scope_keys.contains(scope_key))
+        .collect::<Vec<_>>();
+    if cleared_scope_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    authoritative_state.clear_current_task_closure_results_for_structural_repair_scope_keys(
+        cleared_scope_keys.clone(),
+    )?;
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(cleared_scope_keys)
 }
 
 pub(crate) fn persist_review_state_repair_follow_up(

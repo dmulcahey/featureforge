@@ -24,6 +24,20 @@ This file is project-local guidance for agents working in `featureforge`. It app
 - Do not update historical plans or specs unless the user explicitly asks for that exact artifact change.
 - When a change touches generated skill docs, edit the `.tmpl` source and regenerate the checked-in `SKILL.md` output.
 
+## Shared Truth
+
+- When the same workspace state is visible to multiple surfaces, derive that truth once in shared runtime helpers and project from there. Do not let `workflow/status`, `workflow/operator`, execution query/state, repair/reconcile, and mutators recompute the same routing or review-state truth independently.
+- The default expectation is convergence across all surfaces. Divergence is only acceptable when it is required for functionality or explicit boundary testing.
+- Any intentional divergence must be documented with a nearby code comment explaining why the boundary requires it and why the shared helper path is not being used there.
+
+## Performance Discipline
+
+- Prefer in-process/runtime helpers over subprocess invocation when the shell boundary is not itself under test. Semantic tests should exercise the same Rust code paths the runtime uses directly.
+- Prefer `gix` or other established high-performance libraries over ad hoc `git` subprocesses for repository inspection when semantics can be preserved.
+- Memoize immutable or effectively immutable reads when they are reused within a command or test flow. Repeated repo discovery, overlay loads, transition-state parses, and tree/head lookups are all suspect until proven otherwise.
+- When replacing a CLI subprocess with an in-process test helper, preserve CLI semantics exactly. Match success vs failure exit behavior, stdout vs stderr routing, trailing newlines, JSON field ordering, and explicit state-dir/runtime-root inputs instead of relying on ambient defaults.
+- Do not accept test-speed regressions as harmless. If `cargo test` meaningfully slows down, profile it and remove the duplicated IO or subprocess churn rather than weakening the suite.
+
 ## Project Memory
 
 - `docs/project_notes/` is supportive memory only; approved specs, plans, execution evidence, review artifacts, runtime state, and active repo instructions remain authoritative.
@@ -56,6 +70,8 @@ This file is project-local guidance for agents working in `featureforge`. It app
 - For Rust code changes, default verification is:
   - `cargo clippy --all-targets --all-features -- -D warnings`
   - targeted `cargo test` commands for changed areas
+- For performance-sensitive Rust changes, also measure plain `cargo test` and investigate regressions instead of assuming the suite cost is fixed.
+- When performance work touches repo or workflow IO, prefer shared helpers, `gix`, memoization, and cached fixture templates over fresh subprocesses or repeated filesystem scans when the contract does not require the boundary.
 - For skill template changes, also run:
   - `node scripts/gen-skill-docs.mjs`
   - `node --test tests/codex-runtime/skill-doc-contracts.test.mjs`
@@ -73,3 +89,9 @@ This file is project-local guidance for agents working in `featureforge`. It app
 - Before calling work complete, verify both implementation correctness and workflow correctness.
 - Fresh independent review is preferred for material workflow or trust-boundary changes.
 - If a reviewer finds real issues, fix them in code or tests; do not paper over them with policy exceptions.
+- Reviews for this repository should explicitly check for three recurring failure modes:
+- Reviews should treat any direct-helper vs real-CLI divergence as a bug unless the divergence is required for a boundary test and documented inline.
+  - duplicate truth derivation across surfaces that should share a single authoritative decision
+  - repeated immutable IO or missed memoization in runtime hot paths
+  - semantic tests that still shell out even though the subprocess boundary is not part of the contract under test
+  - git subprocess usage or repeated repo discovery in runtime/test hot paths where a shared helper or `gix` path could preserve semantics with less IO

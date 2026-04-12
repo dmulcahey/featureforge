@@ -1,16 +1,27 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, RwLock};
 
 use sha2::{Digest, Sha256};
 
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::paths::branch_storage_key;
 
+type CommitFingerprintCache = RwLock<HashMap<(PathBuf, String), String>>;
+type AncestorCache = RwLock<HashMap<(PathBuf, String, String), bool>>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepositoryIdentity {
     pub repo_root: PathBuf,
     pub remote_url: Option<String>,
     pub branch_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryContext {
+    pub identity: RepositoryIdentity,
+    pub git_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +33,29 @@ pub struct SlugIdentity {
     pub safe_branch: String,
 }
 
+fn fallback_slug_identity(start_dir: &Path) -> SlugIdentity {
+    let repo_root = canonicalize_repo_root_path(start_dir);
+    let branch_name = String::from("current");
+    SlugIdentity {
+        repo_slug: derive_repo_slug(&repo_root, None),
+        safe_branch: String::from("current"),
+        repo_root,
+        remote_url: None,
+        branch_name,
+    }
+}
+
+fn slug_identity_from_repo_identity(identity: RepositoryIdentity) -> SlugIdentity {
+    let safe_branch = branch_storage_key(&identity.branch_name);
+    SlugIdentity {
+        repo_slug: derive_repo_slug(&identity.repo_root, identity.remote_url.as_deref()),
+        safe_branch,
+        repo_root: identity.repo_root,
+        remote_url: identity.remote_url,
+        branch_name: identity.branch_name,
+    }
+}
+
 pub fn canonicalize_repo_root_path(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
@@ -30,6 +64,73 @@ pub fn canonicalize_repo_root_string(path: &Path) -> String {
     canonicalize_repo_root_path(path)
         .to_string_lossy()
         .into_owned()
+}
+
+pub fn discover_repository(start_dir: &Path) -> Result<gix::Repository, Box<gix::discover::Error>> {
+    gix::discover(start_dir).map_err(Box::new)
+}
+
+fn commit_fingerprint_cache() -> &'static CommitFingerprintCache {
+    static COMMIT_FINGERPRINT_CACHE: OnceLock<CommitFingerprintCache> = OnceLock::new();
+    COMMIT_FINGERPRINT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn ancestor_cache() -> &'static AncestorCache {
+    static ANCESTOR_CACHE: OnceLock<AncestorCache> = OnceLock::new();
+    ANCESTOR_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+pub fn commit_object_fingerprint(repo_root: &Path, commit_sha: &str) -> Option<String> {
+    let key = (repo_root.to_path_buf(), commit_sha.trim().to_owned());
+    if let Some(fingerprint) = commit_fingerprint_cache()
+        .read()
+        .expect("commit fingerprint cache lock should not be poisoned")
+        .get(&key)
+        .cloned()
+    {
+        return Some(fingerprint);
+    }
+
+    let repo = discover_repository(repo_root).ok()?;
+    let object_id = gix::hash::ObjectId::from_hex(commit_sha.trim().as_bytes()).ok()?;
+    let commit = repo.find_commit(object_id).ok()?;
+    let fingerprint = sha256_hex(commit.data.as_slice());
+    commit_fingerprint_cache()
+        .write()
+        .expect("commit fingerprint cache lock should not be poisoned")
+        .insert(key, fingerprint.clone());
+    Some(fingerprint)
+}
+
+pub fn is_ancestor_commit(repo_root: &Path, ancestor: &str, descendant: &str) -> bool {
+    let key = (
+        repo_root.to_path_buf(),
+        ancestor.trim().to_owned(),
+        descendant.trim().to_owned(),
+    );
+    if let Some(cached) = ancestor_cache()
+        .read()
+        .expect("ancestor cache lock should not be poisoned")
+        .get(&key)
+        .copied()
+    {
+        return cached;
+    }
+
+    let result = discover_repository(repo_root)
+        .ok()
+        .and_then(|repo| {
+            let ancestor_id = gix::hash::ObjectId::from_hex(ancestor.trim().as_bytes()).ok()?;
+            let descendant_id = gix::hash::ObjectId::from_hex(descendant.trim().as_bytes()).ok()?;
+            let merge_base = repo.merge_base(ancestor_id, descendant_id).ok()?;
+            Some(merge_base.detach() == ancestor_id)
+        })
+        .unwrap_or(false);
+    ancestor_cache()
+        .write()
+        .expect("ancestor cache lock should not be poisoned")
+        .insert(key, result);
+    result
 }
 
 pub fn stored_repo_root_matches_current(stored_repo_root: &str, current_repo_root: &Path) -> bool {
@@ -45,12 +146,41 @@ pub fn stored_repo_root_matches_current(stored_repo_root: &str, current_repo_roo
 }
 
 pub fn discover_repo_identity(start_dir: &Path) -> Result<RepositoryIdentity, DiagnosticError> {
-    let repo = gix::discover(start_dir).map_err(|err| {
+    discover_repo_context(start_dir).map(|context| context.identity)
+}
+
+pub fn discover_repo_context(start_dir: &Path) -> Result<RepositoryContext, DiagnosticError> {
+    let repo = discover_repository(start_dir).map_err(|err| {
         DiagnosticError::new(
             FailureClass::BranchDetectionFailed,
             format!("Could not discover the current repository: {err}"),
         )
     })?;
+    repo_context_from_repository(repo)
+}
+
+pub fn discover_slug_identity(start_dir: &Path) -> SlugIdentity {
+    discover_repo_identity(start_dir)
+        .map(slug_identity_from_repo_identity)
+        .unwrap_or_else(|_| fallback_slug_identity(start_dir))
+}
+
+pub fn discover_slug_identity_and_head(start_dir: &Path) -> (SlugIdentity, Option<String>) {
+    let repo = match discover_repository(start_dir) {
+        Ok(repo) => repo,
+        Err(_) => return (fallback_slug_identity(start_dir), None),
+    };
+    let head_sha = repo.head_id().ok().map(|head| head.detach().to_string());
+    let context = match repo_context_from_repository(repo) {
+        Ok(context) => context,
+        Err(_) => return (fallback_slug_identity(start_dir), None),
+    };
+    (slug_identity_from_repo_identity(context.identity), head_sha)
+}
+
+fn repo_context_from_repository(
+    repo: gix::Repository,
+) -> Result<RepositoryContext, DiagnosticError> {
     let head = repo.head().map_err(|err| {
         DiagnosticError::new(
             FailureClass::BranchDetectionFailed,
@@ -76,37 +206,14 @@ pub fn discover_repo_identity(start_dir: &Path) -> Result<RepositoryIdentity, Di
             .map(|url| url.to_string())
     });
 
-    Ok(RepositoryIdentity {
-        repo_root,
-        remote_url,
-        branch_name,
+    Ok(RepositoryContext {
+        identity: RepositoryIdentity {
+            repo_root,
+            remote_url,
+            branch_name,
+        },
+        git_dir: repo.path().to_path_buf(),
     })
-}
-
-pub fn discover_slug_identity(start_dir: &Path) -> SlugIdentity {
-    match discover_repo_identity(start_dir) {
-        Ok(identity) => {
-            let safe_branch = branch_storage_key(&identity.branch_name);
-            SlugIdentity {
-                repo_slug: derive_repo_slug(&identity.repo_root, identity.remote_url.as_deref()),
-                safe_branch,
-                repo_root: identity.repo_root,
-                remote_url: identity.remote_url,
-                branch_name: identity.branch_name,
-            }
-        }
-        Err(_) => {
-            let repo_root = canonicalize_repo_root_path(start_dir);
-            let branch_name = String::from("current");
-            SlugIdentity {
-                repo_slug: derive_repo_slug(&repo_root, None),
-                safe_branch: String::from("current"),
-                repo_root,
-                remote_url: None,
-                branch_name,
-            }
-        }
-    }
 }
 
 pub fn derive_repo_slug(repo_root: &Path, remote_url: Option<&str>) -> String {

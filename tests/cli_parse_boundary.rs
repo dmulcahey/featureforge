@@ -2,6 +2,8 @@
 mod failure_json_support;
 #[path = "support/files.rs"]
 mod files_support;
+#[path = "support/git.rs"]
+mod git_support;
 #[path = "support/json.rs"]
 mod json_support;
 #[path = "support/process.rs"]
@@ -16,7 +18,7 @@ use tempfile::TempDir;
 use failure_json_support::parse_failure_json;
 use files_support::write_file;
 use json_support::parse_json;
-use process_support::{run, run_checked};
+use process_support::run;
 
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-25-cli-parse-boundary-design.md";
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-25-cli-parse-boundary.md";
@@ -26,52 +28,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
 
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.arg("init").current_dir(repo);
-            command
-        },
-        "git init",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.name", "FeatureForge Test"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.name",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command
-                .args(["config", "user.email", "featureforge-tests@example.com"])
-                .current_dir(repo);
-            command
-        },
-        "git config user.email",
-    );
-
-    write_file(&repo.join("README.md"), &format!("# {name}\n"));
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["add", "README.md"]).current_dir(repo);
-            command
-        },
-        "git add README",
-    );
-    run_checked(
-        {
-            let mut command = Command::new("git");
-            command.args(["commit", "-m", "init"]).current_dir(repo);
-            command
-        },
-        "git commit init",
-    );
+    git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
 
     write_file(
         &repo.join(SPEC_REL),

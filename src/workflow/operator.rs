@@ -10,9 +10,13 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::{OperatorArgs, PlanArgs};
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
+use crate::execution::current_truth::{
+    gate_has_any_reason, task_boundary_block_reason_code as shared_task_boundary_block_reason_code,
+};
 use crate::execution::harness::EvaluatorKind;
 use crate::execution::query::{
-    ExecutionRoutingState, query_workflow_read_state, query_workflow_routing_state,
+    ExecutionRoutingState, query_workflow_read_state, query_workflow_read_state_for_runtime,
+    query_workflow_routing_state, query_workflow_routing_state_for_runtime,
 };
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
@@ -266,42 +270,78 @@ struct OperatorContext {
 
 pub fn render_next(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
+    Ok(render_next_from_context(&context))
+}
+
+pub fn render_next_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
+    let context = build_context_for_runtime(runtime)?;
+    Ok(render_next_from_context(&context))
+}
+
+fn render_next_from_context(context: &OperatorContext) -> String {
     let mut output = String::new();
     output.push_str("Next action: ");
-    output.push_str(next_action_for_context(&context));
+    output.push_str(next_action_for_context(context));
     output.push('\n');
     output.push_str("Next safe step: ");
-    output.push_str(&next_step_text(&context));
+    output.push_str(&next_step_text(context));
     output.push('\n');
     output.push_str("Reason: ");
-    output.push_str(&reason_text(&context));
+    output.push_str(&reason_text(context));
     output.push('\n');
-    Ok(output)
+    output
 }
 
 pub fn render_artifacts(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
-    Ok(format!(
+    Ok(render_artifacts_from_context(&context))
+}
+
+pub fn render_artifacts_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
+    let context = build_context_for_runtime(runtime)?;
+    Ok(render_artifacts_from_context(&context))
+}
+
+fn render_artifacts_from_context(context: &OperatorContext) -> String {
+    format!(
         "Workflow artifacts\n- Spec: {}\n- Plan: {}\n",
         display_or_none(&context.route.spec_path),
         display_or_none(&context.route.plan_path)
-    ))
+    )
 }
 
 pub fn render_explain(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
-    Ok(format!(
+    Ok(render_explain_from_context(&context))
+}
+
+pub fn render_explain_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
+    let context = build_context_for_runtime(runtime)?;
+    Ok(render_explain_from_context(&context))
+}
+
+fn render_explain_from_context(context: &OperatorContext) -> String {
+    format!(
         "Why FeatureForge chose this state\n- State: {}\n- Spec: {}\n- Plan: {}\nWhat to do:\n1. {}\n",
         context.route.status,
         display_or_none(&context.route.spec_path),
         display_or_none(&context.route.plan_path),
-        next_step_text(&context)
-    ))
+        next_step_text(context)
+    )
 }
 
 pub fn phase(current_dir: &Path) -> Result<WorkflowPhase, JsonFailure> {
     let context = build_context(current_dir)?;
-    Ok(WorkflowPhase {
+    Ok(phase_from_context(context))
+}
+
+pub fn phase_for_runtime(runtime: &ExecutionRuntime) -> Result<WorkflowPhase, JsonFailure> {
+    let context = build_context_for_runtime(runtime)?;
+    Ok(phase_from_context(context))
+}
+
+fn phase_from_context(context: OperatorContext) -> WorkflowPhase {
+    WorkflowPhase {
         schema_version: WORKFLOW_PHASE_SCHEMA_VERSION,
         phase: context.phase.clone(),
         route_status: context.route.status.clone(),
@@ -316,27 +356,45 @@ pub fn phase(current_dir: &Path) -> Result<WorkflowPhase, JsonFailure> {
         spec_path: context.route.spec_path.clone(),
         plan_path: context.route.plan_path.clone(),
         route: context.route,
-    })
+    }
 }
 
 pub fn render_phase(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
-    Ok(format!(
+    Ok(render_phase_from_context(&context))
+}
+
+pub fn render_phase_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
+    let context = build_context_for_runtime(runtime)?;
+    Ok(render_phase_from_context(&context))
+}
+
+fn render_phase_from_context(context: &OperatorContext) -> String {
+    format!(
         "Workflow phase: {}\nPhase detail: {}\nReview state: {}\nRoute status: {}\nNext action: {}\nRecommended command: {}\nNext: {}\nSpec: {}\nPlan: {}\n",
         context.phase,
         context.operator_phase_detail,
         context.operator_review_state_status,
         context.route.status,
-        next_action_for_context(&context),
+        next_action_for_context(context),
         optional_text(context.operator_recommended_command.as_deref()),
-        next_step_text(&context),
+        next_step_text(context),
         display_or_none(&context.route.spec_path),
         display_or_none(&context.route.plan_path)
-    ))
+    )
 }
 
 pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
     let context = build_context(current_dir)?;
+    Ok(doctor_from_context(context))
+}
+
+pub fn doctor_for_runtime(runtime: &ExecutionRuntime) -> Result<WorkflowDoctor, JsonFailure> {
+    let context = build_context_for_runtime(runtime)?;
+    Ok(doctor_from_context(context))
+}
+
+fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
     let doctor_phase = doctor_phase_for_context(&context);
     let contract_state = context
         .plan_contract
@@ -344,7 +402,7 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
         .map(|report| report.contract_state.clone())
         .unwrap_or_else(|| context.route.contract_state.clone());
 
-    Ok(WorkflowDoctor {
+    WorkflowDoctor {
         schema_version: WORKFLOW_DOCTOR_SCHEMA_VERSION,
         phase: doctor_phase,
         phase_detail: context.operator_phase_detail.clone(),
@@ -365,11 +423,20 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
         gate_finish: context.gate_finish,
         task_review_dispatch_id: context.task_review_dispatch_id,
         final_review_dispatch_id: context.final_review_dispatch_id,
-    })
+    }
 }
 
 pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
     let doctor = doctor(current_dir)?;
+    Ok(render_doctor_output(&doctor))
+}
+
+pub fn render_doctor_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
+    let doctor = doctor_for_runtime(runtime)?;
+    Ok(render_doctor_output(&doctor))
+}
+
+fn render_doctor_output(doctor: &WorkflowDoctor) -> String {
     let mut output = format!(
         "Workflow doctor\nPhase: {}\nPhase detail: {}\nReview state: {}\nRoute status: {}\nNext action: {}\nRecommended command: {}\nNext: {}\nContract state: {}\nSpec: {}\nPlan: {}\n",
         doctor.phase,
@@ -404,38 +471,73 @@ pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
             reason_codes_text(&gate_finish.reason_codes)
         ));
     }
-    Ok(output)
+    output
 }
 
 pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
     let context = build_context(current_dir)?;
-    let contract_state = context
-        .plan_contract
-        .as_ref()
-        .map(|report| report.contract_state.clone())
-        .unwrap_or_else(|| context.route.contract_state.clone());
+    let recommendation = execution_preflight_recommendation_for_context(&context, |plan| {
+        let runtime = ExecutionRuntime::discover(current_dir)?;
+        runtime.recommend(&RecommendArgs {
+            plan,
+            isolated_agents: None,
+            session_intent: None,
+            workspace_prepared: None,
+        })
+    })?;
+    Ok(handoff_from_context(context, recommendation))
+}
 
+pub fn handoff_for_runtime(runtime: &ExecutionRuntime) -> Result<WorkflowHandoff, JsonFailure> {
+    let context = build_context_for_runtime(runtime)?;
+    let recommendation = execution_preflight_recommendation_for_context(&context, |plan| {
+        runtime.recommend(&RecommendArgs {
+            plan,
+            isolated_agents: None,
+            session_intent: None,
+            workspace_prepared: None,
+        })
+    })?;
+    Ok(handoff_from_context(context, recommendation))
+}
+
+fn execution_preflight_recommendation_for_context<F>(
+    context: &OperatorContext,
+    recommend: F,
+) -> Result<Option<RecommendOutput>, JsonFailure>
+where
+    F: FnOnce(PathBuf) -> Result<RecommendOutput, JsonFailure>,
+{
     let execution_started = context
         .execution_status
         .as_ref()
         .map(|status| status.execution_started.clone())
         .unwrap_or_else(|| String::from("no"));
-    let recommendation = if context.route.status == "implementation_ready"
+    if context.route.status == "implementation_ready"
         && context.phase == "execution_preflight"
         && execution_started != "yes"
         && !context.route.plan_path.is_empty()
     {
-        let runtime = ExecutionRuntime::discover(current_dir)?;
-        Some(runtime.recommend(&RecommendArgs {
-            plan: PathBuf::from(&context.route.plan_path),
-            isolated_agents: None,
-            session_intent: None,
-            workspace_prepared: None,
-        })?)
+        recommend(PathBuf::from(&context.route.plan_path)).map(Some)
     } else {
-        None
-    };
+        Ok(None)
+    }
+}
 
+fn handoff_from_context(
+    context: OperatorContext,
+    recommendation: Option<RecommendOutput>,
+) -> WorkflowHandoff {
+    let contract_state = context
+        .plan_contract
+        .as_ref()
+        .map(|report| report.contract_state.clone())
+        .unwrap_or_else(|| context.route.contract_state.clone());
+    let execution_started = context
+        .execution_status
+        .as_ref()
+        .map(|status| status.execution_started.clone())
+        .unwrap_or_else(|| String::from("no"));
     let (recommended_skill, recommendation_reason) = if let Some(recommendation) =
         recommendation.as_ref()
     {
@@ -513,7 +615,7 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
         }
     };
 
-    Ok(WorkflowHandoff {
+    WorkflowHandoff {
         schema_version: WORKFLOW_HANDOFF_SCHEMA_VERSION,
         phase: context.phase.clone(),
         phase_detail: context.operator_phase_detail.clone(),
@@ -534,7 +636,7 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
         execution_status: context.execution_status,
         plan_contract: context.plan_contract,
         recommendation,
-    })
+    }
 }
 
 pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOperator, JsonFailure> {
@@ -544,8 +646,25 @@ pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOpera
         args.external_review_result_ready,
         true,
     )?;
+    Ok(operator_from_context(context, args))
+}
+
+pub fn operator_for_runtime(
+    runtime: &ExecutionRuntime,
+    args: &OperatorArgs,
+) -> Result<WorkflowOperator, JsonFailure> {
+    let context = build_context_with_plan_for_runtime(
+        runtime,
+        Some(&args.plan),
+        args.external_review_result_ready,
+        true,
+    )?;
+    Ok(operator_from_context(context, args))
+}
+
+fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> WorkflowOperator {
     let plan_path = operator_plan_path(&context, args);
-    Ok(WorkflowOperator {
+    WorkflowOperator {
         schema_version: WORKFLOW_OPERATOR_SCHEMA_VERSION,
         phase: context.operator_phase.clone(),
         phase_detail: context.operator_phase_detail.clone(),
@@ -561,7 +680,7 @@ pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOpera
         recommended_command: context.operator_recommended_command.clone(),
         spec_path: context.route.spec_path.clone(),
         plan_path,
-    })
+    }
 }
 
 pub fn render_operator(operator: WorkflowOperator) -> String {
@@ -603,6 +722,15 @@ pub fn render_operator(operator: WorkflowOperator) -> String {
 
 pub fn render_handoff(current_dir: &Path) -> Result<String, JsonFailure> {
     let handoff = handoff(current_dir)?;
+    Ok(render_handoff_output(&handoff))
+}
+
+pub fn render_handoff_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
+    let handoff = handoff_for_runtime(runtime)?;
+    Ok(render_handoff_output(&handoff))
+}
+
+fn render_handoff_output(handoff: &WorkflowHandoff) -> String {
     let mut output = String::new();
     output.push_str("Workflow handoff\n");
     output.push_str(&format!("Phase: {}\n", handoff.phase));
@@ -628,21 +756,42 @@ pub fn render_handoff(current_dir: &Path) -> Result<String, JsonFailure> {
     if let Some(execution_status) = handoff.execution_status.as_ref() {
         append_execution_status_metadata(&mut output, execution_status);
     }
-    Ok(output)
+    output
 }
 
 pub fn preflight(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, JsonFailure> {
     let runtime = ExecutionRuntime::discover(current_dir)?;
+    preflight_for_runtime(&runtime, args)
+}
+
+pub fn preflight_for_runtime(
+    runtime: &ExecutionRuntime,
+    args: &PlanArgs,
+) -> Result<GateResult, JsonFailure> {
     runtime.preflight(&execution_status_args(args))
 }
 
 pub fn gate_review(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, JsonFailure> {
     let runtime = ExecutionRuntime::discover(current_dir)?;
+    gate_review_for_runtime(&runtime, args)
+}
+
+pub fn gate_review_for_runtime(
+    runtime: &ExecutionRuntime,
+    args: &PlanArgs,
+) -> Result<GateResult, JsonFailure> {
     runtime.gate_review(&execution_status_args(args))
 }
 
 pub fn gate_finish(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, JsonFailure> {
     let runtime = ExecutionRuntime::discover(current_dir)?;
+    gate_finish_for_runtime(&runtime, args)
+}
+
+pub fn gate_finish_for_runtime(
+    runtime: &ExecutionRuntime,
+    args: &PlanArgs,
+) -> Result<GateResult, JsonFailure> {
     runtime.gate_finish(&execution_status_args(args))
 }
 
@@ -658,6 +807,10 @@ fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
     build_context_with_plan(current_dir, None, false, false)
 }
 
+fn build_context_for_runtime(runtime: &ExecutionRuntime) -> Result<OperatorContext, JsonFailure> {
+    build_context_with_plan_for_runtime(runtime, None, false, false)
+}
+
 fn build_context_with_plan(
     current_dir: &Path,
     plan_override: Option<&Path>,
@@ -669,6 +822,30 @@ fn build_context_with_plan(
     } else {
         query_workflow_read_state(current_dir, plan_override, external_review_result_ready)?
     };
+    build_context_from_routing(routing)
+}
+
+fn build_context_with_plan_for_runtime(
+    runtime: &ExecutionRuntime,
+    plan_override: Option<&Path>,
+    external_review_result_ready: bool,
+    operator_contract: bool,
+) -> Result<OperatorContext, JsonFailure> {
+    let routing = if operator_contract {
+        query_workflow_routing_state_for_runtime(
+            runtime,
+            plan_override,
+            external_review_result_ready,
+        )?
+    } else {
+        query_workflow_read_state_for_runtime(runtime, plan_override, external_review_result_ready)?
+    };
+    build_context_from_routing(routing)
+}
+
+fn build_context_from_routing(
+    routing: ExecutionRoutingState,
+) -> Result<OperatorContext, JsonFailure> {
     let ExecutionRoutingState {
         route,
         execution_status,
@@ -704,30 +881,10 @@ fn build_context_with_plan(
             task_number: context.task_number,
             step_id: context.step_id,
         });
-    let (
-        operator_phase,
-        operator_phase_detail,
-        operator_next_action,
-        operator_execution_command_context,
-        operator_recommended_command,
-    ) = if operator_contract {
-        normalize_operator_contract(
-            phase.clone(),
-            phase_detail,
-            next_action,
-            operator_execution_command_context,
-            recommended_command,
-            execution_status.as_ref(),
-        )
-    } else {
-        (
-            phase.clone(),
-            phase_detail,
-            next_action,
-            operator_execution_command_context,
-            recommended_command,
-        )
-    };
+    let operator_phase = phase.clone();
+    let operator_phase_detail = phase_detail;
+    let operator_next_action = next_action;
+    let operator_recommended_command = recommended_command;
     let plan_contract = if route.status == "implementation_ready" {
         analyze_plan_if_available(&route).map_err(JsonFailure::from)?
     } else {
@@ -923,7 +1080,7 @@ fn reason_text(context: &OperatorContext) -> String {
         }
         "task_closure_pending" => {
             let dispatch_block_reason = context.execution_status.as_ref().and_then(|status| {
-                task_boundary_block_reason_code(status).filter(|reason_code| {
+                shared_task_boundary_block_reason_code(status).filter(|reason_code| {
                     matches!(
                         *reason_code,
                         "prior_task_review_dispatch_missing"
@@ -974,65 +1131,6 @@ fn reason_text(context: &OperatorContext) -> String {
 
 fn display_or_none(value: &str) -> &str {
     if value.is_empty() { "none" } else { value }
-}
-
-fn normalize_operator_contract(
-    phase: String,
-    phase_detail: String,
-    next_action: String,
-    execution_command_context: Option<WorkflowOperatorExecutionCommandContext>,
-    recommended_command: Option<String>,
-    execution_status: Option<&PlanExecutionStatus>,
-) -> (
-    String,
-    String,
-    String,
-    Option<WorkflowOperatorExecutionCommandContext>,
-    Option<String>,
-) {
-    if !matches!(
-        phase.as_str(),
-        "execution_preflight" | "implementation_handoff"
-    ) {
-        return (
-            phase,
-            phase_detail,
-            next_action,
-            execution_command_context,
-            recommended_command,
-        );
-    }
-
-    let mut normalized_phase_detail = phase_detail;
-    let mut normalized_next_action = next_action;
-    let mut normalized_execution_command_context = execution_command_context;
-    let mut normalized_recommended_command = recommended_command;
-
-    if let Some(status) = execution_status {
-        normalized_phase_detail = status.phase_detail.clone();
-        normalized_next_action = status.next_action.clone();
-        if normalized_execution_command_context.is_none() {
-            normalized_execution_command_context =
-                status.execution_command_context.as_ref().map(|context| {
-                    WorkflowOperatorExecutionCommandContext {
-                        command_kind: context.command_kind.clone(),
-                        task_number: context.task_number,
-                        step_id: context.step_id,
-                    }
-                });
-        }
-        if normalized_recommended_command.is_none() {
-            normalized_recommended_command = status.recommended_command.clone();
-        }
-    }
-
-    (
-        String::from("executing"),
-        normalized_phase_detail,
-        normalized_next_action,
-        normalized_execution_command_context,
-        normalized_recommended_command,
-    )
 }
 
 fn format_operator_recording_context(context: &WorkflowOperatorRecordingContext) -> String {
@@ -1096,29 +1194,9 @@ fn review_requires_execution_reentry(context: &OperatorContext) -> bool {
             .is_some_and(|gate| !gate.allowed)
 }
 
-fn task_boundary_block_reason_code(status: &PlanExecutionStatus) -> Option<&str> {
-    if status.blocking_task.is_none() || status.blocking_step.is_some() {
-        return None;
-    }
-    status.reason_codes.iter().map(String::as_str).find(|code| {
-        matches!(
-            *code,
-            "prior_task_review_not_green"
-                | "task_review_not_independent"
-                | "task_review_receipt_malformed"
-                | "prior_task_verification_missing"
-                | "prior_task_verification_missing_legacy"
-                | "task_verification_receipt_malformed"
-                | "prior_task_review_dispatch_missing"
-                | "prior_task_review_dispatch_stale"
-                | "task_cycle_break_active"
-        )
-    })
-}
-
 fn task_boundary_reason_text(status: &PlanExecutionStatus) -> Option<String> {
     let blocking_task = status.blocking_task?;
-    let reason_code = task_boundary_block_reason_code(status)?;
+    let reason_code = shared_task_boundary_block_reason_code(status)?;
     let message = match reason_code {
         "prior_task_review_not_green"
         | "task_review_not_independent"
@@ -1134,6 +1212,13 @@ fn task_boundary_reason_text(status: &PlanExecutionStatus) -> Option<String> {
         "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale" => format!(
             "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. STOP and dispatch fresh-context dedicated-independent review before any next-task begin."
         ),
+        "prior_task_current_closure_stale" => format!(
+            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Reenter execution to refresh Task {blocking_task} closure truth before advancing."
+        ),
+        "prior_task_current_closure_invalid"
+        | "prior_task_current_closure_reviewed_state_malformed" => format!(
+            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Repair invalid closure provenance through execution reentry before advancing."
+        ),
         "task_cycle_break_active" => format!(
             "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Resolve cycle-break remediation for Task {blocking_task} before retrying."
         ),
@@ -1148,7 +1233,7 @@ fn task_boundary_next_step_text(context: &OperatorContext) -> Option<String> {
     }
     let status = context.execution_status.as_ref()?;
     let reason = task_boundary_reason_text(status)?;
-    let reason_code = task_boundary_block_reason_code(status)?;
+    let reason_code = shared_task_boundary_block_reason_code(status)?;
     if matches!(
         reason_code,
         "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
@@ -1171,14 +1256,6 @@ fn task_boundary_next_step_text(context: &OperatorContext) -> Option<String> {
             context.route.plan_path
         ))
     }
-}
-
-fn gate_has_any_reason(gate: Option<&GateResult>, expected_codes: &[&str]) -> bool {
-    gate.is_some_and(|gate| {
-        gate.reason_codes
-            .iter()
-            .any(|code| expected_codes.contains(&code.as_str()))
-    })
 }
 
 fn gate_first_diagnostic_message(gate: Option<&GateResult>) -> Option<String> {

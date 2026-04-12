@@ -1,9 +1,9 @@
 #[path = "support/featureforge.rs"]
 mod featureforge_support;
-#[path = "support/plan_execution_direct.rs"]
-mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/runtime.rs"]
+mod runtime_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
@@ -17,8 +17,7 @@ use featureforge::execution::query::{
     ExecutionRoutingState, query_review_state, query_workflow_execution_state,
     query_workflow_routing_state_for_runtime,
 };
-use featureforge::execution::state::ExecutionRuntime;
-use featureforge::git::discover_slug_identity;
+use runtime_support::execution_runtime;
 use serde_json::Value;
 use workflow_support::{init_repo, install_full_contract_ready_artifacts};
 
@@ -78,33 +77,25 @@ Task 1 -> Task 2
 "#;
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_json_direct(
-        repo, state, args, context,
-    ) {
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Json(value)) => value,
-        Ok(plan_execution_direct_support::DirectPlanExecutionRun::Unsupported) => {
-            let mut command_args = vec!["plan", "execution"];
-            command_args.extend_from_slice(args);
-            let output = featureforge_support::run_rust_featureforge(
-                Some(repo),
-                Some(state),
-                None,
-                &[],
-                &command_args,
-                context,
-            );
-            assert!(
-                output.status.success(),
-                "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            serde_json::from_slice(&output.stdout)
-                .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
-        }
-        Err(error) => panic!("{error}"),
-    }
+    let mut command_args = vec!["plan", "execution"];
+    command_args.extend_from_slice(args);
+    let output = featureforge_support::run_rust_featureforge(
+        Some(repo),
+        Some(state),
+        None,
+        &[],
+        &command_args,
+        context,
+    );
+    assert!(
+        output.status.success(),
+        "{context} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
 fn run_workflow_operator_json(
@@ -136,19 +127,6 @@ fn run_workflow_operator_json(
     );
     serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
-}
-
-fn execution_runtime(repo: &Path, state: &Path) -> ExecutionRuntime {
-    let git_repo = gix::discover(repo).expect("git repo should be discoverable");
-    let identity = discover_slug_identity(repo);
-    ExecutionRuntime {
-        repo_root: identity.repo_root,
-        git_dir: git_repo.path().to_path_buf(),
-        branch_name: identity.branch_name,
-        repo_slug: identity.repo_slug,
-        safe_branch: identity.safe_branch,
-        state_dir: state.to_path_buf(),
-    }
 }
 
 fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
