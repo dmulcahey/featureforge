@@ -924,6 +924,49 @@ pub(crate) fn public_late_stage_rederivation_basis_present(status: &PlanExecutio
         || status.current_qa_result.is_some()
 }
 
+pub(crate) fn public_late_stage_stale_unreviewed(
+    status: &PlanExecutionStatus,
+    gate_review: Option<&GateResult>,
+    gate_finish: Option<&GateResult>,
+) -> bool {
+    public_late_stage_rederivation_basis_present(status)
+        && late_stage_stale_unreviewed(gate_review, gate_finish)
+}
+
+pub(crate) fn current_branch_closure_has_tracked_drift(
+    context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+) -> Result<bool, JsonFailure> {
+    let Some(baseline_tree_sha) =
+        authoritative_state.and_then(|_| current_branch_closure_reviewed_tree_sha(context))
+    else {
+        return Ok(false);
+    };
+    Ok(context.current_tracked_tree_sha()? != baseline_tree_sha)
+}
+
+pub(crate) fn public_review_state_stale_unreviewed_for_reroute(
+    context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+    status: &PlanExecutionStatus,
+    gate_review: Option<&GateResult>,
+    gate_finish: Option<&GateResult>,
+) -> Result<bool, JsonFailure> {
+    Ok(
+        public_late_stage_stale_unreviewed(status, gate_review, gate_finish)
+            || current_branch_closure_has_tracked_drift(context, authoritative_state)?,
+    )
+}
+
+pub(crate) fn branch_closure_refresh_missing_current_closure(status: &PlanExecutionStatus) -> bool {
+    status.current_release_readiness_state.is_none()
+        && status.current_branch_closure_id.is_some()
+        && status
+            .current_branch_reviewed_state_id
+            .as_deref()
+            .is_some_and(|reviewed_state_id| reviewed_state_id != status.workspace_state_id)
+}
+
 pub(crate) fn late_stage_stale_unreviewed(
     gate_review: Option<&GateResult>,
     gate_finish: Option<&GateResult>,
@@ -993,6 +1036,64 @@ pub(crate) fn repair_review_state_execution_reentry_active(
     task_scope_repair_precedence_active: bool,
 ) -> bool {
     repair_follow_up == Some("execution_reentry") && !task_scope_repair_precedence_active
+}
+
+pub(crate) fn live_review_state_status_for_reroute(
+    stale_unreviewed: bool,
+    missing_current_closure: bool,
+) -> Option<&'static str> {
+    if stale_unreviewed {
+        Some("stale_unreviewed")
+    } else if missing_current_closure {
+        Some("missing_current_closure")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn live_review_state_repair_reroute(
+    persisted_follow_up: Option<&str>,
+    task_scope_repair_precedence_active: bool,
+    branch_reroute_still_valid: bool,
+    live_review_state_status: Option<&str>,
+    branch_closure_refresh_missing_current_closure: bool,
+) -> ReviewStateRepairReroute {
+    if !matches!(
+        live_review_state_status,
+        Some("stale_unreviewed" | "missing_current_closure")
+    ) {
+        return ReviewStateRepairReroute::None;
+    }
+    if live_review_state_status == Some("missing_current_closure")
+        && !task_scope_repair_precedence_active
+        && (branch_reroute_still_valid || branch_closure_refresh_missing_current_closure)
+    {
+        return ReviewStateRepairReroute::RecordBranchClosure;
+    }
+    review_state_repair_reroute(
+        persisted_follow_up,
+        task_scope_repair_precedence_active,
+        branch_reroute_still_valid,
+    )
+}
+
+pub(crate) fn live_task_scope_repair_precedence_active(
+    task_scope_overlay_restore_required: bool,
+    task_scope_structural_reason_present: bool,
+    task_scope_stale_reason_present: bool,
+    persisted_follow_up: Option<&str>,
+    branch_reroute_still_valid: bool,
+    live_review_state_status: Option<&str>,
+) -> bool {
+    task_scope_overlay_restore_required
+        || task_scope_structural_reason_present
+        || (task_scope_stale_reason_present
+            && !(persisted_follow_up == Some("record_branch_closure")
+                && branch_reroute_still_valid
+                && matches!(
+                    live_review_state_status,
+                    Some("stale_unreviewed" | "missing_current_closure")
+                )))
 }
 
 pub(crate) fn current_late_stage_branch_bindings(

@@ -27,16 +27,21 @@ use crate::execution::command_eligibility::{
     operator_requires_review_state_repair, release_readiness_required_follow_up,
 };
 use crate::execution::current_truth::{
+    branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
     branch_closure_rerecording_supported,
     branch_contract_identity as shared_branch_contract_identity,
     branch_source_task_closure_ids as shared_branch_source_task_closure_ids,
     current_branch_closure_baseline_tree_sha as shared_current_branch_closure_baseline_tree_sha,
+    current_branch_closure_has_tracked_drift as shared_current_branch_closure_has_tracked_drift,
     current_branch_closure_reviewed_tree_sha,
     final_review_dispatch_still_current as shared_final_review_dispatch_still_current,
-    handoff_decision_scope as shared_handoff_decision_scope, normalize_summary_content,
-    normalized_late_stage_surface, path_matches_late_stage_surface,
+    handoff_decision_scope as shared_handoff_decision_scope,
+    live_review_state_repair_reroute as shared_live_review_state_repair_reroute,
+    live_task_scope_repair_precedence_active as shared_live_task_scope_repair_precedence_active,
+    normalize_summary_content, normalized_late_stage_surface, path_matches_late_stage_surface,
+    public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
+    public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
     render_late_stage_surface_only_branch_surface as late_stage_surface_only_branch_surface,
-    repair_review_state_branch_reroute_active as shared_repair_review_state_branch_reroute_active,
     summary_hash,
     task_closure_contributes_to_branch_surface as shared_task_closure_contributes_to_branch_surface,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
@@ -77,14 +82,15 @@ use crate::execution::state::{
     compute_packet_fingerprint, current_file_proof, current_head_sha,
     current_test_plan_artifact_path_for_finish, discover_rebuild_candidates,
     gate_finish_from_context, gate_review_from_context, hash_contract_plan,
-    load_execution_context_for_exact_plan, load_execution_context_for_mutation,
-    normalize_begin_request, normalize_complete_request, normalize_note_request,
-    normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
-    normalize_transfer_request, require_normalized_text, require_preflight_acceptance,
-    require_prior_task_closure_for_begin, status_from_context, still_current_task_closure_records,
-    structural_current_task_closure_failures, task_completion_lineage_fingerprint,
-    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
-    usable_current_branch_closure_identity, validate_expected_fingerprint,
+    live_review_state_status_for_reroute_from_status, load_execution_context_for_exact_plan,
+    load_execution_context_for_mutation, normalize_begin_request, normalize_complete_request,
+    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
+    normalize_source, normalize_transfer_request, require_normalized_text,
+    require_preflight_acceptance, require_prior_task_closure_for_begin, status_from_context,
+    still_current_task_closure_records, structural_current_task_closure_failures,
+    task_completion_lineage_fingerprint, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason, usable_current_branch_closure_identity,
+    validate_expected_fingerprint,
 };
 use crate::execution::topology::persist_preflight_acceptance;
 use crate::execution::transitions::{
@@ -5035,14 +5041,38 @@ fn repair_review_state_record_branch_closure_reroute_active(
         &snapshot.missing_derived_overlays,
         Some(authoritative_state),
     );
-    let task_scope_repair_precedence_active = task_scope_overlay_restore_required
-        || task_scope_structural_review_state_reason(&status).is_some()
-        || task_scope_review_state_repair_reason(&status).is_some();
-    Ok(shared_repair_review_state_branch_reroute_active(
+    let gate_review = gate_review_from_context(context);
+    let gate_finish = gate_finish_from_context(context);
+    let branch_reroute_still_valid = branch_closure_rerecording_supported(context)?;
+    let live_stale_unreviewed = shared_public_review_state_stale_unreviewed_for_reroute(
+        context,
+        Some(authoritative_state),
+        &status,
+        Some(&gate_review),
+        Some(&gate_finish),
+    )
+    .unwrap_or_else(|_| {
+        shared_public_late_stage_stale_unreviewed(&status, Some(&gate_review), Some(&gate_finish))
+            || shared_current_branch_closure_has_tracked_drift(context, Some(authoritative_state))
+                .unwrap_or(false)
+    });
+    let live_review_state_status =
+        live_review_state_status_for_reroute_from_status(&status, live_stale_unreviewed);
+    let task_scope_repair_precedence_active = shared_live_task_scope_repair_precedence_active(
+        task_scope_overlay_restore_required,
+        task_scope_structural_review_state_reason(&status).is_some(),
+        task_scope_review_state_repair_reason(&status).is_some(),
+        authoritative_state.review_state_repair_follow_up(),
+        branch_reroute_still_valid,
+        live_review_state_status,
+    );
+    Ok(shared_live_review_state_repair_reroute(
         authoritative_state.review_state_repair_follow_up(),
         task_scope_repair_precedence_active,
-        branch_closure_rerecording_supported(context)?,
-    ))
+        branch_reroute_still_valid,
+        live_review_state_status,
+        shared_branch_closure_refresh_missing_current_closure(&status),
+    ) == crate::execution::current_truth::ReviewStateRepairReroute::RecordBranchClosure)
 }
 
 fn pre_release_branch_closure_already_current_allowed(

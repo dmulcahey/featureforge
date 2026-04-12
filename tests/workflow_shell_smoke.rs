@@ -9307,6 +9307,147 @@ fn workflow_status_and_operator_reroute_prerelease_branch_closure_refresh_when_c
 }
 
 #[test]
+fn prerelease_branch_closure_refresh_ignores_stale_execution_reentry_follow_up() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("prerelease-branch-closure-refresh-ignores-stale-execution-follow-up");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch =
+        resolve_release_base_branch(&repo.join(".git"), "feature").expect("fixture base branch");
+    setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
+    upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
+
+    let branch_closure = run_plan_execution_json(
+        repo,
+        state,
+        &["record-branch-closure", "--plan", plan_rel],
+        "record-branch-closure should establish a current branch closure before stale execution-follow-up prerelease refresh coverage",
+    );
+    assert_eq!(branch_closure["action"], "recorded");
+
+    append_tracked_repo_line(
+        repo,
+        "README.md",
+        "prerelease refresh should ignore stale execution follow-up latches",
+    );
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[(
+            "review_state_repair_follow_up",
+            Value::from("execution_reentry"),
+        )],
+    );
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status should keep the prerelease refresh route on branch-closure recording even when a stale execution-reentry follow-up remains persisted",
+    );
+    assert_eq!(
+        status_json["review_state_status"],
+        "missing_current_closure"
+    );
+    assert_eq!(
+        status_json["phase_detail"],
+        "branch_closure_recording_required_for_release_readiness"
+    );
+    assert_eq!(
+        status_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution record-branch-closure --plan {plan_rel}"
+        ))
+    );
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator should ignore a stale execution-reentry follow-up when prerelease refresh still projects missing_current_closure",
+    );
+    assert_eq!(operator_json["phase"], "document_release_pending");
+    assert_eq!(
+        operator_json["phase_detail"],
+        "branch_closure_recording_required_for_release_readiness"
+    );
+    assert_eq!(
+        operator_json["review_state_status"],
+        "missing_current_closure"
+    );
+    assert_eq!(
+        operator_json["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution record-branch-closure --plan {plan_rel}"
+        ))
+    );
+
+    let record_json = run_plan_execution_json(
+        repo,
+        state,
+        &["record-branch-closure", "--plan", plan_rel],
+        "record-branch-closure should not be blocked by a stale execution-reentry follow-up when prerelease refresh still requires branch-closure rerecording",
+    );
+    assert_eq!(record_json["action"], "recorded");
+}
+
+#[test]
+fn gate_review_ignores_stale_execution_reentry_follow_up_during_prerelease_refresh() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("gate-review-ignores-stale-execution-follow-up-prerelease-refresh");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch =
+        resolve_release_base_branch(&repo.join(".git"), "feature").expect("fixture base branch");
+    setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
+    upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
+
+    let branch_closure = run_plan_execution_json(
+        repo,
+        state,
+        &["record-branch-closure", "--plan", plan_rel],
+        "record-branch-closure should establish a current branch closure before gate-review prerelease refresh coverage",
+    );
+    assert_eq!(branch_closure["action"], "recorded");
+
+    append_tracked_repo_line(
+        repo,
+        "README.md",
+        "gate-review prerelease refresh should ignore stale execution follow-up latches",
+    );
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[(
+            "review_state_repair_follow_up",
+            Value::from("execution_reentry"),
+        )],
+    );
+
+    let gate_review = run_plan_execution_json(
+        repo,
+        state,
+        &["gate-review", "--plan", plan_rel],
+        "gate-review should keep recommending branch-closure recording when prerelease refresh truth outranks a stale execution-reentry follow-up",
+    );
+    assert_eq!(
+        gate_review["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution record-branch-closure --plan {plan_rel}"
+        ))
+    );
+    assert_ne!(
+        gate_review["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution repair-review-state --plan {plan_rel}"
+        ))
+    );
+}
+
+#[test]
 fn workflow_status_and_operator_require_execution_reentry_when_no_branch_contributing_task_closure_remains()
  {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
@@ -10284,6 +10425,14 @@ fn plan_execution_record_branch_closure_blocks_late_stage_only_recreation_withou
             "featureforge plan execution record-branch-closure --plan {plan_rel}"
         ))
     );
+    assert_eq!(
+        status_after_repair["execution_command_context"],
+        serde_json::json!({
+            "command_kind": "reopen",
+            "task_number": 1,
+            "step_id": 1
+        })
+    );
 
     let operator_after_repair = run_featureforge_with_env_json(
         repo,
@@ -10309,6 +10458,14 @@ fn plan_execution_record_branch_closure_blocks_late_stage_only_recreation_withou
         Value::from(format!(
             "featureforge plan execution record-branch-closure --plan {plan_rel}"
         ))
+    );
+    assert_eq!(
+        operator_after_repair["execution_command_context"],
+        status_after_repair["execution_command_context"],
+    );
+    assert_eq!(
+        operator_after_repair["recommended_command"],
+        status_after_repair["recommended_command"],
     );
 
     let reentry_command = operator_after_repair["recommended_command"]

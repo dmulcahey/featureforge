@@ -18648,6 +18648,229 @@ fn rebuild_evidence_manual_required_rerun_resumes_open_step() {
 }
 
 #[test]
+fn repair_review_state_clears_stale_follow_up_when_review_state_is_already_current() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-repair-review-state-clears-follow-up");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up": "execution_reentry"
+        }),
+    );
+
+    let repair = run_rust_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", PLAN_REL],
+        "repair-review-state should clear stale persisted follow-up when state is already current",
+    );
+    assert_eq!(
+        repair["action"],
+        Value::from("already_current"),
+        "json: {repair}"
+    );
+    assert_eq!(repair["required_follow_up"], Value::Null, "json: {repair}");
+
+    let state_path =
+        featureforge::paths::harness_state_path(state, &repo_slug(repo), &branch_name(repo));
+    let authoritative_state: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path)
+            .expect("authoritative state should be readable after repair-review-state clear"),
+    )
+    .expect("authoritative state should remain valid json after repair-review-state clear");
+    assert_eq!(
+        authoritative_state["review_state_repair_follow_up"],
+        Value::Null,
+        "repair-review-state should clear the persisted reroute latch when no follow-up is required",
+    );
+}
+
+#[test]
+fn repair_review_state_clears_stale_record_branch_closure_follow_up_when_review_state_is_already_current()
+ {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-repair-review-state-clears-branch-reroute-follow-up");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up": "record_branch_closure"
+        }),
+    );
+
+    let repair = run_rust_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", PLAN_REL],
+        "repair-review-state should clear a stale persisted branch-reroute follow-up when state is already current",
+    );
+    assert_eq!(
+        repair["action"],
+        Value::from("already_current"),
+        "json: {repair}"
+    );
+    assert_eq!(repair["required_follow_up"], Value::Null, "json: {repair}");
+
+    let state_path =
+        featureforge::paths::harness_state_path(state, &repo_slug(repo), &branch_name(repo));
+    let authoritative_state: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path).expect(
+            "authoritative state should be readable after repair-review-state clears stale branch reroute",
+        ),
+    )
+    .expect("authoritative state should remain valid json after stale branch reroute clear");
+    assert_eq!(
+        authoritative_state["review_state_repair_follow_up"],
+        Value::Null,
+        "repair-review-state should clear a stale persisted branch-reroute latch when no follow-up is required",
+    );
+}
+
+#[test]
+fn late_stage_status_ignores_stale_execution_reentry_follow_up_when_current_truth_is_clean() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-status-ignores-stale-follow-up");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up": "execution_reentry"
+        }),
+    );
+
+    let status = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should ignore stale persisted execution-reentry follow-up when late-stage truth is current",
+    );
+
+    assert_eq!(
+        status["review_state_status"],
+        Value::from("clean"),
+        "json: {status}"
+    );
+    assert_ne!(
+        status["phase_detail"],
+        Value::from("execution_reentry_required"),
+        "status should not get trapped in execution reentry from a stale persisted follow-up: {status}",
+    );
+    assert_ne!(
+        status["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution repair-review-state --plan {PLAN_REL}"
+        )),
+        "status should not keep recommending repair-review-state after live truth is already current: {status}",
+    );
+}
+
+#[test]
+fn workflow_operator_ignores_stale_record_branch_closure_follow_up_when_current_truth_is_clean() {
+    let (repo_dir, state_dir) =
+        init_repo("workflow-operator-ignores-stale-branch-reroute-follow-up");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up": "record_branch_closure"
+        }),
+    );
+
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["workflow", "operator", "--plan", PLAN_REL, "--json"]);
+    let operator = parse_json(
+        &run(
+            command,
+            "workflow/operator should ignore stale persisted record-branch-closure follow-up when late-stage truth is already current",
+        ),
+        "workflow/operator stale branch reroute ignore",
+    );
+
+    assert_eq!(
+        operator["review_state_status"],
+        Value::from("clean"),
+        "json: {operator}"
+    );
+    assert_ne!(
+        operator["phase_detail"],
+        Value::from("branch_closure_recording_required_for_release_readiness"),
+        "workflow/operator should not keep routing to branch-closure recording from a stale persisted follow-up: {operator}",
+    );
+    assert_ne!(
+        operator["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution record-branch-closure --plan {PLAN_REL}"
+        )),
+        "workflow/operator should not keep recommending record-branch-closure after live truth is already current: {operator}",
+    );
+}
+
+#[test]
+fn workflow_operator_ignores_stale_execution_reentry_follow_up_when_current_truth_is_clean() {
+    let (repo_dir, state_dir) = init_repo("workflow-operator-ignores-stale-follow-up");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "review_state_repair_follow_up": "execution_reentry"
+        }),
+    );
+
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["workflow", "operator", "--plan", PLAN_REL, "--json"]);
+    let operator = parse_json(
+        &run(
+            command,
+            "workflow/operator should ignore stale persisted execution-reentry follow-up when late-stage truth is current",
+        ),
+        "workflow/operator stale follow-up ignore",
+    );
+
+    assert_eq!(
+        operator["review_state_status"],
+        Value::from("clean"),
+        "json: {operator}"
+    );
+    assert_ne!(
+        operator["phase_detail"],
+        Value::from("execution_reentry_required"),
+        "workflow/operator should not stay in fake execution reentry from a stale persisted follow-up: {operator}",
+    );
+    assert_ne!(
+        operator["recommended_command"],
+        Value::from(format!(
+            "featureforge plan execution repair-review-state --plan {PLAN_REL}"
+        )),
+        "workflow/operator should not keep recommending repair-review-state after live truth is already current: {operator}",
+    );
+}
+
+#[test]
 fn rebuild_evidence_manual_required_does_not_block_later_command_targets() {
     let (repo_dir, state_dir) = init_repo("plan-execution-rebuild-evidence-manual-mixed-batch");
     let repo = repo_dir.path();

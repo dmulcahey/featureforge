@@ -10,7 +10,9 @@ use crate::cli::plan_execution::StatusArgs;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::current_truth::{
     CurrentLateStageBranchBindings, FollowUpOverrideInputs, ReviewStateRepairReroute,
-    branch_closure_rerecording_supported, current_branch_closure_reviewed_tree_sha,
+    branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
+    branch_closure_rerecording_supported,
+    current_branch_closure_has_tracked_drift as shared_current_branch_closure_has_tracked_drift,
     current_final_review_dispatch_id as shared_current_final_review_dispatch_id,
     current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings,
     current_task_negative_result_task as shared_current_task_negative_result_task,
@@ -24,14 +26,17 @@ use crate::execution::current_truth::{
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
     late_stage_stale_unreviewed as shared_late_stage_stale_unreviewed,
     late_stage_stale_unreviewed_closure_ids as shared_late_stage_stale_unreviewed_closure_ids,
+    live_review_state_repair_reroute as shared_live_review_state_repair_reroute,
+    live_task_scope_repair_precedence_active as shared_live_task_scope_repair_precedence_active,
     negative_result_requires_execution_reentry as shared_negative_result_requires_execution_reentry,
     normalized_late_stage_surface,
     normalized_plan_qa_requirement as shared_normalized_plan_qa_requirement,
     path_matches_late_stage_surface,
     public_late_stage_rederivation_basis_present as late_stage_rederivation_basis_present,
+    public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
+    public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
     qa_requirement_policy_invalid as shared_qa_requirement_policy_invalid,
     resolve_follow_up_override as resolve_shared_follow_up_override,
-    review_state_repair_reroute as shared_review_state_repair_reroute,
     task_boundary_block_reason_code as shared_task_boundary_block_reason_code,
     task_review_dispatch_task, task_review_result_pending_task,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
@@ -44,15 +49,15 @@ use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionRuntime, GateResult, PlanExecutionStatus,
     current_branch_closure_structural_review_state_reason, current_head_sha,
     execution_reentry_requires_review_state_repair, gate_finish_from_context,
-    gate_review_from_context, load_execution_context, load_execution_context_for_exact_plan,
-    load_execution_read_scope, missing_derived_review_state_fields, preflight_from_context,
+    gate_review_from_context, live_review_state_status_for_reroute_from_status,
+    load_execution_context, load_execution_context_for_exact_plan, load_execution_read_scope,
+    missing_derived_review_state_fields, preflight_from_context,
     prerelease_branch_closure_refresh_required, require_public_exact_execution_command,
     resolve_exact_execution_command_from_context, stale_current_task_closure_record_ids,
     still_current_task_closure_records, task_completion_lineage_fingerprint,
     task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
-use crate::execution::transitions::AuthoritativeTransitionState;
 use crate::git::discover_slug_identity_and_head;
 use crate::workflow::late_stage_precedence::{
     GateState, LateStageSignals, resolve as resolve_late_stage_precedence,
@@ -219,7 +224,7 @@ fn review_state_snapshot_from_read_scope(
     let overlay = read_scope.overlay.as_ref();
     let authoritative_state = read_scope.authoritative_state.as_ref();
     let branch_closure_tracked_drift =
-        branch_closure_has_tracked_drift(context, authoritative_state, status)?;
+        shared_current_branch_closure_has_tracked_drift(context, authoritative_state)?;
     let late_stage_stale_unreviewed = review_state_is_stale_unreviewed(context, status);
     let task_scope_stale_unreviewed = task_scope_review_state_is_stale_unreviewed(status);
     let task_scope_structural_reason = task_scope_structural_review_state_reason(status);
@@ -384,19 +389,43 @@ fn query_workflow_execution_state_internal(
         .map(|identity| identity.branch_closure_id);
     let authoritative_current_branch_closure_id =
         execution_status.current_branch_closure_id.clone();
-    let task_scope_repair_precedence_active = task_scope_overlay_restore_required
-        || task_scope_structural_review_state_reason(&execution_status).is_some()
-        || task_scope_review_state_is_stale_unreviewed(&execution_status)
-        || task_review_dispatch_stale(&execution_status).is_some();
     let branch_reroute_still_valid =
         branch_closure_rerecording_supported(&context).unwrap_or(false);
     let persisted_repair_follow_up = authoritative_state
         .as_ref()
         .and_then(|state| state.review_state_repair_follow_up());
-    let repair_review_state_follow_up = match shared_review_state_repair_reroute(
+    let live_stale_unreviewed = shared_public_review_state_stale_unreviewed_for_reroute(
+        &context,
+        authoritative_state.as_ref(),
+        &execution_status,
+        gate_review.as_ref(),
+        gate_finish.as_ref(),
+    )
+    .unwrap_or_else(|_| {
+        review_state_is_stale_unreviewed(&context, &execution_status)
+            || shared_current_branch_closure_has_tracked_drift(
+                &context,
+                authoritative_state.as_ref(),
+            )
+            .unwrap_or(false)
+    });
+    let live_review_state_status =
+        live_review_state_status_for_reroute_from_status(&execution_status, live_stale_unreviewed);
+    let task_scope_repair_precedence_active = shared_live_task_scope_repair_precedence_active(
+        task_scope_overlay_restore_required,
+        task_scope_structural_review_state_reason(&execution_status).is_some(),
+        task_scope_review_state_is_stale_unreviewed(&execution_status)
+            || task_review_dispatch_stale(&execution_status).is_some(),
+        persisted_repair_follow_up,
+        branch_reroute_still_valid,
+        live_review_state_status,
+    );
+    let repair_review_state_follow_up = match shared_live_review_state_repair_reroute(
         persisted_repair_follow_up,
         task_scope_repair_precedence_active,
         branch_reroute_still_valid,
+        live_review_state_status,
+        shared_branch_closure_refresh_missing_current_closure(&execution_status),
     ) {
         ReviewStateRepairReroute::RecordBranchClosure => {
             Some(String::from("record_branch_closure"))
@@ -1852,7 +1881,7 @@ fn review_state_is_stale_unreviewed(
 
     let gate_review = gate_review_from_context(context);
     let gate_finish = gate_finish_from_context(context);
-    shared_late_stage_stale_unreviewed(Some(&gate_review), Some(&gate_finish))
+    shared_public_late_stage_stale_unreviewed(status, Some(&gate_review), Some(&gate_finish))
 }
 
 fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {
@@ -1868,19 +1897,6 @@ fn status_has_accepted_preflight(status: &PlanExecutionStatus) -> bool {
         .as_ref()
         .is_some_and(|run_id| !run_id.as_str().trim().is_empty())
         || status.harness_phase == HarnessPhase::ExecutionPreflight
-}
-
-fn branch_closure_has_tracked_drift(
-    context: &ExecutionContext,
-    authoritative_state: Option<&AuthoritativeTransitionState>,
-    _status: &PlanExecutionStatus,
-) -> Result<bool, JsonFailure> {
-    let Some(baseline_tree_sha) =
-        authoritative_state.and_then(|_| current_branch_closure_reviewed_tree_sha(context))
-    else {
-        return Ok(false);
-    };
-    Ok(context.current_tracked_tree_sha()? != baseline_tree_sha)
 }
 
 fn branch_drift_is_confined_to_late_stage_surface(
@@ -2055,8 +2071,11 @@ fn late_stage_repair_review_state_status(
         return None;
     }
 
-    let stale_review_state = shared_late_stage_stale_unreviewed(gate_review, gate_finish)
-        || execution_status.is_some_and(|status| status.review_state_status == "stale_unreviewed");
+    let stale_review_state = execution_status.is_some_and(|status| {
+        shared_public_late_stage_stale_unreviewed(status, gate_review, gate_finish)
+            || status.review_state_status == "stale_unreviewed"
+    }) || (execution_status.is_none()
+        && shared_late_stage_stale_unreviewed(gate_review, gate_finish));
     if stale_review_state {
         return Some("stale_unreviewed");
     }

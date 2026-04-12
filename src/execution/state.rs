@@ -27,9 +27,12 @@ use crate::contracts::spec::parse_spec_file;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::authority::ensure_preflight_authoritative_bootstrap;
 use crate::execution::current_truth::{
-    CurrentLateStageBranchBindings, FollowUpOverrideInputs, branch_closure_rerecording_supported,
+    CurrentLateStageBranchBindings, FollowUpOverrideInputs,
+    branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
+    branch_closure_rerecording_supported,
     branch_contract_identity as shared_branch_contract_identity,
     branch_source_task_closure_ids as shared_branch_source_task_closure_ids,
+    current_branch_closure_has_tracked_drift as shared_current_branch_closure_has_tracked_drift,
     current_final_review_dispatch_id as shared_current_final_review_dispatch_id,
     current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings,
     current_repo_tracked_tree_sha,
@@ -41,15 +44,18 @@ use crate::execution::current_truth::{
     late_stage_release_blocked as shared_late_stage_release_blocked,
     late_stage_review_blocked as shared_late_stage_review_blocked,
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
-    late_stage_stale_unreviewed as shared_late_stage_stale_unreviewed,
     late_stage_stale_unreviewed_closure_ids as shared_late_stage_stale_unreviewed_closure_ids,
+    live_review_state_repair_reroute as shared_live_review_state_repair_reroute,
+    live_review_state_status_for_reroute as shared_live_review_state_status_for_reroute,
+    live_task_scope_repair_precedence_active as shared_live_task_scope_repair_precedence_active,
     negative_result_requires_execution_reentry as shared_negative_result_requires_execution_reentry,
     normalize_summary_content, normalized_late_stage_surface,
     normalized_plan_qa_requirement as shared_normalized_plan_qa_requirement,
     parse_late_stage_surface_only_branch_surface, path_matches_late_stage_surface,
     public_late_stage_rederivation_basis_present,
+    public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
+    public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
     qa_requirement_policy_invalid as shared_qa_requirement_policy_invalid,
-    repair_review_state_branch_reroute_active as shared_repair_review_state_branch_reroute_active,
     repair_review_state_execution_reentry_active as shared_repair_review_state_execution_reentry_active,
     resolve_follow_up_override as resolve_shared_follow_up_override,
     task_closure_contributes_to_branch_surface, task_review_dispatch_task,
@@ -1183,31 +1189,65 @@ pub(crate) struct ExecutionReadScope {
 }
 
 fn current_branch_closure_missing_gate_follow_up(context: &ExecutionContext) -> &'static str {
-    let task_scope_repair_precedence_active = status_from_context(context)
-        .map(|status| {
-            task_scope_overlay_repair_required(&status)
-                || task_scope_structural_review_state_reason(&status).is_some()
-                || matches!(
-                    task_scope_review_state_repair_reason(&status),
-                    Some("prior_task_review_dispatch_stale" | "prior_task_current_closure_stale")
-                )
-        })
-        .unwrap_or(false);
+    let status = status_from_context(context).ok();
+    if let Some(status) = status.as_ref()
+        && status.phase_detail == "branch_closure_recording_required_for_release_readiness"
+        && status.review_state_status == "missing_current_closure"
+    {
+        return "record_branch_closure";
+    }
     let authoritative_state = load_authoritative_transition_state(context).ok().flatten();
     let persisted_repair_follow_up = authoritative_state
         .as_ref()
         .and_then(|state| state.review_state_repair_follow_up());
     let branch_reroute_still_valid = branch_closure_rerecording_supported(context).unwrap_or(false);
-    if shared_repair_review_state_execution_reentry_active(
+    let live_review_state_status = status.as_ref().and_then(|status| {
+        live_review_state_status_for_reroute_from_status(
+            status,
+            status.review_state_status == "stale_unreviewed",
+        )
+    });
+    let task_scope_repair_precedence_active = status
+        .as_ref()
+        .map(|status| {
+            shared_live_task_scope_repair_precedence_active(
+                task_scope_overlay_repair_required(status),
+                task_scope_structural_review_state_reason(status).is_some(),
+                matches!(
+                    task_scope_review_state_repair_reason(status),
+                    Some("prior_task_review_dispatch_stale" | "prior_task_current_closure_stale")
+                ),
+                persisted_repair_follow_up,
+                branch_reroute_still_valid,
+                live_review_state_status,
+            )
+        })
+        .unwrap_or(false);
+    match shared_live_review_state_repair_reroute(
         persisted_repair_follow_up,
         task_scope_repair_precedence_active,
+        branch_reroute_still_valid,
+        live_review_state_status,
+        status
+            .as_ref()
+            .is_some_and(shared_branch_closure_refresh_missing_current_closure),
     ) {
-        return "repair_review_state";
-    }
-    if branch_reroute_still_valid && !task_scope_repair_precedence_active {
-        "record_branch_closure"
-    } else {
-        "repair_review_state"
+        crate::execution::current_truth::ReviewStateRepairReroute::RecordBranchClosure => {
+            "record_branch_closure"
+        }
+        crate::execution::current_truth::ReviewStateRepairReroute::ExecutionReentry
+        | crate::execution::current_truth::ReviewStateRepairReroute::None => {
+            if shared_repair_review_state_execution_reentry_active(
+                persisted_repair_follow_up,
+                task_scope_repair_precedence_active,
+            ) {
+                "repair_review_state"
+            } else if branch_reroute_still_valid && !task_scope_repair_precedence_active {
+                "record_branch_closure"
+            } else {
+                "repair_review_state"
+            }
+        }
     }
 }
 
@@ -1255,6 +1295,13 @@ fn specific_gate_reason_is_explicit_direct_follow_up(
         .iter()
         .any(|code| code == "current_branch_closure_id_missing")
     {
+        if let Ok(status) = status_from_context(context)
+            && status.phase_detail == "execution_reentry_required"
+            && status.review_state_status == "clean"
+            && status.execution_command_context.is_some()
+        {
+            return None;
+        }
         return Some(current_branch_closure_missing_gate_follow_up(context));
     }
     None
@@ -3851,27 +3898,51 @@ fn populate_public_status_contract_fields(
     if task_scope_overlay_restore_required {
         status.harness_phase = HarnessPhase::Executing;
     }
-    let task_scope_repair_precedence_active = task_scope_overlay_restore_required
-        || task_scope_structural_review_state_reason(status).is_some()
-        || matches!(
-            task_scope_review_state_repair_reason(status),
-            Some("prior_task_review_dispatch_stale" | "prior_task_current_closure_stale")
-        );
     let branch_reroute_still_valid = branch_closure_rerecording_supported(context).unwrap_or(false);
     let persisted_repair_follow_up =
         authoritative_state.and_then(|state| state.review_state_repair_follow_up());
-    let repair_follow_up_requires_execution_reentry =
-        shared_repair_review_state_execution_reentry_active(
-            persisted_repair_follow_up,
-            task_scope_repair_precedence_active,
-        );
-    let repair_follow_up_records_branch_closure = shared_repair_review_state_branch_reroute_active(
+    let late_stage_stale_unreviewed = shared_public_review_state_stale_unreviewed_for_reroute(
+        context,
+        authoritative_state,
+        status,
+        Some(&gate_review),
+        Some(&gate_finish),
+    )
+    .unwrap_or_else(|_| {
+        shared_public_late_stage_stale_unreviewed(status, Some(&gate_review), Some(&gate_finish))
+            || shared_current_branch_closure_has_tracked_drift(context, authoritative_state)
+                .unwrap_or(false)
+    });
+    let raw_late_stage_review_state_status =
+        live_review_state_status_for_reroute_from_status(status, late_stage_stale_unreviewed);
+    let task_scope_repair_precedence_active = shared_live_task_scope_repair_precedence_active(
+        task_scope_overlay_restore_required,
+        task_scope_structural_review_state_reason(status).is_some(),
+        matches!(
+            task_scope_review_state_repair_reason(status),
+            Some("prior_task_review_dispatch_stale" | "prior_task_current_closure_stale")
+        ),
+        persisted_repair_follow_up,
+        branch_reroute_still_valid,
+        raw_late_stage_review_state_status,
+    );
+    let repair_reroute = shared_live_review_state_repair_reroute(
         persisted_repair_follow_up,
         task_scope_repair_precedence_active,
         branch_reroute_still_valid,
+        raw_late_stage_review_state_status,
+        shared_branch_closure_refresh_missing_current_closure(status),
     );
+    let repair_follow_up_requires_execution_reentry = repair_reroute
+        == crate::execution::current_truth::ReviewStateRepairReroute::ExecutionReentry;
+    let repair_follow_up_records_branch_closure = repair_reroute
+        == crate::execution::current_truth::ReviewStateRepairReroute::RecordBranchClosure;
+    let branch_closure_refresh_missing_current_closure =
+        shared_branch_closure_refresh_missing_current_closure(status);
     if repair_follow_up_requires_execution_reentry {
         status.harness_phase = HarnessPhase::Executing;
+    } else if repair_follow_up_records_branch_closure {
+        status.harness_phase = HarnessPhase::DocumentReleasePending;
     }
     status.review_state_status = derive_public_review_state_status(
         status,
@@ -3880,20 +3951,15 @@ fn populate_public_status_contract_fields(
         repair_follow_up_requires_execution_reentry,
         repair_follow_up_records_branch_closure,
     );
-    let raw_current_branch_closure_binding_present = authoritative_state
-        .and_then(|state| state.recoverable_current_branch_closure_identity())
-        .is_some()
-        || overlay
-            .and_then(|overlay| {
-                normalize_optional_overlay_value(overlay.current_branch_closure_id.as_deref())
-            })
-            .is_some();
     let branch_closure_recording_basis_missing = status.review_state_status
         == "missing_current_closure"
-        && (raw_current_branch_closure_binding_present || !status.current_task_closures.is_empty())
-        && !branch_reroute_still_valid;
+        && !branch_reroute_still_valid
+        && !branch_closure_refresh_missing_current_closure;
     if branch_closure_recording_basis_missing {
         status.harness_phase = HarnessPhase::Executing;
+        if persisted_repair_follow_up == Some("execution_reentry") {
+            status.review_state_status = String::from("clean");
+        }
     }
     status.follow_up_override = derive_public_follow_up_override(context, status);
     let negative_result_phase_detail_override = apply_negative_result_status_overlay(
@@ -3920,6 +3986,11 @@ fn populate_public_status_contract_fields(
         });
     if task_scope_overlay_restore_required || branch_closure_recording_basis_missing {
         status.phase_detail = String::from("execution_reentry_required");
+    }
+    let force_repair_review_state = task_scope_overlay_restore_required
+        || (branch_closure_recording_basis_missing
+            && persisted_repair_follow_up != Some("execution_reentry"));
+    if force_repair_review_state {
         status.recording_context = None;
         status.execution_command_context = None;
         status.next_action = String::from("repair review state / reenter execution");
@@ -3928,12 +3999,16 @@ fn populate_public_status_contract_fields(
             context.plan_rel
         ));
     } else {
-        status.recording_context = derive_public_recording_context(
-            status,
-            &status.phase_detail,
-            task_review_dispatch_id.as_deref(),
-            final_review_dispatch_id.as_deref(),
-        );
+        status.recording_context = if branch_closure_recording_basis_missing {
+            None
+        } else {
+            derive_public_recording_context(
+                status,
+                &status.phase_detail,
+                task_review_dispatch_id.as_deref(),
+                final_review_dispatch_id.as_deref(),
+            )
+        };
         let (execution_command_context, execution_command) =
             if public_exact_execution_command_required(context, status) {
                 if let Some(resolved) =
@@ -4018,6 +4093,27 @@ pub(crate) fn prerelease_branch_closure_refresh_required(status: &PlanExecutionS
             .is_some_and(|reviewed_state_id| reviewed_state_id != status.workspace_state_id)
 }
 
+pub(crate) fn live_review_state_status_for_reroute_from_status(
+    status: &PlanExecutionStatus,
+    late_stage_stale_unreviewed: bool,
+) -> Option<&'static str> {
+    if shared_branch_closure_refresh_missing_current_closure(status) {
+        return Some("missing_current_closure");
+    }
+    shared_live_review_state_status_for_reroute(
+        late_stage_stale_unreviewed,
+        current_branch_closure_structural_review_state_reason(status).is_some()
+            || shared_branch_closure_refresh_missing_current_closure(status)
+            || (matches!(
+                status.harness_phase,
+                HarnessPhase::DocumentReleasePending
+                    | HarnessPhase::FinalReviewPending
+                    | HarnessPhase::QaPending
+                    | HarnessPhase::ReadyForBranchCompletion
+            ) && status.current_branch_closure_id.is_none()),
+    )
+}
+
 fn derive_public_review_state_status(
     status: &PlanExecutionStatus,
     gate_review: &GateResult,
@@ -4037,8 +4133,8 @@ fn derive_public_review_state_status(
             .reason_codes
             .iter()
             .any(|code| code == REASON_CODE_STALE_PROVENANCE);
-    let late_stage_stale_unreviewed = is_late_stage_phase(status.harness_phase)
-        && shared_late_stage_stale_unreviewed(Some(gate_review), Some(gate_finish));
+    let late_stage_stale_unreviewed =
+        shared_public_late_stage_stale_unreviewed(status, Some(gate_review), Some(gate_finish));
     if repair_follow_up_requires_execution_reentry {
         return String::from("clean");
     }
@@ -4214,7 +4310,9 @@ fn derive_stale_unreviewed_closures(
     overlay: Option<&StatusAuthoritativeOverlay>,
     review_state_status: &str,
 ) -> Result<Vec<String>, JsonFailure> {
-    if is_late_stage_phase(status.harness_phase) {
+    if public_late_stage_rederivation_basis_present(status)
+        || is_late_stage_phase(status.harness_phase)
+    {
         let preserve_late_stage_stale_targets = review_state_status == "stale_unreviewed"
             || (review_state_status == "missing_current_closure"
                 && prerelease_branch_closure_refresh_required(status));
@@ -4421,7 +4519,9 @@ fn derive_public_next_action(status: &PlanExecutionStatus, phase_detail: &str) -
         "test_plan_refresh_required" => String::from("refresh test plan"),
         "qa_recording_required" => String::from("run QA"),
         "execution_reentry_required" => {
-            if execution_reentry_requires_review_state_repair(status) {
+            if status.review_state_status == "clean" && status.execution_command_context.is_some() {
+                String::from("execution reentry required")
+            } else if execution_reentry_requires_review_state_repair(status) {
                 String::from("repair review state / reenter execution")
             } else {
                 String::from("execution reentry required")
@@ -4514,6 +4614,27 @@ pub(crate) fn resolve_exact_execution_command(
     None
 }
 
+fn latest_reopen_target_from_context(context: &ExecutionContext) -> Option<(u32, u32)> {
+    let scan = prepare_rebuild_candidate_scan(context);
+    context
+        .steps
+        .iter()
+        .filter_map(|step| rebuild_candidate_for_step(context, &scan, step, false))
+        .filter(|candidate| candidate.needs_reopen)
+        .max_by_key(|candidate| {
+            scan.latest_attempts
+                .get(&(candidate.task, candidate.step))
+                .copied()
+                .or_else(|| {
+                    scan.latest_completed
+                        .get(&(candidate.task, candidate.step))
+                        .copied()
+                })
+                .unwrap_or(0)
+        })
+        .map(|candidate| (candidate.task, candidate.step))
+}
+
 pub(crate) fn resolve_exact_execution_command_from_context(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
@@ -4544,42 +4665,47 @@ pub(crate) fn resolve_exact_execution_command_from_context(
         });
     }
     if context.steps.iter().all(|step| step.checked)
-        && let Some(task_number) = status
-            .current_task_closures
-            .iter()
-            .map(|closure| closure.task)
-            .max()
-            .or_else(|| {
-                (status.latest_authoritative_sequence == INITIAL_AUTHORITATIVE_SEQUENCE)
-                    .then(|| {
-                        context
-                            .evidence
-                            .attempts
-                            .last()
-                            .map(|attempt| attempt.task_number)
-                    })
-                    .flatten()
-            })
-            .or_else(|| {
-                status
-                    .active_contract_path
-                    .as_ref()
-                    .zip(status.active_contract_fingerprint.as_ref())
-                    .and_then(|_| {
-                        context
-                            .evidence
-                            .attempts
-                            .last()
-                            .map(|attempt| attempt.task_number)
-                    })
-            })
-            .or_else(|| {
-                status
-                    .active_contract_path
-                    .as_ref()
-                    .zip(status.active_contract_fingerprint.as_ref())
-                    .and_then(|_| context.steps.iter().map(|step| step.task_number).max())
-            })
+        && let Some(task_number) = {
+            let current_task_numbers = status
+                .current_task_closures
+                .iter()
+                .map(|closure| closure.task)
+                .collect::<BTreeSet<_>>();
+            (current_task_numbers.len() == 1)
+                .then(|| current_task_numbers.iter().next().copied())
+                .flatten()
+                .or_else(|| {
+                    (status.latest_authoritative_sequence == INITIAL_AUTHORITATIVE_SEQUENCE)
+                        .then(|| {
+                            context
+                                .evidence
+                                .attempts
+                                .last()
+                                .map(|attempt| attempt.task_number)
+                        })
+                        .flatten()
+                })
+                .or_else(|| {
+                    status
+                        .active_contract_path
+                        .as_ref()
+                        .zip(status.active_contract_fingerprint.as_ref())
+                        .and_then(|_| {
+                            context
+                                .evidence
+                                .attempts
+                                .last()
+                                .map(|attempt| attempt.task_number)
+                        })
+                })
+                .or_else(|| {
+                    status
+                        .active_contract_path
+                        .as_ref()
+                        .zip(status.active_contract_fingerprint.as_ref())
+                        .and_then(|_| context.steps.iter().map(|step| step.task_number).max())
+                })
+        }
     {
         let step_id = latest_attempted_step_for_task(context, task_number).or_else(|| {
             context
@@ -4595,6 +4721,17 @@ pub(crate) fn resolve_exact_execution_command_from_context(
             recommended_command: format!(
                 "featureforge plan execution reopen --plan {plan_path} --task {task_number} --step {step_id} --source {} --reason <reason> --expect-execution-fingerprint {}",
                 status.execution_mode, status.execution_fingerprint
+            ),
+        });
+    }
+    if let Some((task_number, step_id)) = latest_reopen_target_from_context(context) {
+        return Some(ExactExecutionCommand {
+            command_kind: "reopen",
+            task_number,
+            step_id: Some(step_id),
+            recommended_command: format!(
+                "featureforge plan execution reopen --plan {plan_path} --task {} --step {} --source {} --reason <reason> --expect-execution-fingerprint {}",
+                task_number, step_id, status.execution_mode, status.execution_fingerprint
             ),
         });
     }
@@ -4717,6 +4854,40 @@ mod exact_execution_command_tests {
         }
     }
 
+    fn invalidated_attempt(
+        task_number: u32,
+        step_number: u32,
+        attempt_number: u32,
+        recorded_at: &str,
+        invalidation_reason: &str,
+    ) -> EvidenceAttempt {
+        EvidenceAttempt {
+            task_number,
+            step_number,
+            attempt_number,
+            status: String::from("Invalidated"),
+            recorded_at: recorded_at.to_owned(),
+            execution_source: String::from("featureforge:executing-plans"),
+            claim: format!("Invalidated attempt for Task {task_number} Step {step_number}."),
+            files: Vec::new(),
+            file_proofs: Vec::new(),
+            verify_command: None,
+            verification_summary: String::from("Unit test invalidated attempt."),
+            invalidation_reason: invalidation_reason.to_owned(),
+            packet_fingerprint: None,
+            head_sha: None,
+            base_sha: None,
+            source_contract_path: None,
+            source_contract_fingerprint: None,
+            source_evaluation_report_fingerprint: None,
+            evaluator_verdict: None,
+            failing_criterion_ids: Vec::new(),
+            source_handoff_fingerprint: None,
+            repo_state_baseline_head_sha: None,
+            repo_state_baseline_worktree_fingerprint: None,
+        }
+    }
+
     #[test]
     fn resolve_exact_execution_command_from_context_uses_first_unchecked_step_without_markers() {
         let (_repo_dir, context, plan_rel) = unresolved_execution_context();
@@ -4797,6 +4968,27 @@ mod exact_execution_command_tests {
     }
 
     #[test]
+    fn latest_reopen_target_from_context_prefers_latest_evidence_not_reverse_plan_order() {
+        let (_repo_dir, mut context, _plan_rel) = unresolved_execution_context();
+        context.steps[0].checked = true;
+        let mut second_step = context.steps[0].clone();
+        second_step.step_number = 2;
+        second_step.title = String::from("Synthetic second step");
+        context.steps.push(second_step);
+        context.steps[1].checked = true;
+        context.evidence.attempts = vec![
+            invalidated_attempt(1, 2, 1, "2026-04-10T12:00:00Z", "files_proven_drifted"),
+            invalidated_attempt(1, 1, 2, "2026-04-10T12:30:00Z", "files_proven_drifted"),
+        ];
+
+        assert_eq!(
+            latest_reopen_target_from_context(&context),
+            Some((1, 1)),
+            "reopen selection must follow the latest authoritative stale evidence target, not reverse plan order",
+        );
+    }
+
+    #[test]
     fn derive_public_review_state_status_treats_not_fresh_late_gate_reasons_as_stale_unreviewed() {
         for reason_code in [
             "release_docs_state_not_fresh",
@@ -4856,6 +5048,23 @@ mod exact_execution_command_tests {
             derive_public_review_state_status(&status, &gate_review, &gate_finish, false, false),
             "stale_unreviewed",
             "a resumed task rerouted out of late-stage phase must require review-state repair",
+        );
+    }
+
+    #[test]
+    fn derive_public_review_state_status_marks_stale_late_stage_truth_even_when_harness_phase_stays_executing()
+     {
+        let mut status = late_stage_status_for_review_state_tests();
+        status.harness_phase = HarnessPhase::Executing;
+        status.current_release_readiness_state = Some(String::from("ready"));
+
+        let gate_review = gate_result_with_reason("release_docs_state_not_fresh");
+        let gate_finish = gate_result_with_reason("release_docs_state_not_fresh");
+
+        assert_eq!(
+            derive_public_review_state_status(&status, &gate_review, &gate_finish, false, false),
+            "stale_unreviewed",
+            "late-stage stale truth must surface from current branch bindings even if harness phase lags in executing",
         );
     }
 
@@ -5082,6 +5291,9 @@ pub(crate) fn require_public_exact_execution_command(
     status: &PlanExecutionStatus,
 ) -> Result<(), JsonFailure> {
     if public_exact_execution_command_required(context, status) {
+        if status.execution_command_context.is_some() && status.recommended_command.is_some() {
+            return Ok(());
+        }
         let _ = require_exact_execution_command(context, status, &context.plan_rel, "status")?;
     }
     Ok(())
@@ -5125,7 +5337,9 @@ fn derive_public_recommended_command(
             "featureforge plan execution record-qa --plan {plan} --result pass|fail --summary-file <path>"
         )),
         "execution_reentry_required" => {
-            if execution_reentry_requires_review_state_repair(status) {
+            if status.review_state_status == "clean" && execution_command.is_some() {
+                execution_command
+            } else if execution_reentry_requires_review_state_repair(status) {
                 Some(format!("featureforge plan execution repair-review-state --plan {plan}"))
             } else {
                 execution_command
@@ -10519,6 +10733,186 @@ pub fn parse_command_verification_summary(summary: &str) -> Option<String> {
     (!command.is_empty()).then_some(command)
 }
 
+struct RebuildCandidateScan {
+    session_provenance_reason: Option<String>,
+    contract_plan_fingerprint: String,
+    source_spec_fingerprint: String,
+    latest_attempts: BTreeMap<(u32, u32), usize>,
+    latest_completed: BTreeMap<(u32, u32), usize>,
+    latest_file_proofs: BTreeMap<String, usize>,
+}
+
+fn prepare_rebuild_candidate_scan(context: &ExecutionContext) -> RebuildCandidateScan {
+    let legacy_plan_fingerprint = sha256_hex(context.plan_source.as_bytes());
+    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+    let session_provenance_reason =
+        if context.evidence.plan_fingerprint.as_deref() != Some(legacy_plan_fingerprint.as_str()) {
+            Some(String::from("plan_fingerprint_mismatch"))
+        } else if context.evidence.source_spec_fingerprint.as_deref()
+            != Some(source_spec_fingerprint.as_str())
+        {
+            Some(String::from("source_spec_fingerprint_mismatch"))
+        } else {
+            None
+        };
+    let latest_attempts = latest_attempt_indices_by_step(&context.evidence);
+    let latest_completed = latest_completed_attempts_by_step(&context.evidence);
+    let latest_file_proofs =
+        latest_completed_attempts_by_file(&context.evidence, &latest_completed);
+
+    RebuildCandidateScan {
+        session_provenance_reason,
+        contract_plan_fingerprint: hash_contract_plan(&context.plan_source),
+        source_spec_fingerprint,
+        latest_attempts,
+        latest_completed,
+        latest_file_proofs,
+    }
+}
+
+fn rebuild_candidate_for_step(
+    context: &ExecutionContext,
+    scan: &RebuildCandidateScan,
+    step: &PlanStepState,
+    include_open: bool,
+) -> Option<RebuildEvidenceCandidate> {
+    let step_key = (step.task_number, step.step_number);
+    let latest_attempt = scan
+        .latest_attempts
+        .get(&step_key)
+        .map(|index| &context.evidence.attempts[*index]);
+    let latest_completed_index = scan.latest_completed.get(&step_key).copied();
+    let latest_completed_attempt =
+        latest_completed_index.map(|index| &context.evidence.attempts[index]);
+
+    let mut pre_invalidation_reason = None;
+    let mut target_kind = String::new();
+    let mut needs_reopen = false;
+
+    if step.checked
+        && let Some(reason) = scan.session_provenance_reason.as_ref()
+        && latest_completed_attempt.is_some()
+    {
+        pre_invalidation_reason = Some(reason.clone());
+        target_kind = String::from("stale_completed_attempt");
+        needs_reopen = true;
+    }
+
+    if let Some(attempt) = latest_attempt
+        && attempt.status == "Invalidated"
+        && attempt.invalidation_reason != "N/A"
+    {
+        pre_invalidation_reason = Some(attempt.invalidation_reason.clone());
+        target_kind = String::from("invalidated_attempt");
+        needs_reopen = step.checked;
+    }
+
+    if pre_invalidation_reason.is_none()
+        && step.checked
+        && let Some(attempt) = latest_completed_attempt
+    {
+        let expected_packet = compute_packet_fingerprint(PacketFingerprintInput {
+            plan_path: &context.plan_rel,
+            plan_revision: context.plan_document.plan_revision,
+            plan_fingerprint: &scan.contract_plan_fingerprint,
+            source_spec_path: &context.plan_document.source_spec_path,
+            source_spec_revision: context.plan_document.source_spec_revision,
+            source_spec_fingerprint: &scan.source_spec_fingerprint,
+            task: step.task_number,
+            step: step.step_number,
+        });
+        if attempt.packet_fingerprint.as_deref() != Some(expected_packet.as_str()) {
+            pre_invalidation_reason = Some(String::from("packet_fingerprint_mismatch"));
+            target_kind = String::from("stale_completed_attempt");
+            needs_reopen = true;
+        } else {
+            for proof in &attempt.file_proofs {
+                if proof.path == NO_REPO_FILES_MARKER
+                    || proof.path == context.plan_rel
+                    || proof.path == context.evidence_rel
+                {
+                    continue;
+                }
+                if scan
+                    .latest_file_proofs
+                    .get(&proof.path)
+                    .is_some_and(|latest_index| {
+                        latest_completed_index
+                            .is_some_and(|attempt_index| *latest_index != attempt_index)
+                    })
+                {
+                    continue;
+                }
+                match current_file_proof_checked(&context.runtime.repo_root, &proof.path) {
+                    Ok(current_proof) => {
+                        if current_proof != proof.proof {
+                            pre_invalidation_reason = Some(String::from("files_proven_drifted"));
+                            target_kind = String::from("stale_completed_attempt");
+                            needs_reopen = true;
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        pre_invalidation_reason = Some(format!(
+                            "artifact_read_error: could not read {} ({error})",
+                            proof.path
+                        ));
+                        target_kind = String::from("artifact_read_error");
+                        needs_reopen = false;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if pre_invalidation_reason.is_none()
+        && include_open
+        && !step.checked
+        && (step.note_state.is_some() || latest_attempt.is_some())
+    {
+        pre_invalidation_reason = Some(String::from("open_step_requested"));
+        target_kind = String::from("open_step");
+    }
+
+    let pre_invalidation_reason = pre_invalidation_reason?;
+    let attempt = latest_attempt.or(latest_completed_attempt);
+    let verify_command = attempt.and_then(|candidate| candidate.verify_command.clone());
+    let verify_mode = if verify_command.is_some() {
+        String::from("command")
+    } else {
+        String::from("manual")
+    };
+    let claim = attempt
+        .map(|candidate| candidate.claim.clone())
+        .unwrap_or_else(|| {
+            format!(
+                "Rebuilt evidence for Task {} Step {}.",
+                step.task_number, step.step_number
+            )
+        });
+    let files = attempt
+        .map(|candidate| candidate.files.clone())
+        .unwrap_or_default();
+    let attempt_number = attempt.map(|candidate| candidate.attempt_number);
+    let artifact_epoch = attempt.map(|candidate| candidate.recorded_at.clone());
+
+    Some(RebuildEvidenceCandidate {
+        task: step.task_number,
+        step: step.step_number,
+        order_key: (step.task_number, step.step_number),
+        target_kind,
+        pre_invalidation_reason,
+        verify_command,
+        verify_mode,
+        claim,
+        files,
+        attempt_number,
+        artifact_epoch,
+        needs_reopen,
+    })
+}
+
 pub fn discover_rebuild_candidates(
     context: &ExecutionContext,
     request: &RebuildEvidenceRequest,
@@ -10542,164 +10936,15 @@ pub fn discover_rebuild_candidates(
         ));
     }
 
-    let legacy_plan_fingerprint = sha256_hex(context.plan_source.as_bytes());
-    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
-    let session_provenance_reason =
-        if context.evidence.plan_fingerprint.as_deref() != Some(legacy_plan_fingerprint.as_str()) {
-            Some(String::from("plan_fingerprint_mismatch"))
-        } else if context.evidence.source_spec_fingerprint.as_deref()
-            != Some(source_spec_fingerprint.as_str())
-        {
-            Some(String::from("source_spec_fingerprint_mismatch"))
-        } else {
-            None
-        };
-
-    let contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
-    let latest_attempts = latest_attempt_indices_by_step(&context.evidence);
-    let latest_completed = latest_completed_attempts_by_step(&context.evidence);
-    let latest_file_proofs =
-        latest_completed_attempts_by_file(&context.evidence, &latest_completed);
+    let scan = prepare_rebuild_candidate_scan(context);
     let mut candidates = Vec::new();
 
     for step in matching_steps {
-        let step_key = (step.task_number, step.step_number);
-        let latest_attempt = latest_attempts
-            .get(&step_key)
-            .map(|index| &context.evidence.attempts[*index]);
-        let latest_completed_attempt = latest_completed
-            .get(&step_key)
-            .map(|index| &context.evidence.attempts[*index]);
-
-        let mut pre_invalidation_reason = None;
-        let mut target_kind = String::new();
-        let mut needs_reopen = false;
-
-        if step.checked
-            && let Some(reason) = session_provenance_reason.as_ref()
-            && latest_completed_attempt.is_some()
+        if let Some(candidate) =
+            rebuild_candidate_for_step(context, &scan, step, request.include_open)
         {
-            pre_invalidation_reason = Some(reason.clone());
-            target_kind = String::from("stale_completed_attempt");
-            needs_reopen = true;
+            candidates.push(candidate);
         }
-
-        if let Some(attempt) = latest_attempt
-            && attempt.status == "Invalidated"
-            && attempt.invalidation_reason != "N/A"
-        {
-            pre_invalidation_reason = Some(attempt.invalidation_reason.clone());
-            target_kind = String::from("invalidated_attempt");
-            needs_reopen = step.checked;
-        }
-
-        if pre_invalidation_reason.is_none()
-            && step.checked
-            && let Some(attempt) = latest_completed_attempt
-        {
-            let expected_packet = compute_packet_fingerprint(PacketFingerprintInput {
-                plan_path: &context.plan_rel,
-                plan_revision: context.plan_document.plan_revision,
-                plan_fingerprint: &contract_plan_fingerprint,
-                source_spec_path: &context.plan_document.source_spec_path,
-                source_spec_revision: context.plan_document.source_spec_revision,
-                source_spec_fingerprint: &source_spec_fingerprint,
-                task: step.task_number,
-                step: step.step_number,
-            });
-            if attempt.packet_fingerprint.as_deref() != Some(expected_packet.as_str()) {
-                pre_invalidation_reason = Some(String::from("packet_fingerprint_mismatch"));
-                target_kind = String::from("stale_completed_attempt");
-                needs_reopen = true;
-            } else {
-                for proof in &attempt.file_proofs {
-                    if proof.path == NO_REPO_FILES_MARKER
-                        || proof.path == context.plan_rel
-                        || proof.path == context.evidence_rel
-                    {
-                        continue;
-                    }
-                    if latest_file_proofs
-                        .get(&proof.path)
-                        .is_some_and(|latest_index| {
-                            latest_completed
-                                .get(&step_key)
-                                .is_some_and(|attempt_index| latest_index != attempt_index)
-                        })
-                    {
-                        continue;
-                    }
-                    match current_file_proof_checked(&context.runtime.repo_root, &proof.path) {
-                        Ok(current_proof) => {
-                            if current_proof != proof.proof {
-                                pre_invalidation_reason =
-                                    Some(String::from("files_proven_drifted"));
-                                target_kind = String::from("stale_completed_attempt");
-                                needs_reopen = true;
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            pre_invalidation_reason = Some(format!(
-                                "artifact_read_error: could not read {} ({error})",
-                                proof.path
-                            ));
-                            target_kind = String::from("artifact_read_error");
-                            needs_reopen = false;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if pre_invalidation_reason.is_none()
-            && request.include_open
-            && !step.checked
-            && (step.note_state.is_some() || latest_attempt.is_some())
-        {
-            pre_invalidation_reason = Some(String::from("open_step_requested"));
-            target_kind = String::from("open_step");
-        }
-
-        let Some(pre_invalidation_reason) = pre_invalidation_reason else {
-            continue;
-        };
-        let attempt = latest_attempt.or(latest_completed_attempt);
-        let verify_command = attempt.and_then(|candidate| candidate.verify_command.clone());
-        let verify_mode = if verify_command.is_some() {
-            String::from("command")
-        } else {
-            String::from("manual")
-        };
-        let claim = attempt
-            .map(|candidate| candidate.claim.clone())
-            .unwrap_or_else(|| {
-                format!(
-                    "Rebuilt evidence for Task {} Step {}.",
-                    step.task_number, step.step_number
-                )
-            });
-        let files = attempt
-            .map(|candidate| candidate.files.clone())
-            .unwrap_or_default();
-        let attempt_number = attempt.map(|candidate| candidate.attempt_number);
-        let artifact_epoch = attempt.map(|candidate| candidate.recorded_at.clone());
-
-        candidates.push(RebuildEvidenceCandidate {
-            task: step.task_number,
-            step: step.step_number,
-            order_key: (step.task_number, step.step_number),
-            target_kind,
-            pre_invalidation_reason,
-            verify_command,
-            verify_mode,
-            claim,
-            files,
-            attempt_number,
-            artifact_epoch,
-            needs_reopen,
-        });
     }
 
     candidates.sort_by_key(|candidate| candidate.order_key);
