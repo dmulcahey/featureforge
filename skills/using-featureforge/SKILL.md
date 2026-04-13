@@ -166,13 +166,15 @@ Do NOT jump from brainstorming straight to implementation. For workflow-routed w
 
 ### Helper-first routing
 
-If `$_FEATUREFORGE_BIN` is available call `$_FEATUREFORGE_BIN workflow status --refresh` to discover artifact-state status and the current approved `plan_path` when it exists.
+If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. Otherwise call `$_FEATUREFORGE_BIN workflow status --refresh` only to discover the current approved `plan_path`, then route through workflow/operator.
 
 - If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.
 - If the JSON result reports `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` using that exact approved plan path.
 - Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` as the authoritative public routing contract.
 - If workflow/operator returns a non-empty `recommended_command`, follow that exact command template.
 - If workflow/operator omits `recommended_command` (for example, while waiting for an external review result or refreshing the test plan), follow `next_action` and rerun workflow/operator after the prerequisite is satisfied.
+- Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.
+- Treat low-level runtime commands (`record-review-dispatch`, `record-branch-closure`, `record-release-readiness`, `record-final-review`, `record-qa`, `rebuild-evidence`, and `explain-review-state`) as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.
 - If workflow/operator reports `phase` `executing`, call `featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>` before choosing between `featureforge:subagent-driven-development` and `featureforge:executing-plans`.
 - In that helper-backed execution flow, treat `execution_started` as an executor-resume signal only when workflow/operator reports `phase` `executing`.
 - If workflow/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.

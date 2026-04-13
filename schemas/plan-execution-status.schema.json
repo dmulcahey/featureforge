@@ -88,20 +88,18 @@
     "NextActionSchema": {
       "enum": [
         "advance late stage",
+        "finish branch",
         "close current task",
         "continue execution",
-        "dispatch review",
-        "dispatch final review",
+        "request task review",
+        "request final review",
         "execution reentry required",
         "hand off",
         "pivot / return to planning",
-        "record branch closure",
         "refresh test plan",
         "repair review state / reenter execution",
         "resolve release blocker",
         "run QA",
-        "run finish completion gate",
-        "run finish review gate",
         "wait for external review result"
       ],
       "type": "string"
@@ -226,7 +224,7 @@
       "enum": [
         "execution_reentry",
         "repair_review_state",
-        "record_review_dispatch",
+        "request_external_review",
         "record_branch_closure",
         "resolve_release_blocker",
         "record_handoff",
@@ -481,11 +479,23 @@
     "aggregate_evaluation_state": {
       "$ref": "#/$defs/AggregateEvaluationState"
     },
+    "blocking_reason_codes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "blocking_records": {
       "items": {
         "$ref": "#/$defs/StatusBlockingRecord"
       },
       "type": "array"
+    },
+    "blocking_scope": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "blocking_step": {
       "format": "uint32",
@@ -631,6 +641,12 @@
     },
     "execution_started": {
       "type": "string"
+    },
+    "external_wait_state": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "final_review_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"

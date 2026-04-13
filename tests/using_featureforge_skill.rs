@@ -216,6 +216,8 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
     for pattern in [
         "If helpers are unavailable, fallback stays minimal and conservative:",
         "Manual fallback must not infer readiness from the legacy thin header subset.",
+        "Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.",
+        "Treat low-level runtime commands (`record-review-dispatch`, `record-branch-closure`, `record-release-readiness`, `record-final-review`, `record-qa`, `rebuild-evidence`, and `explain-review-state`) as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
         "If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.",
         "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
         "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
@@ -489,5 +491,20 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         handoff_vague_entry["selected_route"],
         Value::String(String::from("featureforge:executing-plans")),
         "non-explicit requests should preserve the implementation-ready handoff route",
+    );
+}
+
+#[test]
+fn runtime_remediation_inventory_is_available_to_skill_route_contracts() {
+    let inventory =
+        fs::read_to_string(repo_root().join("tests/fixtures/runtime-remediation/README.md"))
+            .expect("runtime-remediation inventory should be readable");
+    assert!(
+        inventory.contains("FS-03"),
+        "runtime-remediation inventory should include FS-03 redispatch contradiction coverage",
+    );
+    assert!(
+        inventory.contains("FS-09"),
+        "runtime-remediation inventory should include FS-09 post-repair blocker coverage",
     );
 }

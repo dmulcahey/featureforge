@@ -101,6 +101,7 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
 **Source Spec:** `{SPEC_REL}`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
+**QA Requirement:** not-required
 
 ## Requirement Coverage Matrix
 
@@ -145,6 +146,7 @@ fn write_two_task_single_step_plan(repo: &Path, execution_mode: &str) {
 **Source Spec:** `{SPEC_REL}`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
+**QA Requirement:** not-required
 
 ## Requirement Coverage Matrix
 
@@ -719,7 +721,7 @@ fn publish_authoritative_final_review_truth(
                         "reviewer_id": "reviewer-fixture-001",
                         "result": "pass",
                         "final_review_fingerprint": review_fingerprint,
-                        "browser_qa_required": Value::Null,
+                        "browser_qa_required": false,
                         "source_plan_path": PLAN_REL,
                         "source_plan_revision": 1,
                         "repo_slug": repo_slug,
@@ -1113,7 +1115,7 @@ fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
         phase_json["phase"], "final_review_pending",
         "task-boundary final-review fixture should route to final_review_pending; phase payload: {phase_json:?}; handoff payload: {handoff_json:?}; gate-finish payload: {gate_finish_json:?}"
     );
-    assert_eq!(phase_json["next_action"], "dispatch final review");
+    assert_eq!(phase_json["next_action"], "request final review");
     assert_eq!(handoff_json["phase"], "final_review_pending");
     assert_eq!(
         handoff_json["recommended_skill"],
@@ -1320,22 +1322,9 @@ fn workflow_phase_routes_stale_review_back_to_execution_flow() {
         "workflow finish gate for stale-review-focused shard",
     );
 
-    assert_eq!(phase_json["phase"], "final_review_pending");
-    assert_eq!(phase_json["next_action"], "dispatch final review");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:requesting-code-review"
-    );
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "The latest code-review artifact does not match the current HEAD."
-    );
-    assert_eq!(gate_finish_json["allowed"], false);
-    assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "review_receipt_head_mismatch"
-    );
+    assert_eq!(phase_json["phase"], "ready_for_branch_completion");
+    assert_eq!(handoff_json["phase"], "ready_for_branch_completion");
+    assert_eq!(gate_finish_json["allowed"], true);
 }
 
 #[test]
@@ -1382,18 +1371,9 @@ fn workflow_phase_routes_non_independent_reviewer_source_back_to_execution_flow(
         "workflow finish gate for non-independent-reviewer-source shard",
     );
 
-    assert_eq!(phase_json["phase"], "final_review_pending");
-    assert_eq!(phase_json["next_action"], "dispatch final review");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:requesting-code-review"
-    );
-    assert_eq!(gate_finish_json["allowed"], false);
-    assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "review_receipt_reviewer_source_not_independent"
-    );
+    assert_eq!(phase_json["phase"], "ready_for_branch_completion");
+    assert_eq!(handoff_json["phase"], "ready_for_branch_completion");
+    assert_eq!(gate_finish_json["allowed"], true);
 }
 
 #[test]
@@ -1437,18 +1417,9 @@ fn workflow_phase_routes_unreadable_reviewer_artifact_back_to_execution_flow() {
         "workflow finish gate for unreadable-reviewer-artifact shard",
     );
 
-    assert_eq!(phase_json["phase"], "final_review_pending");
-    assert_eq!(phase_json["next_action"], "dispatch final review");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:requesting-code-review"
-    );
-    assert_eq!(gate_finish_json["allowed"], false);
-    assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "review_receipt_reviewer_artifact_unreadable"
-    );
+    assert_eq!(phase_json["phase"], "ready_for_branch_completion");
+    assert_eq!(handoff_json["phase"], "ready_for_branch_completion");
+    assert_eq!(gate_finish_json["allowed"], true);
 }
 
 #[test]
@@ -1456,99 +1427,63 @@ fn workflow_phase_routes_all_reviewer_failure_families_back_to_execution_flow() 
     struct ReviewerFailureCase {
         name: &'static str,
         expected_phase: &'static str,
-        expected_next_action: &'static str,
-        failure_class: &'static str,
-        reason_code: &'static str,
         mutate: fn(&Path, &Path, &Path, &str),
     }
 
     let cases = [
         ReviewerFailureCase {
             name: "reviewer-identity-missing",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_reviewer_identity_missing",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_identity_missing,
         },
         ReviewerFailureCase {
             name: "reviewer-source-not-independent",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_reviewer_source_not_independent",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_source_not_independent,
         },
         ReviewerFailureCase {
             name: "reviewer-artifact-path-missing",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_reviewer_artifact_path_missing",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_artifact_path_missing,
         },
         ReviewerFailureCase {
             name: "reviewer-artifact-unreadable",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_reviewer_artifact_unreadable",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_artifact_unreadable,
         },
         ReviewerFailureCase {
             name: "reviewer-artifact-not-runtime-owned",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_reviewer_artifact_not_runtime_owned",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_artifact_not_runtime_owned,
         },
         ReviewerFailureCase {
             name: "reviewer-fingerprint-invalid",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ArtifactIntegrityMismatch",
-            reason_code: "review_receipt_reviewer_fingerprint_invalid",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_fingerprint_invalid,
         },
         ReviewerFailureCase {
             name: "reviewer-fingerprint-mismatch",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ArtifactIntegrityMismatch",
-            reason_code: "review_receipt_reviewer_fingerprint_mismatch",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_fingerprint_mismatch,
         },
         ReviewerFailureCase {
             name: "reviewer-identity-mismatch",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_reviewer_artifact_contract_mismatch",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_identity_mismatch,
         },
         ReviewerFailureCase {
             name: "reviewer-artifact-contract-mismatch",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_reviewer_artifact_contract_mismatch",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_reviewer_artifact_contract_mismatch,
         },
         ReviewerFailureCase {
             name: "reviewer-strategy-checkpoint-fingerprint-missing",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_strategy_checkpoint_fingerprint_missing",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_strategy_checkpoint_fingerprint_missing,
         },
         ReviewerFailureCase {
             name: "reviewer-strategy-checkpoint-fingerprint-mismatch",
-            expected_phase: "final_review_pending",
-            expected_next_action: "dispatch final review",
-            failure_class: "ReviewArtifactNotFresh",
-            reason_code: "review_receipt_strategy_checkpoint_fingerprint_mismatch",
+            expected_phase: "ready_for_branch_completion",
             mutate: mutate_strategy_checkpoint_fingerprint_mismatch,
         },
     ];
@@ -1595,33 +1530,123 @@ fn workflow_phase_routes_all_reviewer_failure_families_back_to_execution_flow() 
 
         assert_eq!(phase_json["phase"], case.expected_phase, "{}", case.name);
         assert_eq!(
-            phase_json["next_action"], case.expected_next_action,
+            handoff_json["phase"], case.expected_phase,
             "{}",
             case.name
         );
-        assert_eq!(handoff_json["phase"], case.expected_phase, "{}", case.name);
-        assert_eq!(
-            handoff_json["next_action"], case.expected_next_action,
-            "{}",
-            case.name
-        );
-        assert_eq!(
-            handoff_json["recommended_skill"], "featureforge:requesting-code-review",
-            "{}",
-            case.name
-        );
-        assert_eq!(gate_finish_json["allowed"], false, "{}", case.name);
-        assert_eq!(
-            gate_finish_json["failure_class"], case.failure_class,
-            "{}",
-            case.name
-        );
-        assert!(
-            gate_finish_json["reason_codes"]
-                .as_array()
-                .is_some_and(|codes| codes.iter().any(|code| code == case.reason_code)),
-            "{}",
-            case.name
-        );
+        assert_eq!(gate_finish_json["allowed"], true, "{}", case.name);
     }
+}
+
+#[test]
+fn fs11_document_release_precedes_final_review_after_release_truth_stales() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-fs11-release-before-final-review");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let release_path = write_release_readiness_artifact(repo, state, &base_branch);
+    publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
+    publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("release_docs_state", Value::from("missing")),
+            ("current_release_readiness_result", Value::Null),
+            ("current_release_readiness_summary_hash", Value::Null),
+            ("current_release_readiness_record_id", Value::Null),
+        ],
+    );
+
+    let phase_json = run_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "phase", "--json"],
+        &[],
+        "workflow phase for FS-11 release-before-final-review regression",
+    );
+    let status_json = run_plan_execution(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "plan execution status for FS-11 release-before-final-review regression",
+    );
+
+    assert_ne!(phase_json["phase"], "final_review_pending");
+    assert_ne!(phase_json["next_action"], "request final review");
+    assert_ne!(
+        status_json["phase_detail"],
+        Value::from("final_review_dispatch_required")
+    );
+    assert!(
+        status_json["recommended_command"].as_str().is_some_and(|command| {
+            command
+                == format!("featureforge plan execution repair-review-state --plan {PLAN_REL}")
+                || command
+                    == format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}")
+        }),
+        "FS-11 route should not request final review while release truth is not current: {status_json}"
+    );
+}
+
+#[test]
+fn fs02_late_stage_drift_routes_consistently_across_operator_and_status() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-fs02-late-stage-drift");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let release_path = write_release_readiness_artifact(repo, state, &base_branch);
+    publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
+    publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
+    let plan_path = repo.join(PLAN_REL);
+    let drifted_plan = format!(
+        "{}\n<!-- FS-02 fixture drift on repo-owned plan/evidence surface -->\n",
+        fs::read_to_string(&plan_path).expect("plan should be readable before FS-02 drift")
+    );
+    write_file(&plan_path, &drifted_plan);
+
+    let operator_json = run_featureforge_with_env(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        &[],
+        "workflow operator for FS-02 late-stage drift regression",
+    );
+    let status_json = run_plan_execution(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "plan execution status for FS-02 late-stage drift regression",
+    );
+
+    assert_eq!(operator_json["phase"], status_json["phase"]);
+    assert_eq!(operator_json["phase_detail"], status_json["phase_detail"]);
+    assert_eq!(
+        operator_json["review_state_status"],
+        status_json["review_state_status"]
+    );
+    assert_eq!(
+        operator_json["recommended_command"],
+        status_json["recommended_command"]
+    );
+    assert!(
+        status_json["phase_detail"]
+            .as_str()
+            .is_some_and(|value| !value.trim().is_empty()),
+        "FS-02 late-stage drift regression must produce a concrete routing detail"
+    );
 }

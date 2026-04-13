@@ -931,20 +931,18 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         "next_action",
         [
             "advance late stage",
+            "finish branch",
             "close current task",
             "continue execution",
-            "dispatch review",
-            "dispatch final review",
+            "request task review",
+            "request final review",
             "execution reentry required",
             "hand off",
             "pivot / return to planning",
-            "record branch closure",
             "refresh test plan",
             "repair review state / reenter execution",
             "resolve release blocker",
             "run QA",
-            "run finish completion gate",
-            "run finish review gate",
             "wait for external review result"
         ]
     );

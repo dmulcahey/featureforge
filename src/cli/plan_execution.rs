@@ -25,49 +25,61 @@ pub enum PlanExecutionCommand {
     Status(StatusArgs),
     Recommend(RecommendArgs),
     Preflight(StatusArgs),
-    #[command(name = "rebuild-evidence")]
+    #[command(name = "internal", hide = true)]
+    Internal(InternalPlanExecutionCli),
+    #[command(name = "rebuild-evidence", hide = true)]
     RebuildEvidence(RebuildEvidenceArgs),
-    #[command(name = "gate-contract")]
+    #[command(name = "gate-contract", hide = true)]
     GateContract(GateContractArgs),
-    #[command(name = "record-contract")]
+    #[command(name = "record-contract", hide = true)]
     RecordContract(RecordContractArgs),
-    #[command(name = "gate-evaluator")]
+    #[command(name = "gate-evaluator", hide = true)]
     GateEvaluator(GateEvaluatorArgs),
-    #[command(name = "record-evaluation")]
+    #[command(name = "record-evaluation", hide = true)]
     RecordEvaluation(RecordEvaluationArgs),
-    #[command(name = "gate-handoff")]
+    #[command(name = "gate-handoff", hide = true)]
     GateHandoff(GateHandoffArgs),
-    #[command(name = "record-handoff")]
+    #[command(name = "record-handoff", hide = true)]
     RecordHandoff(RecordHandoffArgs),
-    #[command(name = "gate-review")]
+    #[command(name = "gate-review", hide = true)]
     GateReview(StatusArgs),
-    #[command(name = "record-review-dispatch")]
+    #[command(name = "record-review-dispatch", hide = true)]
     RecordReviewDispatch(RecordReviewDispatchArgs),
     #[command(name = "repair-review-state")]
     RepairReviewState(StatusArgs),
-    #[command(name = "explain-review-state")]
+    #[command(name = "explain-review-state", hide = true)]
     ExplainReviewState(StatusArgs),
-    #[command(name = "reconcile-review-state")]
-    ReconcileReviewState(StatusArgs),
-    #[command(name = "gate-finish")]
+    #[command(name = "gate-finish", hide = true)]
     GateFinish(StatusArgs),
     #[command(name = "close-current-task")]
     CloseCurrentTask(CloseCurrentTaskArgs),
-    #[command(name = "record-branch-closure")]
+    #[command(name = "record-branch-closure", hide = true)]
     RecordBranchClosure(RecordBranchClosureArgs),
-    #[command(name = "record-release-readiness")]
+    #[command(name = "record-release-readiness", hide = true)]
     RecordReleaseReadiness(RecordReleaseReadinessArgs),
     #[command(name = "advance-late-stage")]
     AdvanceLateStage(AdvanceLateStageArgs),
-    #[command(name = "record-final-review")]
+    #[command(name = "record-final-review", hide = true)]
     RecordFinalReview(RecordFinalReviewArgs),
-    #[command(name = "record-qa")]
+    #[command(name = "record-qa", hide = true)]
     RecordQa(RecordQaArgs),
     Begin(BeginArgs),
     Note(NoteArgs),
     Complete(CompleteArgs),
     Reopen(ReopenArgs),
     Transfer(TransferArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct InternalPlanExecutionCli {
+    #[command(subcommand)]
+    pub command: InternalPlanExecutionCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InternalPlanExecutionCommand {
+    #[command(name = "reconcile-review-state")]
+    ReconcileReviewState(StatusArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -213,9 +225,9 @@ pub struct AdvanceLateStageArgs {
     #[arg(long = "reviewer-id")]
     pub reviewer_id: Option<String>,
     #[arg(long, value_enum)]
-    pub result: AdvanceLateStageResultArg,
+    pub result: Option<AdvanceLateStageResultArg>,
     #[arg(long = "summary-file")]
-    pub summary_file: PathBuf,
+    pub summary_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]

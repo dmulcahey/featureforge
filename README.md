@@ -17,7 +17,7 @@ Seven layers matter:
 - `using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.
 - generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows), and that runtime resolves the active root through `featureforge repo runtime-root --path` before update checks or contributor-mode lookups.
 - `featureforge workflow` owns product-work routing up to `implementation_ready`.
-- `featureforge workflow operator --plan <approved-plan-path>` remains authoritative for execution, QA, and late-stage routing after handoff; `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail.
+- `featureforge workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; run `featureforge plan execution status --plan <approved-plan-path>` only when you need deeper diagnostics.
 - `featureforge repo-safety` owns protected branches and repo-write guarantees.
 - `featureforge plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.
 - `featureforge plan execution` owns execution state after an approved plan is handed off.
@@ -70,31 +70,24 @@ Planning chain in plain language:
 
 `brainstorming -> plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> implementation`
 
-The generated `using-featureforge` skill routes through `featureforge workflow status --refresh` before normal planning/spec/plan status work begins; that call happens in the routing flow, not inside the shell preamble block itself.
+The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; otherwise it uses `featureforge workflow status --refresh` only to discover artifact-state status and approved-plan routing context.
 
-Execution starts from an engineering-approved plan and the exact approved plan path. `featureforge plan execution recommend --plan <approved-plan-path>` selects between:
+Execution starts from an engineering-approved plan and the exact approved plan path.
+Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command (`begin`, `close-current-task`, `repair-review-state`, `advance-late-stage`) for the current phase.
 
-- `featureforge:subagent-driven-development` when the approved tasks are independent and isolated-agent execution is viable
-- `featureforge:executing-plans` when the work should stay serial in the current session
-- recommendation output is topology-backed (`selected_topology`, stable `reason_codes`, and learned-downgrade reuse status), not heuristic-only skill selection
+`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.
 
-`featureforge plan execution gate-finish --plan <approved-plan-path>` now derives execution-deviation review requirements from authoritative runtime-owned topology downgrade artifacts. Reason-code-only deviation hints are treated as corroborating metadata, not primary truth.
+When workflow/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
 
-`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug recovery helper, not a normal execution progression step.
-
-`featureforge plan execution gate-review --plan <approved-plan-path>` is the first finish gate: it evaluates finish readiness and records or refreshes the current branch-closure pass checkpoint without minting task-boundary review-dispatch proof.
-
-When workflow/operator reports stale or missing closure context, rerun `featureforge plan execution status --plan <approved-plan-path>` before `featureforge plan execution repair-review-state --plan <approved-plan-path>`.
-
-After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra recording command. Rerun `featureforge workflow operator --plan <approved-plan-path>` next only when the returned command asks for it or after the returned follow-up is complete.
+After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra command. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
 
 `featureforge plan execution` is the execution preflight boundary for the approved plan.
 
 Task closure is enforced at task boundaries, not only at the end of the full plan:
 
-- after implementation steps complete, STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` to mint task-boundary review-dispatch proof
-- once the task review and verification are both green, require `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` before calling `close-current-task`
-- `featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint; `record-review-dispatch` remains the task-boundary review-dispatch proof command
+- after implementation steps complete and review plus verification are ready, run `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `close-current-task` as the authoritative task-closure command
+- if workflow/operator reports `task_review_dispatch_required`, request external review and rerun `workflow operator --external-review-result-ready`; keep normal progression on intent-level commands
+- compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts

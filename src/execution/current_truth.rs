@@ -527,32 +527,78 @@ pub(crate) fn tracked_paths_changed_since_record_branch_closure_baseline(
     Ok(Vec::new())
 }
 
-pub(crate) fn branch_closure_rerecording_supported(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BranchRerecordingUnsupportedReason {
+    MissingTaskClosureBaseline,
+    LateStageSurfaceNotDeclared,
+    DriftEscapesLateStageSurface,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BranchRerecordingAssessment {
+    pub changed_paths: Vec<String>,
+    pub late_stage_surface: Vec<String>,
+    pub drift_confined_to_late_stage_surface: bool,
+    pub supported: bool,
+    pub unsupported_reason: Option<BranchRerecordingUnsupportedReason>,
+}
+
+pub(crate) fn branch_closure_rerecording_assessment(
     context: &ExecutionContext,
-) -> Result<bool, JsonFailure> {
+) -> Result<BranchRerecordingAssessment, JsonFailure> {
     let current_records = current_branch_task_closure_records(context)?;
     let changed_paths = tracked_paths_changed_since_record_branch_closure_baseline(context)?;
-    if current_records.is_empty() {
-        if !current_branch_closure_allows_empty_lineage_late_stage_rerecord(context)? {
-            return Ok(false);
-        }
-        if changed_paths.is_empty() {
-            return Ok(true);
-        }
-        let late_stage_surface = normalized_late_stage_surface(&context.plan_source)?;
-        return Ok(!late_stage_surface.is_empty()
-            && changed_paths
-                .iter()
-                .all(|path| path_matches_late_stage_surface(path, &late_stage_surface)));
+    let empty_lineage_rerecord_allowed = if current_records.is_empty() {
+        current_branch_closure_allows_empty_lineage_late_stage_rerecord(context)?
+    } else {
+        true
+    };
+    if !empty_lineage_rerecord_allowed {
+        return Ok(BranchRerecordingAssessment {
+            changed_paths,
+            late_stage_surface: Vec::new(),
+            drift_confined_to_late_stage_surface: false,
+            supported: false,
+            unsupported_reason: Some(
+                BranchRerecordingUnsupportedReason::MissingTaskClosureBaseline,
+            ),
+        });
     }
     if changed_paths.is_empty() {
-        return Ok(true);
+        return Ok(BranchRerecordingAssessment {
+            changed_paths,
+            late_stage_surface: Vec::new(),
+            drift_confined_to_late_stage_surface: false,
+            supported: true,
+            unsupported_reason: None,
+        });
     }
     let late_stage_surface = normalized_late_stage_surface(&context.plan_source)?;
-    Ok(!late_stage_surface.is_empty()
-        && changed_paths
-            .iter()
-            .all(|path| path_matches_late_stage_surface(path, &late_stage_surface)))
+    if late_stage_surface.is_empty() {
+        return Ok(BranchRerecordingAssessment {
+            changed_paths,
+            late_stage_surface,
+            drift_confined_to_late_stage_surface: false,
+            supported: false,
+            unsupported_reason: Some(
+                BranchRerecordingUnsupportedReason::LateStageSurfaceNotDeclared,
+            ),
+        });
+    }
+    let drift_confined_to_late_stage_surface = changed_paths
+        .iter()
+        .all(|path| path_matches_late_stage_surface(path, &late_stage_surface));
+    Ok(BranchRerecordingAssessment {
+        changed_paths,
+        late_stage_surface,
+        drift_confined_to_late_stage_surface,
+        supported: drift_confined_to_late_stage_surface,
+        unsupported_reason: if drift_confined_to_late_stage_surface {
+            None
+        } else {
+            Some(BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface)
+        },
+    })
 }
 
 fn current_branch_task_closure_records(
@@ -907,9 +953,6 @@ pub(crate) fn finish_requires_test_plan_refresh(gate_finish: Option<&GateResult>
     gate_has_any_reason(
         gate_finish,
         &[
-            "test_plan_artifact_missing",
-            "test_plan_artifact_malformed",
-            "test_plan_artifact_stale",
             "test_plan_artifact_authoritative_provenance_invalid",
             "test_plan_artifact_generator_mismatch",
         ],
@@ -1026,39 +1069,6 @@ pub(crate) fn late_stage_stale_unreviewed(
         || gate_has_any_reason(gate_finish, LATE_STAGE_STALE_REASON_CODES)
 }
 
-pub(crate) fn late_stage_stale_unreviewed_closure_ids(
-    status: &PlanExecutionStatus,
-    overlay_current_branch_closure_id: Option<&str>,
-) -> Vec<String> {
-    let mut closures = Vec::new();
-    for closure_id in [
-        status.current_branch_closure_id.as_deref(),
-        overlay_current_branch_closure_id,
-        status.finish_review_gate_pass_branch_closure_id.as_deref(),
-        status.current_final_review_branch_closure_id.as_deref(),
-        status.current_qa_branch_closure_id.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let closure_id = closure_id.trim();
-        if closure_id.is_empty() || closures.iter().any(|existing| existing == closure_id) {
-            continue;
-        }
-        closures.push(closure_id.to_owned());
-    }
-    if closures.is_empty() {
-        for closure in &status.current_task_closures {
-            let closure_id = closure.closure_record_id.trim();
-            if closure_id.is_empty() || closures.iter().any(|existing| existing == closure_id) {
-                continue;
-            }
-            closures.push(closure_id.to_owned());
-        }
-    }
-    closures
-}
-
 pub(crate) fn repair_review_state_branch_reroute_active(
     repair_follow_up: Option<&str>,
     task_scope_repair_precedence_active: bool,
@@ -1134,6 +1144,13 @@ pub(crate) fn live_task_scope_repair_precedence_active(
                 )))
 }
 
+pub(crate) fn task_scope_stale_review_state_reason_present(repair_reason: Option<&str>) -> bool {
+    matches!(
+        repair_reason,
+        Some("prior_task_review_dispatch_stale" | "prior_task_current_closure_stale")
+    )
+}
+
 pub(crate) fn current_late_stage_branch_bindings(
     authoritative_state: Option<&AuthoritativeTransitionState>,
     current_branch_closure_id: Option<&str>,
@@ -1180,6 +1197,9 @@ pub(crate) fn current_late_stage_branch_bindings(
     let finish_review_gate_pass_branch_closure_id = authoritative_state
         .finish_review_gate_pass_branch_closure_id()
         .filter(|branch_closure_id| branch_closure_id == current_branch_closure_id);
+    let current_release_readiness_record_id = authoritative_state.current_release_readiness_record_id();
+    let current_final_review_record_id = authoritative_state.current_final_review_record_id();
+    let current_qa_record_id = authoritative_state.current_qa_record_id();
 
     let current_release_readiness_result = authoritative_state
         .current_release_readiness_record()
@@ -1199,7 +1219,14 @@ pub(crate) fn current_late_stage_branch_bindings(
     let (current_final_review_branch_closure_id, current_final_review_result) = authoritative_state
         .current_final_review_record()
         .and_then(|record| {
+            let release_binding_matches = match record.release_readiness_record_id.as_deref() {
+                Some(release_record_id) => {
+                    current_release_readiness_record_id.as_deref() == Some(release_record_id)
+                }
+                None => current_final_review_record_id.as_deref() == Some(record.record_id.as_str()),
+            };
             (record.branch_closure_id == current_branch_closure_id
+                && release_binding_matches
                 && milestone_matches_current_branch(
                     &record.source_plan_path,
                     record.source_plan_revision,
@@ -1215,7 +1242,14 @@ pub(crate) fn current_late_stage_branch_bindings(
     let (current_qa_branch_closure_id, current_qa_result) = authoritative_state
         .current_browser_qa_record()
         .and_then(|record| {
+            let final_binding_matches = match record.final_review_record_id.as_deref() {
+                Some(final_review_record_id) => {
+                    current_final_review_record_id.as_deref() == Some(final_review_record_id)
+                }
+                None => current_qa_record_id.as_deref() == Some(record.record_id.as_str()),
+            };
             (record.branch_closure_id == current_branch_closure_id
+                && final_binding_matches
                 && milestone_matches_current_branch(
                     &record.source_plan_path,
                     record.source_plan_revision,

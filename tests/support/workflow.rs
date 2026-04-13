@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use crate::process_support::repo_root;
+use serde_json::Value;
 
 pub fn workflow_fixture_root() -> PathBuf {
     repo_root().join("tests/codex-runtime/fixtures/workflow-artifacts")
@@ -35,7 +36,7 @@ pub fn read_harness_fixture_text(file_name: &str) -> String {
     fs::read_to_string(harness_fixture_path(file_name)).expect("harness fixture should load")
 }
 
-pub fn read_harness_json_fixture(file_name: &str) -> serde_json::Value {
+pub fn read_harness_json_fixture(file_name: &str) -> Value {
     serde_json::from_str(&read_harness_fixture_text(file_name))
         .expect("harness fixture should contain valid json")
 }

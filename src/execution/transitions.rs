@@ -290,6 +290,7 @@ pub(crate) struct BranchClosureResultRecord<'a> {
     pub(crate) provenance_basis: &'a str,
     pub(crate) closure_status: &'a str,
     pub(crate) superseded_branch_closure_ids: &'a [String],
+    pub(crate) branch_closure_fingerprint: Option<&'a str>,
 }
 
 pub(crate) struct ReleaseReadinessResultRecord<'a> {
@@ -309,11 +310,13 @@ pub(crate) struct ReleaseReadinessResultRecord<'a> {
 
 pub(crate) struct FinalReviewMilestoneRecord<'a> {
     pub(crate) branch_closure_id: &'a str,
+    pub(crate) release_readiness_record_id: &'a str,
     pub(crate) dispatch_id: &'a str,
     pub(crate) reviewer_source: &'a str,
     pub(crate) reviewer_id: &'a str,
     pub(crate) result: &'a str,
     pub(crate) final_review_fingerprint: Option<&'a str>,
+    pub(crate) deviations_required: Option<bool>,
     pub(crate) browser_qa_required: Option<bool>,
     pub(crate) source_plan_path: &'a str,
     pub(crate) source_plan_revision: u32,
@@ -327,6 +330,7 @@ pub(crate) struct FinalReviewMilestoneRecord<'a> {
 
 pub(crate) struct BrowserQaResultRecord<'a> {
     pub(crate) branch_closure_id: &'a str,
+    pub(crate) final_review_record_id: &'a str,
     pub(crate) source_plan_path: &'a str,
     pub(crate) source_plan_revision: u32,
     pub(crate) repo_slug: &'a str,
@@ -402,6 +406,7 @@ pub(crate) struct BranchClosureRecord {
     pub(crate) _effective_reviewed_branch_surface: String,
     pub(crate) source_task_closure_ids: Vec<String>,
     pub(crate) provenance_basis: String,
+    pub(crate) branch_closure_fingerprint: Option<String>,
 }
 
 pub(crate) struct CurrentBranchClosureIdentity {
@@ -438,13 +443,16 @@ pub(crate) struct CurrentReleaseReadinessRecord {
 }
 
 pub(crate) struct CurrentFinalReviewRecord {
+    pub(crate) record_id: String,
     pub(crate) record_status: String,
     pub(crate) branch_closure_id: String,
+    pub(crate) release_readiness_record_id: Option<String>,
     pub(crate) dispatch_id: String,
     pub(crate) reviewer_source: String,
     pub(crate) reviewer_id: String,
     pub(crate) result: String,
     pub(crate) final_review_fingerprint: Option<String>,
+    pub(crate) deviations_required: Option<bool>,
     pub(crate) browser_qa_required: Option<bool>,
     pub(crate) source_plan_path: String,
     pub(crate) source_plan_revision: u32,
@@ -457,8 +465,10 @@ pub(crate) struct CurrentFinalReviewRecord {
 }
 
 pub(crate) struct CurrentBrowserQaRecord {
+    pub(crate) record_id: String,
     pub(crate) record_status: String,
     pub(crate) branch_closure_id: String,
+    pub(crate) final_review_record_id: Option<String>,
     pub(crate) source_plan_path: String,
     pub(crate) source_plan_revision: u32,
     pub(crate) repo_slug: String,
@@ -471,6 +481,73 @@ pub(crate) struct CurrentBrowserQaRecord {
     pub(crate) summary: String,
     pub(crate) summary_hash: String,
     pub(crate) generated_by_identity: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ClosureHistorySnapshot {
+    pub(crate) task_closure_record_history: BTreeMap<String, Value>,
+    pub(crate) branch_closure_records: BTreeMap<String, Value>,
+    pub(crate) release_readiness_record_history: BTreeMap<String, Value>,
+    pub(crate) final_review_record_history: BTreeMap<String, Value>,
+    pub(crate) browser_qa_record_history: BTreeMap<String, Value>,
+    pub(crate) current_branch_closure_id: Option<String>,
+    pub(crate) current_release_readiness_record_id: Option<String>,
+    pub(crate) current_final_review_record_id: Option<String>,
+    pub(crate) current_qa_record_id: Option<String>,
+    pub(crate) superseded_task_closure_ids: Vec<String>,
+    pub(crate) superseded_branch_closure_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PersistedReviewStateFieldClass {
+    AuthoritativeAppendOnlyHistory,
+    DerivedCache,
+    ProjectionSummary,
+    Obsolete,
+}
+
+pub(crate) fn classify_review_state_field(field: &str) -> Option<PersistedReviewStateFieldClass> {
+    Some(match field {
+        "task_closure_record_history"
+        | "branch_closure_records"
+        | "release_readiness_record_history"
+        | "final_review_record_history"
+        | "browser_qa_record_history" => {
+            PersistedReviewStateFieldClass::AuthoritativeAppendOnlyHistory
+        }
+        "current_task_closure_records"
+        | "task_closure_negative_result_records"
+        | "current_branch_closure_id"
+        | "current_branch_closure_reviewed_state_id"
+        | "current_branch_closure_contract_identity"
+        | "current_release_readiness_record_id"
+        | "current_release_readiness_result"
+        | "current_release_readiness_summary_hash"
+        | "current_final_review_record_id"
+        | "current_final_review_branch_closure_id"
+        | "current_final_review_dispatch_id"
+        | "current_final_review_reviewer_source"
+        | "current_final_review_reviewer_id"
+        | "current_final_review_result"
+        | "current_final_review_summary_hash"
+        | "current_qa_record_id"
+        | "current_qa_branch_closure_id"
+        | "current_qa_result"
+        | "current_qa_summary_hash"
+        | "review_state_repair_follow_up" => PersistedReviewStateFieldClass::DerivedCache,
+        "release_docs_state"
+        | "final_review_state"
+        | "browser_qa_state"
+        | "last_release_docs_artifact_fingerprint"
+        | "last_final_review_artifact_fingerprint"
+        | "last_browser_qa_artifact_fingerprint" => {
+            PersistedReviewStateFieldClass::ProjectionSummary
+        }
+        "current_release_readiness_state" | "current_final_review_state" | "current_qa_state" => {
+            PersistedReviewStateFieldClass::Obsolete
+        }
+        _ => return None,
+    })
 }
 
 impl AuthoritativeTransitionState {
@@ -1468,82 +1545,6 @@ impl AuthoritativeTransitionState {
         self.clear_task_review_dispatch_lineage_with_record_status(task, "historical")
     }
 
-    pub(crate) fn restore_downstream_truth(
-        &mut self,
-        final_review_fingerprint: &str,
-        browser_qa_required: bool,
-        browser_qa_fingerprint: Option<&str>,
-        release_docs_fingerprint: Option<&str>,
-    ) -> Result<(), JsonFailure> {
-        let root = self.root_object_mut()?;
-        root.insert(
-            String::from("final_review_state"),
-            Value::String(String::from("fresh")),
-        );
-        root.insert(
-            String::from("last_final_review_artifact_fingerprint"),
-            Value::String(final_review_fingerprint.to_owned()),
-        );
-
-        match (browser_qa_required, browser_qa_fingerprint) {
-            (true, Some(fingerprint)) => {
-                root.insert(
-                    String::from("browser_qa_state"),
-                    Value::String(String::from("fresh")),
-                );
-                root.insert(
-                    String::from("last_browser_qa_artifact_fingerprint"),
-                    Value::String(fingerprint.to_owned()),
-                );
-            }
-            (true, None) => {
-                root.insert(
-                    String::from("browser_qa_state"),
-                    Value::String(String::from("stale")),
-                );
-                root.insert(
-                    String::from("last_browser_qa_artifact_fingerprint"),
-                    Value::Null,
-                );
-            }
-            (false, _) => {
-                root.insert(
-                    String::from("browser_qa_state"),
-                    Value::String(String::from("not_required")),
-                );
-                root.insert(
-                    String::from("last_browser_qa_artifact_fingerprint"),
-                    Value::Null,
-                );
-            }
-        }
-
-        match release_docs_fingerprint {
-            Some(fingerprint) => {
-                root.insert(
-                    String::from("release_docs_state"),
-                    Value::String(String::from("fresh")),
-                );
-                root.insert(
-                    String::from("last_release_docs_artifact_fingerprint"),
-                    Value::String(fingerprint.to_owned()),
-                );
-            }
-            None => {
-                root.insert(
-                    String::from("release_docs_state"),
-                    Value::String(String::from("stale")),
-                );
-                root.insert(
-                    String::from("last_release_docs_artifact_fingerprint"),
-                    Value::Null,
-                );
-            }
-        }
-        self.dirty = true;
-        Ok(())
-    }
-
     pub(crate) fn set_current_branch_closure_id(
         &mut self,
         branch_closure_id: &str,
@@ -1819,6 +1820,50 @@ impl AuthoritativeTransitionState {
             .filter(|value| !value.is_empty())
     }
 
+    pub(crate) fn closure_history_snapshot(&self) -> ClosureHistorySnapshot {
+        fn snapshot_map(payload: &Value, key: &str) -> BTreeMap<String, Value> {
+            payload
+                .get(key)
+                .and_then(Value::as_object)
+                .map(|records| {
+                    records
+                        .iter()
+                        .map(|(record_id, record)| (record_id.clone(), record.clone()))
+                        .collect::<BTreeMap<_, _>>()
+                })
+                .unwrap_or_default()
+        }
+
+        ClosureHistorySnapshot {
+            task_closure_record_history: snapshot_map(
+                &self.state_payload,
+                "task_closure_record_history",
+            ),
+            branch_closure_records: snapshot_map(&self.state_payload, "branch_closure_records"),
+            release_readiness_record_history: snapshot_map(
+                &self.state_payload,
+                "release_readiness_record_history",
+            ),
+            final_review_record_history: snapshot_map(
+                &self.state_payload,
+                "final_review_record_history",
+            ),
+            browser_qa_record_history: snapshot_map(
+                &self.state_payload,
+                "browser_qa_record_history",
+            ),
+            current_branch_closure_id: json_string(
+                &self.state_payload,
+                "current_branch_closure_id",
+            ),
+            current_release_readiness_record_id: self.current_release_readiness_record_id(),
+            current_final_review_record_id: self.current_final_review_record_id(),
+            current_qa_record_id: self.current_qa_record_id(),
+            superseded_task_closure_ids: self.superseded_task_closure_ids(),
+            superseded_branch_closure_ids: self.superseded_branch_closure_ids(),
+        }
+    }
+
     pub(crate) fn state_payload_snapshot(&self) -> Value {
         self.state_payload.clone()
     }
@@ -1831,6 +1876,51 @@ impl AuthoritativeTransitionState {
         root.insert(
             String::from("review_state_repair_follow_up"),
             follow_up
+                .map(|value| Value::String(value.to_owned()))
+                .unwrap_or(Value::Null),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn set_current_release_readiness_record_id_cache(
+        &mut self,
+        record_id: Option<&str>,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("current_release_readiness_record_id"),
+            record_id
+                .map(|value| Value::String(value.to_owned()))
+                .unwrap_or(Value::Null),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn set_current_final_review_record_id_cache(
+        &mut self,
+        record_id: Option<&str>,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("current_final_review_record_id"),
+            record_id
+                .map(|value| Value::String(value.to_owned()))
+                .unwrap_or(Value::Null),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn set_current_qa_record_id_cache(
+        &mut self,
+        record_id: Option<&str>,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("current_qa_record_id"),
+            record_id
                 .map(|value| Value::String(value.to_owned()))
                 .unwrap_or(Value::Null),
         );
@@ -2167,25 +2257,31 @@ impl AuthoritativeTransitionState {
     ) -> Result<(), JsonFailure> {
         let records = self.branch_closure_records_mut()?;
         let record_sequence = records.len() as u64 + 1;
-        records.insert(
-            record.branch_closure_id.to_owned(),
-            serde_json::json!({
-                "branch_closure_id": record.branch_closure_id,
-                "source_plan_path": record.source_plan_path,
-                "source_plan_revision": record.source_plan_revision,
-                "repo_slug": record.repo_slug,
-                "branch_name": record.branch_name,
-                "base_branch": record.base_branch,
-                "reviewed_state_id": record.reviewed_state_id,
-                "contract_identity": record.contract_identity,
-                "effective_reviewed_branch_surface": record.effective_reviewed_branch_surface,
-                "source_task_closure_ids": record.source_task_closure_ids,
-                "provenance_basis": record.provenance_basis,
-                "closure_status": record.closure_status,
-                "superseded_branch_closure_ids": record.superseded_branch_closure_ids,
-                "record_sequence": record_sequence,
-            }),
-        );
+        let mut payload = serde_json::json!({
+            "branch_closure_id": record.branch_closure_id,
+            "source_plan_path": record.source_plan_path,
+            "source_plan_revision": record.source_plan_revision,
+            "repo_slug": record.repo_slug,
+            "branch_name": record.branch_name,
+            "base_branch": record.base_branch,
+            "reviewed_state_id": record.reviewed_state_id,
+            "contract_identity": record.contract_identity,
+            "effective_reviewed_branch_surface": record.effective_reviewed_branch_surface,
+            "source_task_closure_ids": record.source_task_closure_ids,
+            "provenance_basis": record.provenance_basis,
+            "closure_status": record.closure_status,
+            "superseded_branch_closure_ids": record.superseded_branch_closure_ids,
+            "record_sequence": record_sequence,
+        });
+        if let Some(branch_closure_fingerprint) = record.branch_closure_fingerprint
+            && let Some(payload_object) = payload.as_object_mut()
+        {
+            payload_object.insert(
+                String::from("branch_closure_fingerprint"),
+                Value::String(branch_closure_fingerprint.to_owned()),
+            );
+        }
+        records.insert(record.branch_closure_id.to_owned(), payload);
         self.root_object_mut()?.insert(
             String::from("harness_phase"),
             Value::String(String::from("document_release_pending")),
@@ -2210,6 +2306,9 @@ impl AuthoritativeTransitionState {
     ) -> Result<(), JsonFailure> {
         let previous_record_id =
             json_string(&self.state_payload, "current_release_readiness_record_id");
+        let previous_final_review_record_id =
+            json_string(&self.state_payload, "current_final_review_record_id");
+        let previous_qa_record_id = json_string(&self.state_payload, "current_qa_record_id");
         let source_plan_revision = record.source_plan_revision.to_string();
         let history = self.release_readiness_record_history_mut()?;
         let base_record_id = deterministic_record_id(
@@ -2261,6 +2360,12 @@ impl AuthoritativeTransitionState {
                 "generated_by_identity": record.generated_by_identity,
             }),
         );
+        let release_record_changed = previous_record_id
+            .as_deref()
+            .is_none_or(|value| value != record_id);
+        if release_record_changed {
+            let _ = self.archive_final_review_dispatch_lineage_record("stale_unreviewed")?;
+        }
         let root = self.root_object_mut()?;
         root.insert(
             String::from("current_release_readiness_result"),
@@ -2300,7 +2405,45 @@ impl AuthoritativeTransitionState {
                 );
             }
         }
+        if release_record_changed {
+            root.insert(
+                String::from("current_final_review_branch_closure_id"),
+                Value::Null,
+            );
+            root.insert(String::from("current_final_review_dispatch_id"), Value::Null);
+            root.insert(String::from("current_final_review_reviewer_source"), Value::Null);
+            root.insert(String::from("current_final_review_reviewer_id"), Value::Null);
+            root.insert(String::from("current_final_review_result"), Value::Null);
+            root.insert(String::from("current_final_review_summary_hash"), Value::Null);
+            root.insert(String::from("current_final_review_record_id"), Value::Null);
+            root.insert(String::from("final_review_state"), Value::Null);
+            root.insert(
+                String::from("last_final_review_artifact_fingerprint"),
+                Value::Null,
+            );
+            root.insert(String::from("browser_qa_state"), Value::Null);
+            root.insert(
+                String::from("last_browser_qa_artifact_fingerprint"),
+                Value::Null,
+            );
+            root.insert(String::from("current_qa_branch_closure_id"), Value::Null);
+            root.insert(String::from("current_qa_result"), Value::Null);
+            root.insert(String::from("current_qa_summary_hash"), Value::Null);
+            root.insert(String::from("current_qa_record_id"), Value::Null);
+            root.insert(String::from("final_review_dispatch_lineage"), Value::Null);
+        }
         self.dirty = true;
+        if release_record_changed {
+            if let Some(previous_final_review_record_id) = previous_final_review_record_id.as_deref()
+            {
+                let records = self.final_review_record_history_mut()?;
+                mark_record_status(records, previous_final_review_record_id, "historical");
+            }
+            if let Some(previous_qa_record_id) = previous_qa_record_id.as_deref() {
+                let records = self.browser_qa_record_history_mut()?;
+                mark_record_status(records, previous_qa_record_id, "historical");
+            }
+        }
         Ok(())
     }
 
@@ -2309,9 +2452,14 @@ impl AuthoritativeTransitionState {
         record: FinalReviewMilestoneRecord<'_>,
     ) -> Result<(), JsonFailure> {
         let previous_record_id = json_string(&self.state_payload, "current_final_review_record_id");
+        let previous_qa_record_id = json_string(&self.state_payload, "current_qa_record_id");
         let source_plan_revision = record.source_plan_revision.to_string();
         let browser_qa_required = record
             .browser_qa_required
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| String::from("none"));
+        let deviations_required = record
+            .deviations_required
             .map(|value| value.to_string())
             .unwrap_or_else(|| String::from("none"));
         let history = self.final_review_record_history_mut()?;
@@ -2319,12 +2467,14 @@ impl AuthoritativeTransitionState {
             "final-review",
             &[
                 record.branch_closure_id,
+                record.release_readiness_record_id,
                 record.dispatch_id,
                 record.reviewer_source,
                 record.reviewer_id,
                 record.result,
                 record.summary_hash,
                 record.final_review_fingerprint.unwrap_or("none"),
+                deviations_required.as_str(),
                 browser_qa_required.as_str(),
                 record.source_plan_path,
                 source_plan_revision.as_str(),
@@ -2349,6 +2499,7 @@ impl AuthoritativeTransitionState {
                 "record_sequence": record_sequence,
                 "record_status": "current",
                 "branch_closure_id": record.branch_closure_id,
+                "release_readiness_record_id": record.release_readiness_record_id,
                 "source_plan_path": record.source_plan_path,
                 "source_plan_revision": record.source_plan_revision,
                 "repo_slug": record.repo_slug,
@@ -2360,11 +2511,15 @@ impl AuthoritativeTransitionState {
                 "reviewer_id": record.reviewer_id,
                 "result": record.result,
                 "final_review_fingerprint": record.final_review_fingerprint,
+                "deviations_required": record.deviations_required,
                 "browser_qa_required": record.browser_qa_required,
                 "summary": record.summary,
                 "summary_hash": record.summary_hash,
             }),
         );
+        let final_review_record_changed = previous_record_id
+            .as_deref()
+            .is_none_or(|value| value != record_id);
         let root = self.root_object_mut()?;
         root.insert(
             String::from("current_final_review_branch_closure_id"),
@@ -2432,7 +2587,26 @@ impl AuthoritativeTransitionState {
                 Value::Null,
             );
         }
+        if final_review_record_changed {
+            root.insert(String::from("current_qa_branch_closure_id"), Value::Null);
+            root.insert(String::from("current_qa_result"), Value::Null);
+            root.insert(String::from("current_qa_summary_hash"), Value::Null);
+            root.insert(String::from("current_qa_record_id"), Value::Null);
+            root.insert(
+                String::from("last_browser_qa_artifact_fingerprint"),
+                Value::Null,
+            );
+            if record.browser_qa_required != Some(false) {
+                root.insert(String::from("browser_qa_state"), Value::Null);
+            }
+        }
         self.dirty = true;
+        if final_review_record_changed
+            && let Some(previous_qa_record_id) = previous_qa_record_id.as_deref()
+        {
+            let records = self.browser_qa_record_history_mut()?;
+            mark_record_status(records, previous_qa_record_id, "historical");
+        }
         Ok(())
     }
 
@@ -2447,6 +2621,7 @@ impl AuthoritativeTransitionState {
             "browser-qa",
             &[
                 record.branch_closure_id,
+                record.final_review_record_id,
                 record.source_plan_path,
                 source_plan_revision.as_str(),
                 record.repo_slug,
@@ -2475,6 +2650,7 @@ impl AuthoritativeTransitionState {
                 "record_sequence": record_sequence,
                 "record_status": "current",
                 "branch_closure_id": record.branch_closure_id,
+                "final_review_record_id": record.final_review_record_id,
                 "source_plan_path": record.source_plan_path,
                 "source_plan_revision": record.source_plan_revision,
                 "repo_slug": record.repo_slug,
@@ -2795,10 +2971,18 @@ impl AuthoritativeTransitionState {
     }
 
     pub(crate) fn current_release_readiness_record(&self) -> Option<CurrentReleaseReadinessRecord> {
-        let payload = self.current_record_payload(
+        let (record_id, _) = self.current_record_entry(
             "current_release_readiness_record_id",
             "release_readiness_record_history",
         )?;
+        self.release_readiness_record_by_id(&record_id)
+    }
+
+    pub(crate) fn release_readiness_record_by_id(
+        &self,
+        record_id: &str,
+    ) -> Option<CurrentReleaseReadinessRecord> {
+        let payload = self.record_payload_by_id("release_readiness_record_history", record_id)?;
         Some(CurrentReleaseReadinessRecord {
             record_status: json_string(&payload, "record_status")?,
             branch_closure_id: json_string(&payload, "branch_closure_id")?,
@@ -2869,18 +3053,29 @@ impl AuthoritativeTransitionState {
     }
 
     pub(crate) fn current_final_review_record(&self) -> Option<CurrentFinalReviewRecord> {
-        let payload = self.current_record_payload(
+        let (record_id, _) = self.current_record_entry(
             "current_final_review_record_id",
             "final_review_record_history",
         )?;
+        self.final_review_record_by_id(&record_id)
+    }
+
+    pub(crate) fn final_review_record_by_id(
+        &self,
+        record_id: &str,
+    ) -> Option<CurrentFinalReviewRecord> {
+        let payload = self.record_payload_by_id("final_review_record_history", record_id)?;
         Some(CurrentFinalReviewRecord {
+            record_id: json_string(&payload, "record_id")?,
             record_status: json_string(&payload, "record_status")?,
             branch_closure_id: json_string(&payload, "branch_closure_id")?,
+            release_readiness_record_id: json_string(&payload, "release_readiness_record_id"),
             dispatch_id: json_string(&payload, "dispatch_id")?,
             reviewer_source: json_string(&payload, "reviewer_source")?,
             reviewer_id: json_string(&payload, "reviewer_id")?,
             result: json_string(&payload, "result")?,
             final_review_fingerprint: json_string(&payload, "final_review_fingerprint"),
+            deviations_required: payload.get("deviations_required").and_then(Value::as_bool),
             browser_qa_required: payload.get("browser_qa_required").and_then(Value::as_bool),
             source_plan_path: json_string(&payload, "source_plan_path")?,
             source_plan_revision: json_u32(&payload, "source_plan_revision")?,
@@ -3129,6 +3324,7 @@ impl AuthoritativeTransitionState {
             _effective_reviewed_branch_surface: effective_reviewed_branch_surface,
             source_task_closure_ids,
             provenance_basis,
+            branch_closure_fingerprint: json_string(&payload_value, "branch_closure_fingerprint"),
         })
     }
 
@@ -3164,6 +3360,24 @@ impl AuthoritativeTransitionState {
             return None;
         }
         Some(current)
+    }
+
+    pub(crate) fn current_branch_closure_overlay_id(&self) -> Option<String> {
+        json_string(&self.state_payload, "current_branch_closure_id")
+    }
+
+    pub(crate) fn current_branch_closure_overlay_reviewed_state_id(&self) -> Option<String> {
+        json_string(
+            &self.state_payload,
+            "current_branch_closure_reviewed_state_id",
+        )
+    }
+
+    pub(crate) fn current_branch_closure_overlay_contract_identity(&self) -> Option<String> {
+        json_string(
+            &self.state_payload,
+            "current_branch_closure_contract_identity",
+        )
     }
 
     pub(crate) fn finish_review_gate_pass_branch_closure_id(&self) -> Option<String> {
@@ -3324,11 +3538,21 @@ impl AuthoritativeTransitionState {
     }
 
     pub(crate) fn current_browser_qa_record(&self) -> Option<CurrentBrowserQaRecord> {
-        let payload =
-            self.current_record_payload("current_qa_record_id", "browser_qa_record_history")?;
+        let (record_id, _) =
+            self.current_record_entry("current_qa_record_id", "browser_qa_record_history")?;
+        self.browser_qa_record_by_id(&record_id)
+    }
+
+    pub(crate) fn browser_qa_record_by_id(
+        &self,
+        record_id: &str,
+    ) -> Option<CurrentBrowserQaRecord> {
+        let payload = self.record_payload_by_id("browser_qa_record_history", record_id)?;
         Some(CurrentBrowserQaRecord {
+            record_id: json_string(&payload, "record_id")?,
             record_status: json_string(&payload, "record_status")?,
             branch_closure_id: json_string(&payload, "branch_closure_id")?,
+            final_review_record_id: json_string(&payload, "final_review_record_id"),
             source_plan_path: json_string(&payload, "source_plan_path")?,
             source_plan_revision: json_u32(&payload, "source_plan_revision")?,
             repo_slug: json_string(&payload, "repo_slug")?,
@@ -3382,9 +3606,16 @@ impl AuthoritativeTransitionState {
         Some(current_record)
     }
 
-    fn current_record_payload(&self, current_id_key: &str, history_key: &str) -> Option<Value> {
-        self.current_record_entry(current_id_key, history_key)
-            .map(|(_, payload)| payload)
+    fn record_payload_by_id(&self, history_key: &str, record_id: &str) -> Option<Value> {
+        let record_id = record_id.trim();
+        if record_id.is_empty() {
+            return None;
+        }
+        self.state_payload
+            .get(history_key)
+            .and_then(Value::as_object)?
+            .get(record_id)
+            .cloned()
     }
 
     fn current_execution_run_id(&self) -> String {
@@ -4089,11 +4320,13 @@ mod tests {
     use super::BrowserQaResultRecord;
     use super::CachedAuthoritativeStatePayload;
     use super::FinalReviewMilestoneRecord;
+    use super::PersistedReviewStateFieldClass;
     use super::ReleaseReadinessResultRecord;
     use super::TaskClosureResultRecord;
     use super::authoritative_state_cache_stamp;
     use super::authoritative_state_payload_cache;
     use super::claim_step_write_authority;
+    use super::classify_review_state_field;
     use super::read_authoritative_transition_state_source;
     use super::remove_stale_write_authority_lock;
     use std::fs;
@@ -4613,11 +4846,13 @@ mod tests {
         authoritative_state
             .record_final_review_result(FinalReviewMilestoneRecord {
                 branch_closure_id: "branch-closure-current",
+                release_readiness_record_id: "release-record-current",
                 dispatch_id: "dispatch-a",
                 reviewer_source: "fresh-context-subagent",
                 reviewer_id: "reviewer-a",
                 result: "pass",
                 final_review_fingerprint: Some("final-fingerprint-a"),
+                deviations_required: Some(false),
                 browser_qa_required: Some(true),
                 source_plan_path: "docs/featureforge/plans/example.md",
                 source_plan_revision: 1,
@@ -4632,11 +4867,13 @@ mod tests {
         authoritative_state
             .record_final_review_result(FinalReviewMilestoneRecord {
                 branch_closure_id: "branch-closure-current",
+                release_readiness_record_id: "release-record-current",
                 dispatch_id: "dispatch-b",
                 reviewer_source: "fresh-context-subagent",
                 reviewer_id: "reviewer-b",
                 result: "pass",
                 final_review_fingerprint: Some("final-fingerprint-b"),
+                deviations_required: Some(false),
                 browser_qa_required: Some(true),
                 source_plan_path: "docs/featureforge/plans/example.md",
                 source_plan_revision: 1,
@@ -4672,6 +4909,7 @@ mod tests {
         authoritative_state
             .record_browser_qa_result(BrowserQaResultRecord {
                 branch_closure_id: "branch-closure-current",
+                final_review_record_id: "final-review-record-current",
                 source_plan_path: "docs/featureforge/plans/example.md",
                 source_plan_revision: 1,
                 repo_slug: "repo-slug",
@@ -4689,6 +4927,7 @@ mod tests {
         authoritative_state
             .record_browser_qa_result(BrowserQaResultRecord {
                 branch_closure_id: "branch-closure-current",
+                final_review_record_id: "final-review-record-current",
                 source_plan_path: "docs/featureforge/plans/example.md",
                 source_plan_revision: 1,
                 repo_slug: "repo-slug",
@@ -4758,6 +4997,7 @@ mod tests {
                 provenance_basis: "task_closure_lineage",
                 closure_status: "current",
                 superseded_branch_closure_ids: &["branch-closure-old".to_owned()],
+                branch_closure_fingerprint: None,
             })
             .expect("second branch-closure record should succeed");
         authoritative_state
@@ -5314,5 +5554,29 @@ mod tests {
         assert_eq!(payload["source_plan_revision"], 7);
         assert_eq!(payload["execution_run_id"], "run-unit-test");
         assert_eq!(payload["closure_status"], "current");
+    }
+
+    #[test]
+    fn review_state_field_classification_marks_history_vs_overlays() {
+        assert_eq!(
+            classify_review_state_field("task_closure_record_history"),
+            Some(PersistedReviewStateFieldClass::AuthoritativeAppendOnlyHistory)
+        );
+        assert_eq!(
+            classify_review_state_field("current_task_closure_records"),
+            Some(PersistedReviewStateFieldClass::DerivedCache)
+        );
+        assert_eq!(
+            classify_review_state_field("review_state_repair_follow_up"),
+            Some(PersistedReviewStateFieldClass::DerivedCache)
+        );
+        assert_eq!(
+            classify_review_state_field("release_docs_state"),
+            Some(PersistedReviewStateFieldClass::ProjectionSummary)
+        );
+        assert_eq!(
+            classify_review_state_field("current_release_readiness_state"),
+            Some(PersistedReviewStateFieldClass::Obsolete)
+        );
     }
 }

@@ -181,6 +181,39 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
         "routing recommended command should match workflow/operator",
     );
     assert_eq!(
+        operator.get("blocking_scope").and_then(Value::as_str),
+        routing.blocking_scope.as_deref(),
+        "routing blocking scope should match workflow/operator",
+    );
+    assert_eq!(
+        operator
+            .get("blocking_task")
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        routing.blocking_task,
+        "routing blocking task should match workflow/operator",
+    );
+    assert_eq!(
+        operator.get("external_wait_state").and_then(Value::as_str),
+        routing.external_wait_state.as_deref(),
+        "routing external wait state should match workflow/operator",
+    );
+    let operator_blocking_reason_codes = operator
+        .get("blocking_reason_codes")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        operator_blocking_reason_codes, routing.blocking_reason_codes,
+        "routing compact blocking reason codes should match workflow/operator",
+    );
+    assert_eq!(
         routing.recording_context.as_ref().map(|context| (
             context.task_number,
             context.dispatch_id.as_deref(),

@@ -15,10 +15,10 @@ pub(crate) fn close_current_task_required_follow_up(
     operator: &ExecutionRoutingState,
 ) -> Option<String> {
     match shared_required_follow_up_from_routing(operator).as_deref() {
-        Some("record_review_dispatch")
+        Some("request_external_review")
             if operator.phase_detail == "task_review_dispatch_required" =>
         {
-            Some(String::from("record_review_dispatch"))
+            Some(String::from("request_external_review"))
         }
         Some("repair_review_state") => Some(String::from("repair_review_state")),
         Some("execution_reentry") => Some(String::from("execution_reentry")),
@@ -44,7 +44,7 @@ pub(crate) fn late_stage_required_follow_up(
     if stage_path == "final_review"
         && !matches!(
             required_follow_up.as_str(),
-            "record_review_dispatch" | "repair_review_state"
+            "request_external_review" | "repair_review_state"
         )
     {
         return None;

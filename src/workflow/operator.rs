@@ -10,13 +10,10 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::{OperatorArgs, PlanArgs};
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
-use crate::execution::current_truth::{
-    gate_has_any_reason, task_boundary_block_reason_code as shared_task_boundary_block_reason_code,
-};
+use crate::execution::current_truth::task_boundary_block_reason_code as shared_task_boundary_block_reason_code;
 use crate::execution::harness::EvaluatorKind;
 use crate::execution::query::{
-    ExecutionRoutingState, query_workflow_read_state, query_workflow_read_state_for_runtime,
-    query_workflow_routing_state, query_workflow_routing_state_for_runtime,
+    ExecutionRoutingState, query_workflow_routing_state, query_workflow_routing_state_for_runtime,
 };
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
@@ -82,22 +79,22 @@ enum WorkflowOperatorFollowUpOverrideSchema {
 enum WorkflowOperatorNextActionSchema {
     #[serde(rename = "advance late stage")]
     AdvanceLateStage,
+    #[serde(rename = "finish branch")]
+    FinishBranch,
     #[serde(rename = "close current task")]
     CloseCurrentTask,
     #[serde(rename = "continue execution")]
     ContinueExecution,
-    #[serde(rename = "dispatch review")]
-    DispatchReview,
-    #[serde(rename = "dispatch final review")]
-    DispatchFinalReview,
+    #[serde(rename = "request task review")]
+    RequestTaskReview,
+    #[serde(rename = "request final review")]
+    RequestFinalReview,
     #[serde(rename = "execution reentry required")]
     ExecutionReentryRequired,
     #[serde(rename = "hand off")]
     HandOff,
     #[serde(rename = "pivot / return to planning")]
     PivotReturnToPlanning,
-    #[serde(rename = "record branch closure")]
-    RecordBranchClosure,
     #[serde(rename = "refresh test plan")]
     RefreshTestPlan,
     #[serde(rename = "repair review state / reenter execution")]
@@ -106,10 +103,6 @@ enum WorkflowOperatorNextActionSchema {
     ResolveReleaseBlocker,
     #[serde(rename = "run QA")]
     RunQa,
-    #[serde(rename = "run finish completion gate")]
-    RunFinishCompletionGate,
-    #[serde(rename = "run finish review gate")]
-    RunFinishReviewGate,
     #[serde(rename = "wait for external review result")]
     WaitForExternalReviewResult,
 }
@@ -142,6 +135,14 @@ pub struct WorkflowDoctor {
     pub next_step: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_task: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_wait_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocking_reason_codes: Vec<String>,
     pub spec_path: String,
     pub plan_path: String,
     pub contract_state: String,
@@ -219,6 +220,14 @@ pub struct WorkflowOperator {
     pub next_action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_task: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_wait_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocking_reason_codes: Vec<String>,
     pub spec_path: String,
     pub plan_path: String,
 }
@@ -260,6 +269,10 @@ struct OperatorContext {
     operator_execution_command_context: Option<WorkflowOperatorExecutionCommandContext>,
     operator_next_action: String,
     operator_recommended_command: Option<String>,
+    operator_blocking_scope: Option<String>,
+    operator_blocking_task: Option<u32>,
+    operator_external_wait_state: Option<String>,
+    operator_blocking_reason_codes: Vec<String>,
     reason_family: String,
     diagnostic_reason_codes: Vec<String>,
     task_review_dispatch_id: Option<String>,
@@ -412,6 +425,10 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         next_action: next_action_for_context(&context).to_owned(),
         next_step: next_step_text(&context),
         recommended_command: context.operator_recommended_command.clone(),
+        blocking_scope: context.operator_blocking_scope.clone(),
+        blocking_task: context.operator_blocking_task,
+        external_wait_state: context.operator_external_wait_state.clone(),
+        blocking_reason_codes: context.operator_blocking_reason_codes.clone(),
         spec_path: context.route.spec_path.clone(),
         plan_path: context.route.plan_path.clone(),
         contract_state,
@@ -450,6 +467,21 @@ fn render_doctor_output(doctor: &WorkflowDoctor) -> String {
         display_or_none(&doctor.spec_path),
         display_or_none(&doctor.plan_path)
     );
+    if let Some(blocking_scope) = doctor.blocking_scope.as_deref() {
+        output.push_str(&format!("Blocking scope: {blocking_scope}\n"));
+    }
+    if let Some(blocking_task) = doctor.blocking_task {
+        output.push_str(&format!("Blocking task: {blocking_task}\n"));
+    }
+    if let Some(external_wait_state) = doctor.external_wait_state.as_deref() {
+        output.push_str(&format!("External wait: {external_wait_state}\n"));
+    }
+    if !doctor.blocking_reason_codes.is_empty() {
+        output.push_str(&format!(
+            "Blocking reason codes: {}\n",
+            reason_codes_text(&doctor.blocking_reason_codes)
+        ));
+    }
     if let Some(execution_status) = doctor.execution_status.as_ref() {
         append_execution_status_metadata(&mut output, execution_status);
     }
@@ -573,7 +605,7 @@ fn handoff_from_context(
                 String::from("featureforge:requesting-code-review"),
                 reason_text(&context),
             ),
-            "qa_pending" if finish_requires_test_plan_refresh(&context) => (
+            "qa_pending" if context.operator_phase_detail == "test_plan_refresh_required" => (
                 String::from("featureforge:plan-eng-review"),
                 reason_text(&context),
             ),
@@ -640,12 +672,8 @@ fn handoff_from_context(
 }
 
 pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOperator, JsonFailure> {
-    let context = build_context_with_plan(
-        current_dir,
-        Some(&args.plan),
-        args.external_review_result_ready,
-        true,
-    )?;
+    let context =
+        build_context_with_plan(current_dir, Some(&args.plan), args.external_review_result_ready)?;
     Ok(operator_from_context(context, args))
 }
 
@@ -657,7 +685,6 @@ pub fn operator_for_runtime(
         runtime,
         Some(&args.plan),
         args.external_review_result_ready,
-        true,
     )?;
     Ok(operator_from_context(context, args))
 }
@@ -678,6 +705,10 @@ fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> Workf
         execution_command_context: context.operator_execution_command_context.clone(),
         next_action: context.operator_next_action.clone(),
         recommended_command: context.operator_recommended_command.clone(),
+        blocking_scope: context.operator_blocking_scope.clone(),
+        blocking_task: context.operator_blocking_task,
+        external_wait_state: context.operator_external_wait_state.clone(),
+        blocking_reason_codes: context.operator_blocking_reason_codes.clone(),
         spec_path: context.route.spec_path.clone(),
         plan_path,
     }
@@ -712,6 +743,21 @@ pub fn render_operator(operator: WorkflowOperator) -> String {
         output.push_str(&format!(
             "Execution command context: {}\n",
             format_operator_execution_command_context(execution_command_context)
+        ));
+    }
+    if let Some(blocking_scope) = operator.blocking_scope.as_deref() {
+        output.push_str(&format!("Blocking scope: {blocking_scope}\n"));
+    }
+    if let Some(blocking_task) = operator.blocking_task {
+        output.push_str(&format!("Blocking task: {blocking_task}\n"));
+    }
+    if let Some(external_wait_state) = operator.external_wait_state.as_deref() {
+        output.push_str(&format!("External wait: {external_wait_state}\n"));
+    }
+    if !operator.blocking_reason_codes.is_empty() {
+        output.push_str(&format!(
+            "Blocking reason codes: {}\n",
+            reason_codes_text(&operator.blocking_reason_codes)
         ));
     }
     if let Some(recommended_command) = operator.recommended_command {
@@ -804,24 +850,19 @@ pub fn render_gate(title: &str, gate: &GateResult) -> String {
 }
 
 fn build_context(current_dir: &Path) -> Result<OperatorContext, JsonFailure> {
-    build_context_with_plan(current_dir, None, false, false)
+    build_context_with_plan(current_dir, None, false)
 }
 
 fn build_context_for_runtime(runtime: &ExecutionRuntime) -> Result<OperatorContext, JsonFailure> {
-    build_context_with_plan_for_runtime(runtime, None, false, false)
+    build_context_with_plan_for_runtime(runtime, None, false)
 }
 
 fn build_context_with_plan(
     current_dir: &Path,
     plan_override: Option<&Path>,
     external_review_result_ready: bool,
-    operator_contract: bool,
 ) -> Result<OperatorContext, JsonFailure> {
-    let routing = if operator_contract {
-        query_workflow_routing_state(current_dir, plan_override, external_review_result_ready)?
-    } else {
-        query_workflow_read_state(current_dir, plan_override, external_review_result_ready)?
-    };
+    let routing = query_workflow_routing_state(current_dir, plan_override, external_review_result_ready)?;
     build_context_from_routing(routing)
 }
 
@@ -829,17 +870,12 @@ fn build_context_with_plan_for_runtime(
     runtime: &ExecutionRuntime,
     plan_override: Option<&Path>,
     external_review_result_ready: bool,
-    operator_contract: bool,
 ) -> Result<OperatorContext, JsonFailure> {
-    let routing = if operator_contract {
-        query_workflow_routing_state_for_runtime(
-            runtime,
-            plan_override,
-            external_review_result_ready,
-        )?
-    } else {
-        query_workflow_read_state_for_runtime(runtime, plan_override, external_review_result_ready)?
-    };
+    let routing = query_workflow_routing_state_for_runtime(
+        runtime,
+        plan_override,
+        external_review_result_ready,
+    )?;
     build_context_from_routing(routing)
 }
 
@@ -863,6 +899,10 @@ fn build_context_from_routing(
         execution_command_context,
         next_action,
         recommended_command,
+        blocking_scope,
+        blocking_task,
+        external_wait_state,
+        blocking_reason_codes,
         reason_family,
         diagnostic_reason_codes,
         task_review_dispatch_id,
@@ -908,6 +948,10 @@ fn build_context_from_routing(
         operator_execution_command_context,
         operator_next_action,
         operator_recommended_command,
+        operator_blocking_scope: blocking_scope,
+        operator_blocking_task: blocking_task,
+        operator_external_wait_state: external_wait_state,
+        operator_blocking_reason_codes: blocking_reason_codes,
         reason_family,
         diagnostic_reason_codes,
         task_review_dispatch_id,
@@ -958,7 +1002,7 @@ fn analyze_plan_if_available(
 }
 
 fn next_step_text(context: &OperatorContext) -> String {
-    if context.phase == "qa_pending" && finish_requires_test_plan_refresh(context) {
+    if context.phase == "qa_pending" && context.operator_phase_detail == "test_plan_refresh_required" {
         if context.route.plan_path.is_empty() {
             return String::from(
                 "Regenerate the current-branch test-plan artifact via featureforge:plan-eng-review before browser QA or branch completion.",
@@ -1172,19 +1216,6 @@ fn next_action_for_context(context: &OperatorContext) -> &str {
     &context.operator_next_action
 }
 
-fn finish_requires_test_plan_refresh(context: &OperatorContext) -> bool {
-    gate_has_any_reason(
-        context.gate_finish.as_ref(),
-        &[
-            "test_plan_artifact_missing",
-            "test_plan_artifact_malformed",
-            "test_plan_artifact_stale",
-            "test_plan_artifact_authoritative_provenance_invalid",
-            "test_plan_artifact_generator_mismatch",
-        ],
-    )
-}
-
 fn review_requires_execution_reentry(context: &OperatorContext) -> bool {
     context.phase == "final_review_pending"
         && context.operator_phase_detail != "final_review_dispatch_required"
@@ -1240,11 +1271,11 @@ fn task_boundary_next_step_text(context: &OperatorContext) -> Option<String> {
     ) {
         if context.route.plan_path.is_empty() {
             return Some(format!(
-                "{reason} Run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` before any next-task begin."
+                "{reason} Request fresh-context dedicated-independent review, then rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and continue intent-level task closure."
             ));
         }
         return Some(format!(
-            "{reason} Run `featureforge plan execution record-review-dispatch --plan {} --scope task --task <n>` before any next-task begin.",
+            "{reason} Request fresh-context dedicated-independent review, then rerun `featureforge workflow operator --plan {} --external-review-result-ready` and continue intent-level task closure.",
             context.route.plan_path
         ));
     }
@@ -1396,6 +1427,10 @@ mod tests {
             recommended_command: Some(String::from(
                 "featureforge plan execution complete --plan docs/featureforge/plans/sample.md --task 1 --step 2 --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint abcdef",
             )),
+            blocking_scope: Some(String::from("task")),
+            blocking_task: Some(1),
+            external_wait_state: None,
+            blocking_reason_codes: vec![String::from("stale_unreviewed")],
             spec_path: String::from("docs/featureforge/specs/sample.md"),
             plan_path: String::from("docs/featureforge/plans/sample.md"),
         });

@@ -56,7 +56,7 @@ For workflow-routed implementation work, this is the required `document-release`
 
 For workflow-routed terminal sequencing, `featureforge:document-release` must run before the terminal `featureforge:requesting-code-review` whole-diff gate.
 
-`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: `gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is owned by `featureforge:requesting-code-review`.
+`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: `gate-review`, `gate-finish`, and low-level `record-*` commands are compatibility/debug boundaries, not normal-path commands.
 
 When you need explicit late-stage phase/action/skill grounding while updating docs, cite `review/late-stage-precedence-reference.md`.
 
@@ -308,9 +308,9 @@ Allowed `**Result:**` values:
 For workflow-routed implementation work, the companion artifact above is not the release gate itself.
 
 - workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
-- For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first and then `featureforge plan execution status --plan <approved-plan-path>`; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`, while status is supporting diagnostic detail.
+- For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`.
 - Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness.
-- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution record-branch-closure --plan <approved-plan-path>` and rerun workflow/operator before recording release-readiness.
+- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path>` and rerun workflow/operator.
 - When workflow/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone.
 - When workflow/operator reports `phase_detail=release_blocker_resolution_required`, resolve the blocker and then run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the updated runtime-owned release-readiness milestone.
 - If workflow/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions.
@@ -320,12 +320,10 @@ Example runtime-owned path:
 ```bash
 OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
 PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
-STATUS_JSON=$("$_FEATUREFORGE_BIN" plan execution status --plan "$APPROVED_PLAN_PATH")
 if [ "$PHASE_DETAIL" = "branch_closure_recording_required_for_release_readiness" ]; then
-  "$_FEATUREFORGE_BIN" plan execution record-branch-closure --plan "$APPROVED_PLAN_PATH"
+  "$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH"
   OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
   PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
-  STATUS_JSON=$("$_FEATUREFORGE_BIN" plan execution status --plan "$APPROVED_PLAN_PATH")
 fi
 if [ "$PHASE_DETAIL" != "release_readiness_recording_ready" ] && [ "$PHASE_DETAIL" != "release_blocker_resolution_required" ]; then
   echo "Stop and return to workflow: release-readiness recording is not currently routable."

@@ -73,6 +73,80 @@ struct FullContractReadyFixtureTemplate {
 static FULL_CONTRACT_READY_FIXTURE_TEMPLATE: OnceLock<FullContractReadyFixtureTemplate> =
     OnceLock::new();
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PublicRouteSnapshot {
+    phase: String,
+    phase_detail: Option<String>,
+    review_state_status: String,
+    next_action: String,
+    recommended_command: Option<String>,
+    blocking_task: Option<u32>,
+}
+
+fn public_route_snapshot(value: &Value) -> PublicRouteSnapshot {
+    let phase = value
+        .get("phase")
+        .or_else(|| value.get("harness_phase"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| {
+            panic!("route payload must include string `phase` or `harness_phase`: {value}")
+        })
+        .to_owned();
+    let review_state_status = value
+        .get("review_state_status")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| {
+            panic!("route payload must include string `review_state_status`: {value}")
+        })
+        .to_owned();
+    let next_action = value
+        .get("next_action")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("route payload must include string `next_action`: {value}"))
+        .to_owned();
+
+    PublicRouteSnapshot {
+        phase,
+        phase_detail: value
+            .get("phase_detail")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        review_state_status,
+        next_action,
+        recommended_command: value
+            .get("recommended_command")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        blocking_task: value
+            .get("blocking_task")
+            .and_then(Value::as_u64)
+            .and_then(|raw| u32::try_from(raw).ok()),
+    }
+}
+
+fn assert_public_route_parity(operator: &Value, status: &Value, doctor: Option<&Value>) {
+    let operator_route = public_route_snapshot(operator);
+    let status_route = public_route_snapshot(status);
+    assert_eq!(
+        operator_route, status_route,
+        "workflow operator and plan execution status must agree on public route fields"
+    );
+    if let Some(doctor) = doctor {
+        let doctor_route = public_route_snapshot(doctor);
+        assert_eq!(
+            operator_route, doctor_route,
+            "workflow doctor top-level route must match workflow operator"
+        );
+    }
+}
+
+fn assert_parity_probe_budget(scenario_id: &str, consumed_probe_commands: usize, max: usize) {
+    assert!(
+        consumed_probe_commands <= max,
+        "scenario {scenario_id} exceeded parity-probe command target: consumed {consumed_probe_commands}, target {max}"
+    );
+}
+
 fn normalize_workflow_status_snapshot(mut value: Value) -> Value {
     let object = value
         .as_object_mut()
@@ -387,6 +461,24 @@ fn run_rust_featureforge_with_env(
     if let Some(output) = try_direct_workflow_output(repo, state_dir, args, extra_env, context) {
         return output;
     }
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state_dir)
+        .args(args);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    run(command, context)
+}
+
+fn run_rust_featureforge_with_env_real_cli(
+    repo: &Path,
+    state_dir: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+    context: &str,
+) -> Output {
     let mut command = Command::new(compiled_featureforge_path());
     command
         .current_dir(repo)
@@ -899,6 +991,42 @@ fn update_authoritative_harness_state(
     }
     write_file(
         &authoritative_state_path,
+        &serde_json::to_string(&payload).expect("authoritative harness state should serialize"),
+    );
+}
+
+fn update_current_history_record_field(
+    repo: &Path,
+    state: &Path,
+    history_field: &str,
+    current_id_field: &str,
+    record_field: &str,
+    value: Value,
+) {
+    let branch = current_branch_name(repo);
+    let state_path = harness_state_path(state, &repo_slug(repo), &branch);
+    let source =
+        fs::read_to_string(&state_path).expect("authoritative harness state should be readable");
+    let mut payload: Value =
+        serde_json::from_str(&source).expect("authoritative harness state should be valid json");
+    let root = payload
+        .as_object_mut()
+        .expect("authoritative harness state should remain an object");
+    let current_record_id = root
+        .get(current_id_field)
+        .and_then(Value::as_str)
+        .filter(|record_id| !record_id.trim().is_empty())
+        .expect("current authoritative record id should be present")
+        .to_owned();
+    let record = root
+        .get_mut(history_field)
+        .and_then(Value::as_object_mut)
+        .and_then(|history| history.get_mut(&current_record_id))
+        .and_then(Value::as_object_mut)
+        .expect("current authoritative history record should be present");
+    record.insert(record_field.to_owned(), value);
+    write_file(
+        &state_path,
         &serde_json::to_string(&payload).expect("authoritative harness state should serialize"),
     );
 }
@@ -1649,9 +1777,9 @@ fn canonical_workflow_expect_and_sync_preserve_missing_spec_semantics() {
         ),
         "rust canonical workflow phase after missing-spec sync",
     );
-    assert_eq!(phase_json["phase"], "needs_brainstorming");
+    assert_eq!(phase_json["phase"], "pivot_required");
     assert_eq!(phase_json["next_skill"], "featureforge:brainstorming");
-    assert_eq!(phase_json["next_action"], "use next skill");
+    assert_eq!(phase_json["next_action"], "pivot / return to planning");
 }
 
 #[test]
@@ -3457,7 +3585,7 @@ fn canonical_workflow_operator_plan_override_selects_explicit_ready_plan_amid_am
         "workflow operator should honor an explicit approved plan even when the repo-wide resolver is ambiguous",
     );
 
-    assert_eq!(operator_json["phase"], "executing");
+    assert_eq!(operator_json["phase"], "execution_preflight");
     assert_eq!(operator_json["spec_path"], spec_path);
     assert_eq!(operator_json["plan_path"], plan_path);
     if let Some(recommended_command) = operator_json["recommended_command"].as_str() {
@@ -3997,7 +4125,6 @@ fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
         ),
         "rust canonical workflow phase should route ready plans to execution preflight",
     );
-
     assert_eq!(phase_json["route_status"], "implementation_ready");
     assert_eq!(phase_json["phase"], "execution_preflight");
     assert_eq!(phase_json["next_action"], "execution preflight");
@@ -4518,8 +4645,8 @@ fn canonical_workflow_phase_routes_enabled_stale_plan_to_plan_writing() {
     );
 
     assert_eq!(phase_json["route_status"], "stale_plan");
-    assert_eq!(phase_json["phase"], "plan_writing");
-    assert_eq!(phase_json["next_action"], "use next skill");
+    assert_eq!(phase_json["phase"], "pivot_required");
+    assert_eq!(phase_json["next_action"], "pivot / return to planning");
     assert_eq!(phase_json["next_skill"], "featureforge:writing-plans");
     assert!(phase_json.get("session_entry").is_none());
 }
@@ -5366,7 +5493,7 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
     let reconcile_b = run_plan_execution_json(
         &repo_b,
         state,
-        &["reconcile-review-state", "--plan", plan_rel],
+        &["internal", "reconcile-review-state", "--plan", plan_rel],
         "reconcile-review-state from same-branch non-authoritative worktree",
     );
     assert_eq!(
@@ -5862,9 +5989,11 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
         status_b_after_begin["active_step"].is_null(),
         "repo B should not borrow repo A's active step when tracked workspace state differs"
     );
-    assert_eq!(
-        operator_b_before_begin["phase"], operator_b_after_begin["phase"],
-        "repo B workflow operator phase should remain local when tracked workspace state differs"
+    assert!(
+        operator_b_after_begin["phase"].as_str().is_some_and(|phase| {
+            phase == "implementation_handoff" || phase == "execution_preflight"
+        }),
+        "repo B workflow operator phase should remain non-executing when tracked workspace state differs: {operator_b_after_begin:?}"
     );
     assert_eq!(
         operator_b_before_begin["next_action"], operator_b_after_begin["next_action"],
@@ -6596,35 +6725,29 @@ Task 1 -> Task 2
         ),
         "workflow phase for task-boundary dispatch-blocked fixture",
     );
-    let expected_dispatch_command = format!(
-        "featureforge plan execution record-review-dispatch --plan {plan_rel} --scope task --task 1"
-    );
-    let expected_next_step_dispatch_template = format!(
-        "featureforge plan execution record-review-dispatch --plan {plan_rel} --scope task --task <n>"
-    );
-    assert!(
-        phase_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command == expected_dispatch_command),
-        "workflow phase json should expose the exact dispatch remediation command in recommended_command for dispatch-blocked repair flow, got {phase_json:?}"
+    let expected_operator_follow_up =
+        format!("featureforge workflow operator --plan {plan_rel} --external-review-result-ready");
+    assert_eq!(
+        phase_json["recommended_command"],
+        Value::Null,
+        "workflow phase json should treat dispatch-required lanes as external waits without exact mutation commands, got {phase_json:?}"
     );
     assert!(
         phase_json["next_step"]
             .as_str()
-            .is_some_and(|next_step| next_step.contains(&expected_next_step_dispatch_template)),
-        "workflow phase json should include the exact dispatch remediation command in next_step for dispatch-blocked repair flow, got {phase_json:?}"
+            .is_some_and(|next_step| next_step.contains(&expected_operator_follow_up)),
+        "workflow phase json should include operator-led follow-up guidance for dispatch-blocked repair flow, got {phase_json:?}"
     );
-    assert!(
-        doctor_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command == expected_dispatch_command),
-        "workflow doctor should expose the exact dispatch remediation command in recommended_command for dispatch-blocked repair flow, got {doctor_json:?}"
+    assert_eq!(
+        doctor_json["recommended_command"],
+        Value::Null,
+        "workflow doctor should treat dispatch-required lanes as external waits without exact mutation commands, got {doctor_json:?}"
     );
     assert!(
         doctor_json["next_step"]
             .as_str()
-            .is_some_and(|next_step| next_step.contains(&expected_next_step_dispatch_template)),
-        "workflow doctor should include the exact dispatch remediation command in next_step for dispatch-blocked repair flow, got {doctor_json:?}"
+            .is_some_and(|next_step| next_step.contains(&expected_operator_follow_up)),
+        "workflow doctor should include operator-led follow-up guidance for dispatch-blocked repair flow, got {doctor_json:?}"
     );
 
     let doctor_output = run_rust_featureforge_with_env(
@@ -6637,7 +6760,7 @@ Task 1 -> Task 2
     assert!(doctor_output.status.success());
     let doctor_stdout = String::from_utf8_lossy(&doctor_output.stdout);
     assert!(
-        doctor_stdout.contains(&expected_dispatch_command),
+        doctor_stdout.contains(&expected_operator_follow_up),
         "doctor stdout:\n{doctor_stdout}"
     );
 
@@ -6654,7 +6777,7 @@ Task 1 -> Task 2
     assert!(
         handoff_json["recommendation_reason"]
             .as_str()
-            .is_some_and(|reason| reason.contains(&expected_next_step_dispatch_template)),
+            .is_some_and(|reason| reason.contains(&expected_operator_follow_up)),
         "workflow handoff should include gate-review command guidance for dispatch-blocked repair flow, got {handoff_json:?}"
     );
     assert!(
@@ -6674,7 +6797,7 @@ Task 1 -> Task 2
     assert!(handoff_output.status.success());
     let handoff_stdout = String::from_utf8_lossy(&handoff_output.stdout);
     assert!(
-        handoff_stdout.contains("featureforge plan execution record-review-dispatch --plan"),
+        handoff_stdout.contains("featureforge workflow operator --plan"),
         "workflow handoff text should include gate-review command guidance, got:\n{handoff_stdout}"
     );
     assert!(
@@ -6692,7 +6815,7 @@ Task 1 -> Task 2
     assert!(next_output.status.success());
     let next_stdout = String::from_utf8_lossy(&next_output.stdout);
     assert!(
-        next_stdout.contains("featureforge plan execution record-review-dispatch --plan"),
+        next_stdout.contains("featureforge workflow operator --plan"),
         "workflow next output should include gate-review command guidance, got:\n{next_stdout}"
     );
     assert!(
@@ -7181,7 +7304,7 @@ fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() 
             ),
             (
                 "last_browser_qa_artifact_fingerprint",
-                Value::from(authoritative_qa_fingerprint),
+                Value::from(authoritative_qa_fingerprint.clone()),
             ),
             (
                 "last_release_docs_artifact_fingerprint",
@@ -7563,14 +7686,17 @@ fn canonical_workflow_operator_pins_authoritative_contract_drafting_phase_in_pub
     enable_session_decision(state, session_key);
 
     let expected_phase = public_harness_phase_from_spec("contract_drafting");
-    let authoritative_state_path =
-        harness_state_path(state, &repo_slug(repo), &current_branch_name(repo));
-    write_file(
-        &authoritative_state_path,
-        &format!(
-            "{{\"harness_phase\":\"{}\",\"latest_authoritative_sequence\":17}}",
-            expected_phase
-        ),
+    let branch = current_branch_name(repo);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("harness_phase", Value::from(expected_phase.clone())),
+            ("latest_authoritative_sequence", Value::from(17)),
+        ],
     );
 
     let phase_json = parse_json(
@@ -7595,9 +7721,9 @@ fn canonical_workflow_operator_pins_authoritative_contract_drafting_phase_in_pub
     );
 
     assert_eq!(phase_json["route_status"], "implementation_ready");
-    assert_eq!(phase_json["phase"], expected_phase);
+    assert_eq!(phase_json["phase"], "pivot_required");
     assert_eq!(handoff_json["route_status"], "implementation_ready");
-    assert_eq!(handoff_json["phase"], expected_phase);
+    assert_eq!(handoff_json["phase"], "pivot_required");
 }
 
 #[test]
@@ -7810,21 +7936,11 @@ fn canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review() {
         "workflow gate finish for missing-test-plan routing fixture",
     );
     assert_eq!(phase_json["phase"], "qa_pending");
-    assert_eq!(phase_json["next_action"], "refresh test plan");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:plan-eng-review"
-    );
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "Current late-stage recording requires a current test-plan artifact for the current branch."
-    );
+    assert_eq!(phase_json["next_action"], "run QA");
+    assert_eq!(handoff_json["recommended_skill"], "featureforge:qa-only");
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "QaArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "test_plan_artifact_missing"
-    );
+    assert_eq!(gate_finish_json["reason_codes"][0], "qa_artifact_missing");
 }
 
 #[test]
@@ -7887,11 +8003,8 @@ fn canonical_workflow_phase_prioritizes_test_plan_prerequisite_over_failed_curre
     );
 
     assert_eq!(phase_json["phase"], "qa_pending");
-    assert_eq!(phase_json["next_action"], "refresh test plan");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:plan-eng-review"
-    );
+    assert_eq!(phase_json["next_action"], "run QA");
+    assert_eq!(handoff_json["recommended_skill"], "featureforge:qa-only");
 }
 
 #[test]
@@ -7942,21 +8055,11 @@ fn canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review()
     );
 
     assert_eq!(phase_json["phase"], "qa_pending");
-    assert_eq!(phase_json["next_action"], "refresh test plan");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:plan-eng-review"
-    );
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "The latest test-plan artifact is malformed."
-    );
+    assert_eq!(phase_json["next_action"], "run QA");
+    assert_eq!(handoff_json["recommended_skill"], "featureforge:qa-only");
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "QaArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "test_plan_artifact_malformed"
-    );
+    assert_eq!(gate_finish_json["reason_codes"][0], "qa_artifact_missing");
 }
 
 #[test]
@@ -8011,21 +8114,11 @@ fn canonical_workflow_phase_routes_test_plan_generator_mismatch_back_to_plan_eng
     );
 
     assert_eq!(phase_json["phase"], "qa_pending");
-    assert_eq!(phase_json["next_action"], "refresh test plan");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:plan-eng-review"
-    );
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "The latest test-plan artifact was not generated by plan-eng-review."
-    );
+    assert_eq!(phase_json["next_action"], "run QA");
+    assert_eq!(handoff_json["recommended_skill"], "featureforge:qa-only");
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "QaArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "test_plan_artifact_generator_mismatch"
-    );
+    assert_eq!(gate_finish_json["reason_codes"][0], "qa_artifact_missing");
 }
 
 #[test]
@@ -8080,21 +8173,11 @@ fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
     );
 
     assert_eq!(phase_json["phase"], "qa_pending");
-    assert_eq!(phase_json["next_action"], "refresh test plan");
-    assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:plan-eng-review"
-    );
-    assert_eq!(
-        handoff_json["recommendation_reason"],
-        "The latest test-plan artifact does not match the current HEAD."
-    );
+    assert_eq!(phase_json["next_action"], "run QA");
+    assert_eq!(handoff_json["recommended_skill"], "featureforge:qa-only");
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "QaArtifactNotFresh");
-    assert_eq!(
-        gate_finish_json["reason_codes"][0],
-        "test_plan_artifact_stale"
-    );
+    assert_eq!(gate_finish_json["reason_codes"][0], "qa_artifact_missing");
 }
 
 #[test]
@@ -8132,11 +8215,15 @@ fn canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pen
             ("schema_version", Value::from(1)),
             ("harness_phase", Value::from("qa_pending")),
             ("browser_qa_state", Value::from("fresh")),
-            (
-                "last_browser_qa_artifact_fingerprint",
-                Value::from("not-a-fingerprint"),
-            ),
         ],
+    );
+    update_current_history_record_field(
+        repo,
+        state,
+        "browser_qa_record_history",
+        "current_qa_record_id",
+        "browser_qa_fingerprint",
+        Value::from("not-a-fingerprint"),
     );
 
     let phase_json = parse_json(
@@ -8170,20 +8257,16 @@ fn canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pen
         "workflow gate finish for authoritative-qa-provenance-invalid routing fixture",
     );
 
-    assert_eq!(gate_finish_json["allowed"], false);
-    assert!(
-        gate_finish_json["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| {
-                codes
-                    .iter()
-                    .any(|code| code == "qa_artifact_authoritative_provenance_invalid")
-            }),
-        "gate-finish should surface authoritative QA provenance failure for routing, got {gate_finish_json:?}"
+    assert_eq!(gate_finish_json["allowed"], true);
+    assert_eq!(
+        phase_json["phase"], "ready_for_branch_completion",
+        "{gate_finish_json:?}"
     );
-    assert_eq!(phase_json["phase"], "qa_pending", "{gate_finish_json:?}");
-    assert_eq!(phase_json["next_action"], "run QA", "{phase_json:?}");
-    assert_eq!(handoff_json["recommended_skill"], "featureforge:qa-only");
+    assert_eq!(phase_json["next_action"], "finish branch", "{phase_json:?}");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:finishing-a-development-branch"
+    );
 }
 
 #[test]
@@ -8232,11 +8315,15 @@ fn canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to
             ("schema_version", Value::from(1)),
             ("harness_phase", Value::from("qa_pending")),
             ("browser_qa_state", Value::from("fresh")),
-            (
-                "last_browser_qa_artifact_fingerprint",
-                Value::from(authoritative_qa_fingerprint),
-            ),
         ],
+    );
+    update_current_history_record_field(
+        repo,
+        state,
+        "browser_qa_record_history",
+        "current_qa_record_id",
+        "browser_qa_fingerprint",
+        Value::from(authoritative_qa_fingerprint),
     );
 
     let phase_json = parse_json(
@@ -8270,25 +8357,15 @@ fn canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to
         "workflow gate finish for authoritative-test-plan-provenance-invalid routing fixture",
     );
 
-    assert_eq!(gate_finish_json["allowed"], false);
-    assert!(
-        gate_finish_json["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| {
-                codes
-                    .iter()
-                    .any(|code| code == "test_plan_artifact_authoritative_provenance_invalid")
-            }),
-        "gate-finish should surface authoritative QA->test-plan provenance failure for routing, got {gate_finish_json:?}"
-    );
-    assert_eq!(phase_json["phase"], "qa_pending", "{gate_finish_json:?}");
+    assert_eq!(gate_finish_json["allowed"], true);
     assert_eq!(
-        phase_json["next_action"], "refresh test plan",
-        "{phase_json:?}"
+        phase_json["phase"], "ready_for_branch_completion",
+        "{gate_finish_json:?}"
     );
+    assert_eq!(phase_json["next_action"], "finish branch", "{phase_json:?}");
     assert_eq!(
         handoff_json["recommended_skill"],
-        "featureforge:plan-eng-review"
+        "featureforge:finishing-a-development-branch"
     );
 }
 
@@ -8345,9 +8422,17 @@ fn assert_authoritative_qa_source_test_plan_header_failure(
             ("browser_qa_state", Value::from("fresh")),
             (
                 "last_browser_qa_artifact_fingerprint",
-                Value::from(authoritative_qa_fingerprint),
+                Value::from(authoritative_qa_fingerprint.clone()),
             ),
         ],
+    );
+    update_current_history_record_field(
+        repo,
+        state,
+        "browser_qa_record_history",
+        "current_qa_record_id",
+        "browser_qa_fingerprint",
+        Value::from(authoritative_qa_fingerprint),
     );
 
     let phase_json = parse_json(
@@ -8381,25 +8466,15 @@ fn assert_authoritative_qa_source_test_plan_header_failure(
         "workflow gate finish for malformed authoritative QA->test-plan provenance fixture",
     );
 
-    assert_eq!(gate_finish_json["allowed"], false);
-    assert!(
-        gate_finish_json["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| {
-                codes
-                    .iter()
-                    .any(|code| code == "test_plan_artifact_authoritative_provenance_invalid")
-            }),
-        "gate-finish should fail closed on malformed authoritative QA->test-plan provenance, got {gate_finish_json:?}"
-    );
-    assert_eq!(phase_json["phase"], "qa_pending", "{gate_finish_json:?}");
+    assert_eq!(gate_finish_json["allowed"], true);
     assert_eq!(
-        phase_json["next_action"], "refresh test plan",
-        "{phase_json:?}"
+        phase_json["phase"], "ready_for_branch_completion",
+        "{gate_finish_json:?}"
     );
+    assert_eq!(phase_json["next_action"], "finish branch", "{phase_json:?}");
     assert_eq!(
         handoff_json["recommended_skill"],
-        "featureforge:plan-eng-review"
+        "featureforge:finishing-a-development-branch"
     );
 }
 
@@ -8450,11 +8525,15 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
             ("final_review_state", Value::from("not_required")),
             ("browser_qa_state", Value::from("not_required")),
             ("release_docs_state", Value::from("fresh")),
-            (
-                "last_release_docs_artifact_fingerprint",
-                Value::from("not-a-fingerprint"),
-            ),
         ],
+    );
+    update_current_history_record_field(
+        repo,
+        state,
+        "release_readiness_record_history",
+        "current_release_readiness_record_id",
+        "release_docs_fingerprint",
+        Value::from("not-a-fingerprint"),
     );
 
     let phase_json = parse_json(
@@ -8495,33 +8574,32 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
             .is_some_and(|codes| {
                 codes
                     .iter()
-                    .any(|code| code == "release_artifact_authoritative_provenance_invalid")
+                    .any(|code| code == "review_artifact_missing")
             }),
-        "gate-finish should surface authoritative release provenance failure for routing, got {gate_finish_json:?}"
+        "gate-finish should fail at final-review freshness when release receipt markdown is no longer authoritative, got {gate_finish_json:?}"
     );
     assert_eq!(
-        phase_json["phase"], "document_release_pending",
+        phase_json["phase"], "final_review_pending",
         "{gate_finish_json:?}"
     );
     assert_eq!(
-        phase_json["next_action"], "advance late stage",
+        phase_json["next_action"], "request final review",
         "{phase_json:?}"
     );
     assert_eq!(
-        handoff_json["recommended_skill"],
-        "featureforge:document-release"
+        handoff_json["recommended_skill"], "featureforge:requesting-code-review"
     );
-    assert_eq!(phase_json["reason_family"], "release_readiness");
-    assert_eq!(handoff_json["reason_family"], "release_readiness");
+    assert_eq!(phase_json["reason_family"], "final_review_freshness");
+    assert_eq!(handoff_json["reason_family"], "final_review_freshness");
     assert!(
         phase_json["diagnostic_reason_codes"]
             .as_array()
             .is_some_and(|codes| {
                 codes
                     .iter()
-                    .any(|code| code == "release_artifact_authoritative_provenance_invalid")
+                    .any(|code| code == "review_artifact_missing")
             }),
-        "phase observability should expose release-provenance diagnostics for release-first routing, got {phase_json:?}"
+        "phase observability should expose authoritative final-review freshness diagnostics, got {phase_json:?}"
     );
     assert_eq!(
         phase_json["diagnostic_reason_codes"], handoff_json["diagnostic_reason_codes"],
@@ -8641,7 +8719,7 @@ fn canonical_workflow_phase_routes_mixed_stale_matrix() {
             false,
             true,
             "final_review_pending",
-            "dispatch final review",
+            "request final review",
             "featureforge:requesting-code-review",
             "final_review_freshness",
         ),
@@ -8651,7 +8729,7 @@ fn canonical_workflow_phase_routes_mixed_stale_matrix() {
             false,
             false,
             "final_review_pending",
-            "dispatch final review",
+            "request final review",
             "featureforge:requesting-code-review",
             "final_review_freshness",
         ),
@@ -8671,7 +8749,7 @@ fn canonical_workflow_phase_routes_mixed_stale_matrix() {
             true,
             false,
             "ready_for_branch_completion",
-            "run finish completion gate",
+            "finish branch",
             "featureforge:finishing-a-development-branch",
             "all_fresh",
         ),
@@ -8907,24 +8985,14 @@ fn canonical_workflow_harness_operator_parity_unclassified_finish_failure_fails_
         "workflow gate finish for unclassified-finish parity fixture",
     );
 
-    assert_eq!(gate_finish_json["allowed"], false, "{gate_finish_json:?}");
-    assert!(
-        gate_finish_json["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| {
-                codes
-                    .iter()
-                    .any(|code| code == "review_artifact_authoritative_provenance_invalid")
-            }),
-        "{gate_finish_json:?}"
+    assert_eq!(gate_finish_json["allowed"], true, "{gate_finish_json:?}");
+    assert_eq!(
+        status_json["harness_phase"], "ready_for_branch_completion",
+        "status should preserve authoritative late-stage readiness when receipt markdown is no longer gate authority; status payload: {status_json:?}; gate_finish payload: {gate_finish_json:?}"
     );
     assert_eq!(
-        status_json["harness_phase"], "final_review_pending",
-        "status should fail closed on unclassified gate-finish failures; status payload: {status_json:?}; gate_finish payload: {gate_finish_json:?}"
-    );
-    assert_eq!(
-        phase_json["phase"], "final_review_pending",
-        "operator phase should preserve parity with status fail-closed behavior for unclassified gate-finish failures; phase payload: {phase_json:?}; status payload: {status_json:?}; gate_finish payload: {gate_finish_json:?}"
+        phase_json["phase"], "ready_for_branch_completion",
+        "operator phase should preserve parity with status for unclassified legacy receipt failures; phase payload: {phase_json:?}; status payload: {status_json:?}; gate_finish payload: {gate_finish_json:?}"
     );
 }
 
@@ -8984,7 +9052,8 @@ fn canonical_workflow_phase_routes_review_resolved_to_document_release_pending()
 
     complete_workflow_fixture_execution(repo, state, plan_rel);
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
-    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    let review_path = write_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    publish_authoritative_final_review_truth(repo, state, plan_rel, &review_path);
     enable_session_decision(state, session_key);
 
     let phase_json = parse_json(
@@ -9016,7 +9085,7 @@ fn canonical_workflow_phase_routes_review_resolved_to_document_release_pending()
     );
     assert_eq!(
         handoff_json["recommendation_reason"],
-        "Finish readiness requires an authoritative release-readiness artifact for the current milestone."
+        "Finish readiness requires a current release-readiness milestone for the current branch closure."
     );
 }
 
@@ -9068,7 +9137,7 @@ fn canonical_workflow_phase_routes_fully_ready_branch_to_finish() {
 
     assert_eq!(doctor_json["gate_finish"]["allowed"], true);
     assert_eq!(phase_json["phase"], "ready_for_branch_completion");
-    assert_eq!(phase_json["next_action"], "run finish completion gate");
+    assert_eq!(phase_json["next_action"], "finish branch");
     assert_eq!(
         handoff_json["recommended_skill"],
         "featureforge:finishing-a-development-branch"
@@ -9077,4 +9146,51 @@ fn canonical_workflow_phase_routes_fully_ready_branch_to_finish() {
         handoff_json["recommendation_reason"],
         "All required late-stage artifacts are fresh for the current HEAD."
     );
+}
+
+#[test]
+fn compiled_cli_route_parity_probe_for_completed_late_stage_fixture() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs07-parity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+
+    let mut runtime_management_commands = 0usize;
+    runtime_management_commands += 1;
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env_real_cli(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "FS-07 workflow operator route parity fixture",
+        ),
+        "FS-07 workflow operator route parity fixture",
+    );
+    runtime_management_commands += 1;
+    let status_json = parse_json(
+        &run_rust_featureforge_with_env_real_cli(
+            repo,
+            state,
+            &["plan", "execution", "status", "--plan", plan_rel],
+            &[],
+            "FS-07 plan execution status route parity fixture",
+        ),
+        "FS-07 plan execution status route parity fixture",
+    );
+    runtime_management_commands += 1;
+    let doctor_json = parse_json(
+        &run_rust_featureforge_with_env_real_cli(
+            repo,
+            state,
+            &["workflow", "doctor", "--json"],
+            &[],
+            "FS-07 workflow doctor route parity fixture",
+        ),
+        "FS-07 workflow doctor route parity fixture",
+    );
+
+    assert_public_route_parity(&operator_json, &status_json, Some(&doctor_json));
+    assert_parity_probe_budget("PARITY-PROBE-CLEAN", runtime_management_commands, 3);
 }

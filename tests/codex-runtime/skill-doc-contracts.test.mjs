@@ -249,16 +249,16 @@ function parseLateStageReferenceRows(markdown) {
 const LATE_STAGE_PHASE_TO_ACTION = new Map([
   [
     'document_release_pending',
-    'derived from phase_detail: record branch closure; advance late stage; resolve release blocker',
+    'derived from phase_detail: advance late stage (branch-closure refresh lane); resolve release blocker',
   ],
   [
     'final_review_pending',
-    'derived from phase_detail: dispatch final review; wait for external review result; advance late stage',
+    'derived from phase_detail: request final review; wait for external review result; advance late stage',
   ],
   ['qa_pending', 'derived from phase_detail: run QA; refresh test plan'],
   [
     'ready_for_branch_completion',
-    'derived from phase_detail: run finish review gate; run finish completion gate',
+    'derived from phase_detail: finish branch',
   ],
 ]);
 
@@ -573,7 +573,11 @@ test('execution workflow skills reference the plan-execution helper contract', (
 
   for (const skill of ['subagent-driven-development', 'executing-plans']) {
     const content = readUtf8(getSkillPath(skill));
-    assert.match(content, /calls `status --plan \.\.\.` during preflight/);
+    assert.match(content, /calls `workflow operator --plan \.\.\.` during preflight/);
+    assert.match(
+      content,
+      /uses `status --plan \.\.\.` only for additional diagnostics when operator output alone is insufficient/,
+    );
     assert.match(content, /Provides the approved plan and the execution preflight handoff/);
     assert.match(content, /calls `begin` before starting work on a plan step/);
     assert.match(content, /calls `complete` after each completed step/);
@@ -589,18 +593,18 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself/);
   assert.match(
     reviewSkill,
-    /`gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is the dispatch-proof minting path when the runtime requires it for the current boundary\./,
+    /`gate-review` and `record-review-dispatch` are compatibility\/debug command boundaries, not normal intent-level progression commands\./,
   );
   assert.match(reviewSkill, /For plan-routed final review, require the exact approved plan path and exact approved spec path from the current execution preflight handoff or session context\./);
   assert.match(reviewSkill, /Run `featureforge plan contract analyze-plan --spec <approved-spec-path> --plan <approved-plan-path> --format json` before dispatching the reviewer\./);
   assert.match(reviewSkill, /Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching the reviewer\./);
   assert.match(reviewSkill, /If workflow\/operator fails, stop and return to the current execution flow; do not guess the public late-stage route from raw execution state\./);
-  assert.match(reviewSkill, /Run `featureforge plan execution status --plan <approved-plan-path>` before dispatching the reviewer\./);
-  assert.match(reviewSkill, /If helper status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state\./);
+  assert.match(reviewSkill, /Run `featureforge plan execution status --plan <approved-plan-path>` only when you need diagnostic fields such as `active_task`, `blocking_task`, `resume_task`, `evidence_path`, or strategy checkpoint state\./);
+  assert.match(reviewSkill, /If diagnostic status fails when those fields are required, stop and return to the current execution flow; do not dispatch review against guessed plan state\./);
   assert.match(reviewSkill, /Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON\./);
   assert.match(reviewSkill, /If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`\./);
-  assert.match(reviewSkill, /treat workflow\/operator as authoritative for the public late-stage route; `featureforge plan execution status --plan <approved-plan-path>` remains supporting diagnostic detail\./);
-  assert.match(reviewSkill, /only dispatch a fresh final review when workflow\/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`\./);
+  assert.match(reviewSkill, /treat workflow\/operator as authoritative for the public late-stage route; status is diagnostic only\./);
+  assert.match(reviewSkill, /only request a fresh external final review when workflow\/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`\./);
   assert.match(reviewSkill, /After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and require `phase_detail=final_review_recording_ready` before recording the result with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass\|fail --summary-file <final-review-summary>`\./);
   assert.match(reviewSkill, /Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context\./);
   assert.match(reviewSkill, /Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base aligned with `featureforge:document-release` and `gate-finish`\./);
@@ -626,13 +630,11 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /git rev-parse HEAD~1/);
   assert.match(reviewSkill, /CONTRACT_STATE=\$\(printf '%s\\n' "\$ANALYZE_JSON" \| node -e 'const fs = require\("fs"\); const parsed = JSON\.parse\(fs\.readFileSync\(0, "utf8"\)\); process\.stdout\.write\(parsed\.contract_state \|\| ""\)'/);
   assert.match(reviewSkill, /if \[ "\$CONTRACT_STATE" != "valid" \] \|\| \[ "\$PACKET_BUILDABLE_TASKS" != "\$TASK_COUNT" \]; then/);
-  assert.match(reviewSkill, /if \[ -n "\$ACTIVE_TASK\$BLOCKING_TASK\$RESUME_TASK" \]; then/);
+  assert.match(reviewSkill, /If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`\./);
   assert.match(reviewSkill, /OPERATOR_JSON=\$\("\$_FEATUREFORGE_BIN" workflow operator --plan "\$APPROVED_PLAN_PATH" --json\)/);
   assert.match(reviewSkill, /if \[ "\$PHASE" != "final_review_pending" \] \|\| \[ "\$PHASE_DETAIL" != "final_review_dispatch_required" \]; then/);
-  assert.match(reviewSkill, /REVIEW_DISPATCH_JSON=\$\("\$_FEATUREFORGE_BIN" plan execution record-review-dispatch --plan "\$APPROVED_PLAN_PATH" --scope final-review\)/);
-  assert.match(reviewSkill, /REVIEW_DISPATCH_ACTION=\$\(printf '%s\\n' "\$REVIEW_DISPATCH_JSON" \| node -e 'const fs = require\("fs"\); const parsed = JSON\.parse\(fs\.readFileSync\(0, "utf8"\)\); process\.stdout\.write\(String\(parsed\.action \?\? ""\)\)'\)/);
-  assert.match(reviewSkill, /if \[ "\$REVIEW_DISPATCH_ACTION" = "blocked" \]; then/);
-  assert.match(reviewSkill, /if \[ "\$REVIEW_DISPATCH_ACTION" != "recorded" \] && \[ "\$REVIEW_DISPATCH_ACTION" != "already_current" \]; then/);
+  assert.doesNotMatch(reviewSkill, /REVIEW_DISPATCH_JSON=/);
+  assert.doesNotMatch(reviewSkill, /REVIEW_DISPATCH_ACTION=/);
   assert.match(reviewSkill, /if \[ -z "\$DISPATCH_ID" \]; then/);
   assert.doesNotMatch(reviewSkill, /REVIEW_DISPATCH_ALLOWED=/);
   assert.doesNotMatch(reviewSkill, /REVIEW_GATE_JSON/);
@@ -645,13 +647,12 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(finishSkill, /rejects branch-completion handoff if the approved plan is execution-dirty or malformed/);
   assert.match(finishSkill, /must not allow branch completion while any checked-off plan step still lacks semantic implementation evidence/);
   assert.match(finishSkill, /If the current work was executed from an approved FeatureForge plan, require the exact approved plan path from the current execution workflow context before presenting completion options\./);
-  assert.match(finishSkill, /Run `featureforge plan execution status --plan <approved-plan-path>` and read the returned `evidence_path` before presenting completion options\./);
-  assert.match(finishSkill, /If the exact approved plan path is unavailable or helper status fails, stop and return to the current execution flow instead of guessing\./);
-  assert.match(finishSkill, /Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON\./);
-  assert.match(finishSkill, /If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; branch completion is only valid when all three are `null`\./);
+  assert.match(finishSkill, /Run `featureforge workflow operator --plan <approved-plan-path>` and require a branch-completion-ready route before presenting completion options\./);
+  assert.match(finishSkill, /If the exact approved plan path is unavailable or workflow\/operator fails, stop and return to the current execution flow instead of guessing\./);
+  assert.match(finishSkill, /Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostics \(`active_task`, `blocking_task`, `resume_task`, `evidence_path`, checkpoint fingerprints\) to explain a blocker\./);
   assert.match(
     finishSkill,
-    /keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> `featureforge workflow operator --plan <approved-plan-path>` -> any required `featureforge:qa-only` handoff -> `record-qa` only when `phase_detail=qa_recording_required` -> rerun `featureforge workflow operator --plan <approved-plan-path>` -> `gate-review` only when `phase_detail=finish_review_gate_ready` -> rerun `featureforge workflow operator --plan <approved-plan-path>` -> `gate-finish` only when `phase_detail=finish_completion_gate_ready`\./,
+    /keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> `featureforge workflow operator --plan <approved-plan-path>` -> any required `featureforge:qa-only` handoff -> `advance-late-stage` only when operator reports `phase_detail=qa_recording_required` -> rerun `featureforge workflow operator --plan <approved-plan-path>` and follow its next finish command\./,
   );
   assert.match(finishSkill, /If the current work is governed by an approved FeatureForge plan, treat the approved plan's normalized `\*\*QA Requirement:\*\* required\|not-required` metadata as authoritative for workflow-routed finish gating\./);
   assert.match(finishSkill, /Treat the current-branch test-plan artifact as a QA scope\/provenance input only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context\./);
@@ -724,14 +725,17 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(executingPlans, /build the canonical task packet/);
   assert.match(executingPlans, /treat it as the exact task contract for that execution segment/);
   assert.match(executingPlans, /mandatory task-boundary closure loop/i);
-  assert.match(executingPlans, /STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` immediately after task completion/i);
+  assert.match(
+    executingPlans,
+    /if workflow\/operator reports `task_review_dispatch_required`, treat it as a compatibility\/debug lane and keep routing through workflow\/operator plus intent-level commands; do not expand the normal closure loop into manual low-level command choreography/i,
+  );
   assert.match(
     executingPlans,
     /After all tasks complete and verified:[\s\S]*featureforge:document-release[\s\S]*featureforge:requesting-code-review/,
   );
   assert.match(
     executingPlans,
-    /After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]` before Task `N\+1` begins\./,
+    /rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]`/i,
   );
   assert.match(
     executingPlans,
@@ -744,7 +748,10 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(subagentSkill, /pass the packet verbatim to implementer and reviewers/);
   assert.match(subagentSkill, /If the packet does not answer it, the task is ambiguous and execution must stop or route back to review\./);
   assert.match(subagentSkill, /The coordinator owns every `git commit`, `git merge`, and `git push` for this workflow/);
-  assert.match(subagentSkill, /STOP and run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <n>` immediately after task completion/i);
+  assert.match(
+    subagentSkill,
+    /If workflow\/operator reports `task_review_dispatch_required`, treat it as a compatibility\/debug lane and keep routing through workflow\/operator plus intent-level commands; do not expand the normal closure loop into manual low-level command choreography\./,
+  );
   assert.match(
     subagentSkill,
     /"More tasks remain\?" -> "Use featureforge:document-release for release-readiness before terminal review" \[label="no"\];/,
@@ -755,22 +762,22 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   );
   assert.match(
     subagentSkill,
-    /After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]` before Task `N\+1` begins\./,
+    /Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]`\./,
   );
   assert.match(
     subagentSkill,
     /featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]/,
   );
-  assert.match(subagentSkill, /run `verification-before-completion` and persist the task verification receipt/i);
+  assert.match(subagentSkill, /run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`/i);
   assertOrderedSubstrings(executingPlans, 'skills/executing-plans/SKILL.md task-boundary loop', [
-    'after review is green, run `verification-before-completion` and persist the task verification receipt',
-    'After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before Task `N+1` begins.',
-    'no exceptions: only after dispatch proof, green review closure, and task verification receipt may Task `N+1` begin',
+    'after review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`',
+    'rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`',
+    'no exceptions: only after close-current-task succeeds may Task `N+1` begin',
   ]);
   assertOrderedSubstrings(subagentSkill, 'skills/subagent-driven-development/SKILL.md task-boundary loop', [
-    'After review is green, run `verification-before-completion` and persist the task verification receipt.',
-    'After the verification receipt exists, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and then run `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before Task `N+1` begins.',
-    'No exceptions: only after dispatch proof, green review closure, and task verification receipt may you dispatch Task `N+1`.',
+    'After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.',
+    'Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.',
+    'No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.',
   ]);
   assert.match(subagentSkill, /does not require per-dispatch user-consent prompts/);
   assert.match(subagentSkill, /Non-execution ad-hoc delegation still follows normal user-consent policy/);
@@ -795,8 +802,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /featureforge plan execution status --plan <approved-plan-path>[\s\S]*supporting diagnostic detail/i,
-      `${label} should describe status as supporting diagnostic detail`,
+      /featureforge plan execution status --plan <approved-plan-path>[\s\S]*optional diagnostic detail/i,
+      `${label} should describe status as optional diagnostic detail`,
     );
     assert.match(
       content,
@@ -815,8 +822,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       content,
-      /featureforge plan execution record-branch-closure --plan <approved-plan-path>/,
-      `${label} should include the branch-closure command`,
+      /featureforge plan execution advance-late-stage --plan <approved-plan-path>/,
+      `${label} should include the aggregate late-stage command`,
     );
     assert.match(
       content,
@@ -835,18 +842,13 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       content,
-      /featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review/,
-      `${label} should include the final-review dispatch command`,
+      /Compatibility-only escape hatch: use `record-review-dispatch --scope final-review` only when explicitly debugging or preserving compatibility/,
+      `${label} should keep final-review dispatch as a compatibility-only escape hatch`,
     );
     assert.match(
       content,
-      /featureforge plan execution record-qa --plan <approved-plan-path> --result pass\|fail --summary-file <qa-report>/,
-      `${label} should include the QA recording command`,
-    );
-    assert.match(
-      content,
-      /featureforge plan execution gate-review --plan <approved-plan-path>/,
-      `${label} should include the finish-gating command`,
+      /featureforge plan execution advance-late-stage --plan <approved-plan-path> --result pass\|fail --summary-file <qa-report>/,
+      `${label} should include the QA recording command through advance-late-stage`,
     );
     assert.match(
       normalized,
@@ -860,8 +862,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /MUST rerun `featureforge plan execution status --plan <approved-plan-path>` before invoking `repair-review-state`[\s\S]*`recommended_command` is authoritative for the immediate reroute[\s\S]*MUST rerun `featureforge workflow operator --plan <approved-plan-path>` next only when the returned command is `featureforge workflow operator --plan <approved-plan-path>` or after completing the returned follow-up step/i,
-      `${label} should require status -> repair-review-state -> returned recommended_command sequencing`,
+      /run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly[\s\S]*`recommended_command` is authoritative for the immediate reroute[\s\S]*Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required/i,
+      `${label} should require repair-review-state plus returned recommended_command sequencing`,
     );
     assert.match(
       normalized,
@@ -895,13 +897,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /\| Compatibility-only fallback:[^|]*featureforge plan execution explain-review-state --plan <approved-plan-path>/i,
+      /\| Compatibility-only (?:fallback|diagnostics):[^|]*featureforge plan execution explain-review-state --plan <approved-plan-path>/i,
       `${label} should keep explain-review-state as a compatibility-only fallback`,
-    );
-    assert.match(
-      normalized,
-      /\| Compatibility-only fallback:[^|]*featureforge plan execution reconcile-review-state --plan <approved-plan-path>/i,
-      `${label} should keep reconcile-review-state as a compatibility-only fallback`,
     );
     assert.match(
       normalized,
@@ -960,8 +957,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /five-step recovery runbook[\s\S]*status[\s\S]*factual-only[\s\S]*task-boundary review/i,
-      `${label} should keep the five-step recovery runbook with status anchoring and factual-only backfill before task-boundary review`,
+      /five-step recovery runbook[\s\S]*workflow operator --plan[\s\S]*factual-only[\s\S]*task-boundary review/i,
+      `${label} should keep the five-step recovery runbook with workflow-operator anchoring and factual-only backfill before task-boundary review`,
     );
   }
 
@@ -1201,7 +1198,7 @@ test('project-memory workflow hooks stay consult-only and non-gating', () => {
   );
   assert.match(
     documentRelease,
-    /`gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is owned by `featureforge:requesting-code-review`\./,
+    /`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting\. Keep command-boundary semantics explicit: `gate-review`, `gate-finish`, and low-level `record-\*` commands are compatibility\/debug boundaries, not normal-path commands\./,
   );
   assertDetectsTimedHookSamples(
     [
@@ -1293,7 +1290,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /If `\$_FEATUREFORGE_BIN` is available call `\$_FEATUREFORGE_BIN workflow status --refresh` to discover artifact-state status and the current approved `plan_path` when it exists\./,
+    /If `\$_FEATUREFORGE_BIN` is available and an approved plan path is already known, call `\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing\. Otherwise call `\$_FEATUREFORGE_BIN workflow status --refresh` only to discover the current approved `plan_path`, then route through workflow\/operator\./,
   );
   assert.match(
     usingFeatureForge,
@@ -1306,6 +1303,14 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.match(
     usingFeatureForge,
     /Treat workflow\/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` as the authoritative public routing contract\./,
+  );
+  assert.match(
+    usingFeatureForge,
+    /Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority\./,
+  );
+  assert.match(
+    usingFeatureForge,
+    /Treat low-level runtime commands \(`record-review-dispatch`, `record-branch-closure`, `record-release-readiness`, `record-final-review`, `record-qa`, `rebuild-evidence`, and `explain-review-state`\) as compatibility\/debug-only surfaces unless workflow\/operator explicitly routes to them\./,
   );
   assert.match(
     usingFeatureForge,
@@ -1480,10 +1485,10 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   assert.match(documentRelease, /workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone\./);
   assert.match(
     documentRelease,
-    /For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first and then `featureforge plan execution status --plan <approved-plan-path>`; workflow\/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`, while status is supporting diagnostic detail\./,
+    /For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow\/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`\./,
   );
   assert.match(documentRelease, /Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness\./);
-  assert.match(documentRelease, /If workflow\/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution record-branch-closure --plan <approved-plan-path>` and rerun workflow\/operator before recording release-readiness\./);
+  assert.match(documentRelease, /If workflow\/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path>` and rerun workflow\/operator\./);
   assert.match(documentRelease, /When workflow\/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready\|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone\./);
   assert.match(
     documentRelease,
@@ -1523,15 +1528,15 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     readme,
-    /`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility\/debug recovery helper, not a normal execution progression step\./,
+    /`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility\/debug projection-regeneration helper\. It does not mutate authoritative execution truth\./,
   );
   assert.match(
     readme,
-    /When workflow\/operator reports stale or missing closure context, rerun `featureforge plan execution status --plan <approved-plan-path>` before `featureforge plan execution repair-review-state --plan <approved-plan-path>`\./,
+    /When workflow\/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly\./,
   );
   assert.match(
     readme,
-    /After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra recording command\./,
+    /After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra command\./,
   );
   assert.doesNotMatch(
     readme,
@@ -1560,11 +1565,11 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     codexReadme,
-    /`featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint while `featureforge plan execution record-review-dispatch` mints review-dispatch proof/,
+    /compatibility\/debug command boundaries \(`gate-\*`, low-level `record-\*`\) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`/,
   );
   assert.match(
     codexReadme,
-    /`featureforge workflow operator --plan <approved-plan-path>` remains authoritative for execution, QA, and late-stage routing after handoff; `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail/,
+    /`featureforge workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `featureforge plan execution status --plan <approved-plan-path>` only for deeper diagnostics/,
   );
 
   const copilotReadme = readUtf8(path.join(REPO_ROOT, 'docs/README.copilot.md'));
@@ -1574,16 +1579,16 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     copilotReadme,
-    /`featureforge plan execution gate-review` advances the finish gate by recording or refreshing the current branch-closure checkpoint while `featureforge plan execution record-review-dispatch` mints review-dispatch proof/,
+    /compatibility\/debug command boundaries \(`gate-\*`, low-level `record-\*`\) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`/,
   );
   assert.match(
     copilotReadme,
-    /`featureforge workflow operator --plan <approved-plan-path>` remains authoritative for execution, QA, and late-stage routing after handoff; `featureforge plan execution status --plan <approved-plan-path>` is supporting diagnostic detail/,
+    /`featureforge workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `featureforge plan execution status --plan <approved-plan-path>` only for deeper diagnostics/,
   );
 
   const lateStageReference = readUtf8(path.join(REPO_ROOT, 'review/late-stage-precedence-reference.md'));
-  assert.match(lateStageReference, /`gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint\./);
-  assert.match(lateStageReference, /`record-review-dispatch` is the dispatch-proof minting boundary\./);
+  assert.match(lateStageReference, /`gate-review` and `gate-finish` are compatibility\/debug boundaries, not normal-path commands\./);
+  assert.match(lateStageReference, /low-level `record-\*` commands are compatibility\/debug boundaries and must not be required by normal-path guidance\./);
   assert.match(
     lateStageReference,
     /For workflow-routed terminal sequencing, run `document-release` before terminal `requesting-code-review`\./,
@@ -1800,5 +1805,24 @@ test('active docs describe the post-session-entry routing contract', () => {
     releaseNotes,
     /workflow status --refresh.*needs_user_choice.*bypassed.*session_entry_unresolved.*session_entry_bypassed.*schema_version.*3/is,
     'RELEASE-NOTES.md should enumerate the workflow status output removals and retained route schema version',
+  );
+});
+
+test('runtime-remediation regression inventory fixture stays complete', () => {
+  const inventory = readUtf8(path.join(REPO_ROOT, 'tests/fixtures/runtime-remediation/README.md'));
+  for (const scenario of [
+    'FS-01', 'FS-02', 'FS-03', 'FS-04', 'FS-05', 'FS-06',
+    'FS-07', 'FS-08', 'FS-09', 'FS-10', 'FS-11', 'FS-12',
+  ]) {
+    assert.match(
+      inventory,
+      new RegExp(`\\b${scenario}\\b`),
+      `runtime-remediation inventory should include ${scenario}`,
+    );
+  }
+  assert.match(
+    inventory,
+    /Probe Command Target/i,
+    'runtime-remediation inventory should keep parity-probe command targets',
   );
 });

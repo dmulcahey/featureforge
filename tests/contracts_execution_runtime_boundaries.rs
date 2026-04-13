@@ -215,6 +215,36 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
         routing.recommended_command.as_deref()
     );
     assert_eq!(
+        operator.get("blocking_scope").and_then(Value::as_str),
+        routing.blocking_scope.as_deref()
+    );
+    assert_eq!(
+        operator
+            .get("blocking_task")
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok()),
+        routing.blocking_task
+    );
+    assert_eq!(
+        operator.get("external_wait_state").and_then(Value::as_str),
+        routing.external_wait_state.as_deref()
+    );
+    let operator_blocking_reason_codes = operator
+        .get("blocking_reason_codes")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        operator_blocking_reason_codes,
+        routing.blocking_reason_codes
+    );
+    assert_eq!(
         routing.recording_context.as_ref().map(|context| (
             context.task_number,
             context.dispatch_id.as_deref(),
@@ -748,5 +778,25 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
     assert!(
         !checkpoint_source.contains("load_authoritative_transition_state_relaxed("),
         "gate-review checkpoint mutation must not bypass active-contract validation with the relaxed transition-state loader",
+    );
+}
+
+#[test]
+fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
+    let inventory = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-remediation/README.md"),
+    )
+    .expect("runtime-remediation inventory should be readable");
+    assert!(
+        inventory.contains("FS-05"),
+        "runtime-remediation inventory should include FS-05 mutation-before-validation coverage"
+    );
+    assert!(
+        inventory.contains("FS-06"),
+        "runtime-remediation inventory should include FS-06 compiled-cli parity coverage"
+    );
+    assert!(
+        inventory.contains("tests/contracts_execution_runtime_boundaries.rs"),
+        "runtime-remediation inventory should map boundary coverage to tests/contracts_execution_runtime_boundaries.rs"
     );
 }

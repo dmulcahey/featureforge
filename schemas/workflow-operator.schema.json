@@ -43,20 +43,18 @@
     "WorkflowOperatorNextActionSchema": {
       "enum": [
         "advance late stage",
+        "finish branch",
         "close current task",
         "continue execution",
-        "dispatch review",
-        "dispatch final review",
+        "request task review",
+        "request final review",
         "execution reentry required",
         "hand off",
         "pivot / return to planning",
-        "record branch closure",
         "refresh test plan",
         "repair review state / reenter execution",
         "resolve release blocker",
         "run QA",
-        "run finish completion gate",
-        "run finish review gate",
         "wait for external review result"
       ],
       "type": "string"
@@ -295,8 +293,34 @@
     }
   ],
   "properties": {
+    "blocking_reason_codes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "blocking_scope": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "blocking_task": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "execution_command_context": {
       "$ref": "#/$defs/WorkflowOperatorExecutionCommandContext"
+    },
+    "external_wait_state": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "finish_review_gate_pass_branch_closure_id": {
       "type": [
