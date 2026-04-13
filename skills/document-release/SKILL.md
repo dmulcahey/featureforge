@@ -56,51 +56,25 @@ For workflow-routed implementation work, this is the required `document-release`
 
 For workflow-routed terminal sequencing, `featureforge:document-release` must run before the terminal `featureforge:requesting-code-review` whole-diff gate.
 
-`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: `gate-review`, `gate-finish`, and low-level `record-*` commands are compatibility/debug boundaries, not normal-path commands.
+`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: low-level compatibility/debug commands stay out of the normal-path flow.
 
 When you need explicit late-stage phase/action/skill grounding while updating docs, cite `review/late-stage-precedence-reference.md`.
 
-## Step 0: Detect base branch
+## Step 0: Require base branch context
 
-Determine which branch this work targets:
+For workflow-routed work, `BASE_BRANCH` is runtime-owned context from the active release-readiness lineage. Use that exact value and do not redetect.
+
+For non-workflow work, require `BASE_BRANCH` explicitly and keep it stable for this run:
 
 ```bash
-BASE_BRANCH=""
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  case "$CURRENT_BRANCH" in
-    main|master|develop|dev|trunk)
-      BASE_BRANCH="$CURRENT_BRANCH"
-      ;;
-  esac
-  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git config --get "branch.$CURRENT_BRANCH.gh-merge-base" 2>/dev/null || true)
-fi
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)
 if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master develop dev trunk; do
-    if git show-ref --verify --quiet "refs/heads/$candidate"; then
-      BASE_BRANCH="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  NON_CURRENT_BRANCHES=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vxF "$CURRENT_BRANCH" || true)
-  NON_CURRENT_BRANCH_COUNT=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d' | wc -l | tr -d ' ')
-  if [ "$NON_CURRENT_BRANCH_COUNT" = "1" ]; then
-    BASE_BRANCH=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d')
-  fi
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  echo "Could not determine the base branch target. Stop and resolve it before writing release-readiness artifacts."
+  echo "Missing BASE_BRANCH. Set it explicitly before writing release-facing docs."
   exit 1
 fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
 ```
 
-Use the detected branch as "the base branch" in the steps below.
-Do not use PR metadata or repo default-branch APIs as a fallback; `gate-finish` only accepts locally derivable base-branch evidence.
-Do not fall back to the current branch when it is the only local branch; stop instead of guessing.
+Do not use PR metadata or repo default-branch APIs as a fallback.
 
 ## Core rules
 
@@ -258,7 +232,7 @@ For workflow-routed implementation work, also write a project-scoped release-rea
 - Require the exact approved plan path from the current workflow context before writing the release-readiness companion artifact.
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - If the approved plan path or revision is unavailable, stop and return to the current workflow instead of writing a partial artifact.
-- Use the base branch detected in Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
+- Use the runtime-provided base branch from Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
 - This markdown output is a derived operator handoff companion. Runtime-owned reviewed-closure and late-stage milestone records remain the authoritative gate-truth surface.
 
 ```bash

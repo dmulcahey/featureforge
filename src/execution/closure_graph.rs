@@ -88,12 +88,10 @@ impl ClosureGraphSignals {
             })
             .unwrap_or_default();
         let current_branch_closure_id = authoritative_state
-            .and_then(|state| state.recoverable_current_branch_closure_identity())
+            .and_then(|state| state.bound_current_branch_closure_identity())
             .map(|identity| identity.branch_closure_id);
-        let finish_review_gate_pass_branch_closure_id =
-            authoritative_state.and_then(
-                AuthoritativeTransitionState::finish_review_gate_pass_branch_closure_id,
-            );
+        let finish_review_gate_pass_branch_closure_id = authoritative_state
+            .and_then(AuthoritativeTransitionState::finish_review_gate_pass_branch_closure_id);
         let current_final_review_branch_closure_id = authoritative_state
             .and_then(AuthoritativeTransitionState::current_final_review_record)
             .map(|record| record.branch_closure_id);
@@ -181,18 +179,33 @@ impl AuthoritativeClosureGraph {
             .and_then(|record_id| self.evaluations.get(record_id))
     }
 
+    pub(crate) fn current_release_readiness_record_id(&self) -> Option<&str> {
+        self.current_release_readiness_record_id.as_deref()
+    }
+
+    pub(crate) fn current_final_review_record_id(&self) -> Option<&str> {
+        self.current_final_review_record_id.as_deref()
+    }
+
+    pub(crate) fn current_browser_qa_record_id(&self) -> Option<&str> {
+        self.current_browser_qa_record_id.as_deref()
+    }
+
+    #[cfg(test)]
     pub(crate) fn current_release_readiness(&self) -> Option<&ClosureEvaluation> {
         self.current_release_readiness_record_id
             .as_ref()
             .and_then(|record_id| self.evaluations.get(record_id))
     }
 
+    #[cfg(test)]
     pub(crate) fn current_final_review(&self) -> Option<&ClosureEvaluation> {
         self.current_final_review_record_id
             .as_ref()
             .and_then(|record_id| self.evaluations.get(record_id))
     }
 
+    #[cfg(test)]
     pub(crate) fn current_browser_qa(&self) -> Option<&ClosureEvaluation> {
         self.current_browser_qa_record_id
             .as_ref()
@@ -622,10 +635,18 @@ impl AuthoritativeClosureGraph {
 
     fn bound_current_record_id(
         &self,
-        _bound_record_id: Option<&str>,
+        bound_record_id: Option<&str>,
         kind: ClosureKind,
     ) -> Option<String> {
-        self.latest_current_record_id(kind, None, None)
+        let bound_record_id = bound_record_id?.trim();
+        if bound_record_id.is_empty() {
+            return None;
+        }
+        let evaluation = self.evaluations.get(bound_record_id)?;
+        if evaluation.identity.kind != kind || evaluation.freshness != ClosureFreshness::Current {
+            return None;
+        }
+        Some(bound_record_id.to_owned())
     }
 
     fn bound_current_milestone_record_id(
@@ -635,78 +656,36 @@ impl AuthoritativeClosureGraph {
         branch_closure_id: Option<&str>,
         required_dependency_id: Option<&str>,
     ) -> Option<String> {
+        let bound_record_id = bound_record_id?.trim();
+        if bound_record_id.is_empty() {
+            return None;
+        }
         let branch_closure_id = branch_closure_id?.trim();
         if branch_closure_id.is_empty() {
             return None;
         }
-        if let Some(record_id) =
-            self.latest_current_record_id(kind, Some(branch_closure_id), required_dependency_id)
-        {
-            return Some(record_id);
-        }
-        let required_dependency_id = required_dependency_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
-        let bound_record_id = bound_record_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
         let evaluation = self.evaluations.get(bound_record_id)?;
         if evaluation.identity.kind != kind || evaluation.freshness != ClosureFreshness::Current {
             return None;
         }
-        let record_branch_closure_id = evaluation
+        let primary_dependency = evaluation
             .dependency_binding
             .depends_on_record_ids
             .first()
-            .map(String::as_str)?;
-        if record_branch_closure_id != branch_closure_id {
+            .map(String::as_str);
+        if primary_dependency != Some(branch_closure_id) {
             return None;
         }
-        let has_explicit_dependency = evaluation
-            .dependency_binding
-            .depends_on_record_ids
-            .iter()
-            .any(|record_id| record_id == required_dependency_id);
-        (!has_explicit_dependency).then(|| bound_record_id.to_owned())
-    }
-
-    fn latest_current_record_id(
-        &self,
-        kind: ClosureKind,
-        branch_closure_id: Option<&str>,
-        required_dependency_id: Option<&str>,
-    ) -> Option<String> {
-        self.evaluations
-            .values()
-            .filter(|evaluation| {
-                evaluation.identity.kind == kind
-                    && evaluation.freshness == ClosureFreshness::Current
-            })
-            .filter(|evaluation| {
-                branch_closure_id.is_none_or(|branch_closure_id| {
-                    evaluation
-                        .dependency_binding
-                        .depends_on_record_ids
-                        .first()
-                        .is_some_and(|record_id| record_id == branch_closure_id)
-                })
-            })
-            .filter(|evaluation| {
-                required_dependency_id.is_none_or(|required_dependency_id| {
-                    evaluation
-                        .dependency_binding
-                        .depends_on_record_ids
-                        .iter()
-                        .any(|record_id| record_id == required_dependency_id)
-                })
-            })
-            .max_by(|left, right| {
-                left.identity
-                    .authoritative_sequence
-                    .cmp(&right.identity.authoritative_sequence)
-                    .then_with(|| left.identity.record_id.cmp(&right.identity.record_id))
-            })
-            .map(|evaluation| evaluation.identity.record_id.clone())
+        if let Some(required_dependency_id) = required_dependency_id
+            && !evaluation
+                .dependency_binding
+                .depends_on_record_ids
+                .iter()
+                .any(|record_id| record_id == required_dependency_id)
+        {
+            return None;
+        }
+        Some(bound_record_id.to_owned())
     }
 
     fn upsert_evaluation(&mut self, evaluation: ClosureEvaluation) {
@@ -1037,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_selects_latest_current_branch_even_when_bound_id_points_older_record() {
+    fn graph_uses_explicit_current_branch_binding_without_history_inference() {
         let snapshot = ClosureHistorySnapshot {
             branch_closure_records: BTreeMap::from([
                 (
@@ -1065,15 +1044,15 @@ mod tests {
         assert_eq!(
             graph
                 .current_branch_closure()
-                .expect("latest branch should be current")
+                .expect("bound branch should remain current")
                 .identity
                 .record_id,
-            "branch-decoy",
+            "branch-bound",
         );
     }
 
     #[test]
-    fn missing_bound_branch_id_recovers_unique_current_from_history() {
+    fn missing_bound_branch_id_does_not_recover_from_history() {
         let snapshot = ClosureHistorySnapshot {
             branch_closure_records: BTreeMap::from([(
                 String::from("branch-current"),
@@ -1088,18 +1067,14 @@ mod tests {
         };
         let graph =
             AuthoritativeClosureGraph::from_snapshot(&snapshot, &ClosureGraphSignals::default());
-        assert_eq!(
-            graph
-                .current_branch_closure()
-                .expect("unique current branch should recover")
-                .identity
-                .record_id,
-            "branch-current",
+        assert!(
+            graph.current_branch_closure().is_none(),
+            "current branch closure must be explicitly bound via current_branch_closure_id"
         );
     }
 
     #[test]
-    fn missing_bound_milestone_ids_recover_unique_branch_scoped_currents() {
+    fn missing_bound_milestone_ids_do_not_recover_from_history() {
         let snapshot = ClosureHistorySnapshot {
             branch_closure_records: BTreeMap::from([(
                 String::from("branch-current"),
@@ -1146,29 +1121,17 @@ mod tests {
         };
         let graph =
             AuthoritativeClosureGraph::from_snapshot(&snapshot, &ClosureGraphSignals::default());
-        assert_eq!(
-            graph
-                .current_release_readiness()
-                .expect("release readiness should recover")
-                .identity
-                .record_id,
-            "release-current",
+        assert!(
+            graph.current_release_readiness().is_none(),
+            "release-readiness current identity must be explicitly persisted"
         );
-        assert_eq!(
-            graph
-                .current_final_review()
-                .expect("final review should recover")
-                .identity
-                .record_id,
-            "final-current",
+        assert!(
+            graph.current_final_review().is_none(),
+            "final-review current identity must be explicitly persisted"
         );
-        assert_eq!(
-            graph
-                .current_browser_qa()
-                .expect("qa should recover")
-                .identity
-                .record_id,
-            "qa-current",
+        assert!(
+            graph.current_browser_qa().is_none(),
+            "browser-QA current identity must be explicitly persisted"
         );
     }
 
@@ -1362,6 +1325,48 @@ mod tests {
         assert!(
             graph.current_final_review().is_none(),
             "final review should not be current without current release-readiness dependency",
+        );
+    }
+
+    #[test]
+    fn bound_final_review_record_without_explicit_release_dependency_is_not_inferred_current() {
+        let snapshot = ClosureHistorySnapshot {
+            branch_closure_records: BTreeMap::from([(
+                String::from("branch-current"),
+                json!({
+                    "branch_closure_id": "branch-current",
+                    "record_status": "current",
+                    "record_sequence": 1,
+                }),
+            )]),
+            release_readiness_record_history: BTreeMap::from([(
+                String::from("release-current"),
+                json!({
+                    "record_id": "release-current",
+                    "record_status": "current",
+                    "record_sequence": 2,
+                    "branch_closure_id": "branch-current",
+                }),
+            )]),
+            final_review_record_history: BTreeMap::from([(
+                String::from("final-current"),
+                json!({
+                    "record_id": "final-current",
+                    "record_status": "current",
+                    "record_sequence": 3,
+                    "branch_closure_id": "branch-current",
+                }),
+            )]),
+            current_branch_closure_id: Some(String::from("branch-current")),
+            current_release_readiness_record_id: Some(String::from("release-current")),
+            current_final_review_record_id: Some(String::from("final-current")),
+            ..ClosureHistorySnapshot::default()
+        };
+        let graph =
+            AuthoritativeClosureGraph::from_snapshot(&snapshot, &ClosureGraphSignals::default());
+        assert!(
+            graph.current_final_review().is_none(),
+            "final review must not be inferred current when release dependency binding is absent",
         );
     }
 

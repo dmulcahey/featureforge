@@ -59,6 +59,8 @@ The authoritative public workflow query surface is:
 
 `featureforge plan execution status --plan <path>` is a supporting diagnostic surface. It must consume the same routing decision as workflow/operator for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command`. Any disagreement is a runtime bug.
 
+Parity checks must use matching routing inputs. Compare `status --plan <path>` to `workflow operator --plan <path>` for baseline parity, and compare `workflow doctor --plan <path> --external-review-result-ready` to `workflow operator --plan <path> --external-review-result-ready` when asserting external-review-result-ready recording routes.
+
 Explicit usage rule:
 
 - agents SHOULD run `featureforge workflow operator --plan <path>` first for normal routing
@@ -218,7 +220,7 @@ Supporting query fields that runtime-owned commands rely on:
 
 - `follow_up_override = none|record_handoff|record_pivot` tells negative-result commands whether to emit execution reentry or a forced handoff/pivot follow-up
 - `follow_up_override` is derived by `FollowUpOverrideResolver`; `record_pivot` wins if both raw handoff and pivot conditions exist, and the field clears once the corresponding handoff/pivot recording succeeds or workflow reevaluates to `none`
-- `finish_review_gate_pass_branch_closure_id` tells workflow/operator whether `gate-review` already passed for the still-current branch closure and therefore whether `finish_completion_gate_ready` is true
+- `finish_review_gate_pass_branch_closure_id` tells workflow/operator whether the finish-review compatibility checkpoint already passed for the still-current branch closure and therefore whether `finish_completion_gate_ready` is true
 
 `review_state_repair_required` is not a top-level phase. Repair is represented by `review_state_status` plus the corresponding `next_action`.
 
@@ -237,8 +239,7 @@ Preferred future agent-facing `next_action` families:
 - request final review
 - run QA
 - refresh test plan
-- run finish review gate
-- run finish completion gate
+- finish branch
 - hand off
 - pivot / return to planning
 

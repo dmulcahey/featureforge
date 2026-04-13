@@ -100,41 +100,41 @@ For each task, enforce this exact order before dispatching the next task:
 5. After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.
 6. Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.
 7. If workflow/operator reports `task_review_dispatch_required`, treat it as a compatibility/debug lane and keep routing through workflow/operator plus intent-level commands; do not expand the normal closure loop into manual low-level command choreography.
-8. No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.
+8. If `task_review_dispatch_required` persists without `recording_context.dispatch_id`, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <blocking_task>` once, rerun operator with `--external-review-result-ready`, then return to workflow/operator-led routing.
+9. If `final_review_dispatch_required` persists without `recording_context.dispatch_id`, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review` once, rerun operator with `--external-review-result-ready`, then return to workflow/operator-led routing.
+10. No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.
 
 ### Reviewed-Closure Command Matrix
 
 For the reviewed-closure mental model, read `docs/featureforge/reference/2026-04-01-review-state-reference.md` before dispatching or closing reviewed work. A current reviewed closure matches the current reviewed state. A superseded closure was valid for earlier reviewed work but is no longer authoritative after later reviewed work lands. A stale-unreviewed state means unreviewed edits exist, so the runtime MUST repair review state before recording another closure or late-stage milestone.
 
-`featureforge workflow operator --plan <approved-plan-path>` is authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command`. `featureforge plan execution status --plan <approved-plan-path>` is optional diagnostic detail for execution telemetry, active blockers, and checkpoint fingerprints.
+`featureforge workflow operator --plan <approved-plan-path>` is the only normal-path routing authority for reviewed-closure and late-stage progression.
+Treat `featureforge workflow operator --plan <approved-plan-path>` as authoritative for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command`.
+Treat `featureforge plan execution status --plan <approved-plan-path>` as optional diagnostic detail.
 
-Only use `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` when the caller already has the external task-review or final-review result in hand. That hint is for recording-ready waits only; do not use it for release-readiness, document-release, or QA routing.
+When an external task-review or final-review result is already in hand, use `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` to expose recording-ready routes. Do not use that hint for release-readiness, document-release, or QA routing.
 
-When workflow/operator reports `review_state_status` as stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
-After `repair-review-state`, MUST follow the command returned in that command's `recommended_command` before any additional recording commands.
-That returned `recommended_command` is authoritative for the immediate reroute.
-Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required for a blocker.
-`task_closure_recording_ready` requires `recording_context.task_number` plus `recording_context.dispatch_id`.
-`release_readiness_recording_ready` and `release_blocker_resolution_required` require `recording_context.branch_closure_id`.
-`final_review_recording_ready` requires `recording_context.dispatch_id` plus `recording_context.branch_closure_id`.
-MUST NOT manually edit runtime-owned execution records.
-MUST NOT manually edit derived markdown artifacts or receipts.
+Do not reconstruct closure routing from memory or duplicate route tables in this skill. Follow operator-reported `phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_command`, and `recording_context` directly, with these guardrails:
+- `task_closure_recording_ready` requires `recording_context.task_number` plus `recording_context.dispatch_id`.
+- `release_readiness_recording_ready` and `release_blocker_resolution_required` require `recording_context.branch_closure_id`.
+- `final_review_recording_ready` requires `recording_context.dispatch_id` plus `recording_context.branch_closure_id`.
+- When workflow/operator reports `review_state_status` as stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
+- After `repair-review-state`, MUST follow the command returned in that command's `recommended_command` before any additional recording commands.
+- The returned `recommended_command` is authoritative for the immediate reroute.
+- Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required.
+- Keep compatibility/debug-only runtime primitives out of the normal path unless explicitly debugging a compatibility boundary.
+- Dispatch lineage is still a required contract in `*_dispatch_required` lanes; if lineage context is absent, use explicit compatibility bind commands (`--scope task --task <blocking_task>` or `--scope final-review`) and return to operator-led routing immediately.
+- MUST NOT manually edit runtime-owned execution records.
+- MUST NOT manually edit derived markdown artifacts or receipts.
+- MUST NOT use the internal task-closure recording service boundary directly.
+- MUST use `close-current-task` for task closure.
 
-The coordinator and runtime MUST NOT use the internal task-closure recording service boundary directly and MUST use `close-current-task` for task closure.
-
-| Triggering phase or scenario | Preconditions you MUST confirm | Exact runtime command or command sequence | Expected runtime signal after command | Fallback path if the command fails closed |
-| --- | --- | --- | --- | --- |
-| External reviewer result is already in hand for task closure or final review | Caller already has the external task-review or final-review result | `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` | Operator surfaces the matching recording-ready substate | If the result is not yet in hand, rerun plain `workflow operator` and wait; do not use this hint for release-readiness |
-| Any reviewed-closure checkpoint before dispatching implementers or reviewers | Approved plan path is current | `featureforge workflow operator --plan <approved-plan-path>` | Operator returns authoritative routing for the next closure or milestone action | Stop and follow the operator-reported blocker instead of reconstructing flow from artifacts |
-| Task review and verification outcome are both known | Dedicated-independent review is green and verification outcome is known | `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`, then `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` | Current task closure is recorded for the still-current reviewed state | If review-state drift blocks closure, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` |
-| Operator reports `task_review_dispatch_required` while closing a task | Task review context is current but compatibility dispatch lineage is still unresolved | `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`, then continue `close-current-task` once operator returns recording-ready closure state | Operator reroute converges back to task-closure recording-ready state for intent-level closure | Compatibility-only diagnostics/escape hatch: `record-review-dispatch` and `explain-review-state` are expert/debug boundaries, not normal choreography |
-| Operator reports stale-unreviewed, escaped, or ambiguous review-state drift | Operator review-state is not clean | `featureforge plan execution repair-review-state --plan <approved-plan-path>` | Review-state blocker is reconciled or restated as the authoritative next action, and the repair response returns the immediate reroute in `recommended_command` | Compatibility-only fallback: `featureforge plan execution explain-review-state --plan <approved-plan-path>` |
-| Operator reports missing branch closure | Current branch closure is required before release-readiness/final-review/QA can advance | `featureforge plan execution advance-late-stage --plan <approved-plan-path>` | Current branch closure exists for the still-current reviewed branch state | Stop and resolve any resolver/store blocker surfaced by operator |
-| Operator reports release-readiness recording ready | Current branch closure exists and operator recommends release-readiness recording | `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` | Aggregate late-stage trace names the delegated primitive and recorded release-readiness milestone keyed by `stage_path` | Compatibility-only fallback: use `record-release-readiness` only for explicit debug or compatibility paths |
-| Operator reports final-review recording ready | Caller already has the external final-review result and operator recommends final-review recording | `featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>` | Aggregate late-stage trace names the delegated primitive and recorded final-review milestone keyed by `stage_path` | Compatibility-only fallback: use `record-final-review` only for explicit debug or compatibility paths |
-| Operator reports final-review dispatch required | Branch closure and release-readiness are ready for final-review dispatch | Rerun `featureforge workflow operator --plan <approved-plan-path>` and keep the flow on operator-led late-stage routing | Final-review route stays explicit without expanding the normal path into low-level command chains | Compatibility-only escape hatch: use `record-review-dispatch --scope final-review` only when explicitly debugging or preserving compatibility |
-| Operator reports QA recording ready | QA report is available and operator recommends QA recording | `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>` | Current QA milestone is recorded for the still-current branch closure | If review-state drift blocks QA, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` first |
-| Operator reports test-plan refresh required during QA routing | Operator stays in `qa_pending` but `phase_detail=test_plan_refresh_required` and `recommended_command` is omitted | Route through `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact, then rerun `featureforge workflow operator --plan <approved-plan-path>` | QA routing returns to `qa_recording_required` only after current-branch test-plan freshness/provenance is restored | Do not run `record-qa` while `recommended_command` is omitted for the QA refresh lane |
+Late-stage aggregate command coverage:
+- `featureforge plan execution advance-late-stage --plan <approved-plan-path>`
+- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>`
+- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>`
+- `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>`
+- Compatibility-only escape hatch: use low-level runtime primitives only when explicitly debugging or preserving compatibility.
 
 ```dot
 digraph process {
@@ -203,7 +203,7 @@ Before dispatching any implementation subagent:
    - if the working tree is dirty, stop unless the helper-selected topology and workspace-prepared context explicitly support isolated worktree-backed execution for this run
 6. Do not auto-clean the workspace. If the helper-selected topology or protected-branch gate requires isolated execution, provision or route through a worktree-backed workspace before dispatching repo-writing subagents.
 7. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
-8. Run `featureforge plan execution preflight --plan <approved-plan-path>` before dispatching implementation subagents.
+8. Run `featureforge workflow preflight --plan <approved-plan-path>` before dispatching implementation subagents.
 9. If the preflight helper returns `allowed` `false`, stop and resolve the reported `failure_class`, `reason_codes`, and `diagnostics` before dispatching work.
 10. Treat execution start as a hard gate, not a reminder:
    - no code edits and no test edits are allowed after successful preflight and before the first `begin` for the active step
@@ -221,7 +221,7 @@ Before dispatching any implementation subagent:
 
 - calls `workflow operator --plan ...` during preflight
 - uses `status --plan ...` only for additional diagnostics when operator output alone is insufficient
-- calls `preflight --plan ...` before dispatching implementation subagents
+- calls `workflow preflight --plan ...` before dispatching implementation subagents
 - calls `begin` before starting work on a plan step
 - calls `complete` after each completed step
 - calls `note` when work is interrupted or blocked
@@ -234,7 +234,7 @@ Before dispatching any implementation subagent:
 - The approved plan/spec scope is fixed during execution. Runtime strategy checkpoints may change topology, lane/worktree allocation, subagent assignment, and remediation order, but must not change approved scope, source plan revision, or required coverage.
 - Required checkpoint kinds:
   - `initial_dispatch`: required before repo-writing implementation starts. Runtime records it automatically on first dispatch/begin when missing.
-  - `review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically for each `record-review-dispatch` command that targets reviewable execution work and when remediation reopens execution work.
+  - `review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work.
   - `cycle_break`: required when churn is detected. Runtime records it automatically when the same task hits three review-dispatch/reopen cycles in one run.
 - Cycle-break trigger: cap remediation churn at 3 cycles per task. On the third cycle, transition to `cycle_break` strategy automatically (no human replanning loopback).
 - Unit-review receipts and downstream final-review evidence must reference the checkpoint fingerprint from the runtime status for traceability.

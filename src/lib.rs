@@ -323,12 +323,12 @@ pub fn run() -> std::process::ExitCode {
                 cli::workflow::WorkflowCommand::Doctor(args) => {
                     if args.json {
                         emit_json(
-                            workflow::operator::doctor(&current_dir)
+                            workflow::operator::doctor_with_args(&current_dir, &args)
                                 .map_err(map_read_only_workflow_failure),
                         )
                     } else {
                         emit_text(
-                            workflow::operator::render_doctor(&current_dir)
+                            workflow::operator::render_doctor_with_args(&current_dir, &args)
                                 .map_err(map_read_only_workflow_failure),
                         )
                     }

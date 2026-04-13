@@ -137,9 +137,9 @@ fn execute_plan_execution_command_json(
         PlanExecutionCommand::Recommend(args) => Ok(to_json!(runtime.recommend(&args)?)),
         PlanExecutionCommand::Preflight(args) => Ok(to_json!(runtime.preflight(&args)?)),
         PlanExecutionCommand::Internal(internal) => match internal.command {
-            InternalPlanExecutionCommand::ReconcileReviewState(args) => {
-                Ok(to_json!(review_state::reconcile_review_state(runtime, &args)?))
-            }
+            InternalPlanExecutionCommand::ReconcileReviewState(args) => Ok(to_json!(
+                review_state::reconcile_review_state(runtime, &args)?
+            )),
         },
         PlanExecutionCommand::RebuildEvidence(args) => {
             let output = mutate::rebuild_evidence(runtime, &args)?;

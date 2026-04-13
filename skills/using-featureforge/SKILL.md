@@ -164,9 +164,14 @@ For feature requests, bugfixes that materially change FeatureForge product or wo
 
 Do NOT jump from brainstorming straight to implementation. For workflow-routed work, every stage owns the handoff into the next one.
 
+Artifact-state routing requirements:
+
+- Plan exists, is `Draft`, and is missing, stale, malformed, non-pass, or non-independent plan-fidelity receipt evidence: invoke `featureforge:plan-fidelity-review`.
+- Plan exists, is `Draft`, and has a matching pass dedicated plan-fidelity receipt: invoke `featureforge:plan-eng-review`.
+
 ### Helper-first routing
 
-If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. Otherwise call `$_FEATUREFORGE_BIN workflow status --refresh` only to discover the current approved `plan_path`, then route through workflow/operator.
+If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. Otherwise call `$_FEATUREFORGE_BIN workflow status --refresh` only to discover the current approved `plan_path`, then immediately route through workflow/operator. Do not route directly from `workflow status` fields.
 
 - If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.
 - If the JSON result reports `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` using that exact approved plan path.
@@ -174,11 +179,10 @@ If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known,
 - If workflow/operator returns a non-empty `recommended_command`, follow that exact command template.
 - If workflow/operator omits `recommended_command` (for example, while waiting for an external review result or refreshing the test plan), follow `next_action` and rerun workflow/operator after the prerequisite is satisfied.
 - Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.
-- Treat low-level runtime commands (`record-review-dispatch`, `record-branch-closure`, `record-release-readiness`, `record-final-review`, `record-qa`, `rebuild-evidence`, and `explain-review-state`) as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.
-- If workflow/operator reports `phase` `executing`, call `featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>` before choosing between `featureforge:subagent-driven-development` and `featureforge:executing-plans`.
+- Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.
+- If workflow/operator reports `phase` `executing`, route directly to the runtime-selected execution owner (`featureforge:executing-plans` or `featureforge:subagent-driven-development`) and keep routing anchored to workflow/operator `phase`, `phase_detail`, `next_action`, and `recommended_command`.
 - In that helper-backed execution flow, treat `execution_started` as an executor-resume signal only when workflow/operator reports `phase` `executing`.
 - If workflow/operator reports a later phase such as `task_closure_pending`, `document_release_pending`, `final_review_pending`, `qa_pending`, or `ready_for_branch_completion`, follow that reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of resuming `featureforge:subagent-driven-development` or `featureforge:executing-plans` just because `execution_started` is `yes`.
-- If the JSON result is not `implementation_ready` and contains a non-empty `next_skill`, use that route as compatibility fallback.
 - For terminal workflow sequencing, preserve the runtime-owned order: `document_release_pending` before terminal `final_review_pending`, then `qa_pending`, then `ready_for_branch_completion`.
 - Treat helper `request_code_review` routing as context-sensitive: it can represent terminal final review or a non-terminal task-boundary checkpoint when reason codes include `prior_task_review_*`.
 - When documenting or explaining that late-stage order, use `review/late-stage-precedence-reference.md` so routing language stays grounded in the runtime table.
@@ -201,39 +205,12 @@ If those signals are absent, keep the helper-derived workflow route.
 
 ### Manual fallback routing
 
-If the helper is unavailable or fails, inspect artifacts manually using the rules below.
+If helper calls fail:
 
-If helpers are unavailable, fallback stays minimal and conservative:
-
-- Manual fallback must not infer readiness from the legacy thin header subset.
-- Manual fallback is only a conservative backward-routing path until the helper works again.
-- If the helper failure leaves workflow state unclear, route to the earlier safe stage instead of synthesizing a parallel readiness decision.
-
-Inspect `docs/featureforge/specs/` and `docs/featureforge/plans/` conservatively for the exact relevant artifacts. If more than one plausible latest or approved artifact exists, treat that as ambiguity and route to the earlier safe stage rather than guessing. Then parse these exact-match header lines:
-
-- Spec state: `^\*\*Workflow State:\*\* (Draft|CEO Approved)$`
-- Spec revision: `^\*\*Spec Revision:\*\* ([0-9]+)$`
-- Draft spec reviewer: `^\*\*Last Reviewed By:\*\* (brainstorming|plan-ceo-review)$`
-- Approved spec reviewer: `^\*\*Last Reviewed By:\*\* plan-ceo-review$`
-- Plan state: `^\*\*Workflow State:\*\* (Draft|Engineering Approved)$`
-- Plan revision: `^\*\*Plan Revision:\*\* ([0-9]+)$`
-- Plan execution mode: `^\*\*Execution Mode:\*\* (none|featureforge:executing-plans|featureforge:subagent-driven-development)$`
-- Plan source: `^\*\*Source Spec:\*\* (.+)$`
-- Plan source revision: `^\*\*Source Spec Revision:\*\* ([0-9]+)$`
-- Draft plan reviewer: `^\*\*Last Reviewed By:\*\* (writing-plans|plan-eng-review)$`
-- Approved plan reviewer: `^\*\*Last Reviewed By:\*\* plan-eng-review$`
-
-Routing rules:
-
-1. No relevant spec artifact: invoke `featureforge:brainstorming`.
-2. Spec exists but is `Draft`, has malformed approval headers, or has `CEO Approved` without `**Last Reviewed By:** plan-ceo-review`: invoke `featureforge:plan-ceo-review`.
-3. Spec is `CEO Approved` and no relevant plan exists: invoke `featureforge:writing-plans`.
-4. Plan exists, is `Draft`, and is missing, stale, malformed, non-pass, or non-independent plan-fidelity receipt evidence: invoke `featureforge:plan-fidelity-review`.
-5. Plan exists, is `Draft`, and has a matching pass dedicated plan-fidelity receipt: invoke `featureforge:plan-eng-review`.
-6. Plan is `Engineering Approved` but its `Source Spec:` path or `Source Spec Revision:` does not match the latest approved spec: invoke `featureforge:writing-plans`.
-7. Plan is `Engineering Approved` and its `Source Spec:` path plus `Source Spec Revision:` match the latest approved spec: only proceed through the normal helper-backed execution preflight and handoff flow for that approved plan path.
-8. If artifacts are ambiguous or incomplete, route to the earlier safe stage instead of skipping ahead.
-9. If the helper-backed execution preflight or handoff flow is unavailable, do not route directly from manual fallback into implementation. Stop at the approved plan path and return to the earlier safe stage or the current execution flow instead.
+- Do not re-derive `phase`, `phase_detail`, readiness, or late-stage precedence from markdown headers.
+- Do not invent or continue a parallel manual routing graph.
+- Retry helper routing after fixing runtime/environment issues (binary path, state-dir binding, repo root).
+- If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.
 
 ### Explicit Project-Memory Routing
 

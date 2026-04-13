@@ -37,7 +37,6 @@ const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
 const ACTIVE_IMPLEMENTATION_TARGET_INDEX: &str =
     "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md";
 const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
-const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 2;
 const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -397,52 +396,6 @@ impl WorkflowRuntime {
         Ok(route)
     }
 
-    pub fn phase(&self) -> Result<WorkflowPhase, DiagnosticError> {
-        let route = self.resolve()?;
-        let phase = if route.status == "implementation_ready" {
-            String::from("execution_preflight")
-        } else if route.status == "stale_plan" {
-            String::from("plan_writing")
-        } else {
-            route.status.clone()
-        };
-        let next_action = if route.status == "implementation_ready" {
-            String::from("execution_preflight")
-        } else {
-            String::from("use_next_skill")
-        };
-        let next_step = if route.status == "implementation_ready" {
-            if route.plan_path.is_empty() {
-                String::from("Return to execution preflight for the approved plan.")
-            } else {
-                format!(
-                    "Return to execution preflight for the approved plan: {}",
-                    route.plan_path
-                )
-            }
-        } else if !route.next_skill.is_empty() {
-            format!("Use {}", route.next_skill)
-        } else {
-            String::from("Inspect the workflow state again after resolving the current issue.")
-        };
-
-        Ok(WorkflowPhase {
-            schema_version: WORKFLOW_PHASE_SCHEMA_VERSION,
-            phase,
-            route_status: route.status.clone(),
-            phase_detail: String::new(),
-            review_state_status: String::new(),
-            next_skill: route.next_skill.clone(),
-            next_step,
-            next_action,
-            recommended_command: None,
-            reason_family: String::new(),
-            diagnostic_reason_codes: Vec::new(),
-            spec_path: route.spec_path.clone(),
-            plan_path: route.plan_path.clone(),
-            route,
-        })
-    }
 }
 
 fn normalize_workflow_route(mut route: WorkflowRoute) -> WorkflowRoute {

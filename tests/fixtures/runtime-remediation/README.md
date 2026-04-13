@@ -5,35 +5,110 @@ This fixture index tracks the single-shot runtime-remediation regression scenari
 Each scenario is represented by at least one compiled-CLI coverage test and, where useful,
 an additional lower-level runtime/shared-truth test.
 
-| Scenario | Source | Setup Summary | Expected Fixed Behavior | Probe Command Target |
+| Scenario | Source | Setup Summary | Expected Fixed Behavior | Probe Command Target (informational unless listed under Task 12 gates) |
 |---|---|---|---|---|
 | `FS-01` | session `03e9` | late-stage missing-current-closure with drift classification pressure | one consistent route across `operator`/`status`/`doctor`; no `repair already_current` contradiction | covered by prerelease-refresh stale-follow-up regressions; parity-probe budget `<=3` |
-| `FS-02` | session `03e9` | late-stage doc/evidence writes around branch-closure baseline | deterministic classification: confined refresh vs true execution reentry vs explicit metadata blocker | parity regression and command-budget guard in compiled-CLI entry routing |
-| `FS-03` | session `a196` | stale prior-task redispatch while later task is active | blocking task target and accepted mutation target match | `<=2` |
-| `FS-04` | session `a196` | repair/rebuild path with stale prior dispatch and resume overlays | repair yields one authoritative next action; no wrong blocker survives | `<=2` |
+| `FS-02` | session `03e9` | late-stage doc/evidence writes around branch-closure baseline | deterministic classification: confined refresh vs true execution reentry vs explicit metadata blocker | parity regression and command-budget guard in compiled-CLI entry routing (`<=3`) |
+| `FS-03` | session `a196` | stale prior-task redispatch while later task is active | blocking task target and accepted mutation target match | `<=3` |
+| `FS-04` | session `a196` | repair/rebuild path with stale prior dispatch and resume overlays | repair yields one authoritative next action; no wrong blocker survives | `<=3` |
 | `FS-05` | session `a196` | unsupported field request on mutation commands | fail before mutation; authoritative digest unchanged | `<=1` |
-| `FS-06` | session `a196` | helper/direct path compared to compiled CLI path | compiled CLI remains contract oracle; helper parity enforced | helper-vs-compiled-cli target-mismatch parity lock |
+| `FS-06` | session `a196` | helper/direct path compared to compiled CLI path | compiled CLI remains contract oracle; helper parity enforced | helper-vs-compiled-cli target-mismatch parity lock (`<=2`) |
 | `FS-07` | session `b83b` | status reports dispatch-required while operator advertises begin/reentry | all surfaces share same routing decision fields | covered by task-boundary dispatch-blocked routing regressions; parity-probe budget `<=3` |
 | `FS-08` | session `b83b` | resume overlays plus stale prior-task closure | stale prerequisite remains visible; resume does not hide blocker | `<=1` |
-| `FS-09` | session `b83b` | repair clears one stale condition and should expose next blocker | repair returns post-repair blocker directly | `<=2` |
+| `FS-09` | session `b83b` | repair clears one stale condition and should expose next blocker | repair returns post-repair blocker directly | `<=3` |
 | `FS-10` | PR `#34` bug class | stale persisted follow-up conflicts with live current truth | stale follow-up ignored/cleared; live closure truth wins | `<=1` |
 | `FS-11` | late-stage precedence | release-facing drift after review or direct review-first attempt | document release precedence enforced before final review, then QA | `<=3` |
-| `FS-12` | cross-session diagnosis | derived receipt/projection missing with authoritative records intact | normal closure/late-stage routing remains valid; projection regenerates without truth mutation | `<=2` |
+| `FS-12` | cross-session diagnosis | derived receipt/projection missing with authoritative records intact | normal closure/late-stage routing remains valid; projection regenerates without truth mutation | `<=3` |
 
 ## Coverage Map
 
-- `FS-01`: `tests/workflow_runtime.rs`, `tests/workflow_shell_smoke.rs`
-- `FS-02`: `tests/workflow_runtime_final_review.rs`, `tests/workflow_entry_shell_smoke.rs`
-- `FS-03`: `tests/workflow_runtime.rs`, `tests/plan_execution.rs`
-- `FS-04`: `tests/workflow_runtime.rs`, `tests/plan_execution.rs`
-- `FS-05`: `tests/plan_execution.rs`, `tests/contracts_execution_runtime_boundaries.rs`
-- `FS-06`: `tests/workflow_shell_smoke.rs`
-- `FS-07`: `tests/workflow_runtime.rs`, `tests/workflow_shell_smoke.rs`
-- `FS-08`: `tests/workflow_runtime.rs`, `tests/plan_execution.rs`
-- `FS-09`: `tests/workflow_runtime.rs`, `tests/workflow_entry_shell_smoke.rs`
-- `FS-10`: `tests/plan_execution.rs`, `tests/workflow_shell_smoke.rs`
-- `FS-11`: `tests/workflow_runtime_final_review.rs`, `tests/plan_execution_final_review.rs`
-- `FS-12`: `tests/plan_execution.rs`, `tests/plan_execution_final_review.rs`
+- `FS-01`:
+  - `tests/workflow_runtime.rs::runtime_remediation_fs01_shared_route_parity_for_missing_current_closure`
+- `FS-02`:
+  - `tests/workflow_runtime_final_review.rs::fs02_late_stage_drift_routes_consistently_across_operator_and_status`
+  - `tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget`
+- `FS-03`:
+  - `tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked`
+  - `tests/plan_execution.rs::runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch`
+  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli`
+- `FS-04`:
+  - `tests/workflow_runtime.rs::runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator`
+  - `tests/workflow_runtime.rs::runtime_remediation_fs04_repair_returns_route_consumed_by_operator`
+  - `tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest`
+  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli`
+- `FS-05`:
+  - `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
+  - `tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
+  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases`
+- `FS-06`:
+  - `tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity`
+- `FS-07`:
+  - `tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked`
+  - `tests/execution_query.rs::runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked`
+  - `tests/workflow_shell_smoke.rs::fs07_task_review_dispatch_route_parity_in_compiled_cli_surfaces`
+- `FS-08`:
+  - `tests/workflow_runtime.rs::runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker`
+  - `tests/workflow_runtime.rs::runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker`
+  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli`
+- `FS-09`:
+  - `tests/workflow_runtime.rs::runtime_remediation_fs09_repair_exposes_next_blocker_immediately`
+  - `tests/workflow_entry_shell_smoke.rs::fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli`
+- `FS-10`:
+  - `tests/workflow_runtime.rs::runtime_remediation_fs10_stale_follow_up_is_ignored_when_truth_is_current`
+  - `tests/workflow_shell_smoke.rs::prerelease_branch_closure_refresh_ignores_stale_execution_reentry_follow_up`
+- `FS-11`:
+  - `tests/workflow_runtime_final_review.rs::fs11_document_release_precedes_final_review_after_release_truth_stales`
+  - `tests/plan_execution_final_review.rs::fs11_status_routes_release_readiness_before_final_review_when_release_state_stales`
+  - `tests/plan_execution_final_review.rs::fs11_gate_finish_rejects_final_review_release_binding_mismatch`
+- `FS-12`:
+  - `tests/plan_execution.rs::rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projection_is_missing`
+  - `tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered`
+  - `tests/plan_execution_final_review.rs::fs12_missing_final_review_projection_regenerates_without_truth_mutation`
+
+## Function-Level Traceability
+
+- `FS-01`
+  - Shared runtime: `tests/workflow_runtime.rs::runtime_remediation_fs01_shared_route_parity_for_missing_current_closure`
+  - Compiled CLI parity: `tests/workflow_shell_smoke.rs::compiled_cli_route_parity_probe_for_late_stage_refresh_fixture`
+- `FS-02`
+  - Shared runtime: `tests/workflow_runtime_final_review.rs::fs02_late_stage_drift_routes_consistently_across_operator_and_status`
+  - Compiled CLI parity: `tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget`
+- `FS-03`
+  - Shared runtime routing: `tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked`
+  - Compiled CLI mutation acceptance/mismatch: `tests/plan_execution.rs::runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch`
+  - Compiled CLI task-boundary target coherence: `tests/workflow_shell_smoke.rs::plan_execution_record_review_dispatch_prefers_task_boundary_target_over_interrupted_note_state`
+  - Direct-vs-compiled CLI boundary parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli`
+- `FS-04`
+  - Shared runtime repair blocker exposure: `tests/workflow_runtime.rs::runtime_remediation_fs04_repair_returns_route_consumed_by_operator`
+  - Compiled CLI repair parity: `tests/workflow_runtime.rs::runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator`
+  - Authoritative digest invariant: `tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest`
+  - Direct-vs-compiled CLI repair-route parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli`
+- `FS-05`
+  - Plan-execution no-mutation invariants: `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
+  - Compatibility alias no-mutation invariant: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases`
+- `FS-06`
+  - Helper vs compiled CLI parity lock: `tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity`
+- `FS-07`
+  - Shared runtime blocked-task routing contract: `tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked`
+  - Query-surface blocked-task routing parity: `tests/execution_query.rs::runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked`
+  - Compiled CLI route parity across surfaces: `tests/workflow_shell_smoke.rs::fs07_task_review_dispatch_route_parity_in_compiled_cli_surfaces`
+- `FS-08`
+  - Shared runtime stale-blocker visibility: `tests/workflow_runtime.rs::runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker`
+  - Compiled CLI stale-blocker visibility: `tests/workflow_runtime.rs::runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker`
+  - Direct-vs-compiled CLI stale-blocker parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli`
+- `FS-09`
+  - Shared runtime post-repair blocker exposure: `tests/workflow_runtime.rs::runtime_remediation_fs09_repair_exposes_next_blocker_immediately`
+  - Compiled CLI post-repair blocker exposure: `tests/workflow_entry_shell_smoke.rs::fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli`
+- `FS-10`
+  - Shared runtime stale-follow-up suppression: `tests/workflow_runtime.rs::runtime_remediation_fs10_stale_follow_up_is_ignored_when_truth_is_current`
+  - Compiled CLI stale-follow-up suppression: `tests/workflow_shell_smoke.rs::prerelease_branch_closure_refresh_ignores_stale_execution_reentry_follow_up`
+- `FS-11`
+  - Shared runtime precedence: `tests/workflow_runtime_final_review.rs::fs11_document_release_precedes_final_review_after_release_truth_stales`
+  - Compiled CLI precedence: `tests/plan_execution_final_review.rs::fs11_status_routes_release_readiness_before_final_review_when_release_state_stales`
+- `FS-12`
+  - Plan-execution projection regeneration invariants: `tests/plan_execution.rs::rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projection_is_missing`
+  - Final-review projection regeneration invariants: `tests/plan_execution_final_review.rs::fs12_missing_final_review_projection_regenerates_without_truth_mutation`
+
 - Task 12 command-budget gates (compiled CLI):
   - `task_close_happy_path_runtime_management_budget_is_capped` (`tests/workflow_shell_smoke.rs`) `<=3`
   - `reentry_recovery_runtime_management_budget_is_capped` (`tests/workflow_shell_smoke.rs`) `<=2`

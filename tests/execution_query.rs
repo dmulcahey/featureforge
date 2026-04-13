@@ -424,7 +424,10 @@ fn query_boundary_reports_empty_review_state_before_execution_starts() {
 
     let runtime = execution_runtime(repo, state);
     let plan = PathBuf::from(PLAN_REL);
-    let status_args = StatusArgs { plan: plan.clone() };
+    let status_args = StatusArgs {
+        plan: plan.clone(),
+        external_review_result_ready: false,
+    };
 
     let review_state = query_review_state(&runtime, &status_args)
         .expect("review-state query should succeed before execution starts");
@@ -555,24 +558,14 @@ fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
             "--task",
             "1",
         ],
-        "record-review-dispatch for execution-query recording-context fixture",
+        "execution query routing recording-context fixture dispatch",
     );
-    assert_eq!(
-        dispatch["allowed"],
-        Value::Bool(true),
-        "task review dispatch should succeed for recording-context fixture",
-    );
-    assert!(
-        dispatch["dispatch_id"]
-            .as_str()
-            .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty()),
-        "task review dispatch should return a non-empty dispatch_id",
-    );
+    assert_eq!(dispatch["allowed"], Value::Bool(true));
 
     let plan = PathBuf::from(PLAN_REL);
     let runtime = execution_runtime(repo, state);
     let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), true)
-        .expect("routing query should succeed for task-closure recording-ready state");
+        .expect("routing query should succeed for intent-level task-closure recording-ready state");
     let operator = run_workflow_operator_json(
         repo,
         state,
@@ -600,6 +593,110 @@ fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
             .as_deref()
             .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty()),
         "task_closure_recording_ready should carry a non-empty dispatch_id",
+    );
+    assert_routing_parity_with_operator_json(&routing, &operator);
+}
+
+#[test]
+fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked() {
+    let (repo_dir, state_dir) = init_repo("execution-query-fs07-task-review-dispatch-blocked");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+
+    let plan = PathBuf::from(PLAN_REL);
+    let runtime = execution_runtime(repo, state);
+    let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), false)
+        .expect("routing query should succeed for task-review-dispatch blocked fixture");
+    let operator = run_workflow_operator_json(
+        repo,
+        state,
+        PLAN_REL,
+        false,
+        "workflow operator json for FS-07 task-review-dispatch blocked fixture",
+    );
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "plan execution status for FS-07 task-review-dispatch blocked fixture",
+    );
+    let review_state = query_review_state(
+        &runtime,
+        &StatusArgs {
+            plan: plan.clone(),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("review-state query should succeed for FS-07 task-review-dispatch blocked fixture");
+
+    assert_eq!(routing.phase_detail, "task_review_dispatch_required");
+    assert_routing_parity_with_operator_json(&routing, &operator);
+    assert_eq!(
+        status["phase_detail"], operator["phase_detail"],
+        "status and operator should agree on FS-07 task-review-dispatch routing detail"
+    );
+    assert_eq!(
+        status["review_state_status"], operator["review_state_status"],
+        "status and operator should agree on FS-07 review-state routing status"
+    );
+    assert!(
+        review_state.current_branch_closure.is_none(),
+        "FS-07 blocked-task fixture should not expose a current branch closure in query review-state snapshot"
+    );
+}
+
+#[test]
+fn routing_external_review_ready_still_requires_task_dispatch_lineage() {
+    let (repo_dir, state_dir) = init_repo("execution-query-task-dispatch-lineage-required");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+
+    let plan = PathBuf::from(PLAN_REL);
+    let runtime = execution_runtime(repo, state);
+    let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), true)
+        .expect("routing query should succeed for missing task-dispatch-lineage fixture");
+    let operator = run_workflow_operator_json(
+        repo,
+        state,
+        PLAN_REL,
+        true,
+        "workflow operator json for missing task-dispatch-lineage fixture",
+    );
+
+    assert_eq!(
+        routing.phase_detail, "task_review_dispatch_required",
+        "external review readiness must not bypass task dispatch lineage requirements",
+    );
+    assert_eq!(
+        routing.next_action, "bind task review dispatch lineage",
+        "external review readiness without task dispatch lineage should surface an explicit dispatch-lineage bind action",
+    );
+    assert_eq!(
+        routing.recommended_command.as_deref(),
+        Some(
+            "featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md --scope task --task 1"
+        ),
+        "external review readiness without task dispatch lineage should expose an executable compatibility bind command",
+    );
+    assert!(
+        routing.recording_context.is_none(),
+        "dispatch-required routing should not expose recording_context ids"
+    );
+    assert!(
+        routing
+            .blocking_reason_codes
+            .iter()
+            .any(|code| code == "prior_task_review_dispatch_missing"),
+        "dispatch-required routing should preserve the specific task-boundary dispatch blocker reason code",
+    );
+    assert!(
+        routing
+            .blocking_reason_codes
+            .iter()
+            .any(|code| code == "task_review_dispatch_required"),
+        "dispatch-required routing should preserve the task dispatch required blocker class",
     );
     assert_routing_parity_with_operator_json(&routing, &operator);
 }

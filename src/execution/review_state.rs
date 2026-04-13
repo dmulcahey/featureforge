@@ -14,8 +14,8 @@ use crate::execution::current_truth::{
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
 use crate::execution::leases::load_status_authoritative_overlay_checked;
 use crate::execution::query::{
-    ExecutionRoutingState, ReviewStateBranchClosure, ReviewStateTaskClosure,
-    query_review_state, query_workflow_routing_state_for_runtime, required_follow_up_from_routing,
+    ExecutionRoutingState, ReviewStateBranchClosure, ReviewStateTaskClosure, query_review_state,
+    query_workflow_routing_state_for_runtime, required_follow_up_from_routing,
 };
 use crate::execution::recording::{
     clear_current_branch_closure_for_structural_repair,
@@ -30,8 +30,8 @@ use crate::execution::state::{
     ExecutionRuntime, current_branch_closure_structural_review_state_reason,
     execution_reentry_current_task_closure_targets, execution_reentry_current_task_closure_tasks,
     load_execution_context_for_exact_plan, load_execution_read_scope,
-    resolve_exact_execution_command_from_context, task_scope_structural_review_state_reason,
-    task_scope_review_state_repair_reason,
+    resolve_exact_execution_command_from_context, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason,
 };
 use crate::execution::transitions::load_authoritative_transition_state_relaxed;
 
@@ -423,7 +423,9 @@ pub fn repair_review_state(
     let should_attempt_overlay_restore = !snapshot.missing_derived_overlays.is_empty()
         || task_scope_structural_reason.is_some()
         || branch_scope_structural_reason.is_some();
-    if should_attempt_overlay_restore && load_authoritative_transition_state_relaxed(&context)?.is_some() {
+    if should_attempt_overlay_restore
+        && load_authoritative_transition_state_relaxed(&context)?.is_some()
+    {
         let restored = restore_review_state_projection_overlays(runtime, &context)?;
         if !restored.is_empty() {
             for action in restored {
@@ -532,8 +534,9 @@ pub fn repair_review_state(
         && actions_performed
             .iter()
             .all(|action| action.starts_with("restored_"));
-    let task_scope_stale_reason_present =
-        task_scope_stale_review_state_reason_present(task_scope_review_state_repair_reason(&status));
+    let task_scope_stale_reason_present = task_scope_stale_review_state_reason_present(
+        task_scope_review_state_repair_reason(&status),
+    );
     let reconciled_overlay_restore_now_current = restored_overlay_actions_only
         && snapshot.missing_derived_overlays.is_empty()
         && snapshot.stale_unreviewed_closures.is_empty()
@@ -548,7 +551,9 @@ pub fn repair_review_state(
     {
         required_follow_up = None;
     }
-    persist_review_state_repair_follow_up(runtime, &context, required_follow_up.as_deref())?;
+    let persisted_required_follow_up =
+        normalize_persisted_review_state_follow_up(required_follow_up.as_deref());
+    persist_review_state_repair_follow_up(runtime, &context, persisted_required_follow_up)?;
 
     let fallback_command = routing
         .as_ref()
@@ -561,7 +566,9 @@ pub fn repair_review_state(
         fallback_command,
     );
 
-    if let Some(required_follow_up) = required_follow_up {
+    let public_required_follow_up = normalize_public_required_follow_up(required_follow_up.as_deref())
+        .map(str::to_owned);
+    if let Some(required_follow_up) = public_required_follow_up {
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -842,7 +849,7 @@ fn repair_follow_up_trace_summary(
     branch_scope_structural_reason: Option<&str>,
 ) -> String {
     match required_follow_up {
-        "record_branch_closure" => String::from(
+        "record_branch_closure" | "advance_late_stage" => String::from(
             "Repair review state reconciled projections and refreshed routing; branch closure must be re-recorded before late-stage progression can continue.",
         ),
         "execution_reentry" => {
@@ -878,7 +885,9 @@ fn repair_follow_up_trace_summary(
             "Repair review state reconciled projections and refreshed routing; planning reentry is required before continuing.",
         ),
         _ => {
-            format!("Repair review state reconciled projections and refreshed routing; required follow-up is {required_follow_up}.")
+            format!(
+                "Repair review state reconciled projections and refreshed routing; required follow-up is {required_follow_up}."
+            )
         }
     }
 }
@@ -930,6 +939,20 @@ fn recommended_follow_up_command(
         return routing.recommended_command.unwrap_or(fallback);
     }
     fallback
+}
+
+fn normalize_public_required_follow_up(required_follow_up: Option<&str>) -> Option<&str> {
+    match required_follow_up {
+        Some("record_branch_closure") => Some("advance_late_stage"),
+        other => other,
+    }
+}
+
+fn normalize_persisted_review_state_follow_up(required_follow_up: Option<&str>) -> Option<&str> {
+    match required_follow_up {
+        Some("advance_late_stage") => Some("record_branch_closure"),
+        other => other,
+    }
 }
 
 fn recommended_operator_command(args: &StatusArgs) -> String {

@@ -59,20 +59,20 @@ Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-re
 - `using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.
 - `featureforge:project-memory` is an opt-in supportive memory skill for `docs/project_notes/*`; use it only for explicit memory-oriented requests or later follow-up updates, not as a default workflow stage or gate
 - generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows), and that runtime resolves the active root through `featureforge repo runtime-root --path` before update checks or contributor-mode reads
-- the generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; `featureforge workflow status --refresh` is only for approved-plan discovery when the path is still unknown
+- the generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; use `featureforge workflow status --refresh` only to discover the approved plan path, then route with workflow/operator
 - `featureforge plan contract` compiles approved markdown into exact execution and review inputs
-- `featureforge plan execution recommend --plan <approved-plan-path>` selects execution topology and mode before work starts
-- task closure is task-boundary gated: once dedicated-independent fresh-context review loops and task verification are complete, route through `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `featureforge plan execution close-current-task --plan <approved-plan-path> ...` as the authoritative closure command before next-task advancement; treat `task_review_dispatch_required` as a compatibility/debug lane and keep normal progression on operator-led intent-level commands
+- workflow/operator and approved-plan execution metadata select the execution owner skill before work starts; do not route from status-only compatibility fields
+- task closure is task-boundary gated: once dedicated-independent fresh-context review loops and task verification are complete, route through `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `featureforge plan execution close-current-task --plan <approved-plan-path> ...` as the authoritative closure command before next-task advancement; treat `task_review_dispatch_required` as a compatibility/debug lane and keep normal progression on operator-led intent-level commands, but if `task_review_dispatch_required` persists without `recording_context.dispatch_id`, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <blocking_task>` once and rerun operator; if `final_review_dispatch_required` persists without `recording_context.dispatch_id`, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review` once and rerun operator
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is pre-authorized and does not require per-dispatch user-consent prompts
 - `featureforge workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `featureforge plan execution status --plan <approved-plan-path>` only for deeper diagnostics
 - `featureforge plan execution status --plan <approved-plan-path>` surfaces runtime strategy checkpoint state (`strategy_state`, `strategy_checkpoint_kind`, `last_strategy_checkpoint_fingerprint`, `strategy_reset_required`)
 - for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`
-- compatibility/debug command boundaries (`gate-review`, `gate-finish`, low-level `record-*`) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`
+- compatibility/debug command boundaries (low-level `record-*` and related compatibility commands) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`
 
 Runtime strategy checkpointing is execution-owned, not planning-owned. The runtime records:
 
 - `initial_dispatch` before repo-writing execution starts
-- `review_remediation` for reviewable `record-review-dispatch` calls and remediation reopen events
+- `review_remediation` when reviewable dispatch lineage enters remediation and when remediation reopens execution work
 - `cycle_break` automatically when the same task reaches three reviewable dispatch/remediation cycles
 
 This does not send the workflow back to planning stages; it keeps remediation in execution while preserving approved plan scope.

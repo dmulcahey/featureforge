@@ -443,7 +443,6 @@ pub(crate) struct CurrentReleaseReadinessRecord {
 }
 
 pub(crate) struct CurrentFinalReviewRecord {
-    pub(crate) record_id: String,
     pub(crate) record_status: String,
     pub(crate) branch_closure_id: String,
     pub(crate) release_readiness_record_id: Option<String>,
@@ -465,7 +464,6 @@ pub(crate) struct CurrentFinalReviewRecord {
 }
 
 pub(crate) struct CurrentBrowserQaRecord {
-    pub(crate) record_id: String,
     pub(crate) record_status: String,
     pub(crate) branch_closure_id: String,
     pub(crate) final_review_record_id: Option<String>,
@@ -2046,6 +2044,15 @@ impl AuthoritativeTransitionState {
         {
             return Ok(false);
         }
+        let Some(current_release_readiness_record_id) = self.current_release_readiness_record_id()
+        else {
+            return Ok(false);
+        };
+        if json_string(&payload, "release_readiness_record_id").as_deref()
+            != Some(current_release_readiness_record_id.as_str())
+        {
+            return Ok(false);
+        }
         let dispatch_id = json_string(&payload, "dispatch_id").ok_or_else(|| {
             JsonFailure::new(
                 FailureClass::MalformedExecutionState,
@@ -2170,6 +2177,14 @@ impl AuthoritativeTransitionState {
         if json_string(&self.state_payload, "current_branch_closure_id")
             .as_deref()
             .is_some_and(|current| current != branch_closure_id)
+        {
+            return Ok(false);
+        }
+        let Some(current_final_review_record_id) = self.current_final_review_record_id() else {
+            return Ok(false);
+        };
+        if json_string(&payload, "final_review_record_id").as_deref()
+            != Some(current_final_review_record_id.as_str())
         {
             return Ok(false);
         }
@@ -2410,11 +2425,23 @@ impl AuthoritativeTransitionState {
                 String::from("current_final_review_branch_closure_id"),
                 Value::Null,
             );
-            root.insert(String::from("current_final_review_dispatch_id"), Value::Null);
-            root.insert(String::from("current_final_review_reviewer_source"), Value::Null);
-            root.insert(String::from("current_final_review_reviewer_id"), Value::Null);
+            root.insert(
+                String::from("current_final_review_dispatch_id"),
+                Value::Null,
+            );
+            root.insert(
+                String::from("current_final_review_reviewer_source"),
+                Value::Null,
+            );
+            root.insert(
+                String::from("current_final_review_reviewer_id"),
+                Value::Null,
+            );
             root.insert(String::from("current_final_review_result"), Value::Null);
-            root.insert(String::from("current_final_review_summary_hash"), Value::Null);
+            root.insert(
+                String::from("current_final_review_summary_hash"),
+                Value::Null,
+            );
             root.insert(String::from("current_final_review_record_id"), Value::Null);
             root.insert(String::from("final_review_state"), Value::Null);
             root.insert(
@@ -2434,7 +2461,8 @@ impl AuthoritativeTransitionState {
         }
         self.dirty = true;
         if release_record_changed {
-            if let Some(previous_final_review_record_id) = previous_final_review_record_id.as_deref()
+            if let Some(previous_final_review_record_id) =
+                previous_final_review_record_id.as_deref()
             {
                 let records = self.final_review_record_history_mut()?;
                 mark_record_status(records, previous_final_review_record_id, "historical");
@@ -3066,7 +3094,6 @@ impl AuthoritativeTransitionState {
     ) -> Option<CurrentFinalReviewRecord> {
         let payload = self.record_payload_by_id("final_review_record_history", record_id)?;
         Some(CurrentFinalReviewRecord {
-            record_id: json_string(&payload, "record_id")?,
             record_status: json_string(&payload, "record_status")?,
             branch_closure_id: json_string(&payload, "branch_closure_id")?,
             release_readiness_record_id: json_string(&payload, "release_readiness_record_id"),
@@ -3331,15 +3358,8 @@ impl AuthoritativeTransitionState {
     pub(crate) fn recoverable_current_branch_closure_identity(
         &self,
     ) -> Option<CurrentBranchClosureIdentity> {
-        if let Some(branch_closure_id) =
-            json_string(&self.state_payload, "current_branch_closure_id")
-            && let Some(record) = self.branch_closure_record(&branch_closure_id)
-        {
-            return Some(CurrentBranchClosureIdentity {
-                branch_closure_id,
-                reviewed_state_id: record.reviewed_state_id,
-                contract_identity: record.contract_identity,
-            });
+        if let Some(identity) = self.bound_current_branch_closure_identity() {
+            return Some(identity);
         }
 
         let records = self
@@ -3360,6 +3380,22 @@ impl AuthoritativeTransitionState {
             return None;
         }
         Some(current)
+    }
+
+    pub(crate) fn bound_current_branch_closure_identity(
+        &self,
+    ) -> Option<CurrentBranchClosureIdentity> {
+        if let Some(branch_closure_id) =
+            json_string(&self.state_payload, "current_branch_closure_id")
+            && let Some(record) = self.branch_closure_record(&branch_closure_id)
+        {
+            return Some(CurrentBranchClosureIdentity {
+                branch_closure_id,
+                reviewed_state_id: record.reviewed_state_id,
+                contract_identity: record.contract_identity,
+            });
+        }
+        None
     }
 
     pub(crate) fn current_branch_closure_overlay_id(&self) -> Option<String> {
@@ -3549,7 +3585,6 @@ impl AuthoritativeTransitionState {
     ) -> Option<CurrentBrowserQaRecord> {
         let payload = self.record_payload_by_id("browser_qa_record_history", record_id)?;
         Some(CurrentBrowserQaRecord {
-            record_id: json_string(&payload, "record_id")?,
             record_status: json_string(&payload, "record_status")?,
             branch_closure_id: json_string(&payload, "branch_closure_id")?,
             final_review_record_id: json_string(&payload, "final_review_record_id"),
@@ -3557,7 +3592,10 @@ impl AuthoritativeTransitionState {
             source_plan_revision: json_u32(&payload, "source_plan_revision")?,
             repo_slug: json_string(&payload, "repo_slug")?,
             branch_name: json_string(&payload, "branch_name")?,
-            base_branch: json_string(&payload, "base_branch")?,
+            // Preserve explicit-but-empty bindings so gate logic can emit
+            // base-branch unresolved reason codes instead of collapsing to
+            // a generic missing-record failure.
+            base_branch: json_string_allow_empty(&payload, "base_branch")?,
             reviewed_state_id: json_string(&payload, "reviewed_state_id")?,
             result: json_string(&payload, "result")?,
             browser_qa_fingerprint: json_string(&payload, "browser_qa_fingerprint"),
@@ -3591,6 +3629,17 @@ impl AuthoritativeTransitionState {
             && json_string(&payload, "record_status").as_deref() == Some("current")
         {
             return Some((record_id.to_owned(), payload));
+        }
+
+        // Late-stage milestone identity must be explicitly persisted via current_*_record_id
+        // bindings. Do not infer "current" from history for these surfaces.
+        if matches!(
+            current_id_key,
+            "current_release_readiness_record_id"
+                | "current_final_review_record_id"
+                | "current_qa_record_id"
+        ) {
+            return None;
         }
 
         let mut current_records = history
@@ -4125,6 +4174,14 @@ fn json_string(payload: &Value, key: &str) -> Option<String> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn json_string_allow_empty(payload: &Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
         .map(str::to_owned)
 }
 
@@ -4956,6 +5013,96 @@ mod tests {
         assert_eq!(
             authoritative_state.state_payload["current_qa_record_id"],
             records[1]["record_id"]
+        );
+    }
+
+    #[test]
+    fn restore_current_final_review_overlay_requires_matching_release_dependency() {
+        let mut authoritative_state = transition_state_with_milestone_histories();
+        authoritative_state.state_payload["current_release_readiness_record_id"] =
+            Value::from("release-record-current");
+        authoritative_state.state_payload["current_final_review_record_id"] =
+            Value::from("final-review-record-current");
+        authoritative_state.state_payload["release_readiness_record_history"] = json!({
+            "release-record-current": {
+                "record_id": "release-record-current",
+                "record_status": "current",
+                "branch_closure_id": "branch-closure-current",
+                "reviewed_state_id": "git_tree:current",
+                "result": "ready",
+                "summary_hash": "release-summary-hash"
+            }
+        });
+        authoritative_state.state_payload["final_review_record_history"] = json!({
+            "final-review-record-current": {
+                "record_id": "final-review-record-current",
+                "record_status": "current",
+                "branch_closure_id": "branch-closure-current",
+                "reviewed_state_id": "git_tree:current",
+                "release_readiness_record_id": "release-record-stale",
+                "dispatch_id": "dispatch-final",
+                "reviewer_source": "fresh-context-subagent",
+                "reviewer_id": "reviewer",
+                "result": "pass",
+                "summary_hash": "final-summary-hash"
+            }
+        });
+
+        let restored = authoritative_state
+            .restore_current_final_review_overlay_fields()
+            .expect("overlay restore should not error on dependency mismatch");
+        assert!(
+            !restored,
+            "final-review overlay restore must fail closed when release dependency is mismatched"
+        );
+        assert!(
+            !authoritative_state.dirty,
+            "mismatched dependency should not mutate derived final-review overlay state"
+        );
+    }
+
+    #[test]
+    fn restore_current_browser_qa_overlay_requires_matching_final_review_dependency() {
+        let mut authoritative_state = transition_state_with_milestone_histories();
+        authoritative_state.state_payload["current_final_review_record_id"] =
+            Value::from("final-review-record-current");
+        authoritative_state.state_payload["current_qa_record_id"] = Value::from("qa-record-current");
+        authoritative_state.state_payload["final_review_record_history"] = json!({
+            "final-review-record-current": {
+                "record_id": "final-review-record-current",
+                "record_status": "current",
+                "branch_closure_id": "branch-closure-current",
+                "reviewed_state_id": "git_tree:current",
+                "release_readiness_record_id": "release-record-current",
+                "dispatch_id": "dispatch-final",
+                "reviewer_source": "fresh-context-subagent",
+                "reviewer_id": "reviewer",
+                "result": "pass",
+                "summary_hash": "final-summary-hash"
+            }
+        });
+        authoritative_state.state_payload["browser_qa_record_history"] = json!({
+            "qa-record-current": {
+                "record_id": "qa-record-current",
+                "record_status": "current",
+                "branch_closure_id": "branch-closure-current",
+                "reviewed_state_id": "git_tree:current",
+                "final_review_record_id": "final-review-record-stale",
+                "result": "pass",
+                "summary_hash": "qa-summary-hash"
+            }
+        });
+
+        let restored = authoritative_state
+            .restore_current_browser_qa_overlay_fields()
+            .expect("overlay restore should not error on dependency mismatch");
+        assert!(
+            !restored,
+            "browser-QA overlay restore must fail closed when final-review dependency is mismatched"
+        );
+        assert!(
+            !authoritative_state.dirty,
+            "mismatched dependency should not mutate derived QA overlay state"
         );
     }
 

@@ -70,7 +70,7 @@ Planning chain in plain language:
 
 `brainstorming -> plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> implementation`
 
-The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; otherwise it uses `featureforge workflow status --refresh` only to discover artifact-state status and approved-plan routing context.
+The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; use `featureforge workflow status --refresh` only to discover the approved plan path, then route with workflow/operator.
 
 Execution starts from an engineering-approved plan and the exact approved plan path.
 Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command (`begin`, `close-current-task`, `repair-review-state`, `advance-late-stage`) for the current phase.
@@ -86,7 +86,8 @@ After `repair-review-state`, treat that command's own `recommended_command` as t
 Task closure is enforced at task boundaries, not only at the end of the full plan:
 
 - after implementation steps complete and review plus verification are ready, run `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `close-current-task` as the authoritative task-closure command
-- if workflow/operator reports `task_review_dispatch_required`, request external review and rerun `workflow operator --external-review-result-ready`; keep normal progression on intent-level commands
+- if workflow/operator reports `task_review_dispatch_required`, request external review and rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`; if that reroute still lacks dispatch lineage, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <blocking_task>` once, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`, then continue intent-level commands
+- if workflow/operator reports `final_review_dispatch_required`, request external final review and rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`; if that reroute still lacks dispatch lineage, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review` once, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`, then continue intent-level commands
 - compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
@@ -112,7 +113,7 @@ Completion then flows through (runtime-owned late-stage sequencing keeps `featur
 Execution strategy checkpoints are runtime-owned execution state, not planning-stage transitions.
 
 - `initial_dispatch` is required before repo-writing execution dispatch
-- `review_remediation` is recorded automatically for reviewable `record-review-dispatch` calls and remediation reopen events
+- `review_remediation` is recorded automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work
 - `cycle_break` is recorded automatically when the same task reaches three reviewable dispatch/remediation cycles
 
 The approved plan path/revision remains fixed during execution. Runtime strategy may adjust topology, lane/worktree allocation, and remediation order without sending the workflow back to planning stages.

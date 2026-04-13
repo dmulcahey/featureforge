@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
+use crate::execution::current_truth::current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings;
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, validated_current_branch_closure_identity,
 };
@@ -299,7 +299,8 @@ pub(crate) fn restore_review_state_projection_overlays(
         push_action("restored_task_closure_negative_result_records");
     }
 
-    if let Some(current_identity) = validated_current_branch_closure_identity(context) {
+    let current_branch_identity = validated_current_branch_closure_identity(context);
+    if let Some(current_identity) = current_branch_identity.as_ref() {
         let branch_id_changed = authoritative_state
             .current_branch_closure_overlay_id()
             .as_deref()
@@ -329,15 +330,18 @@ pub(crate) fn restore_review_state_projection_overlays(
             )?;
         }
     }
-
-    let closure_graph = AuthoritativeClosureGraph::from_snapshot(
-        &authoritative_state.closure_history_snapshot(),
-        &ClosureGraphSignals::default(),
+    let late_stage_bindings = shared_current_late_stage_branch_bindings(
+        Some(authoritative_state),
+        current_branch_identity
+            .as_ref()
+            .map(|identity| identity.branch_closure_id.as_str()),
+        current_branch_identity
+            .as_ref()
+            .map(|identity| identity.reviewed_state_id.as_str()),
     );
 
-    let current_release_readiness_record_id = closure_graph
-        .current_release_readiness()
-        .map(|evaluation| evaluation.identity.record_id.clone());
+    let current_release_readiness_record_id =
+        late_stage_bindings.current_release_readiness_record_id.clone();
     if authoritative_state
         .current_release_readiness_record_id()
         .as_deref()
@@ -354,9 +358,7 @@ pub(crate) fn restore_review_state_projection_overlays(
         push_action("restored_current_release_readiness_overlay");
     }
 
-    let current_final_review_record_id = closure_graph
-        .current_final_review()
-        .map(|evaluation| evaluation.identity.record_id.clone());
+    let current_final_review_record_id = late_stage_bindings.current_final_review_record_id.clone();
     if authoritative_state
         .current_final_review_record_id()
         .as_deref()
@@ -372,9 +374,7 @@ pub(crate) fn restore_review_state_projection_overlays(
         push_action("restored_current_final_review_overlay");
     }
 
-    let current_qa_record_id = closure_graph
-        .current_browser_qa()
-        .map(|evaluation| evaluation.identity.record_id.clone());
+    let current_qa_record_id = late_stage_bindings.current_qa_record_id.clone();
     if authoritative_state.current_qa_record_id().as_deref() != current_qa_record_id.as_deref() {
         authoritative_state.set_current_qa_record_id_cache(current_qa_record_id.as_deref())?;
         push_action("restored_current_browser_qa_overlay");

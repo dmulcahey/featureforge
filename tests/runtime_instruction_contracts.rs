@@ -1384,7 +1384,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/document-release/SKILL.md"),
-        "`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: `gate-review`, `gate-finish`, and low-level `record-*` commands are compatibility/debug boundaries, not normal-path commands.",
+        "`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: low-level compatibility/debug commands stay out of the normal-path flow.",
     );
     assert_file_not_contains(root.join("skills/document-release/SKILL.md"), "gh pr view");
     assert_file_not_contains(
@@ -1472,7 +1472,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. Otherwise call `$_FEATUREFORGE_BIN workflow status --refresh` only to discover the current approved `plan_path`, then route through workflow/operator.",
+        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. Otherwise call `$_FEATUREFORGE_BIN workflow status --refresh` only to discover the current approved `plan_path`, then immediately route through workflow/operator. Do not route directly from `workflow status` fields.",
     );
     assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1504,9 +1504,9 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Treat low-level runtime commands (`record-review-dispatch`, `record-branch-closure`, `record-release-readiness`, `record-final-review`, `record-qa`, `rebuild-evidence`, and `explain-review-state`) as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
+        "Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
     );
-    assert_file_contains(
+    assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
         "featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>",
     );
@@ -1520,11 +1520,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Approved spec reviewer: `^\\*\\*Last Reviewed By:\\*\\* plan-ceo-review$`",
+        "Do not re-derive `phase`, `phase_detail`, readiness, or late-stage precedence from markdown headers.",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Approved plan reviewer: `^\\*\\*Last Reviewed By:\\*\\* plan-eng-review$`",
+        "If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.",
     );
     assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1565,7 +1565,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: `gate-review` and `record-review-dispatch` are compatibility/debug command boundaries, not normal intent-level progression commands.",
+        "For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: low-level compatibility/debug dispatch commands are not normal intent-level progression.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1637,7 +1637,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "`review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically for each `record-review-dispatch` command that targets reviewable execution work and when remediation reopens execution work.",
+        "`review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work.",
     );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -1693,7 +1693,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "`review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically for each `record-review-dispatch` command that targets reviewable execution work and when remediation reopens execution work.",
+        "`review_remediation`: required after actionable independent-review findings and before remediation starts. Runtime records it automatically when reviewable dispatch lineage enters remediation and when remediation reopens execution work.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1755,7 +1755,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "If `gate-finish` fails with `qa_requirement_missing_or_invalid`, hand control back to `featureforge workflow record-pivot --plan <path> --reason <reason>` so the approved plan metadata can be corrected before QA or branch completion.",
+        "If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge workflow record-pivot --plan <path> --reason <reason>`; do not guess from test-plan prose.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -1763,7 +1763,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "If approved-plan `QA Requirement` is `required` and `gate-finish` fails with `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.",
+        "If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or late-stage completion commands.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -1805,9 +1805,13 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         "same routing decision as workflow/operator for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command`",
     );
 
-    assert_file_contains(
+    assert_file_not_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
         "featureforge plan execution recommend --plan <approved-plan-path>",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "Present the runtime-selected execution owner skill as the default path with the approved plan path.",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -1899,7 +1903,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-ceo-review/SKILL.md"),
-        "Do not use PR metadata or repo default-branch APIs as a fallback; keep the system audit aligned with `document-release`, `requesting-code-review`, and `gate-finish`.",
+        "Do not use PR metadata or repo default-branch APIs as a fallback; keep the system audit locally derivable from repository state.",
     );
     assert_file_not_contains(
         root.join("skills/plan-ceo-review/SKILL.md"),
@@ -1971,7 +1975,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/qa-only/SKILL.md"),
-        "Do not use PR metadata or repo default-branch APIs as a fallback; keep diff-aware scoping aligned with `document-release`, `requesting-code-review`, and `gate-finish`.",
+        "Do not use PR metadata or repo default-branch APIs as a fallback; keep diff-aware scoping locally derivable from repository state.",
     );
     assert_file_contains(
         root.join("skills/qa-only/SKILL.md"),
@@ -2003,7 +2007,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base aligned with `featureforge:document-release` and `gate-finish`.",
+        "Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base locally derivable from repository state.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -2029,7 +2033,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/requesting-code-review/SKILL.md"),
         "git log --oneline | grep \"Task 1\"",
     );
-    assert_file_contains(
+    assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "git rev-parse HEAD~1",
     );
@@ -2043,7 +2047,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.",
+        "When diagnostic status is required, if any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -2107,7 +2111,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
-        "same locally derivable base-branch contract as `document-release` and `gate-finish`",
+        "runtime-provided base-branch context from `document-release` and release-lineage routing",
     );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
@@ -2144,7 +2148,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
-        "compatibility/debug command boundaries (`gate-review`, `gate-finish`, low-level `record-*`) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`",
+        "compatibility/debug command boundaries (low-level `record-*` and related compatibility commands) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`",
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
@@ -2156,7 +2160,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/README.copilot.md"),
-        "compatibility/debug command boundaries (`gate-review`, `gate-finish`, low-level `record-*`) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`",
+        "compatibility/debug command boundaries (low-level `record-*` and related compatibility commands) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`",
     );
     assert_file_not_contains(
         root.join("schemas/workflow-operator.schema.json"),
@@ -2184,7 +2188,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("review/late-stage-precedence-reference.md"),
-        "`gate-review` and `gate-finish` are compatibility/debug boundaries, not normal-path commands.",
+        "Legacy finish-gate compatibility commands are compatibility/debug boundaries, not normal-path commands.",
     );
     assert_file_contains(
         root.join("review/late-stage-precedence-reference.md"),

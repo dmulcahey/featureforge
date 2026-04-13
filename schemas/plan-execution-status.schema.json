@@ -92,7 +92,9 @@
         "close current task",
         "continue execution",
         "request task review",
+        "bind task review dispatch lineage",
         "request final review",
+        "bind final review dispatch lineage",
         "execution reentry required",
         "hand off",
         "pivot / return to planning",
@@ -225,7 +227,7 @@
         "execution_reentry",
         "repair_review_state",
         "request_external_review",
-        "record_branch_closure",
+        "advance_late_stage",
         "resolve_release_blocker",
         "record_handoff",
         "record_pivot"

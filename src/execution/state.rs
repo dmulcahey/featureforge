@@ -41,6 +41,7 @@ use crate::execution::current_truth::{
     current_repo_tracked_tree_sha,
     current_task_negative_result_task as shared_current_task_negative_result_task,
     current_task_review_dispatch_id as shared_current_task_review_dispatch_id,
+    intent_level_command_template, IntentLevelCommandTemplateInputs,
     execution_state_has_open_steps as shared_execution_state_has_open_steps,
     final_review_dispatch_still_current as shared_final_review_dispatch_still_current,
     finish_requires_test_plan_refresh, handoff_decision_scope as shared_handoff_decision_scope,
@@ -60,6 +61,7 @@ use crate::execution::current_truth::{
     public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
     public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
     qa_requirement_policy_invalid as shared_qa_requirement_policy_invalid,
+    reviewer_source_is_valid as shared_reviewer_source_is_valid,
     resolve_follow_up_override as resolve_shared_follow_up_override,
     task_closure_contributes_to_branch_surface, task_review_dispatch_task,
     task_review_result_pending_task,
@@ -85,12 +87,12 @@ use crate::execution::leases::{
     preflight_requires_authoritative_mutation_recovery, preflight_write_authority_state,
     validate_worktree_lease,
 };
+use crate::execution::observability::{
+    REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
+};
 use crate::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state_for_runtime,
     query_workflow_routing_state_for_runtime_with_read_scope, required_follow_up_from_routing,
-};
-use crate::execution::observability::{
-    REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
 };
 use crate::execution::topology::{
     RecommendOutput, default_preflight_chunking_strategy, default_preflight_evaluator_policy,
@@ -100,8 +102,8 @@ use crate::execution::topology::{
 };
 use crate::execution::transitions::{
     AuthoritativeTransitionState, PersistedReviewStateFieldClass, claim_step_write_authority,
-    classify_review_state_field,
-    load_authoritative_transition_state, load_authoritative_transition_state_relaxed,
+    classify_review_state_field, load_authoritative_transition_state,
+    load_authoritative_transition_state_relaxed,
 };
 use crate::git::{
     canonicalize_repo_root_path, commit_object_fingerprint, derive_repo_slug,
@@ -188,7 +190,7 @@ enum RequiredFollowUpSchema {
     ExecutionReentry,
     RepairReviewState,
     RequestExternalReview,
-    RecordBranchClosure,
+    AdvanceLateStage,
     ResolveReleaseBlocker,
     RecordHandoff,
     RecordPivot,
@@ -206,8 +208,12 @@ enum NextActionSchema {
     ContinueExecution,
     #[serde(rename = "request task review")]
     RequestTaskReview,
+    #[serde(rename = "bind task review dispatch lineage")]
+    BindTaskReviewDispatchLineage,
     #[serde(rename = "request final review")]
     RequestFinalReview,
+    #[serde(rename = "bind final review dispatch lineage")]
+    BindFinalReviewDispatchLineage,
     #[serde(rename = "execution reentry required")]
     ExecutionReentryRequired,
     #[serde(rename = "hand off")]
@@ -833,9 +839,15 @@ impl ExecutionRuntime {
         let routing = query_workflow_routing_state_for_runtime_with_read_scope(
             self,
             &read_scope,
-            false,
+            args.external_review_result_ready,
         )?;
         project_routing_decision_onto_status(&mut read_scope.status, &routing);
+        let gate_finish = routing
+            .gate_finish
+            .clone()
+            .unwrap_or_else(|| gate_finish_from_context(&read_scope.context));
+        read_scope.status.blocking_records =
+            compute_status_blocking_records(&read_scope.context, &read_scope.status, &gate_finish)?;
         require_public_exact_execution_command(&read_scope.context, &read_scope.status)?;
         Ok(read_scope.status)
     }
@@ -1242,11 +1254,15 @@ fn project_routing_decision_onto_status(
     status.phase = Some(routing.phase.clone());
     status.phase_detail = routing.phase_detail.clone();
     status.review_state_status = routing.review_state_status.clone();
-    status.recording_context = routing.recording_context.as_ref().map(|context| PublicRecordingContext {
-        task_number: context.task_number,
-        dispatch_id: context.dispatch_id.clone(),
-        branch_closure_id: context.branch_closure_id.clone(),
-    });
+    status.recording_context =
+        routing
+            .recording_context
+            .as_ref()
+            .map(|context| PublicRecordingContext {
+                task_number: context.task_number,
+                dispatch_id: context.dispatch_id.clone(),
+                branch_closure_id: context.branch_closure_id.clone(),
+            });
     status.execution_command_context =
         routing
             .execution_command_context
@@ -1290,7 +1306,7 @@ fn current_branch_closure_missing_gate_follow_up(
         return "record_branch_closure";
     }
     match required_follow_up_from_routing(routing).as_deref() {
-        Some("record_branch_closure") => "record_branch_closure",
+        Some("advance_late_stage") => "record_branch_closure",
         _ => "repair_review_state",
     }
 }
@@ -1531,16 +1547,15 @@ fn record_review_dispatch_blocked_output_from_gate(
         };
     } else {
         let routing = gate_follow_up_routing_state(context);
-        let direct_follow_up = specific_gate_reason_is_explicit_direct_follow_up(&gate, routing.as_ref());
-        let task_scope_prior_task_requires_requery = matches!(args.scope, ReviewDispatchScopeArg::Task)
-            && gate
-                .reason_codes
-                .iter()
-                .any(|code| code.starts_with("prior_task_"));
-        if gate.allowed
-            || direct_follow_up.is_none()
-            || task_scope_prior_task_requires_requery
-        {
+        let direct_follow_up =
+            specific_gate_reason_is_explicit_direct_follow_up(&gate, routing.as_ref());
+        let task_scope_prior_task_requires_requery =
+            matches!(args.scope, ReviewDispatchScopeArg::Task)
+                && gate
+                    .reason_codes
+                    .iter()
+                    .any(|code| code.starts_with("prior_task_"));
+        if gate.allowed || direct_follow_up.is_none() || task_scope_prior_task_requires_requery {
             apply_out_of_phase_gate_contract(context, &mut gate);
         } else {
             gate.recommended_command = match direct_follow_up {
@@ -2016,7 +2031,12 @@ fn final_review_dispatch_gate_from_context(context: &ExecutionContext) -> GateRe
 
     let release_readiness_result = authoritative_state
         .as_ref()
-        .and_then(|state| state.current_release_readiness_record())
+        .and_then(|state| {
+            state
+                .current_release_readiness_record_id()
+                .as_deref()
+                .and_then(|record_id| state.release_readiness_record_by_id(record_id))
+        })
         .and_then(|record| {
             (record.branch_closure_id == current_branch_closure_id).then_some(record.result)
         });
@@ -3416,12 +3436,11 @@ pub(crate) fn missing_derived_review_state_fields(
         return missing;
     };
 
-    let recoverable_current_branch_closure =
-        authoritative_state.recoverable_current_branch_closure_identity();
-    let current_branch_closure_id = recoverable_current_branch_closure
+    let bound_current_branch_closure = authoritative_state.bound_current_branch_closure_identity();
+    let current_branch_closure_id = bound_current_branch_closure
         .as_ref()
         .map(|identity| identity.branch_closure_id.as_str());
-    if let Some(current_identity) = recoverable_current_branch_closure.as_ref() {
+    if let Some(current_identity) = bound_current_branch_closure.as_ref() {
         if overlay_current_branch_closure_id != Some(current_identity.branch_closure_id.as_str()) {
             push_missing_derived_field(&mut missing, "current_branch_closure_id");
         }
@@ -4001,7 +4020,10 @@ fn populate_public_status_contract_fields(
         push_status_reason_code_once(status, "derived_review_state_missing");
     }
     let task_scope_overlay_restore_required = status.execution_started == "yes"
-        && shared_task_scope_overlay_restore_required(&missing_derived_overlays, authoritative_state);
+        && shared_task_scope_overlay_restore_required(
+            &missing_derived_overlays,
+            authoritative_state,
+        );
     if task_scope_overlay_restore_required {
         status.harness_phase = HarnessPhase::Executing;
     }
@@ -4162,12 +4184,16 @@ fn populate_public_status_contract_fields(
                 (None, None)
             };
         status.execution_command_context = execution_command_context;
-        status.next_action = derive_public_next_action(status, &status.phase_detail);
         status.recommended_command = derive_public_recommended_command(
             context,
             status,
             &status.phase_detail,
             execution_command,
+        );
+        status.next_action = derive_public_next_action(
+            status,
+            &status.phase_detail,
+            status.recommended_command.as_deref(),
         );
     }
     let persisted_branch_reroute_projection = status.execution_started == "yes"
@@ -4192,12 +4218,21 @@ fn populate_public_status_contract_fields(
             context.plan_rel
         ));
     }
-    let base_blocking_records = derive_public_blocking_records(status, &gate_finish);
+    status.blocking_records = compute_status_blocking_records(context, status, &gate_finish)?;
+
+    Ok(())
+}
+
+fn compute_status_blocking_records(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    gate_finish: &GateResult,
+) -> Result<Vec<StatusBlockingRecord>, JsonFailure> {
+    let base_blocking_records = derive_public_blocking_records(status, gate_finish);
     let task_structural_records =
         derive_structural_current_task_closure_blocking_records(context, status)?;
-    let branch_structural_records =
-        derive_structural_current_branch_closure_blocking_records(status);
-    status.blocking_records = if status.review_state_status == "stale_unreviewed" {
+    let branch_structural_records = derive_structural_current_branch_closure_blocking_records(status);
+    let blocking_records = if status.review_state_status == "stale_unreviewed" {
         task_structural_records
             .into_iter()
             .chain(branch_structural_records)
@@ -4213,8 +4248,7 @@ fn populate_public_status_contract_fields(
     } else {
         base_blocking_records
     };
-
-    Ok(())
+    Ok(blocking_records)
 }
 
 fn downstream_freshness_state_label(state: DownstreamFreshnessState) -> &'static str {
@@ -4590,11 +4624,11 @@ fn derive_public_phase_detail(
     if execution_reentry_requires_review_state_repair(status) {
         return String::from("execution_reentry_required");
     }
-    if task_review_dispatch_task(status).is_some() {
-        return String::from("task_review_dispatch_required");
-    }
     if task_review_result_pending_task(status, task_review_dispatch_id).is_some() {
         return String::from("task_review_result_pending");
+    }
+    if task_review_dispatch_task(status).is_some() {
+        return String::from("task_review_dispatch_required");
     }
     if review_state_status == "missing_current_closure" {
         return String::from("branch_closure_recording_required_for_release_readiness");
@@ -4672,9 +4706,21 @@ fn derive_public_phase_detail(
     }
 }
 
-fn derive_public_next_action(status: &PlanExecutionStatus, phase_detail: &str) -> String {
+fn derive_public_next_action(
+    status: &PlanExecutionStatus,
+    phase_detail: &str,
+    recommended_command: Option<&str>,
+) -> String {
     match phase_detail {
-        "task_review_dispatch_required" => String::from("request task review"),
+        "task_review_dispatch_required" => {
+            if recommended_command
+                .is_some_and(|command| command.contains("record-review-dispatch"))
+            {
+                String::from("bind task review dispatch lineage")
+            } else {
+                String::from("request task review")
+            }
+        }
         "task_review_result_pending" => String::from("wait for external review result"),
         "task_closure_recording_ready" => String::from("close current task"),
         "finish_completion_gate_ready" | "finish_review_gate_ready" => {
@@ -4685,7 +4731,15 @@ fn derive_public_next_action(status: &PlanExecutionStatus, phase_detail: &str) -
         }
         "release_readiness_recording_ready" => String::from("advance late stage"),
         "release_blocker_resolution_required" => String::from("resolve release blocker"),
-        "final_review_dispatch_required" => String::from("request final review"),
+        "final_review_dispatch_required" => {
+            if recommended_command
+                .is_some_and(|command| command.contains("record-review-dispatch"))
+            {
+                String::from("bind final review dispatch lineage")
+            } else {
+                String::from("request final review")
+            }
+        }
         "final_review_outcome_pending" => String::from("wait for external review result"),
         "final_review_recording_ready" => String::from("advance late stage"),
         "test_plan_refresh_required" => String::from("refresh test plan"),
@@ -4832,9 +4886,16 @@ fn latest_stale_task_from_closure_graph(
     closure_graph.latest_stale_task_number()
 }
 
-fn stale_reason_codes_from_gates(gate_review: &GateResult, gate_finish: &GateResult) -> Vec<String> {
+fn stale_reason_codes_from_gates(
+    gate_review: &GateResult,
+    gate_finish: &GateResult,
+) -> Vec<String> {
     let mut reason_codes = Vec::new();
-    for reason_code in gate_review.reason_codes.iter().chain(gate_finish.reason_codes.iter()) {
+    for reason_code in gate_review
+        .reason_codes
+        .iter()
+        .chain(gate_finish.reason_codes.iter())
+    {
         if reason_code_indicates_stale_unreviewed(reason_code)
             && !reason_codes.iter().any(|existing| existing == reason_code)
         {
@@ -5549,52 +5610,24 @@ fn derive_public_recommended_command(
     execution_command: Option<String>,
 ) -> Option<String> {
     let plan = &context.plan_rel;
+    let task_number = status.blocking_task.or(status.active_task).or(status.resume_task);
+    if phase_detail == "task_closure_recording_ready" && task_number.is_none() {
+        return None;
+    }
+    let dispatch_id = status
+        .recording_context
+        .as_ref()
+        .and_then(|context| context.dispatch_id.as_deref());
+    let intent_template = intent_level_command_template(IntentLevelCommandTemplateInputs {
+        phase_detail,
+        plan_path: plan,
+        task_number,
+        dispatch_id,
+    });
+    if let Some(recommended_command) = intent_template.recommended_command {
+        return recommended_command;
+    }
     match phase_detail {
-        "task_closure_recording_ready" => {
-            let task_number = status
-                .blocking_task
-                .or(status.active_task)
-                .or(status.resume_task)?;
-            let dispatch_id = status
-                .recording_context
-                .as_ref()
-                .and_then(|context| context.dispatch_id.as_deref())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("<dispatch-id>");
-            Some(format!(
-                "featureforge plan execution close-current-task --plan {plan} --task {task_number} --dispatch-id {dispatch_id} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-            ))
-        }
-        "task_review_dispatch_required" => None,
-        "finish_completion_gate_ready" | "finish_review_gate_ready" => None,
-        "branch_closure_recording_required_for_release_readiness" => Some(format!(
-            "featureforge plan execution advance-late-stage --plan {plan}"
-        )),
-        "release_readiness_recording_ready" | "release_blocker_resolution_required" => {
-            Some(format!(
-                "featureforge plan execution advance-late-stage --plan {plan} --result ready|blocked --summary-file <path>"
-            ))
-        }
-        "final_review_recording_ready" => {
-            let dispatch_id = status
-                .recording_context
-                .as_ref()
-                .and_then(|context| context.dispatch_id.as_deref())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("<id>");
-            Some(format!(
-                "featureforge plan execution advance-late-stage --plan {plan} --dispatch-id {dispatch_id} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
-            ))
-        }
-        "final_review_dispatch_required" => None,
-        "task_review_result_pending"
-        | "final_review_outcome_pending"
-        | "test_plan_refresh_required" => None,
-        "qa_recording_required" => Some(format!(
-            "featureforge plan execution advance-late-stage --plan {plan} --result pass|fail --summary-file <path>"
-        )),
         "execution_reentry_required" => {
             if status.review_state_status == "clean" && execution_command.is_some() {
                 execution_command
@@ -5635,7 +5668,7 @@ fn derive_public_blocking_records(
                 record_type: String::from("branch_closure"),
                 record_id: None,
                 review_state_status: status.review_state_status.clone(),
-                required_follow_up: Some(String::from("record_branch_closure")),
+                required_follow_up: Some(String::from("advance_late_stage")),
                 message: String::from(
                     "The active late-stage phase requires a current branch closure, but the authoritative branch-closure record is missing and must be re-recorded before late-stage progression can continue.",
                 ),
@@ -5820,7 +5853,7 @@ fn derive_public_blocking_records(
             record_type: String::from("branch_closure"),
             record_id: None,
             review_state_status: status.review_state_status.clone(),
-            required_follow_up: Some(String::from("record_branch_closure")),
+            required_follow_up: Some(String::from("advance_late_stage")),
             message: String::from(
                 "The current branch closure must be recorded before late-stage progression can continue.",
             ),
@@ -6033,7 +6066,7 @@ fn validated_current_branch_closure_identity_from_authoritative_state(
     authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> Option<crate::execution::transitions::CurrentBranchClosureIdentity> {
     let state = authoritative_state?;
-    let identity = state.recoverable_current_branch_closure_identity()?;
+    let identity = state.bound_current_branch_closure_identity()?;
     let record = state.branch_closure_record(&identity.branch_closure_id)?;
     let current_base_branch = context.current_release_base_branch()?;
     let expected_contract_identity = shared_branch_contract_identity(
@@ -9407,13 +9440,6 @@ fn summary_hash_matches(summary: &str, expected_hash: &str) -> bool {
     sha256_hex(normalize_summary_content(summary).as_bytes()) == expected_hash
 }
 
-fn reviewer_source_is_valid(value: &str) -> bool {
-    matches!(
-        value,
-        "fresh-context-subagent" | "cross-model" | "human-independent-reviewer"
-    )
-}
-
 fn current_branch_artifact_candidate_paths(
     artifact_dir: &Path,
     branch_name: &str,
@@ -9532,11 +9558,13 @@ fn latest_test_plan_artifact_has_generator_mismatch(context: &ExecutionContext) 
         .state_dir
         .join("projects")
         .join(&context.runtime.repo_slug);
-    let Some(latest_candidate_path) =
-        current_branch_artifact_candidate_paths(&artifact_dir, &context.runtime.branch_name, "test-plan")
-            .into_iter()
-            .next()
-    else {
+    let Some(latest_candidate_path) = current_branch_artifact_candidate_paths(
+        &artifact_dir,
+        &context.runtime.branch_name,
+        "test-plan",
+    )
+    .into_iter()
+    .next() else {
         return false;
     };
     parse_artifact_document(&latest_candidate_path)
@@ -9600,7 +9628,22 @@ fn require_current_release_readiness_ready_for_finish(
     current_base_branch: &str,
     gate: &mut GateState,
 ) -> bool {
-    let Some(record) = authoritative_state.current_release_readiness_record() else {
+    let Some(current_release_readiness_record_id) = authoritative_state
+        .current_release_readiness_record_id()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        gate.fail(
+            FailureClass::ReleaseArtifactNotFresh,
+            "release_docs_state_missing",
+            "Finish readiness requires a current release-readiness milestone for the current branch closure.",
+            "Run document-release and return with a fresh release-readiness result.",
+        );
+        return false;
+    };
+    let Some(record) = authoritative_state
+        .release_readiness_record_by_id(&current_release_readiness_record_id)
+    else {
         gate.fail(
             FailureClass::ReleaseArtifactNotFresh,
             "release_docs_state_missing",
@@ -9721,7 +9764,34 @@ fn require_current_final_review_pass_for_finish(
     current_base_branch: &str,
     gate: &mut GateState,
 ) -> bool {
-    let Some(record) = authoritative_state.current_final_review_record() else {
+    let Some(current_release_readiness_record_id) = authoritative_state
+        .current_release_readiness_record_id()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        gate.fail(
+            FailureClass::ReviewArtifactNotFresh,
+            "review_artifact_release_binding_missing",
+            "The current final-review milestone is missing its release-readiness dependency binding.",
+            "Run document-release, then rerun requesting-code-review for the current branch closure.",
+        );
+        return false;
+    };
+    let Some(current_final_review_record_id) = authoritative_state
+        .current_final_review_record_id()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        gate.fail(
+            FailureClass::ReviewArtifactNotFresh,
+            "review_artifact_missing",
+            "Finish readiness requires a current final-review milestone for the current branch closure.",
+            "Run requesting-code-review and return with a fresh final-review result.",
+        );
+        return false;
+    };
+    let Some(record) = authoritative_state.final_review_record_by_id(&current_final_review_record_id)
+    else {
         gate.fail(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_missing",
@@ -9753,6 +9823,17 @@ fn require_current_final_review_pass_for_finish(
             FailureClass::ReviewArtifactNotFresh,
             "review_artifact_missing",
             "The current final-review milestone is not bound to the still-current branch closure.",
+            "Run requesting-code-review and return with a fresh final-review result.",
+        );
+        return false;
+    }
+    if record.release_readiness_record_id.as_deref()
+        != Some(current_release_readiness_record_id.as_str())
+    {
+        gate.fail(
+            FailureClass::ReviewArtifactNotFresh,
+            "review_artifact_release_binding_mismatch",
+            "The current final-review milestone is not bound to the current release-readiness milestone identity.",
             "Run requesting-code-review and return with a fresh final-review result.",
         );
         return false;
@@ -9813,7 +9894,7 @@ fn require_current_final_review_pass_for_finish(
         );
         return false;
     }
-    if !reviewer_source_is_valid(&record.reviewer_source) {
+    if !shared_reviewer_source_is_valid(&record.reviewer_source) {
         gate.fail(
             FailureClass::MalformedExecutionState,
             "review_artifact_reviewer_source_invalid",
@@ -9877,7 +9958,55 @@ fn validate_current_final_review_authoritative_provenance(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return true;
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "review_artifact_malformed",
+            "The current final-review milestone is missing its authoritative artifact fingerprint binding.",
+            "Repair the authoritative final-review record and retry gate-finish.",
+        );
+        return false;
+    };
+    if !is_canonical_sha256_fingerprint(final_review_fingerprint) {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "review_artifact_malformed",
+            "The current final-review milestone has a non-canonical authoritative artifact fingerprint binding.",
+            "Repair the authoritative final-review record and retry gate-finish.",
+        );
+        return false;
+    }
+    let expected_strategy_checkpoint_fingerprint =
+        match authoritative_strategy_checkpoint_fingerprint_checked(context) {
+            Ok(Some(fingerprint)) if !fingerprint.trim().is_empty() => fingerprint,
+            Ok(_) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "review_artifact_malformed",
+                    "Authoritative strategy checkpoint provenance is missing for current final-review validation.",
+                    "Restore authoritative strategy checkpoint provenance and retry gate-finish.",
+                );
+                return false;
+            }
+            Err(error) => {
+                gate.fail(
+                    FailureClass::MalformedExecutionState,
+                    "review_artifact_malformed",
+                    error.message,
+                    "Restore authoritative strategy checkpoint provenance and retry gate-finish.",
+                );
+                return false;
+            }
+        };
+    let expected_strategy_checkpoint_fingerprint =
+        expected_strategy_checkpoint_fingerprint.trim().to_owned();
+    if !is_canonical_sha256_fingerprint(&expected_strategy_checkpoint_fingerprint) {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "review_artifact_malformed",
+            "Authoritative strategy checkpoint provenance must be a canonical fingerprint for current final-review validation.",
+            "Restore authoritative strategy checkpoint provenance and retry gate-finish.",
+        );
+        return false;
     };
     let final_review_path = harness_authoritative_artifact_path(
         &context.runtime.state_dir,
@@ -9919,7 +10048,9 @@ fn validate_current_final_review_authoritative_provenance(
     let expectations = FinalReviewReceiptExpectations {
         expected_plan_path: &context.plan_rel,
         expected_plan_revision: context.plan_document.plan_revision,
-        expected_strategy_checkpoint_fingerprint: None,
+        expected_strategy_checkpoint_fingerprint: Some(
+            expected_strategy_checkpoint_fingerprint.as_str(),
+        ),
         expected_branch: &context.runtime.branch_name,
         expected_repo: &context.runtime.repo_slug,
         expected_head_sha: &expected_head_sha,
@@ -9942,12 +10073,20 @@ fn validate_current_final_review_authoritative_provenance(
     true
 }
 
-fn fail_current_final_review_receipt_issue(gate: &mut GateState, issue: FinalReviewReceiptIssue) -> bool {
+fn is_canonical_sha256_fingerprint(value: &str) -> bool {
+    value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn fail_current_final_review_receipt_issue(
+    gate: &mut GateState,
+    issue: FinalReviewReceiptIssue,
+) -> bool {
     let (failure_class, reason_code) = match issue {
         FinalReviewReceiptIssue::SourcePlanMismatch
-        | FinalReviewReceiptIssue::SourcePlanRevisionMismatch => {
-            (FailureClass::ReviewArtifactNotFresh, "review_artifact_plan_mismatch")
-        }
+        | FinalReviewReceiptIssue::SourcePlanRevisionMismatch => (
+            FailureClass::ReviewArtifactNotFresh,
+            "review_artifact_plan_mismatch",
+        ),
         FinalReviewReceiptIssue::ReviewerArtifactFingerprintInvalid => (
             FailureClass::ReviewArtifactNotFresh,
             "review_receipt_reviewer_fingerprint_invalid",
@@ -9956,7 +10095,10 @@ fn fail_current_final_review_receipt_issue(gate: &mut GateState, issue: FinalRev
             FailureClass::ReviewArtifactNotFresh,
             "review_receipt_reviewer_fingerprint_mismatch",
         ),
-        _ => (FailureClass::MalformedExecutionState, "review_artifact_malformed"),
+        _ => (
+            FailureClass::MalformedExecutionState,
+            "review_artifact_malformed",
+        ),
     };
     gate.fail(
         failure_class,
@@ -9975,7 +10117,33 @@ fn require_current_browser_qa_pass_for_finish(
     current_base_branch: &str,
     gate: &mut GateState,
 ) -> bool {
-    let Some(record) = authoritative_state.current_browser_qa_record() else {
+    let Some(current_final_review_record_id) = authoritative_state
+        .current_final_review_record_id()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        gate.fail(
+            FailureClass::MalformedExecutionState,
+            "qa_artifact_malformed",
+            "The current QA milestone is missing its final-review dependency binding.",
+            "Run requesting-code-review, then rerun qa-only for the current branch closure.",
+        );
+        return false;
+    };
+    let Some(current_qa_record_id) = authoritative_state
+        .current_qa_record_id()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        gate.fail(
+            FailureClass::QaArtifactNotFresh,
+            "qa_artifact_missing",
+            "Finish readiness requires a current QA milestone for the current branch closure.",
+            "Run qa-only and return with a fresh QA result.",
+        );
+        return false;
+    };
+    let Some(record) = authoritative_state.browser_qa_record_by_id(&current_qa_record_id) else {
         gate.fail(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_missing",
@@ -10034,6 +10202,15 @@ fn require_current_browser_qa_pass_for_finish(
             FailureClass::QaArtifactNotFresh,
             "qa_artifact_missing",
             "The current QA milestone is not bound to the still-current branch closure.",
+            "Run qa-only and return with a fresh QA result.",
+        );
+        return false;
+    }
+    if record.final_review_record_id.as_deref() != Some(current_final_review_record_id.as_str()) {
+        gate.fail(
+            FailureClass::QaArtifactNotFresh,
+            "qa_artifact_review_binding_mismatch",
+            "The current QA milestone is not bound to the current final-review milestone identity.",
             "Run qa-only and return with a fresh QA result.",
         );
         return false;

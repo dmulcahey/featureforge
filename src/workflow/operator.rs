@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArgs};
-use crate::cli::workflow::{OperatorArgs, PlanArgs};
+use crate::cli::workflow::{DoctorArgs, OperatorArgs, PlanArgs};
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
 use crate::execution::current_truth::task_boundary_block_reason_code as shared_task_boundary_block_reason_code;
@@ -87,8 +87,12 @@ enum WorkflowOperatorNextActionSchema {
     ContinueExecution,
     #[serde(rename = "request task review")]
     RequestTaskReview,
+    #[serde(rename = "bind task review dispatch lineage")]
+    BindTaskReviewDispatchLineage,
     #[serde(rename = "request final review")]
     RequestFinalReview,
+    #[serde(rename = "bind final review dispatch lineage")]
+    BindFinalReviewDispatchLineage,
     #[serde(rename = "execution reentry required")]
     ExecutionReentryRequired,
     #[serde(rename = "hand off")]
@@ -398,7 +402,25 @@ fn render_phase_from_context(context: &OperatorContext) -> String {
 }
 
 pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
-    let context = build_context(current_dir)?;
+    doctor_with_args(
+        current_dir,
+        &DoctorArgs {
+            plan: None,
+            external_review_result_ready: false,
+            json: false,
+        },
+    )
+}
+
+pub fn doctor_with_args(
+    current_dir: &Path,
+    args: &DoctorArgs,
+) -> Result<WorkflowDoctor, JsonFailure> {
+    let context = build_context_with_plan(
+        current_dir,
+        args.plan.as_deref(),
+        args.external_review_result_ready,
+    )?;
     Ok(doctor_from_context(context))
 }
 
@@ -444,7 +466,21 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
 }
 
 pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
-    let doctor = doctor(current_dir)?;
+    render_doctor_with_args(
+        current_dir,
+        &DoctorArgs {
+            plan: None,
+            external_review_result_ready: false,
+            json: false,
+        },
+    )
+}
+
+pub fn render_doctor_with_args(
+    current_dir: &Path,
+    args: &DoctorArgs,
+) -> Result<String, JsonFailure> {
+    let doctor = doctor_with_args(current_dir, args)?;
     Ok(render_doctor_output(&doctor))
 }
 
@@ -672,8 +708,11 @@ fn handoff_from_context(
 }
 
 pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOperator, JsonFailure> {
-    let context =
-        build_context_with_plan(current_dir, Some(&args.plan), args.external_review_result_ready)?;
+    let context = build_context_with_plan(
+        current_dir,
+        Some(&args.plan),
+        args.external_review_result_ready,
+    )?;
     Ok(operator_from_context(context, args))
 }
 
@@ -862,7 +901,8 @@ fn build_context_with_plan(
     plan_override: Option<&Path>,
     external_review_result_ready: bool,
 ) -> Result<OperatorContext, JsonFailure> {
-    let routing = query_workflow_routing_state(current_dir, plan_override, external_review_result_ready)?;
+    let routing =
+        query_workflow_routing_state(current_dir, plan_override, external_review_result_ready)?;
     build_context_from_routing(routing)
 }
 
@@ -1002,7 +1042,9 @@ fn analyze_plan_if_available(
 }
 
 fn next_step_text(context: &OperatorContext) -> String {
-    if context.phase == "qa_pending" && context.operator_phase_detail == "test_plan_refresh_required" {
+    if context.phase == "qa_pending"
+        && context.operator_phase_detail == "test_plan_refresh_required"
+    {
         if context.route.plan_path.is_empty() {
             return String::from(
                 "Regenerate the current-branch test-plan artifact via featureforge:plan-eng-review before browser QA or branch completion.",
@@ -1269,6 +1311,21 @@ fn task_boundary_next_step_text(context: &OperatorContext) -> Option<String> {
         reason_code,
         "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
     ) {
+        if let Some(compat_dispatch_command) = context
+            .operator_recommended_command
+            .as_deref()
+            .filter(|command| command.contains("record-review-dispatch"))
+        {
+            if context.route.plan_path.is_empty() {
+                return Some(format!(
+                    "{reason} Run `{compat_dispatch_command}` once to bind dispatch lineage, then rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and continue intent-level task closure."
+                ));
+            }
+            return Some(format!(
+                "{reason} Run `{compat_dispatch_command}` once to bind dispatch lineage, then rerun `featureforge workflow operator --plan {} --external-review-result-ready` and continue intent-level task closure.",
+                context.route.plan_path
+            ));
+        }
         if context.route.plan_path.is_empty() {
             return Some(format!(
                 "{reason} Request fresh-context dedicated-independent review, then rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and continue intent-level task closure."
@@ -1396,6 +1453,7 @@ fn optional_text(value: Option<&str>) -> &str {
 fn execution_status_args(args: &PlanArgs) -> ExecutionStatusArgs {
     ExecutionStatusArgs {
         plan: args.plan.clone(),
+        external_review_result_ready: false,
     }
 }
 

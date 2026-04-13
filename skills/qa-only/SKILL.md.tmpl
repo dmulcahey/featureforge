@@ -89,34 +89,19 @@ If no artifact exists, use:
 If no URL is provided and the repo is on a feature branch, automatically enter `diff-aware` mode:
 
 ```bash
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-BASE_BRANCH=""
-if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  case "$CURRENT_BRANCH" in
-    main|master|develop|dev|trunk)
-      BASE_BRANCH="$CURRENT_BRANCH"
-      ;;
-  esac
-  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git config --get "branch.$CURRENT_BRANCH.gh-merge-base" 2>/dev/null || true)
-fi
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)
 if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master develop dev trunk; do
-    if git show-ref --verify --quiet "refs/heads/$candidate"; then
+  BASE_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+fi
+if [ -z "$BASE_BRANCH" ]; then
+  for candidate in main master; do
+    if git show-ref --verify --quiet "refs/heads/$candidate" || git show-ref --verify --quiet "refs/remotes/origin/$candidate"; then
       BASE_BRANCH="$candidate"
       break
     fi
   done
 fi
-if [ -z "$BASE_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  NON_CURRENT_BRANCHES=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vxF "$CURRENT_BRANCH" || true)
-  NON_CURRENT_BRANCH_COUNT=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d' | wc -l | tr -d ' ')
-  if [ "$NON_CURRENT_BRANCH_COUNT" = "1" ]; then
-    BASE_BRANCH=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d')
-  fi
-fi
 if [ -z "$BASE_BRANCH" ]; then
-  echo "Could not determine the base branch for diff-aware QA scoping. Stop and resolve it before continuing."
+  echo "Missing BASE_BRANCH. For workflow-routed QA, use the runtime-owned release-lineage base branch; otherwise set BASE_BRANCH explicitly before continuing."
   exit 1
 fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
@@ -124,7 +109,7 @@ git diff "origin/$BASE_BRANCH...HEAD" --name-only 2>/dev/null || git diff "$BASE
 git log "origin/$BASE_BRANCH"..HEAD --oneline 2>/dev/null || git log "$BASE_BRANCH"..HEAD --oneline
 ```
 
-Do not use PR metadata or repo default-branch APIs as a fallback; keep diff-aware scoping aligned with `document-release`, `requesting-code-review`, and `gate-finish`.
+Do not use PR metadata or repo default-branch APIs as a fallback; keep diff-aware scoping locally derivable from repository state.
 
 From the changed files, infer:
 - affected pages and routes

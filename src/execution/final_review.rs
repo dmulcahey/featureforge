@@ -40,11 +40,14 @@ pub struct FinalReviewReceipt {
 struct ReviewerArtifactExpectations<'a> {
     expected_plan_path: &'a str,
     expected_plan_revision: u32,
+    expected_strategy_checkpoint_fingerprint: Option<&'a str>,
     expected_branch: &'a str,
     expected_repo: &'a str,
     expected_head_sha: &'a str,
     expected_base_branch: &'a str,
     expected_result: &'a str,
+    expected_recorded_execution_deviations: &'a str,
+    expected_deviation_review_verdict: &'a str,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -384,11 +387,15 @@ pub fn validate_final_review_receipt(
     let expectations = ReviewerArtifactExpectations {
         expected_plan_path: expectations.expected_plan_path,
         expected_plan_revision: expectations.expected_plan_revision,
+        expected_strategy_checkpoint_fingerprint: expectations
+            .expected_strategy_checkpoint_fingerprint,
         expected_branch: expectations.expected_branch,
         expected_repo: expectations.expected_repo,
         expected_head_sha: expectations.expected_head_sha,
         expected_base_branch: expectations.expected_base_branch,
         expected_result,
+        expected_recorded_execution_deviations: expected_deviation_record,
+        expected_deviation_review_verdict: expected_deviation_verdict,
     };
     validate_reviewer_artifact_binding(receipt, review_receipt_path, &expectations)?;
     Ok(())
@@ -719,6 +726,34 @@ fn reviewer_artifact_matches_final_review_contract(
     }
     if reviewer_artifact.headers.get("Result").map(String::as_str)
         != Some(expectations.expected_result)
+    {
+        return false;
+    }
+    if let Some(expected_strategy_checkpoint_fingerprint) = expectations
+        .expected_strategy_checkpoint_fingerprint
+        .map(str::trim)
+        && reviewer_artifact
+            .headers
+            .get("Strategy Checkpoint Fingerprint")
+            .map(String::as_str)
+            .map(str::trim)
+            != Some(expected_strategy_checkpoint_fingerprint)
+    {
+        return false;
+    }
+    if reviewer_artifact
+        .headers
+        .get("Recorded Execution Deviations")
+        .map(String::as_str)
+        != Some(expectations.expected_recorded_execution_deviations)
+    {
+        return false;
+    }
+    if reviewer_artifact
+        .headers
+        .get("Deviation Review Verdict")
+        .map(String::as_str)
+        != Some(expectations.expected_deviation_review_verdict)
     {
         return false;
     }

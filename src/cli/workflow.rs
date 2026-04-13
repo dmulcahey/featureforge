@@ -19,12 +19,13 @@ pub enum WorkflowCommand {
     Artifacts,
     Explain,
     Phase(PhaseArgs),
-    Doctor(JsonModeArgs),
+    Doctor(DoctorArgs),
     Handoff(JsonModeArgs),
     Operator(OperatorArgs),
     #[command(name = "record-pivot")]
     RecordPivot(RecordPivotArgs),
     Preflight(PlanArgs),
+    #[command(hide = true)]
     Gate(WorkflowGateCli),
 }
 
@@ -66,6 +67,16 @@ pub struct PhaseArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct JsonModeArgs {
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct DoctorArgs {
+    #[arg(long)]
+    pub plan: Option<PathBuf>,
+    #[arg(long = "external-review-result-ready", default_value_t = false)]
+    pub external_review_result_ready: bool,
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }

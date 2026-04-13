@@ -49,3 +49,82 @@ fn repo_root_exposes_featureforge_binary_contract() {
         windows_binary.display()
     );
 }
+
+#[test]
+fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_featureforge"))
+        .args(["plan", "execution", "--help"])
+        .output()
+        .expect("plan execution help command should run");
+    assert!(
+        output.status.success(),
+        "expected plan execution --help to succeed, got {:?}",
+        output.status
+    );
+    let stdout =
+        String::from_utf8(output.stdout).expect("plan execution help stdout should be utf-8");
+    for command in [
+        "begin",
+        "complete",
+        "close-current-task",
+        "repair-review-state",
+        "advance-late-stage",
+    ] {
+        assert!(
+            stdout.contains(command),
+            "plan execution --help should include `{command}`, got:\n{stdout}"
+        );
+    }
+    for compatibility_only in [
+        "recommend",
+        "preflight",
+        "record-review-dispatch",
+        "record-branch-closure",
+        "record-release-readiness",
+        "record-final-review",
+        "record-qa",
+        "rebuild-evidence",
+        "explain-review-state",
+        "reconcile-review-state",
+        "gate-contract",
+        "gate-evaluator",
+        "gate-handoff",
+        "gate-review",
+        "gate-finish",
+    ] {
+        assert!(
+            !stdout.contains(compatibility_only),
+            "plan execution --help should not expose compatibility-only `{compatibility_only}`, got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn direct_compatibility_command_help_marks_non_normal_flow_usage() {
+    for compatibility_command in [
+        "record-review-dispatch",
+        "record-branch-closure",
+        "record-release-readiness",
+        "record-final-review",
+        "record-qa",
+        "rebuild-evidence",
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_featureforge"))
+            .args(["plan", "execution", compatibility_command, "--help"])
+            .output()
+            .unwrap_or_else(|error| {
+                panic!("plan execution {compatibility_command} --help should run: {error}")
+            });
+        assert!(
+            output.status.success(),
+            "expected plan execution {compatibility_command} --help to succeed, got {:?}",
+            output.status
+        );
+        let stdout = String::from_utf8(output.stdout)
+            .expect("compatibility command help stdout should be utf-8");
+        assert!(
+            stdout.contains("Compatibility/debug"),
+            "direct compatibility command help should explicitly mark non-normal flow usage for `{compatibility_command}`, got:\n{stdout}"
+        );
+    }
+}

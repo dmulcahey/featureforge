@@ -170,7 +170,7 @@ A project-wide or generic test-plan artifact may help scope ad-hoc QA, but it do
 
 If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge workflow record-pivot --plan <path> --reason <reason>`; do not guess from test-plan prose.
 
-If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or `gate-finish`.
+If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or late-stage completion commands.
 
 If workflow/operator reports `test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
 
@@ -211,13 +211,9 @@ If the operator reports any other late-stage phase/detail pair, follow that exac
 
 For workflow-routed terminal completion, if no fresh post-document-release dedicated-independent review exists for the current `HEAD`, invoke `featureforge:requesting-code-review` before presenting branch completion options.
 
-`gate-review` and `gate-finish` remain compatibility/expert-only finish primitives; follow workflow/operator for normal routing instead of invoking them from memory.
+Low-level compatibility finish commands remain expert/debug-only surfaces; follow workflow/operator for normal routing instead of invoking compatibility commands from memory.
 
-If the current work is governed by an approved FeatureForge plan and the finish gate returns `allowed` `false`, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
-
-If `gate-finish` fails with `qa_requirement_missing_or_invalid`, hand control back to `featureforge workflow record-pivot --plan <path> --reason <reason>` so the approved plan metadata can be corrected before QA or branch completion.
-
-If approved-plan `QA Requirement` is `required` and `gate-finish` fails with `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
+If the current work is governed by an approved FeatureForge plan and workflow/operator does not route to branch completion, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
 
 If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.
 
@@ -250,37 +246,11 @@ If the current work is governed by an approved FeatureForge plan:
 - For plan-routed completion, use the exact `Base Branch` from the fresh release-readiness artifact instead of redetecting the target branch.
 - If the fresh release-readiness artifact is missing or its `**Base Branch:**` header is blank, stop and return to `featureforge:document-release`.
 
-If the current work is not governed by an approved FeatureForge plan, derive `<base-branch>` using the same locally derivable contract as `featureforge:document-release` and `gate-finish`:
+If the current work is not governed by an approved FeatureForge plan, require an explicit `<base-branch>` value and keep it stable for this run:
 
 ```bash
-BASE_BRANCH=""
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  case "$CURRENT_BRANCH" in
-    main|master|develop|dev|trunk)
-      BASE_BRANCH="$CURRENT_BRANCH"
-      ;;
-  esac
-  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git config --get "branch.$CURRENT_BRANCH.gh-merge-base" 2>/dev/null || true)
-fi
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)
 if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master develop dev trunk; do
-    if git show-ref --verify --quiet "refs/heads/$candidate"; then
-      BASE_BRANCH="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  NON_CURRENT_BRANCHES=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vxF "$CURRENT_BRANCH" || true)
-  NON_CURRENT_BRANCH_COUNT=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d' | wc -l | tr -d ' ')
-  if [ "$NON_CURRENT_BRANCH_COUNT" = "1" ]; then
-    BASE_BRANCH=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d')
-  fi
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  echo "Could not determine the base branch target. Stop and resolve it before finishing the branch."
+  echo "Missing BASE_BRANCH. For non-workflow completion, set BASE_BRANCH explicitly before finishing the branch."
   exit 1
 fi
 ```

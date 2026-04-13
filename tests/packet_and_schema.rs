@@ -935,7 +935,9 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "close current task",
             "continue execution",
             "request task review",
+            "bind task review dispatch lineage",
             "request final review",
+            "bind final review dispatch lineage",
             "execution reentry required",
             "hand off",
             "pivot / return to planning",
@@ -950,6 +952,20 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_enum!(
         "follow_up_override",
         ["none", "record_handoff", "record_pivot"]
+    );
+    assert_schema_pointer_enum(
+        &schema,
+        "/$defs/RequiredFollowUpSchema",
+        &[
+            "execution_reentry",
+            "repair_review_state",
+            "request_external_review",
+            "advance_late_stage",
+            "resolve_release_blocker",
+            "record_handoff",
+            "record_pivot",
+        ],
+        &mut issues,
     );
     check_types!("recording_context", ["object"], optional);
     check_types!("execution_command_context", ["object"], optional);

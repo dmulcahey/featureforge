@@ -10,14 +10,12 @@ use sha2::{Digest, Sha256};
 
 use crate::cli::plan_execution::{
     AdvanceLateStageArgs, AdvanceLateStageResultArg, BeginArgs, CloseCurrentTaskArgs, CompleteArgs,
-    NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs,
-    RecordFinalReviewArgs, RecordQaArgs, RecordReleaseReadinessArgs, ReopenArgs, ReviewOutcomeArg,
-    StatusArgs, TransferArgs, VerificationOutcomeArg,
+    NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs, RecordFinalReviewArgs, RecordQaArgs,
+    RecordReleaseReadinessArgs, ReopenArgs, ReviewOutcomeArg, StatusArgs, TransferArgs,
+    VerificationOutcomeArg,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::authority::{
-    write_authoritative_unit_review_receipt_artifact,
-};
+use crate::execution::authority::write_authoritative_unit_review_receipt_artifact;
 use crate::execution::command_eligibility::{
     blocked_follow_up_for_operator, close_current_task_required_follow_up,
     late_stage_required_follow_up, negative_result_follow_up,
@@ -40,6 +38,7 @@ use crate::execution::current_truth::{
     public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
     public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
     render_late_stage_surface_only_branch_surface as late_stage_surface_only_branch_surface,
+    reviewer_source_is_valid as shared_reviewer_source_is_valid,
     summary_hash,
     task_closure_contributes_to_branch_surface as shared_task_closure_contributes_to_branch_surface,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
@@ -102,7 +101,8 @@ use crate::execution::transitions::{
 };
 use crate::git::{commit_object_fingerprint, discover_repository};
 use crate::paths::{
-    harness_authoritative_artifact_path, normalize_repo_relative_path, write_atomic as write_atomic_file,
+    harness_authoritative_artifact_path, normalize_repo_relative_path,
+    write_atomic as write_atomic_file,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -807,6 +807,7 @@ fn status_with_shared_routing_or_context(
 ) -> Result<PlanExecutionStatus, JsonFailure> {
     let args = StatusArgs {
         plan: plan.to_path_buf(),
+        external_review_result_ready: false,
     };
     match runtime.status(&args) {
         Ok(status) => Ok(status),
@@ -1000,7 +1001,6 @@ pub fn close_current_task(
     match task_dispatch_reviewed_state_status(
         &context,
         args.task,
-        &args.dispatch_id,
         &reviewed_state_id,
     )? {
         TaskDispatchReviewedStateStatus::Current => {}
@@ -1182,7 +1182,6 @@ pub fn close_current_task(
                     strategy_checkpoint_fingerprint: &strategy_checkpoint_fingerprint,
                     active_contract_fingerprint: None,
                     task: args.task,
-                    restore_missing_dispatch_lineage: false,
                     claim_write_authority: true,
                 },
             )?;
@@ -1625,7 +1624,10 @@ pub fn record_branch_closure(
     )?;
     let published_branch_closure_fingerprint =
         publish_authoritative_artifact(runtime, "branch-closure", &branch_closure_source)?;
-    debug_assert_eq!(published_branch_closure_fingerprint, branch_closure_fingerprint);
+    debug_assert_eq!(
+        published_branch_closure_fingerprint,
+        branch_closure_fingerprint
+    );
     write_project_artifact(
         runtime,
         &format!("branch-closure-{}.md", &branch_closure_id),
@@ -1691,6 +1693,12 @@ pub fn advance_late_stage(
                     "reviewer_source_required: final-review advance-late-stage requires --reviewer-source.",
                 )
             })?;
+        if !shared_reviewer_source_is_valid(reviewer_source) {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "reviewer_source_invalid: final-review advance-late-stage requires --reviewer-source fresh-context-subagent|cross-model|human-independent-reviewer.",
+            ));
+        }
         let reviewer_id = args.reviewer_id.as_deref().ok_or_else(|| {
             JsonFailure::new(
                 FailureClass::InvalidCommandInput,
@@ -1758,6 +1766,7 @@ pub fn advance_late_stage(
             return Ok(advance_late_stage_follow_up_or_requery_output(
                 &operator,
                 &args.plan,
+                ensure_final_review_dispatch_id_matches(&context, dispatch_id).is_ok(),
                 AdvanceLateStageOutputContext {
                     stage_path: "final_review",
                     delegated_primitive: "record-final-review",
@@ -1914,11 +1923,8 @@ pub fn advance_late_stage(
                 summary_hash: &normalized_summary_hash,
             },
         )?;
-        let published = publish_authoritative_artifact(
-            runtime,
-            "final-review",
-            &final_review_source,
-        )?;
+        let published =
+            publish_authoritative_artifact(runtime, "final-review", &final_review_source)?;
         debug_assert_eq!(published, final_review_fingerprint);
         let reviewer_artifact_name = rendered_final_review
             .reviewer_artifact_path
@@ -1993,6 +1999,12 @@ pub fn advance_late_stage(
         && operator.phase == "document_release_pending"
         && operator.phase_detail == "branch_closure_recording_required_for_release_readiness"
     {
+        if args.result.is_some() || args.summary_file.is_some() || args.dispatch_id.is_some() {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "branch_closure_argument_mismatch: branch-closure advance-late-stage does not accept --result, --summary-file, or --dispatch-id.",
+            ));
+        }
         let output = record_branch_closure(
             runtime,
             &RecordBranchClosureArgs {
@@ -2160,6 +2172,7 @@ pub fn advance_late_stage(
         &context,
         &branch_closure_id,
         &reviewed_state_id,
+        &base_branch,
         result,
         &summary,
     )?;
@@ -2323,9 +2336,10 @@ pub fn record_qa(
     let provided_summary_hash = optional_summary_hash(&args.summary_file);
     let operator = current_workflow_operator(runtime, &args.plan, false)?;
     let required_follow_up = blocked_follow_up_for_operator(&operator);
-    let qa_refresh_reroute_active = shared_finish_requires_test_plan_refresh(Some(
-        &gate_finish_from_context(&context),
-    )) || (operator.phase == "qa_pending" && operator.phase_detail == "test_plan_refresh_required");
+    let qa_refresh_reroute_active =
+        shared_finish_requires_test_plan_refresh(Some(&gate_finish_from_context(&context)))
+            || (operator.phase == "qa_pending"
+                && operator.phase_detail == "test_plan_refresh_required");
     if qa_refresh_reroute_active {
         return Ok(RecordQaOutput {
             action: String::from("blocked"),
@@ -2794,12 +2808,9 @@ fn execute_rebuild_candidate_projection_only(
     request: &crate::execution::state::RebuildEvidenceRequest,
     candidate: &RebuildEvidenceCandidate,
 ) -> RebuildEvidenceTarget {
-    let attempt_id_before = candidate.attempt_number.map(|attempt| {
-        format!(
-            "{}:{}:{}",
-            candidate.task, candidate.step, attempt
-        )
-    });
+    let attempt_id_before = candidate
+        .attempt_number
+        .map(|attempt| format!("{}:{}:{}", candidate.task, candidate.step, attempt));
     let mut target = RebuildEvidenceTarget {
         task_id: candidate.task,
         step_id: candidate.step,
@@ -2866,38 +2877,34 @@ fn ensure_task_dispatch_id_matches(
         )
     })?;
     let lineage_key = format!("task-{task}");
-    let expected_dispatch = overlay
+    let expected_dispatch_from_lineage = overlay
         .strategy_review_dispatch_lineage
         .get(&lineage_key)
         .and_then(|record| record.dispatch_id.as_deref())
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
+        .filter(|value| !value.is_empty());
+    if let Some(expected_dispatch) = expected_dispatch_from_lineage {
+        if expected_dispatch != dispatch_id.trim() {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
                 format!(
-                    "close-current-task requires a current task review dispatch lineage for task {task}."
+                    "dispatch_id_mismatch: close-current-task expected dispatch `{expected_dispatch}` for task {task}."
                 ),
-            )
-        })?;
-    if expected_dispatch != dispatch_id.trim() {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidCommandInput,
-            format!(
-                "dispatch_id_mismatch: close-current-task expected dispatch `{expected_dispatch}` for task {task}."
-            ),
-        ));
+            ));
+        }
+        return Ok(());
     }
-    Ok(())
+    Err(JsonFailure::new(
+        FailureClass::ExecutionStateNotReady,
+        format!("close-current-task requires a current task review dispatch lineage for task {task}."),
+    ))
 }
 
 fn task_dispatch_reviewed_state_status(
     context: &ExecutionContext,
     task: u32,
-    dispatch_id: &str,
     reviewed_state_id: &str,
 ) -> Result<TaskDispatchReviewedStateStatus, JsonFailure> {
-    ensure_task_dispatch_id_matches(context, task, dispatch_id)?;
     let overlay = load_status_authoritative_overlay_checked(context)?.ok_or_else(|| {
         JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
@@ -2932,7 +2939,7 @@ fn ensure_final_review_dispatch_id_matches(
             "advance-late-stage final-review path requires authoritative dispatch lineage state.",
         )
     })?;
-    let expected_dispatch = overlay
+    let expected_dispatch_from_lineage = overlay
         .final_review_dispatch_lineage
         .as_ref()
         .and_then(|record| {
@@ -2943,22 +2950,22 @@ fn ensure_final_review_dispatch_id_matches(
             record.dispatch_id.as_deref()
         })
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                "advance-late-stage final-review path requires a current final-review dispatch lineage.",
-            )
-        })?;
-    if expected_dispatch != dispatch_id.trim() {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidCommandInput,
-            format!(
-                "dispatch_id_mismatch: advance-late-stage expected final-review dispatch `{expected_dispatch}`."
-            ),
-        ));
+        .filter(|value| !value.is_empty());
+    if let Some(expected_dispatch) = expected_dispatch_from_lineage {
+        if expected_dispatch != dispatch_id.trim() {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                format!(
+                    "dispatch_id_mismatch: advance-late-stage expected final-review dispatch `{expected_dispatch}`."
+                ),
+            ));
+        }
+        return Ok(());
     }
-    Ok(())
+    Err(JsonFailure::new(
+        FailureClass::ExecutionStateNotReady,
+        "advance-late-stage final-review path requires a current final-review dispatch lineage.",
+    ))
 }
 
 fn close_current_task_summary_hashes(
@@ -3352,6 +3359,7 @@ struct AdvanceLateStageOutputContext<'a> {
 fn advance_late_stage_follow_up_or_requery_output(
     operator: &ExecutionRoutingState,
     plan: &Path,
+    dispatch_lineage_matches: bool,
     params: AdvanceLateStageOutputContext<'_>,
 ) -> AdvanceLateStageOutput {
     let AdvanceLateStageOutputContext {
@@ -3363,6 +3371,23 @@ fn advance_late_stage_follow_up_or_requery_output(
         trace_summary,
     } = params;
     if let Some(required_follow_up) = late_stage_required_follow_up(stage_path, operator) {
+        if stage_path == "final_review"
+            && required_follow_up == "request_external_review"
+            && dispatch_id.is_some()
+            && !dispatch_lineage_matches
+        {
+            return shared_out_of_phase_advance_late_stage_output(
+                plan,
+                AdvanceLateStageOutputContext {
+                    stage_path,
+                    delegated_primitive,
+                    branch_closure_id,
+                    dispatch_id,
+                    result,
+                    trace_summary,
+                },
+            );
+        }
         return AdvanceLateStageOutput {
             action: String::from("blocked"),
             stage_path: stage_path.to_owned(),
@@ -3460,7 +3485,6 @@ struct TaskClosureReceiptRefresh<'a> {
     strategy_checkpoint_fingerprint: &'a str,
     active_contract_fingerprint: Option<&'a str>,
     task: u32,
-    restore_missing_dispatch_lineage: bool,
     claim_write_authority: bool,
 }
 
@@ -3612,6 +3636,7 @@ fn repair_review_state_record_branch_closure_reroute_active(
         runtime,
         &StatusArgs {
             plan: args.plan.clone(),
+            external_review_result_ready: false,
         },
     )?;
     let status = status_with_shared_routing_or_context(runtime, &args.plan, context)?;
@@ -3892,7 +3917,7 @@ fn final_review_dispatch_lineage_is_current_for_rerun(
         return Ok(false);
     }
     match ensure_final_review_dispatch_id_matches(context, expected_dispatch_id) {
-        Ok(()) => Ok(true),
+        Ok(_) => Ok(true),
         Err(error)
             if matches!(
                 error.error_class.as_str(),
@@ -4030,11 +4055,7 @@ fn refresh_rebuild_task_closure_receipts_with_context(
     let mut authoritative_state = load_authoritative_transition_state(context)?;
     if let Some(authoritative_state) = authoritative_state.as_mut() {
         let current_task_closure = authoritative_state.current_task_closure_result(refresh.task);
-        if refresh.restore_missing_dispatch_lineage {
-            authoritative_state.ensure_task_review_dispatch_lineage(context, refresh.task)?;
-        } else {
-            authoritative_state.refresh_task_review_dispatch_lineage(context, refresh.task)?;
-        }
+        authoritative_state.refresh_task_review_dispatch_lineage(context, refresh.task)?;
         let dispatch_id = current_task_closure
             .as_ref()
             .map(|record| record.dispatch_id.clone())
@@ -4868,6 +4889,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 mod unit_tests {
     use std::collections::BTreeMap;
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
     use std::sync::OnceLock;
 
@@ -4883,7 +4905,8 @@ mod unit_tests {
         rewrite_branch_final_review_artifacts, rewrite_branch_head_bound_artifact,
         rewrite_branch_qa_artifact, superseded_branch_closure_ids_from_previous_current,
         task_closure_contributes_to_branch_surface, task_closure_record_covers_path,
-        verify_command_launcher,
+        verify_command_launcher, AdvanceLateStageOutputContext,
+        advance_late_stage_follow_up_or_requery_output,
     };
     use crate::cli::plan_execution::{ReviewOutcomeArg, VerificationOutcomeArg};
     use crate::contracts::plan::parse_plan_file;
@@ -5483,11 +5506,154 @@ mod unit_tests {
 
         assert_eq!(
             blocked_follow_up_for_operator(&operator),
-            Some(String::from("record_branch_closure"))
+            Some(String::from("advance_late_stage"))
         );
         assert_eq!(
             late_stage_required_follow_up("final_review", &operator),
             None
+        );
+    }
+
+    #[test]
+    fn advance_late_stage_final_review_with_dispatch_id_requeries_when_dispatch_follow_up_is_required()
+     {
+        let operator = ExecutionRoutingState {
+            route: WorkflowRoute {
+                schema_version: 3,
+                status: String::from("ok"),
+                next_skill: String::from("featureforge:workflow"),
+                spec_path: String::new(),
+                plan_path: String::new(),
+                contract_state: String::new(),
+                reason_codes: Vec::new(),
+                diagnostics: Vec::new(),
+                scan_truncated: false,
+                spec_candidate_count: 0,
+                plan_candidate_count: 0,
+                manifest_path: String::new(),
+                root: String::new(),
+                reason: String::new(),
+                note: String::new(),
+            },
+            execution_status: None,
+            preflight: None,
+            gate_review: None,
+            gate_finish: None,
+            workflow_phase: String::from("executing"),
+            phase: String::from("final_review_pending"),
+            phase_detail: String::from("final_review_dispatch_required"),
+            review_state_status: String::from("clean"),
+            qa_requirement: None,
+            follow_up_override: String::from("none"),
+            finish_review_gate_pass_branch_closure_id: None,
+            recording_context: None,
+            execution_command_context: None,
+            next_action: String::new(),
+            recommended_command: None,
+            blocking_scope: None,
+            blocking_task: None,
+            external_wait_state: None,
+            blocking_reason_codes: Vec::new(),
+            reason_family: String::new(),
+            diagnostic_reason_codes: Vec::new(),
+            task_review_dispatch_id: None,
+            final_review_dispatch_id: None,
+            current_branch_closure_id: None,
+            current_release_readiness_result: None,
+        };
+
+        let output = advance_late_stage_follow_up_or_requery_output(
+            &operator,
+            Path::new("docs/featureforge/plans/example.md"),
+            false,
+            AdvanceLateStageOutputContext {
+                stage_path: "final_review",
+                delegated_primitive: "record-final-review",
+                branch_closure_id: Some(String::from("branch-closure-1")),
+                dispatch_id: Some(String::from("dispatch-123")),
+                result: "pass",
+                trace_summary: "advance-late-stage failed closed because workflow/operator requery is required.",
+            },
+        );
+
+        assert_eq!(output.action, "blocked");
+        assert_eq!(output.code.as_deref(), Some("out_of_phase_requery_required"));
+        assert_eq!(
+            output.recommended_command.as_deref(),
+            Some("featureforge workflow operator --plan docs/featureforge/plans/example.md")
+        );
+        assert_eq!(output.rederive_via_workflow_operator, Some(true));
+        assert_eq!(output.required_follow_up, None);
+    }
+
+    #[test]
+    fn advance_late_stage_final_review_with_matching_dispatch_lineage_keeps_dispatch_follow_up() {
+        let operator = ExecutionRoutingState {
+            route: WorkflowRoute {
+                schema_version: 3,
+                status: String::from("ok"),
+                next_skill: String::from("featureforge:workflow"),
+                spec_path: String::new(),
+                plan_path: String::new(),
+                contract_state: String::new(),
+                reason_codes: Vec::new(),
+                diagnostics: Vec::new(),
+                scan_truncated: false,
+                spec_candidate_count: 0,
+                plan_candidate_count: 0,
+                manifest_path: String::new(),
+                root: String::new(),
+                reason: String::new(),
+                note: String::new(),
+            },
+            execution_status: None,
+            preflight: None,
+            gate_review: None,
+            gate_finish: None,
+            workflow_phase: String::from("executing"),
+            phase: String::from("final_review_pending"),
+            phase_detail: String::from("final_review_dispatch_required"),
+            review_state_status: String::from("clean"),
+            qa_requirement: None,
+            follow_up_override: String::from("none"),
+            finish_review_gate_pass_branch_closure_id: None,
+            recording_context: None,
+            execution_command_context: None,
+            next_action: String::new(),
+            recommended_command: None,
+            blocking_scope: None,
+            blocking_task: None,
+            external_wait_state: None,
+            blocking_reason_codes: Vec::new(),
+            reason_family: String::new(),
+            diagnostic_reason_codes: Vec::new(),
+            task_review_dispatch_id: None,
+            final_review_dispatch_id: None,
+            current_branch_closure_id: None,
+            current_release_readiness_result: None,
+        };
+
+        let output = advance_late_stage_follow_up_or_requery_output(
+            &operator,
+            Path::new("docs/featureforge/plans/example.md"),
+            true,
+            AdvanceLateStageOutputContext {
+                stage_path: "final_review",
+                delegated_primitive: "record-final-review",
+                branch_closure_id: Some(String::from("branch-closure-1")),
+                dispatch_id: Some(String::from("dispatch-123")),
+                result: "pass",
+                trace_summary: "advance-late-stage follow-up required.",
+            },
+        );
+
+        assert_eq!(output.action, "blocked");
+        assert_eq!(output.code, None);
+        assert_eq!(output.recommended_command, None);
+        assert_eq!(output.rederive_via_workflow_operator, None);
+        assert_eq!(
+            output.required_follow_up,
+            Some(String::from("request_external_review"))
         );
     }
 
