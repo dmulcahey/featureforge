@@ -92,9 +92,7 @@
         "close current task",
         "continue execution",
         "request task review",
-        "bind task review dispatch lineage",
         "request final review",
-        "bind final review dispatch lineage",
         "execution reentry required",
         "hand off",
         "pivot / return to planning",
@@ -162,8 +160,7 @@
         },
         {
           "required": [
-            "task_number",
-            "dispatch_id"
+            "task_number"
           ]
         }
       ],
@@ -312,8 +309,7 @@
         "properties": {
           "recording_context": {
             "required": [
-              "task_number",
-              "dispatch_id"
+              "task_number"
             ]
           }
         },
@@ -376,7 +372,6 @@
         "properties": {
           "recording_context": {
             "required": [
-              "dispatch_id",
               "branch_closure_id"
             ]
           }

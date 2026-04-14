@@ -197,8 +197,8 @@ fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&st
     let state_path = authoritative_harness_state_path(repo, state);
     let source = fs::read_to_string(&state_path)
         .expect("authoritative harness state should be readable for fixture mutation");
-    let mut payload: Value =
-        serde_json::from_str(&source).expect("authoritative harness state should remain valid json");
+    let mut payload: Value = serde_json::from_str(&source)
+        .expect("authoritative harness state should remain valid json");
     let object = payload
         .as_object_mut()
         .expect("authoritative harness state should remain a json object");
@@ -639,8 +639,8 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
         recording_context
             .dispatch_id
             .as_deref()
-            .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty()),
-        "task_closure_recording_ready should expose a non-empty dispatch_id",
+            .is_none_or(|dispatch_id| !dispatch_id.trim().is_empty()),
+        "task_closure_recording_ready dispatch_id should be omitted or non-empty",
     );
     assert_routing_parity_with_operator_json(&routing, &operator);
 
@@ -650,8 +650,8 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
     assert!(
         query_source.contains("String::from(\"task_closure_recording_ready\")")
             && query_source.contains("task_number: Some(task_number)")
-            && query_source.contains("dispatch_id: Some(dispatch_id.clone())"),
-        "task_closure_recording_ready should expose task_number and dispatch_id recording_context ids",
+            && query_source.contains("dispatch_id: task_review_dispatch_id.clone()"),
+        "task_closure_recording_ready should expose task_number and may surface dispatch_id in recording_context",
     );
     assert!(
         query_source.contains("\"release_readiness_recording_ready\"")
@@ -661,9 +661,9 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
     );
     assert!(
         query_source.contains("String::from(\"final_review_recording_ready\")")
-            && query_source.contains("dispatch_id: Some(dispatch_id.clone())")
-            && query_source.contains("branch_closure_id: current_branch_closure_id.clone()"),
-        "final_review_recording_ready should expose dispatch_id and branch_closure_id recording_context ids in the routing constructor",
+            && query_source.contains("dispatch_id: final_review_dispatch_id.clone()")
+            && query_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
+        "final_review_recording_ready should expose branch_closure_id and may surface dispatch_id in the routing constructor",
     );
 }
 
@@ -714,8 +714,8 @@ fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned() {
 }
 
 #[test]
-fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned_for_task_boundary_blocked_fixture(
-) {
+fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned_for_task_boundary_blocked_fixture()
+ {
     let (repo_dir, state_dir) =
         init_repo("contracts-boundary-workflow-direct-real-cli-alignment-blocked");
     let repo = repo_dir.path();
@@ -963,8 +963,8 @@ fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
 }
 
 #[test]
-fn runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli(
-) {
+fn runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli()
+ {
     let command_success = [
         "plan",
         "execution",
@@ -989,7 +989,9 @@ fn runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned
     ];
 
     for (label, real_cli) in [("direct", false), ("compiled-cli", true)] {
-        let (repo_dir, state_dir) = init_repo(&format!("contracts-boundary-runtime-remediation-fs03-{label}"));
+        let (repo_dir, state_dir) = init_repo(&format!(
+            "contracts-boundary-runtime-remediation-fs03-{label}"
+        ));
         let repo = repo_dir.path();
         let state = state_dir.path();
         setup_task_boundary_blocked_case(repo, state);
@@ -1087,16 +1089,25 @@ fn runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibi
 }
 
 #[test]
-fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli() {
+fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli()
+{
     let run_case = |label: &str, real_cli: bool| -> Value {
-        let (repo_dir, state_dir) = init_repo(&format!("contracts-boundary-runtime-remediation-fs04-{label}"));
+        let (repo_dir, state_dir) = init_repo(&format!(
+            "contracts-boundary-runtime-remediation-fs04-{label}"
+        ));
         let repo = repo_dir.path();
         let state = state_dir.path();
         setup_task_boundary_blocked_case(repo, state);
         run_featureforge_json(
             repo,
             state,
-            &["plan", "execution", "repair-review-state", "--plan", PLAN_REL],
+            &[
+                "plan",
+                "execution",
+                "repair-review-state",
+                "--plan",
+                PLAN_REL,
+            ],
             real_cli,
             &format!("FS-04 {label} repair-review-state route visibility"),
         )
@@ -1122,7 +1133,8 @@ fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct
 }
 
 #[test]
-fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli() {
+fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli()
+{
     let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs08");
     let repo = repo_dir.path();
     let state = state_dir.path();

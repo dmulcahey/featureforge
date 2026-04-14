@@ -1589,11 +1589,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`",
+        "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
+        "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1613,7 +1613,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "`task_closure_recording_ready` requires `recording_context.task_number` plus `recording_context.dispatch_id`.",
+        "`task_closure_recording_ready` requires `recording_context.task_number`.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1621,13 +1621,13 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "`final_review_recording_ready` requires `recording_context.dispatch_id` plus `recording_context.branch_closure_id`.",
+        "`final_review_recording_ready` requires `recording_context.branch_closure_id`.",
     );
     assert_file_contains_in_order(
         root.join("skills/executing-plans/SKILL.md"),
         &[
             "after review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`",
-            "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`",
+            "rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`",
             "no exceptions: only after close-current-task succeeds may Task `N+1` begin",
         ],
     );
@@ -1657,11 +1657,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.",
+        "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
+        "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1681,7 +1681,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "`task_closure_recording_ready` requires `recording_context.task_number` plus `recording_context.dispatch_id`.",
+        "`task_closure_recording_ready` requires `recording_context.task_number`.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1689,7 +1689,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "`final_review_recording_ready` requires `recording_context.dispatch_id` plus `recording_context.branch_closure_id`.",
+        "`final_review_recording_ready` requires `recording_context.branch_closure_id`.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1703,13 +1703,13 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/subagent-driven-development/SKILL.md"),
         &[
             "After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.",
-            "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.",
+            "Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.",
             "No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.",
         ],
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "If workflow/operator reports `task_review_dispatch_required`, treat it as a compatibility/debug lane and keep routing through workflow/operator plus intent-level commands; do not expand the normal closure loop into manual low-level command choreography.",
+        "If workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep routing through workflow/operator plus the intent-level commands; do not expand the normal closure loop into low-level dispatch-lineage management.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -2011,17 +2011,21 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
+        "Keep review artifacts runtime-owned:",
+    );
+    assert_file_not_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
         "project-scoped code-review companion artifact",
     );
-    assert_file_contains(
+    assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "{user}-{safe-branch}-code-review-{datetime}.md",
     );
-    assert_file_contains(
+    assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "**Generated By:** featureforge:requesting-code-review",
     );
-    assert_file_contains(
+    assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "derived companion for reviewer provenance and audit traceability",
     );
@@ -2057,6 +2061,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/requesting-code-review/SKILL.md"),
         "For terminal whole-diff review, only request a fresh external final review when workflow/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`.",
     );
+    assert_file_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "Pass the exact approved plan path into the reviewer context. When runtime-owned execution evidence or task-packet context is already available from the current workflow handoff, pass it through as supplemental context; do not make the public flow harvest it manually.",
+    );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "REVIEW_DISPATCH_JSON=",
@@ -2065,9 +2073,9 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("skills/requesting-code-review/SKILL.md"),
         "REVIEW_DISPATCH_ACTION=",
     );
-    assert_file_contains(
+    assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "if [ -z \"$DISPATCH_ID\" ]; then",
+        "DISPATCH_ID=",
     );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -2083,7 +2091,15 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
-        "\"$_FEATUREFORGE_BIN\" plan execution advance-late-stage --plan \"$APPROVED_PLAN_PATH\" --dispatch-id \"$DISPATCH_ID\" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary.md",
+        "\"$_FEATUREFORGE_BIN\" plan execution advance-late-stage --plan \"$APPROVED_PLAN_PATH\" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary.md",
+    );
+    assert_file_not_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "STATUS_JSON=$(\"$_FEATUREFORGE_BIN\" plan execution status --plan \"$APPROVED_PLAN_PATH\")",
+    );
+    assert_file_not_contains(
+        root.join("skills/requesting-code-review/SKILL.md"),
+        "TASK_PACKET_CONTEXT_TASK_1=",
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),

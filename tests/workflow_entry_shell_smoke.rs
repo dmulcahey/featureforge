@@ -271,7 +271,9 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
 
 fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
     let mut checkout = Command::new("git");
-    checkout.args(["checkout", "-B", branch_name]).current_dir(repo);
+    checkout
+        .args(["checkout", "-B", branch_name])
+        .current_dir(repo);
     let output = run(checkout, "git checkout preflight acceptance branch");
     assert!(
         output.status.success(),

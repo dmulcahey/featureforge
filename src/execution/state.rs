@@ -30,7 +30,7 @@ use crate::execution::closure_graph::{
     AuthoritativeClosureGraph, ClosureGraphSignals, reason_code_indicates_stale_unreviewed,
 };
 use crate::execution::current_truth::{
-    BranchRerecordingUnsupportedReason, FollowUpOverrideInputs,
+    BranchRerecordingUnsupportedReason, FollowUpOverrideInputs, IntentLevelCommandTemplateInputs,
     branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
     branch_closure_rerecording_assessment,
     branch_contract_identity as shared_branch_contract_identity,
@@ -41,10 +41,10 @@ use crate::execution::current_truth::{
     current_repo_tracked_tree_sha,
     current_task_negative_result_task as shared_current_task_negative_result_task,
     current_task_review_dispatch_id as shared_current_task_review_dispatch_id,
-    intent_level_command_template, IntentLevelCommandTemplateInputs,
     execution_state_has_open_steps as shared_execution_state_has_open_steps,
     final_review_dispatch_still_current as shared_final_review_dispatch_still_current,
     finish_requires_test_plan_refresh, handoff_decision_scope as shared_handoff_decision_scope,
+    intent_level_command_template,
     late_stage_missing_current_closure_stale_provenance_present as shared_late_stage_missing_current_closure_stale_provenance_present,
     late_stage_qa_blocked as shared_late_stage_qa_blocked,
     late_stage_release_blocked as shared_late_stage_release_blocked,
@@ -61,8 +61,8 @@ use crate::execution::current_truth::{
     public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
     public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
     qa_requirement_policy_invalid as shared_qa_requirement_policy_invalid,
-    reviewer_source_is_valid as shared_reviewer_source_is_valid,
     resolve_follow_up_override as resolve_shared_follow_up_override,
+    reviewer_source_is_valid as shared_reviewer_source_is_valid,
     task_closure_contributes_to_branch_surface, task_review_dispatch_task,
     task_review_result_pending_task,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
@@ -208,12 +208,8 @@ enum NextActionSchema {
     ContinueExecution,
     #[serde(rename = "request task review")]
     RequestTaskReview,
-    #[serde(rename = "bind task review dispatch lineage")]
-    BindTaskReviewDispatchLineage,
     #[serde(rename = "request final review")]
     RequestFinalReview,
-    #[serde(rename = "bind final review dispatch lineage")]
-    BindFinalReviewDispatchLineage,
     #[serde(rename = "execution reentry required")]
     ExecutionReentryRequired,
     #[serde(rename = "hand off")]
@@ -1695,6 +1691,100 @@ fn current_review_dispatch_id_from_lineage(
     })
 }
 
+pub(crate) fn ensure_current_review_dispatch_id(
+    context: &ExecutionContext,
+    scope: ReviewDispatchScopeArg,
+    task: Option<u32>,
+    expected_dispatch_id: Option<&str>,
+) -> Result<String, JsonFailure> {
+    let args = RecordReviewDispatchArgs {
+        plan: PathBuf::from(context.plan_rel.clone()),
+        scope,
+        task,
+    };
+    let cycle_target = review_dispatch_cycle_target(context);
+    validate_review_dispatch_request(context, &args, cycle_target)?;
+    if let Some(dispatch_id) = current_review_dispatch_id_if_still_current(context, &args)? {
+        validate_expected_dispatch_id(&dispatch_id, expected_dispatch_id, scope, task)?;
+        return Ok(dispatch_id);
+    }
+    if let Some(expected_dispatch_id) = expected_dispatch_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(expected_dispatch_id.to_owned());
+    }
+    ensure_review_dispatch_authoritative_bootstrap(context)?;
+    let action = record_review_dispatch_strategy_checkpoint(context, &args, cycle_target)?;
+    let refreshed = load_execution_context_for_exact_plan(&context.runtime, &args.plan)?;
+    let dispatch_id = match action {
+        ReviewDispatchMutationAction::Recorded => {
+            current_review_dispatch_id_from_lineage(&refreshed, &args)?
+        }
+        ReviewDispatchMutationAction::AlreadyCurrent => {
+            current_review_dispatch_id_if_still_current(&refreshed, &args)?
+        }
+    }
+    .ok_or_else(|| {
+        JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            "review-dispatch lineage binding did not yield a current dispatch id.",
+        )
+    })?;
+    validate_expected_dispatch_id(&dispatch_id, expected_dispatch_id, scope, task)?;
+    Ok(dispatch_id)
+}
+
+pub(crate) fn current_review_dispatch_id_candidate(
+    context: &ExecutionContext,
+    scope: ReviewDispatchScopeArg,
+    task: Option<u32>,
+    expected_dispatch_id: Option<&str>,
+) -> Result<Option<String>, JsonFailure> {
+    if let Some(expected_dispatch_id) = expected_dispatch_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(Some(expected_dispatch_id.to_owned()));
+    }
+    let args = RecordReviewDispatchArgs {
+        plan: PathBuf::from(context.plan_rel.clone()),
+        scope,
+        task,
+    };
+    current_review_dispatch_id_if_still_current(context, &args)
+}
+
+fn validate_expected_dispatch_id(
+    actual_dispatch_id: &str,
+    expected_dispatch_id: Option<&str>,
+    scope: ReviewDispatchScopeArg,
+    task: Option<u32>,
+) -> Result<(), JsonFailure> {
+    let Some(expected_dispatch_id) = expected_dispatch_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    if actual_dispatch_id.trim() == expected_dispatch_id {
+        return Ok(());
+    }
+    let detail = match scope {
+        ReviewDispatchScopeArg::Task => format!(
+            "close-current-task expected dispatch `{expected_dispatch_id}` for task {}.",
+            task.unwrap_or_default()
+        ),
+        ReviewDispatchScopeArg::FinalReview => {
+            format!("advance-late-stage expected final-review dispatch `{expected_dispatch_id}`.")
+        }
+    };
+    Err(JsonFailure::new(
+        FailureClass::InvalidCommandInput,
+        format!("dispatch_id_mismatch: {detail}"),
+    ))
+}
+
 fn recommendation_execution_context_key(context: &ExecutionContext) -> String {
     let base_branch = context
         .current_release_base_branch()
@@ -1702,12 +1792,11 @@ fn recommendation_execution_context_key(context: &ExecutionContext) -> String {
     format!("{}@{}", context.runtime.branch_name, base_branch)
 }
 
-fn record_review_dispatch_strategy_checkpoint(
+fn record_review_dispatch_strategy_checkpoint_without_claim(
     context: &ExecutionContext,
     args: &RecordReviewDispatchArgs,
     cycle_target: ReviewDispatchCycleTarget,
 ) -> Result<ReviewDispatchMutationAction, JsonFailure> {
-    let _write_authority = claim_step_write_authority(&context.runtime)?;
     if current_review_dispatch_id_if_still_current(context, args)?.is_some() {
         return Ok(ReviewDispatchMutationAction::AlreadyCurrent);
     }
@@ -1736,6 +1825,16 @@ fn record_review_dispatch_strategy_checkpoint(
     )?;
     authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(ReviewDispatchMutationAction::Recorded)
+}
+
+fn record_review_dispatch_strategy_checkpoint(
+    context: &ExecutionContext,
+    args: &RecordReviewDispatchArgs,
+    cycle_target: ReviewDispatchCycleTarget,
+) -> Result<ReviewDispatchMutationAction, JsonFailure> {
+    let _ = load_authoritative_transition_state(context)?;
+    let _write_authority = claim_step_write_authority(&context.runtime)?;
+    record_review_dispatch_strategy_checkpoint_without_claim(context, args, cycle_target)
 }
 
 fn ensure_review_dispatch_authoritative_bootstrap(
@@ -2362,7 +2461,7 @@ fn tighten_plan_execution_phase_bound_recording_context_contracts(
     append_phase_bound_recording_context_requirements(
         schema_json,
         "task_closure_recording_ready",
-        &["task_number", "dispatch_id"],
+        &["task_number"],
     )?;
     append_phase_bound_recording_context_requirements(
         schema_json,
@@ -2377,7 +2476,7 @@ fn tighten_plan_execution_phase_bound_recording_context_contracts(
     append_phase_bound_recording_context_requirements(
         schema_json,
         "final_review_recording_ready",
-        &["dispatch_id", "branch_closure_id"],
+        &["branch_closure_id"],
     )?;
     append_phase_detail_field_forbidden_outside_allowed_phase_details(
         schema_json,
@@ -2456,7 +2555,7 @@ fn tighten_public_recording_context_schema(
         String::from("anyOf"),
         serde_json::json!([
             {"required": ["branch_closure_id"]},
-            {"required": ["task_number", "dispatch_id"]}
+            {"required": ["task_number"]}
         ]),
     );
     Ok(())
@@ -4231,7 +4330,8 @@ fn compute_status_blocking_records(
     let base_blocking_records = derive_public_blocking_records(status, gate_finish);
     let task_structural_records =
         derive_structural_current_task_closure_blocking_records(context, status)?;
-    let branch_structural_records = derive_structural_current_branch_closure_blocking_records(status);
+    let branch_structural_records =
+        derive_structural_current_branch_closure_blocking_records(status);
     let blocking_records = if status.review_state_status == "stale_unreviewed" {
         task_structural_records
             .into_iter()
@@ -4709,18 +4809,10 @@ fn derive_public_phase_detail(
 fn derive_public_next_action(
     status: &PlanExecutionStatus,
     phase_detail: &str,
-    recommended_command: Option<&str>,
+    _recommended_command: Option<&str>,
 ) -> String {
     match phase_detail {
-        "task_review_dispatch_required" => {
-            if recommended_command
-                .is_some_and(|command| command.contains("record-review-dispatch"))
-            {
-                String::from("bind task review dispatch lineage")
-            } else {
-                String::from("request task review")
-            }
-        }
+        "task_review_dispatch_required" => String::from("request task review"),
         "task_review_result_pending" => String::from("wait for external review result"),
         "task_closure_recording_ready" => String::from("close current task"),
         "finish_completion_gate_ready" | "finish_review_gate_ready" => {
@@ -4731,15 +4823,7 @@ fn derive_public_next_action(
         }
         "release_readiness_recording_ready" => String::from("advance late stage"),
         "release_blocker_resolution_required" => String::from("resolve release blocker"),
-        "final_review_dispatch_required" => {
-            if recommended_command
-                .is_some_and(|command| command.contains("record-review-dispatch"))
-            {
-                String::from("bind final review dispatch lineage")
-            } else {
-                String::from("request final review")
-            }
-        }
+        "final_review_dispatch_required" => String::from("request final review"),
         "final_review_outcome_pending" => String::from("wait for external review result"),
         "final_review_recording_ready" => String::from("advance late stage"),
         "test_plan_refresh_required" => String::from("refresh test plan"),
@@ -4776,18 +4860,23 @@ fn derive_public_recording_context(
                 branch_closure_id: Some(branch_closure_id.clone()),
             }),
         "task_closure_recording_ready" => {
-            task_review_dispatch_id.map(|dispatch_id| PublicRecordingContext {
-                task_number: status.blocking_task,
-                dispatch_id: Some(dispatch_id.to_owned()),
-                branch_closure_id: None,
-            })
+            status
+                .blocking_task
+                .map(|task_number| PublicRecordingContext {
+                    task_number: Some(task_number),
+                    dispatch_id: task_review_dispatch_id.map(str::to_owned),
+                    branch_closure_id: None,
+                })
         }
         "final_review_recording_ready" => {
-            final_review_dispatch_id.map(|dispatch_id| PublicRecordingContext {
-                task_number: None,
-                dispatch_id: Some(dispatch_id.to_owned()),
-                branch_closure_id: status.current_branch_closure_id.clone(),
-            })
+            status
+                .current_branch_closure_id
+                .as_ref()
+                .map(|branch_closure_id| PublicRecordingContext {
+                    task_number: None,
+                    dispatch_id: final_review_dispatch_id.map(str::to_owned),
+                    branch_closure_id: Some(branch_closure_id.clone()),
+                })
         }
         _ => None,
     }
@@ -5610,7 +5699,10 @@ fn derive_public_recommended_command(
     execution_command: Option<String>,
 ) -> Option<String> {
     let plan = &context.plan_rel;
-    let task_number = status.blocking_task.or(status.active_task).or(status.resume_task);
+    let task_number = status
+        .blocking_task
+        .or(status.active_task)
+        .or(status.resume_task);
     if phase_detail == "task_closure_recording_ready" && task_number.is_none() {
         return None;
     }
@@ -9641,8 +9733,8 @@ fn require_current_release_readiness_ready_for_finish(
         );
         return false;
     };
-    let Some(record) = authoritative_state
-        .release_readiness_record_by_id(&current_release_readiness_record_id)
+    let Some(record) =
+        authoritative_state.release_readiness_record_by_id(&current_release_readiness_record_id)
     else {
         gate.fail(
             FailureClass::ReleaseArtifactNotFresh,
@@ -9790,7 +9882,8 @@ fn require_current_final_review_pass_for_finish(
         );
         return false;
     };
-    let Some(record) = authoritative_state.final_review_record_by_id(&current_final_review_record_id)
+    let Some(record) =
+        authoritative_state.final_review_record_by_id(&current_final_review_record_id)
     else {
         gate.fail(
             FailureClass::ReviewArtifactNotFresh,
@@ -12807,7 +12900,7 @@ fn ensure_prior_task_current_closure_record(
                 FailureClass::ExecutionStateNotReady,
                 "prior_task_review_not_green",
                 format!(
-                    "Task {target_task} may not begin because Task {prior_task} does not yet have a current task closure. Run `featureforge plan execution close-current-task --plan {} --task {prior_task} --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` before starting Task {target_task}.",
+                    "Task {target_task} may not begin because Task {prior_task} does not yet have a current task closure. Run `featureforge workflow operator --plan {} --external-review-result-ready`, then follow the recommended `close-current-task` command before starting Task {target_task}.",
                     context.plan_rel
                 ),
             )

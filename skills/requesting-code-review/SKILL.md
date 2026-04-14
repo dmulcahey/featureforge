@@ -83,47 +83,30 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 - If `contract_state != valid` or `packet_buildable_tasks != task_count`, stop and return to the current execution flow; do not review stale or malformed approved artifacts.
 - Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching the reviewer.
 - If workflow/operator fails, stop and return to the current execution flow; do not guess the public late-stage route from raw execution state.
-- Run `featureforge plan execution status --plan <approved-plan-path>` only when you need diagnostic fields such as `active_task`, `blocking_task`, `resume_task`, `evidence_path`, or strategy checkpoint state.
+- Run `featureforge plan execution status --plan <approved-plan-path>` only when you need extra execution-dirty or strategy-checkpoint diagnostics from the current workflow context.
 - If diagnostic status fails when those fields are required, stop and return to the current execution flow; do not dispatch review against guessed plan state.
 - When diagnostic status is required, parse `active_task`, `blocking_task`, and `resume_task` from that status JSON.
 - When diagnostic status is required, if any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.
-- For terminal whole-diff review, status is mandatory.
-- For terminal whole-diff review, run `featureforge plan execution status --plan <approved-plan-path>` before dispatching the reviewer.
-- For terminal whole-diff review, if status fails, stop and return to the current execution flow; do not dispatch review against guessed plan state.
-- For terminal whole-diff review, parse `active_task`, `blocking_task`, `resume_task`, and `evidence_path` from status JSON.
-- For terminal whole-diff review, if any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`.
+- For terminal whole-diff review, keep `workflow operator` as the normal route authority; use `plan execution status` only when you need extra diagnostic fields for review context.
 - For non-terminal checkpoint or task-boundary review, do not force terminal-clean execution state; follow the helper-reported blocking reason and review scope for the current task boundary.
-- For terminal whole-diff review, if `evidence_path` is empty or unreadable, stop and return to the current execution flow instead of reviewing against missing execution evidence.
 - For terminal whole-diff review, treat workflow/operator as authoritative for the public late-stage route; status is diagnostic only.
 - For terminal whole-diff review, only request a fresh external final review when workflow/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`.
 - For terminal whole-diff review, if workflow/operator already reports `phase_detail=final_review_outcome_pending`, do not dispatch a second reviewer; wait for the current final-review result or return to the current execution flow.
 - For terminal whole-diff review, when workflow/operator reports `final_review_dispatch_required`, keep the normal path operator-led and treat low-level dispatch commands as compatibility/debug-only.
-- For terminal whole-diff review, dispatch lineage remains mandatory in `*_dispatch_required` lanes; if `task_review_dispatch_required` persists without `recording_context.dispatch_id`, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <blocking_task>` once; if `final_review_dispatch_required` persists without `recording_context.dispatch_id`, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review` once. In both cases rerun operator and return to operator-led routing.
+- For terminal whole-diff review, do not route the normal path through `record-review-dispatch`; stay on workflow/operator plus the intent-level commands.
 - For terminal whole-diff review, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` after the external review result is ready and require `phase_detail=final_review_recording_ready` before recording final-review outcome.
-- After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and require `phase_detail=final_review_recording_ready` before recording the result with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>`.
+- After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and require `phase_detail=final_review_recording_ready` before recording the result with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>`.
 - For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: low-level compatibility/debug dispatch commands are not normal intent-level progression.
 - If operator/status diagnostics surface warning-only compatibility codes such as `legacy_evidence_format`, keep them in review context but do not treat them as blockers when authoritative gate outputs remain `allowed=true`.
-- Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context.
-- Build completed task-packet context from the approved plan and pass that completed task-packet context plus the plan's coverage matrix into the reviewer briefing.
+- Pass the exact approved plan path into the reviewer context. When runtime-owned execution evidence or task-packet context is already available from the current workflow handoff, pass it through as supplemental context; do not make the public flow harvest it manually.
 - If the current review is not governed by an approved FeatureForge plan, skip this execution-state gate and continue with the normal diff review.
 
-**2. Use the base branch context and derive the review range:**
-Keep base-branch selection runtime-aligned and stable for this review. For plan-routed final review, `BASE_BRANCH` must come from the runtime-owned release lineage/document-release context. For non-plan-routed review, prefer an explicit `BASE_BRANCH`; if not provided, derive it locally from repository refs using the fallback flow below.
+**2. Use the provided base branch context and derive the review range:**
+Keep base-branch selection runtime-aligned and stable for this review. For plan-routed final review, `BASE_BRANCH` must come from the runtime-owned release lineage/document-release context. For non-plan-routed review, provide `BASE_BRANCH` explicitly before running this step. Do not redetect it here.
 
 ```bash
 if [ -z "$BASE_BRANCH" ]; then
-  BASE_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master; do
-    if git show-ref --verify --quiet "refs/heads/$candidate" || git show-ref --verify --quiet "refs/remotes/origin/$candidate"; then
-      BASE_BRANCH="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  echo "Missing BASE_BRANCH. Set BASE_BRANCH from runtime-owned release lineage (plan-routed) or provide it explicitly (non-plan-routed) before continuing."
+  echo "Missing BASE_BRANCH. Set it from runtime-owned release lineage (plan-routed) or provide it explicitly (non-plan-routed) before continuing."
   exit 1
 fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
@@ -153,7 +136,7 @@ If the approved plan already called out a likely external-pattern target, you ma
 - `{WHAT_WAS_IMPLEMENTED}` - What you just built
 - `{PLAN_OR_REQUIREMENTS}` - What it should do, including completed task-packet context and coverage matrix details for plan-routed review
 - `{APPROVED_PLAN_PATH}` - Exact approved plan path for plan-routed review, otherwise leave blank
-- `{EXECUTION_EVIDENCE_PATH}` - Helper-reported evidence artifact path for plan-routed review, otherwise leave blank
+- `{EXECUTION_EVIDENCE_PATH}` - Optional runtime-provided evidence artifact path for plan-routed review, otherwise leave blank
 - `{BASE_BRANCH}` - The runtime-provided or explicitly supplied base branch name
 - `{BASE_SHA}` - Starting commit
 - `{HEAD_SHA}` - Ending commit
@@ -182,95 +165,10 @@ If the approved plan already called out a likely external-pattern target, you ma
   - `last_strategy_checkpoint_fingerprint`
   - `strategy_reset_required`
 
-**4.5. Persist workflow-routed review resolution:**
+**4.5. Keep review artifacts runtime-owned:**
 
-For workflow-routed final review, also write a project-scoped code-review companion artifact after the review is resolved and any required fixes land:
-
-- Require the exact approved plan path from the current workflow context before writing the code-review companion artifact.
-- Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
-- Use the base branch from Step 2 exactly as written; do not substitute a different branch name when persisting the artifact.
-- Use the current `HEAD` exactly as written; if new repo changes land after review, treat the earlier artifact as stale and rerun `requesting-code-review`.
-- Persist dedicated-review provenance in the artifact. For plan-routed final review, `Review Stage` must be `featureforge:requesting-code-review`, `Reviewer Provenance` must be `dedicated-independent`, `Reviewer Source` and `Reviewer ID` must be copied from the completed dedicated reviewer run, `Reviewer Artifact Path` must point at a runtime-owned dedicated reviewer artifact inside `$_FEATUREFORGE_STATE_DIR/projects/$SLUG`, `Reviewer Artifact Fingerprint` must be the canonical fingerprint of that artifact, and `Distinct From Stages` must enumerate the implementation stages this reviewer is independent from.
-- Require the referenced dedicated reviewer artifact to be a structured review receipt (not an ad-hoc note). It must include at least: `Review Stage`, `Reviewer Provenance`, `Reviewer Source`, `Reviewer ID`, `Distinct From Stages`, `Recorded Execution Deviations`, `Deviation Review Verdict`, `Source Plan`, `Source Plan Revision`, `Strategy Checkpoint Fingerprint`, `Base Branch`, `Head SHA`, `Result`, and `Generated By`.
-- Persist explicit deviation disposition. When execution evidence recorded topology downgrades or other runtime execution deviations for the current run, set `Recorded Execution Deviations: present` and `Deviation Review Verdict: pass` only after the reviewer explicitly inspects those deviations. When no deviations were recorded, write `Recorded Execution Deviations: none` and `Deviation Review Verdict: not_required`.
-
-```bash
-_SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
-if [ -n "$_SLUG_ENV" ]; then
-  eval "$_SLUG_ENV"
-fi
-unset _SLUG_ENV
-USER=$(whoami)
-DATETIME=$(date +%Y%m%d-%H%M%S)
-HEAD_SHA=$(git rev-parse HEAD)
-mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
-```
-
-Write to:
-- `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-code-review-{datetime}.md`
-
-For workflow-routed final review, this project artifact is a derived companion for reviewer provenance and audit traceability. Runtime-owned reviewed-closure and milestone records remain authoritative for routing and finish gates.
-
-Use this structure:
-
-```markdown
-# Code Review Result
-**Review Stage:** featureforge:requesting-code-review
-**Reviewer Provenance:** dedicated-independent
-**Reviewer Source:** fresh-context-subagent
-**Reviewer ID:** 019d3550-c932-7bb2-9903-33f68d7c30ca
-**Reviewer Artifact Path:** `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-independent-review-{datetime}.md`
-**Reviewer Artifact Fingerprint:** aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development
-**Recorded Execution Deviations:** none
-**Deviation Review Verdict:** not_required
-**Source Plan:** `docs/featureforge/plans/...`
-**Source Plan Revision:** 3
-**Strategy Checkpoint Fingerprint:** aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-**Branch:** feature/foo
-**Repo:** featureforge
-**Base Branch:** main
-**Head SHA:** abc1234
-**Result:** pass
-**Generated By:** featureforge:requesting-code-review
-**Generated At:** 2026-03-24T12:10:00Z
-
-## Summary
-- reviewer identity or transport
-- critical and important findings resolved or explicitly accepted
-- remaining minor follow-ups
-```
-
-Dedicated reviewer artifact (the path referenced above) should use this structure:
-
-```markdown
-# Code Review Result
-**Review Stage:** featureforge:requesting-code-review
-**Reviewer Provenance:** dedicated-independent
-**Reviewer Source:** fresh-context-subagent
-**Reviewer ID:** 019d3550-c932-7bb2-9903-33f68d7c30ca
-**Distinct From Stages:** featureforge:executing-plans, featureforge:subagent-driven-development
-**Recorded Execution Deviations:** none
-**Deviation Review Verdict:** not_required
-**Source Plan:** `docs/featureforge/plans/...`
-**Source Plan Revision:** 3
-**Strategy Checkpoint Fingerprint:** aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-**Branch:** feature/foo
-**Repo:** featureforge
-**Base Branch:** main
-**Head SHA:** abc1234
-**Result:** pass
-**Generated By:** featureforge:requesting-code-review
-**Generated At:** 2026-03-24T12:09:50Z
-
-## Summary
-- dedicated independent reviewer findings and verdict
-```
-
-Allowed `**Result:**` values:
-- `pass`
-- `needs-user-input`
-- `blocked`
+- Do not add manual project-scoped markdown review artifacts as part of the normal public flow.
+- If runtime emits derived reviewer receipts or provenance artifacts, treat them as output only; reviewed-closure and milestone records remain authoritative for routing and finish gates.
 
 ## Example
 
@@ -296,21 +194,6 @@ if [ "$PHASE" != "final_review_pending" ] || [ "$PHASE_DETAIL" != "final_review_
   echo "Stop and return to execution: workflow/operator did not expose final-review dispatch as the current route."
   exit 1
 fi
-STATUS_JSON=$("$_FEATUREFORGE_BIN" plan execution status --plan "$APPROVED_PLAN_PATH")
-ACTIVE_TASK=$(printf '%s\n' "$STATUS_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.active_task == null ? "" : String(parsed.active_task))')
-BLOCKING_TASK=$(printf '%s\n' "$STATUS_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.blocking_task == null ? "" : String(parsed.blocking_task))')
-RESUME_TASK=$(printf '%s\n' "$STATUS_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.resume_task == null ? "" : String(parsed.resume_task))')
-EXECUTION_EVIDENCE_PATH=$(printf '%s\n' "$STATUS_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.evidence_path || "")')
-if [ -n "$ACTIVE_TASK" ] || [ -n "$BLOCKING_TASK" ] || [ -n "$RESUME_TASK" ]; then
-  echo "Stop and return to execution: terminal review requires active_task/blocking_task/resume_task all null."
-  exit 1
-fi
-if [ -z "$EXECUTION_EVIDENCE_PATH" ] || [ ! -r "$EXECUTION_EVIDENCE_PATH" ]; then
-  echo "Stop and return to execution: helper-reported execution evidence path is missing or unreadable."
-  exit 1
-fi
-TASK_PACKET_CONTEXT_TASK_1=$("$_FEATUREFORGE_BIN" plan contract build-task-packet --plan "$APPROVED_PLAN_PATH" --task 1 --format markdown --persist yes)
-TASK_PACKET_CONTEXT_TASK_2=$("$_FEATUREFORGE_BIN" plan contract build-task-packet --plan "$APPROVED_PLAN_PATH" --task 2 --format markdown --persist yes)
 BASE_BRANCH=<same runtime-owned base branch from document-release when plan-routed, otherwise the explicit BASE_BRANCH provided in Step 2>
 BASE_SHA=$(git merge-base HEAD "origin/$BASE_BRANCH" 2>/dev/null || git merge-base HEAD "$BASE_BRANCH" 2>/dev/null)
 if [ -z "$BASE_SHA" ]; then
@@ -321,9 +204,9 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 [Dispatch code-reviewer agent]
   WHAT_WAS_IMPLEMENTED: Final branch diff for the deployment plan
-  PLAN_OR_REQUIREMENTS: Approved plan plus completed task-packet contexts for Tasks 1 and 2 and coverage matrix excerpts
+  PLAN_OR_REQUIREMENTS: Approved plan plus any runtime-provided supplemental context for the current review handoff
   APPROVED_PLAN_PATH: docs/featureforge/plans/deployment-plan.md
-  EXECUTION_EVIDENCE_PATH: $EXECUTION_EVIDENCE_PATH
+  EXECUTION_EVIDENCE_PATH:
   BASE_BRANCH: main
   BASE_SHA: a7981ec
   HEAD_SHA: 3df7661
@@ -339,16 +222,11 @@ HEAD_SHA=$(git rev-parse HEAD)
 You: [Fix progress indicators]
 RECORDING_READY_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --external-review-result-ready --json)
 RECORDING_PHASE_DETAIL=$(printf '%s\n' "$RECORDING_READY_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
-DISPATCH_ID=$(printf '%s\n' "$RECORDING_READY_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.recording_context?.dispatch_id || "")')
 if [ "$RECORDING_PHASE_DETAIL" != "final_review_recording_ready" ]; then
   echo "Stop and return to execution: workflow/operator did not expose final-review recording readiness."
   exit 1
 fi
-if [ -z "$DISPATCH_ID" ]; then
-  echo "Stop and return to execution: final-review recording-ready route did not include dispatch binding context."
-  exit 1
-fi
-"$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH" --dispatch-id "$DISPATCH_ID" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary.md
+"$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary.md
 [Continue to QA or branch completion through workflow/operator]
 ```
 
@@ -356,13 +234,13 @@ fi
 
 **Subagent-Driven Development:**
 - Per-task spec-compliance and code-quality reviews happen inside `subagent-driven-development`
-- Use `requesting-code-review` as the final whole-diff gate only after `featureforge:document-release` is current for the same `HEAD`, or earlier when you intentionally want an extra checkpoint
+- Use `featureforge:requesting-code-review` as the final whole-diff gate only after `featureforge:document-release` is current for the same `HEAD`, or earlier when you intentionally want an extra checkpoint
 - Resolve Critical and Important findings before handing off to branch completion
 
 **Executing Plans:**
-- Use `requesting-code-review` for both terminal whole-diff review and runtime-requested task-boundary dedicated-independent review (`prior_task_review_*` reason families)
+- Use `featureforge:requesting-code-review` for both terminal whole-diff review and runtime-requested task-boundary dedicated-independent review (`prior_task_review_*` reason families)
 - For terminal whole-diff review, run it after `featureforge:document-release`
-- After the reviewer returns for terminal whole-diff review, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and record the final-review result through `featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>` before QA or branch completion
+- After the reviewer returns for terminal whole-diff review, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and record the final-review result through `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <final-review-summary>` before QA or branch completion
 - Use an earlier review only when intentionally checkpointing or when runtime boundary reasons explicitly require it
 
 **Ad-Hoc Development:**
@@ -373,10 +251,9 @@ fi
 
 - rejects final review if the plan has invalid execution state or required unfinished work not truthfully represented
 - treats non-null `active_task`, `blocking_task`, or `resume_task` as execution-dirty and rejects final review until execution returns to a clean state
-- uses `workflow operator --plan ...` as the authoritative late-stage route, requests external final review when operator reports `final_review_dispatch_required`, and records final-review outcome through `advance-late-stage --dispatch-id ...` only after `--external-review-result-ready` exposes `final_review_recording_ready`
-- consumes the execution evidence artifact for checked-off steps
-- consumes completed task-packet context and the approved plan's coverage matrix for plan-routed review
-- requires the persisted final-review artifact to prove dedicated independent reviewer provenance and, when present, explicit deviation disposition
+- uses `workflow operator --plan ...` as the authoritative late-stage route, requests external final review when operator reports `final_review_dispatch_required`, and records final-review outcome through `advance-late-stage` only after `--external-review-result-ready` exposes `final_review_recording_ready`
+- accepts runtime-provided supplemental review context when the current workflow handoff already includes it, but does not require manual status/evidence/task-packet harvesting in the normal path
+- treats any derived reviewer receipts or provenance artifacts as runtime-owned output, not routing authority
 - must fail closed when it detects a missed reopen or stale evidence, but must not call `reopen` itself
 
 ## Red Flags

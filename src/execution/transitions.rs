@@ -5066,7 +5066,8 @@ mod tests {
         let mut authoritative_state = transition_state_with_milestone_histories();
         authoritative_state.state_payload["current_final_review_record_id"] =
             Value::from("final-review-record-current");
-        authoritative_state.state_payload["current_qa_record_id"] = Value::from("qa-record-current");
+        authoritative_state.state_payload["current_qa_record_id"] =
+            Value::from("qa-record-current");
         authoritative_state.state_payload["final_review_record_history"] = json!({
             "final-review-record-current": {
                 "record_id": "final-review-record-current",

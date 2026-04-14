@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use crate::cli::plan_execution::{
     AdvanceLateStageArgs, AdvanceLateStageResultArg, BeginArgs, CloseCurrentTaskArgs, CompleteArgs,
     NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs, RecordFinalReviewArgs, RecordQaArgs,
-    RecordReleaseReadinessArgs, ReopenArgs, ReviewOutcomeArg, StatusArgs, TransferArgs,
-    VerificationOutcomeArg,
+    RecordReleaseReadinessArgs, ReopenArgs, ReviewDispatchScopeArg, ReviewOutcomeArg, StatusArgs,
+    TransferArgs, VerificationOutcomeArg,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::authority::write_authoritative_unit_review_receipt_artifact;
@@ -38,8 +38,7 @@ use crate::execution::current_truth::{
     public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
     public_review_state_stale_unreviewed_for_reroute as shared_public_review_state_stale_unreviewed_for_reroute,
     render_late_stage_surface_only_branch_surface as late_stage_surface_only_branch_surface,
-    reviewer_source_is_valid as shared_reviewer_source_is_valid,
-    summary_hash,
+    reviewer_source_is_valid as shared_reviewer_source_is_valid, summary_hash,
     task_closure_contributes_to_branch_surface as shared_task_closure_contributes_to_branch_surface,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
     task_scope_stale_review_state_reason_present as shared_task_scope_stale_review_state_reason_present,
@@ -82,17 +81,17 @@ use crate::execution::state::{
     RebuildEvidenceCandidate, RebuildEvidenceCounts, RebuildEvidenceFilter, RebuildEvidenceOutput,
     RebuildEvidenceTarget, branch_closure_record_matches_plan_exemption,
     compute_packet_fingerprint, current_file_proof, current_head_sha,
-    current_test_plan_artifact_path_for_finish, discover_rebuild_candidates,
-    gate_finish_from_context, gate_review_from_context, hash_contract_plan,
-    live_review_state_status_for_reroute_from_status, load_execution_context_for_exact_plan,
-    load_execution_context_for_mutation, normalize_begin_request, normalize_complete_request,
-    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
-    normalize_source, normalize_transfer_request, require_normalized_text,
-    require_preflight_acceptance, require_prior_task_closure_for_begin, status_from_context,
-    still_current_task_closure_records, structural_current_task_closure_failures,
-    task_completion_lineage_fingerprint, task_scope_review_state_repair_reason,
-    task_scope_structural_review_state_reason, usable_current_branch_closure_identity,
-    validate_expected_fingerprint,
+    current_review_dispatch_id_candidate, current_test_plan_artifact_path_for_finish,
+    discover_rebuild_candidates, ensure_current_review_dispatch_id, gate_finish_from_context,
+    gate_review_from_context, hash_contract_plan, live_review_state_status_for_reroute_from_status,
+    load_execution_context_for_exact_plan, load_execution_context_for_mutation,
+    normalize_begin_request, normalize_complete_request, normalize_note_request,
+    normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
+    normalize_transfer_request, require_normalized_text, require_preflight_acceptance,
+    require_prior_task_closure_for_begin, status_from_context, still_current_task_closure_records,
+    structural_current_task_closure_failures, task_completion_lineage_fingerprint,
+    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
+    usable_current_branch_closure_identity, validate_expected_fingerprint,
 };
 use crate::execution::transitions::{
     AuthoritativeTransitionState, BranchClosureRecord, CurrentTaskClosureRecord, StepCommand,
@@ -972,9 +971,8 @@ pub fn close_current_task(
     runtime: &ExecutionRuntime,
     args: &CloseCurrentTaskArgs,
 ) -> Result<CloseCurrentTaskOutput, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    require_preflight_acceptance(&context)?;
-    let status = status_with_shared_routing_or_context(runtime, &args.plan, &context)?;
+    let initial_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    let status = status_with_shared_routing_or_context(runtime, &args.plan, &initial_context)?;
     let execution_run_id = status
         .execution_run_id
         .as_ref()
@@ -985,6 +983,191 @@ pub fn close_current_task(
                 "close-current-task requires an active execution run identity.",
             )
         })?;
+    let verification_result = args.verification_result.as_str();
+    let initial_reviewed_state_id = current_task_reviewed_state_id(&initial_context, args.task)?;
+    let initial_contract_identity = current_task_contract_identity(&initial_context, args.task);
+    let initial_closure_record_id = current_task_closure_record_id(&initial_context, args.task)?;
+    let task_recording_ready_for_task = |operator: &ExecutionRoutingState| {
+        operator.phase == "task_closure_pending"
+            && operator.phase_detail == "task_closure_recording_ready"
+            && operator.review_state_status == "clean"
+            && operator
+                .recording_context
+                .as_ref()
+                .and_then(|context| context.task_number)
+                == Some(args.task)
+    };
+    let candidate_dispatch_id = current_review_dispatch_id_candidate(
+        &initial_context,
+        ReviewDispatchScopeArg::Task,
+        Some(args.task),
+        args.dispatch_id.as_deref(),
+    )?;
+    if let Some(dispatch_id) = candidate_dispatch_id.as_deref() {
+        ensure_task_dispatch_id_matches(&initial_context, args.task, dispatch_id)?;
+        match task_dispatch_reviewed_state_status(
+            &initial_context,
+            args.task,
+            &initial_reviewed_state_id,
+        )? {
+            TaskDispatchReviewedStateStatus::Current => {}
+            TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
+                return Ok(CloseCurrentTaskOutput {
+                    action: String::from("blocked"),
+                    task_number: args.task,
+                    dispatch_validation_action: String::from("blocked"),
+                    closure_action: String::from("blocked"),
+                    task_closure_status: String::from("not_current"),
+                    superseded_task_closure_ids: Vec::new(),
+                    closure_record_id: None,
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    required_follow_up: Some(String::from("request_external_review")),
+                    trace_summary: String::from(
+                        "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
+                    ),
+                });
+            }
+            TaskDispatchReviewedStateStatus::StaleReviewedState => {
+                return Ok(CloseCurrentTaskOutput {
+                    action: String::from("blocked"),
+                    task_number: args.task,
+                    dispatch_validation_action: String::from("blocked"),
+                    closure_action: String::from("blocked"),
+                    task_closure_status: String::from("not_current"),
+                    superseded_task_closure_ids: Vec::new(),
+                    closure_record_id: None,
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    required_follow_up: Some(String::from("execution_reentry")),
+                    trace_summary: String::from(
+                        "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
+                    ),
+                });
+            }
+        }
+        let mut authoritative_state = load_authoritative_transition_state(&initial_context)?;
+        let Some(authoritative_state) = authoritative_state.as_mut() else {
+            return Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                "close-current-task requires authoritative harness state.",
+            ));
+        };
+        if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
+            && current_record.closure_record_id == initial_closure_record_id
+            && current_record.dispatch_id == dispatch_id
+        {
+            let (review_summary_hash, verification_summary_hash) =
+                close_current_task_summary_hashes(args)?;
+            if current_record.review_result == args.review_result.as_str()
+                && current_record.review_summary_hash == review_summary_hash.as_str()
+                && current_record.verification_result == verification_result
+                && current_record.verification_summary_hash == verification_summary_hash.as_str()
+            {
+                return Ok(CloseCurrentTaskOutput {
+                    action: String::from("already_current"),
+                    task_number: args.task,
+                    dispatch_validation_action: String::from("validated"),
+                    closure_action: String::from("already_current"),
+                    task_closure_status: String::from("current"),
+                    superseded_task_closure_ids: Vec::new(),
+                    closure_record_id: Some(initial_closure_record_id),
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    required_follow_up: None,
+                    trace_summary: String::from(
+                        "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                    ),
+                });
+            }
+            return Ok(CloseCurrentTaskOutput {
+                action: String::from("blocked"),
+                task_number: args.task,
+                dispatch_validation_action: String::from("validated"),
+                closure_action: String::from("blocked"),
+                task_closure_status: String::from("current"),
+                superseded_task_closure_ids: Vec::new(),
+                closure_record_id: Some(initial_closure_record_id),
+                code: None,
+                recommended_command: None,
+                rederive_via_workflow_operator: None,
+                required_follow_up: None,
+                trace_summary: String::from(
+                    "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
+                ),
+            });
+        }
+        if let Some(negative_record) = authoritative_state.task_closure_negative_result(args.task)
+            && negative_record.dispatch_id == dispatch_id
+            && negative_record.reviewed_state_id == initial_reviewed_state_id
+            && negative_record.contract_identity == initial_contract_identity
+        {
+            let operator = current_workflow_operator(runtime, &args.plan, true)?;
+            return Ok(CloseCurrentTaskOutput {
+                action: String::from("blocked"),
+                task_number: args.task,
+                dispatch_validation_action: String::from("validated"),
+                closure_action: String::from("blocked"),
+                task_closure_status: String::from("not_current"),
+                superseded_task_closure_ids: Vec::new(),
+                closure_record_id: None,
+                code: None,
+                recommended_command: None,
+                rederive_via_workflow_operator: None,
+                required_follow_up: negative_result_follow_up(&operator),
+                trace_summary: String::from(
+                    "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
+                ),
+            });
+        }
+    }
+    let operator = current_workflow_operator(runtime, &args.plan, true)?;
+    if candidate_dispatch_id.is_some() && !task_recording_ready_for_task(&operator) {
+        let required_follow_up = close_current_task_required_follow_up(&operator);
+        if required_follow_up.is_none() {
+            return Ok(shared_out_of_phase_close_current_task_output(
+                &args.plan,
+                args.task,
+                "close-current-task failed closed because workflow/operator did not expose task_closure_recording_ready for the supplied task.",
+            ));
+        }
+        return Ok(CloseCurrentTaskOutput {
+            action: String::from("blocked"),
+            task_number: args.task,
+            dispatch_validation_action: String::from("blocked"),
+            closure_action: String::from("blocked"),
+            task_closure_status: String::from("not_current"),
+            superseded_task_closure_ids: Vec::new(),
+            closure_record_id: None,
+            code: None,
+            recommended_command: None,
+            rederive_via_workflow_operator: None,
+            required_follow_up,
+            trace_summary: String::from(
+                "close-current-task failed closed because workflow/operator did not expose task_closure_recording_ready for the supplied task.",
+            ),
+        });
+    }
+    let mut summary_hashes = candidate_dispatch_id
+        .is_none()
+        .then(|| close_current_task_summary_hashes(args))
+        .transpose()?;
+    let dispatch_was_missing = candidate_dispatch_id.is_none();
+    let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
+        dispatch_id
+    } else {
+        ensure_current_review_dispatch_id(
+            &initial_context,
+            ReviewDispatchScopeArg::Task,
+            Some(args.task),
+            args.dispatch_id.as_deref(),
+        )?
+    };
+    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    ensure_task_dispatch_id_matches(&context, args.task, &dispatch_id)?;
     let strategy_checkpoint_fingerprint =
         authoritative_strategy_checkpoint_fingerprint_checked(&context)?.ok_or_else(|| {
             JsonFailure::new(
@@ -992,17 +1175,10 @@ pub fn close_current_task(
                 "close-current-task requires authoritative strategy checkpoint provenance.",
             )
         })?;
-    ensure_task_dispatch_id_matches(&context, args.task, &args.dispatch_id)?;
-    let verification_result = args.verification_result.as_str();
-    let mut summary_hashes: Option<(String, String)> = None;
     let reviewed_state_id = current_task_reviewed_state_id(&context, args.task)?;
     let contract_identity = current_task_contract_identity(&context, args.task);
     let closure_record_id = current_task_closure_record_id(&context, args.task)?;
-    match task_dispatch_reviewed_state_status(
-        &context,
-        args.task,
-        &reviewed_state_id,
-    )? {
+    match task_dispatch_reviewed_state_status(&context, args.task, &reviewed_state_id)? {
         TaskDispatchReviewedStateStatus::Current => {}
         TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
             return Ok(CloseCurrentTaskOutput {
@@ -1042,20 +1218,19 @@ pub fn close_current_task(
         }
     }
     let current_task_recording_ready = |operator: &ExecutionRoutingState| {
-        operator.phase == "task_closure_pending"
-            && operator.phase_detail == "task_closure_recording_ready"
-            && operator.review_state_status == "clean"
-            && operator
-                .recording_context
-                .as_ref()
-                .and_then(|context| context.task_number)
-                == Some(args.task)
+        task_recording_ready_for_task(operator)
             && operator
                 .recording_context
                 .as_ref()
                 .and_then(|context| context.dispatch_id.as_deref())
-                == Some(args.dispatch_id.as_str())
+                .is_none_or(|current_dispatch_id| current_dispatch_id == dispatch_id.as_str())
     };
+    if summary_hashes.is_none() {
+        summary_hashes = Some(close_current_task_summary_hashes(args)?);
+    }
+    let (review_summary_hash, verification_summary_hash) = summary_hashes
+        .as_ref()
+        .expect("summary hashes should exist after summary validation");
     {
         let _write_authority = claim_step_write_authority(runtime)?;
         let mut authoritative_state = load_authoritative_transition_state(&context)?;
@@ -1067,14 +1242,8 @@ pub fn close_current_task(
         };
         if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
             && current_record.closure_record_id == closure_record_id
-            && current_record.dispatch_id == args.dispatch_id
+            && current_record.dispatch_id == dispatch_id
         {
-            if summary_hashes.is_none() {
-                summary_hashes = Some(close_current_task_summary_hashes(args)?);
-            }
-            let (review_summary_hash, verification_summary_hash) = summary_hashes
-                .as_ref()
-                .expect("summary hashes should exist after summary validation");
             if current_record.review_result == args.review_result.as_str()
                 && current_record.review_summary_hash == review_summary_hash.as_str()
                 && current_record.verification_result == verification_result
@@ -1115,7 +1284,7 @@ pub fn close_current_task(
             });
         }
         if let Some(negative_record) = authoritative_state.task_closure_negative_result(args.task)
-            && negative_record.dispatch_id == args.dispatch_id
+            && negative_record.dispatch_id == dispatch_id
             && negative_record.reviewed_state_id == reviewed_state_id
             && negative_record.contract_identity == contract_identity
         {
@@ -1139,7 +1308,7 @@ pub fn close_current_task(
         }
     }
     let operator = current_workflow_operator(runtime, &args.plan, true)?;
-    if !current_task_recording_ready(&operator) {
+    if !dispatch_was_missing && !current_task_recording_ready(&operator) {
         let required_follow_up = close_current_task_required_follow_up(&operator);
         if required_follow_up.is_none() {
             return Ok(shared_out_of_phase_close_current_task_output(
@@ -1165,11 +1334,6 @@ pub fn close_current_task(
             ),
         });
     }
-    if summary_hashes.is_none() {
-        summary_hashes = Some(close_current_task_summary_hashes(args)?);
-    }
-    let (review_summary_hash, verification_summary_hash) =
-        summary_hashes.expect("summary hashes should exist after summary validation");
     match close_current_task_outcome_class(args.review_result, args.verification_result) {
         CloseCurrentTaskOutcomeClass::Positive => {
             let effective_reviewed_surface_paths =
@@ -1194,15 +1358,16 @@ pub fn close_current_task(
                 ));
             };
             let locked_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-            ensure_task_dispatch_id_matches(&locked_context, args.task, &args.dispatch_id)?;
+            ensure_task_dispatch_id_matches(&locked_context, args.task, &dispatch_id)?;
             if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
                 && current_record.closure_record_id == closure_record_id
-                && current_record.dispatch_id == args.dispatch_id
+                && current_record.dispatch_id == dispatch_id
             {
                 if current_record.review_result == args.review_result.as_str()
-                    && current_record.review_summary_hash == review_summary_hash
+                    && current_record.review_summary_hash == review_summary_hash.as_str()
                     && current_record.verification_result == verification_result
-                    && current_record.verification_summary_hash == verification_summary_hash
+                    && current_record.verification_summary_hash
+                        == verification_summary_hash.as_str()
                 {
                     return Ok(CloseCurrentTaskOutput {
                         action: String::from("already_current"),
@@ -1240,7 +1405,7 @@ pub fn close_current_task(
             }
             if let Some(negative_record) =
                 authoritative_state.task_closure_negative_result(args.task)
-                && negative_record.dispatch_id == args.dispatch_id
+                && negative_record.dispatch_id == dispatch_id
                 && negative_record.reviewed_state_id == reviewed_state_id
                 && negative_record.contract_identity == contract_identity
             {
@@ -1279,15 +1444,15 @@ pub fn close_current_task(
                 authoritative_state,
                 CurrentTaskClosureWrite {
                     task: args.task,
-                    dispatch_id: &args.dispatch_id,
+                    dispatch_id: &dispatch_id,
                     closure_record_id: &closure_record_id,
                     reviewed_state_id: &reviewed_state_id,
                     contract_identity: &contract_identity,
                     effective_reviewed_surface_paths: &effective_reviewed_surface_paths,
                     review_result: args.review_result.as_str(),
-                    review_summary_hash: &review_summary_hash,
+                    review_summary_hash,
                     verification_result,
-                    verification_summary_hash: &verification_summary_hash,
+                    verification_summary_hash,
                     superseded_tasks: &superseded_tasks,
                     superseded_task_closure_ids: &superseded_task_closure_ids,
                 },
@@ -1319,10 +1484,10 @@ pub fn close_current_task(
                 ));
             };
             let locked_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-            ensure_task_dispatch_id_matches(&locked_context, args.task, &args.dispatch_id)?;
+            ensure_task_dispatch_id_matches(&locked_context, args.task, &dispatch_id)?;
             if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
                 && current_record.closure_record_id == closure_record_id
-                && current_record.dispatch_id == args.dispatch_id
+                && current_record.dispatch_id == dispatch_id
             {
                 return Ok(CloseCurrentTaskOutput {
                     action: String::from("blocked"),
@@ -1343,7 +1508,7 @@ pub fn close_current_task(
             }
             if let Some(negative_record) =
                 authoritative_state.task_closure_negative_result(args.task)
-                && negative_record.dispatch_id == args.dispatch_id
+                && negative_record.dispatch_id == dispatch_id
                 && negative_record.reviewed_state_id == reviewed_state_id
                 && negative_record.contract_identity == contract_identity
             {
@@ -1368,13 +1533,13 @@ pub fn close_current_task(
                 authoritative_state,
                 NegativeTaskClosureWrite {
                     task: args.task,
-                    dispatch_id: &args.dispatch_id,
+                    dispatch_id: &dispatch_id,
                     reviewed_state_id: &reviewed_state_id,
                     contract_identity: &contract_identity,
                     review_result: args.review_result.as_str(),
-                    review_summary_hash: &review_summary_hash,
+                    review_summary_hash,
                     verification_result,
-                    verification_summary_hash: &verification_summary_hash,
+                    verification_summary_hash,
                 },
             )?;
             Ok(CloseCurrentTaskOutput {
@@ -1671,13 +1836,19 @@ pub fn advance_late_stage(
     runtime: &ExecutionRuntime,
     args: &AdvanceLateStageArgs,
 ) -> Result<AdvanceLateStageOutput, JsonFailure> {
-    let _write_authority = claim_step_write_authority(runtime)?;
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     require_preflight_acceptance(&context)?;
     let supplied_result_label = advance_late_stage_result_label(args.result);
     let current_branch_closure = current_authoritative_branch_closure_binding_optional(&context)?;
     let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
-    if let Some(dispatch_id) = args.dispatch_id.as_ref() {
+    let final_review_recording_requested = args.dispatch_id.is_some()
+        || args.reviewer_source.is_some()
+        || args.reviewer_id.is_some()
+        || matches!(
+            args.result,
+            Some(AdvanceLateStageResultArg::Pass | AdvanceLateStageResultArg::Fail)
+        );
+    if final_review_recording_requested {
         if args.branch_closure_id.is_some() {
             return Err(JsonFailure::new(
                 FailureClass::InvalidCommandInput,
@@ -1716,6 +1887,103 @@ pub fn advance_late_stage(
             }
         };
         let summary_file = require_advance_late_stage_summary_file(args, "final-review")?;
+        let final_review_recording_ready = |operator: &ExecutionRoutingState| {
+            operator.review_state_status == "clean"
+                && operator.phase == "final_review_pending"
+                && operator.phase_detail == "final_review_recording_ready"
+                && operator
+                    .recording_context
+                    .as_ref()
+                    .and_then(|context| context.branch_closure_id.as_deref())
+                    == branch_closure_id.as_deref()
+        };
+        let candidate_dispatch_id = current_review_dispatch_id_candidate(
+            &context,
+            ReviewDispatchScopeArg::FinalReview,
+            None,
+            args.dispatch_id.as_deref(),
+        )?;
+        let operator = match current_workflow_operator(runtime, &args.plan, true) {
+            Ok(operator) => operator,
+            Err(error) if error.error_class == FailureClass::InstructionParseFailed.as_str() => {
+                return Ok(shared_out_of_phase_advance_late_stage_output(
+                    &args.plan,
+                    AdvanceLateStageOutputContext {
+                        stage_path: "final_review",
+                        delegated_primitive: "record-final-review",
+                        branch_closure_id: branch_closure_id.clone(),
+                        dispatch_id: None,
+                        result,
+                        trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                    },
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        let dispatch_current_before_record = candidate_dispatch_id
+            .as_deref()
+            .map(|dispatch_id| {
+                ensure_final_review_dispatch_id_matches(&context, dispatch_id).is_ok()
+            })
+            .unwrap_or(false);
+        if operator.review_state_status == "clean"
+            && dispatch_current_before_record
+            && let Some(current_branch_closure) = current_branch_closure.as_ref()
+            && let Some(output) = equivalent_current_final_review_rerun(
+                &context,
+                current_branch_closure,
+                EquivalentFinalReviewRerunParams {
+                    stage_path: "final_review",
+                    delegated_primitive: "record-final-review",
+                    dispatch_id: candidate_dispatch_id
+                        .as_deref()
+                        .expect("candidate dispatch id should exist when marked current"),
+                    reviewer_source,
+                    reviewer_id,
+                    result,
+                    summary_file,
+                    required_follow_up: (result == "fail")
+                        .then(|| negative_result_follow_up(&operator))
+                        .flatten(),
+                },
+            )?
+        {
+            return Ok(output);
+        }
+        if !final_review_recording_ready(&operator) {
+            return Ok(advance_late_stage_follow_up_or_requery_output(
+                &operator,
+                &args.plan,
+                false,
+                AdvanceLateStageOutputContext {
+                    stage_path: "final_review",
+                    delegated_primitive: "record-final-review",
+                    branch_closure_id: branch_closure_id.clone(),
+                    dispatch_id: None,
+                    result,
+                    trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                },
+            ));
+        }
+        let summary = read_nonempty_summary_file(summary_file, "summary")?;
+        let normalized_summary_hash = summary_hash(&summary);
+        let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
+            dispatch_id
+        } else {
+            ensure_current_review_dispatch_id(
+                &context,
+                ReviewDispatchScopeArg::FinalReview,
+                None,
+                args.dispatch_id.as_deref(),
+            )?
+        };
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        let current_branch_closure =
+            current_authoritative_branch_closure_binding_optional(&context)?;
+        let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
+        let dispatch_current =
+            ensure_final_review_dispatch_id_matches(&context, &dispatch_id).is_ok();
         let operator = match current_workflow_operator(runtime, &args.plan, true) {
             Ok(operator) => operator,
             Err(error) if error.error_class == FailureClass::InstructionParseFailed.as_str() => {
@@ -1733,15 +2001,7 @@ pub fn advance_late_stage(
             }
             Err(error) => return Err(error),
         };
-        if operator.review_state_status != "clean"
-            || operator.phase != "final_review_pending"
-            || operator.phase_detail != "final_review_recording_ready"
-            || operator
-                .recording_context
-                .as_ref()
-                .and_then(|context| context.dispatch_id.as_deref())
-                != Some(dispatch_id.as_str())
-        {
+        if !final_review_recording_ready(&operator) || !dispatch_current {
             if operator.review_state_status == "clean"
                 && let Some(current_branch_closure) = current_branch_closure.as_ref()
                 && let Some(output) = equivalent_current_final_review_rerun(
@@ -1750,7 +2010,7 @@ pub fn advance_late_stage(
                     EquivalentFinalReviewRerunParams {
                         stage_path: "final_review",
                         delegated_primitive: "record-final-review",
-                        dispatch_id,
+                        dispatch_id: &dispatch_id,
                         reviewer_source,
                         reviewer_id,
                         result,
@@ -1766,7 +2026,7 @@ pub fn advance_late_stage(
             return Ok(advance_late_stage_follow_up_or_requery_output(
                 &operator,
                 &args.plan,
-                ensure_final_review_dispatch_id_matches(&context, dispatch_id).is_ok(),
+                dispatch_current,
                 AdvanceLateStageOutputContext {
                     stage_path: "final_review",
                     delegated_primitive: "record-final-review",
@@ -1777,14 +2037,12 @@ pub fn advance_late_stage(
                 },
             ));
         }
-        let summary = read_nonempty_summary_file(summary_file, "summary")?;
-        let normalized_summary_hash = summary_hash(&summary);
         let current_branch_closure = authoritative_current_branch_closure_binding(
             &context,
             "advance-late-stage final-review",
         )?;
         let branch_closure_id = current_branch_closure.branch_closure_id.clone();
-        ensure_final_review_dispatch_id_matches(&context, dispatch_id)?;
+        ensure_final_review_dispatch_id_matches(&context, &dispatch_id)?;
         let reviewed_state_id = current_branch_closure.reviewed_state_id.clone();
         let browser_qa_required = current_plan_requires_browser_qa(&context);
         let mut authoritative_state = load_authoritative_transition_state(&context)?;
@@ -1822,7 +2080,7 @@ pub fn advance_late_stage(
                     authoritative_state,
                     CurrentFinalReviewAuthorityCheck {
                         branch_closure_id: &branch_closure_id,
-                        dispatch_id,
+                        dispatch_id: &dispatch_id,
                         reviewer_source,
                         reviewer_id,
                         result,
@@ -1883,7 +2141,7 @@ pub fn advance_late_stage(
             &reviewed_state_id,
             &final_review_evidence.base_branch,
             FinalReviewProjectionInput {
-                dispatch_id,
+                dispatch_id: &dispatch_id,
                 reviewer_source,
                 reviewer_id,
                 result,
@@ -1906,7 +2164,7 @@ pub fn advance_late_stage(
             FinalReviewWrite {
                 branch_closure_id: &branch_closure_id,
                 release_readiness_record_id: &release_readiness_record_id,
-                dispatch_id,
+                dispatch_id: &dispatch_id,
                 reviewer_source,
                 reviewer_id,
                 result,
@@ -2062,6 +2320,7 @@ pub fn advance_late_stage(
             trace_summary: output.trace_summary,
         });
     }
+    let _write_authority = claim_step_write_authority(runtime)?;
     let result = match args.result {
         Some(AdvanceLateStageResultArg::Ready) => "ready",
         Some(AdvanceLateStageResultArg::Blocked) => "blocked",
@@ -2896,7 +3155,9 @@ fn ensure_task_dispatch_id_matches(
     }
     Err(JsonFailure::new(
         FailureClass::ExecutionStateNotReady,
-        format!("close-current-task requires a current task review dispatch lineage for task {task}."),
+        format!(
+            "close-current-task requires a current task review dispatch lineage for task {task}."
+        ),
     ))
 }
 
@@ -4897,16 +5158,17 @@ mod unit_tests {
     use tempfile::TempDir;
 
     use super::{
-        CloseCurrentTaskOutcomeClass, CurrentFinalReviewAuthorityCheck, FinalReviewProjectionInput,
-        blocked_follow_up_for_operator, close_current_task_outcome_class,
-        close_current_task_required_follow_up, current_final_review_record_is_still_authoritative,
-        late_stage_required_follow_up, normalized_late_stage_surface,
-        path_matches_late_stage_surface, render_final_review_artifacts,
-        rewrite_branch_final_review_artifacts, rewrite_branch_head_bound_artifact,
-        rewrite_branch_qa_artifact, superseded_branch_closure_ids_from_previous_current,
+        AdvanceLateStageOutputContext, CloseCurrentTaskOutcomeClass,
+        CurrentFinalReviewAuthorityCheck, FinalReviewProjectionInput,
+        advance_late_stage_follow_up_or_requery_output, blocked_follow_up_for_operator,
+        close_current_task_outcome_class, close_current_task_required_follow_up,
+        current_final_review_record_is_still_authoritative, late_stage_required_follow_up,
+        normalized_late_stage_surface, path_matches_late_stage_surface,
+        render_final_review_artifacts, rewrite_branch_final_review_artifacts,
+        rewrite_branch_head_bound_artifact, rewrite_branch_qa_artifact,
+        superseded_branch_closure_ids_from_previous_current,
         task_closure_contributes_to_branch_surface, task_closure_record_covers_path,
-        verify_command_launcher, AdvanceLateStageOutputContext,
-        advance_late_stage_follow_up_or_requery_output,
+        verify_command_launcher,
     };
     use crate::cli::plan_execution::{ReviewOutcomeArg, VerificationOutcomeArg};
     use crate::contracts::plan::parse_plan_file;
@@ -5577,7 +5839,10 @@ mod unit_tests {
         );
 
         assert_eq!(output.action, "blocked");
-        assert_eq!(output.code.as_deref(), Some("out_of_phase_requery_required"));
+        assert_eq!(
+            output.code.as_deref(),
+            Some("out_of_phase_requery_required")
+        );
         assert_eq!(
             output.recommended_command.as_deref(),
             Some("featureforge workflow operator --plan docs/featureforge/plans/example.md")

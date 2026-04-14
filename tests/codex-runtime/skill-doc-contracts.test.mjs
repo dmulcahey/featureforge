@@ -599,33 +599,23 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /Run `featureforge plan contract analyze-plan --spec <approved-spec-path> --plan <approved-plan-path> --format json` before dispatching the reviewer\./);
   assert.match(reviewSkill, /Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching the reviewer\./);
   assert.match(reviewSkill, /If workflow\/operator fails, stop and return to the current execution flow; do not guess the public late-stage route from raw execution state\./);
-  assert.match(reviewSkill, /Run `featureforge plan execution status --plan <approved-plan-path>` only when you need diagnostic fields such as `active_task`, `blocking_task`, `resume_task`, `evidence_path`, or strategy checkpoint state\./);
+  assert.match(reviewSkill, /Run `featureforge plan execution status --plan <approved-plan-path>` only when you need extra execution-dirty or strategy-checkpoint diagnostics from the current workflow context\./);
   assert.match(reviewSkill, /If diagnostic status fails when those fields are required, stop and return to the current execution flow; do not dispatch review against guessed plan state\./);
   assert.match(reviewSkill, /When diagnostic status is required, parse `active_task`, `blocking_task`, and `resume_task` from that status JSON\./);
   assert.match(reviewSkill, /When diagnostic status is required, if any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; final review is only valid when all three are `null`\./);
   assert.match(reviewSkill, /treat workflow\/operator as authoritative for the public late-stage route; status is diagnostic only\./);
   assert.match(reviewSkill, /only request a fresh external final review when workflow\/operator reports `phase=final_review_pending` with `phase_detail=final_review_dispatch_required`\./);
-  assert.match(reviewSkill, /After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and require `phase_detail=final_review_recording_ready` before recording the result with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass\|fail --summary-file <final-review-summary>`\./);
-  assert.match(reviewSkill, /Pass the exact approved plan path and helper-reported execution evidence path into the reviewer context\./);
+  assert.match(reviewSkill, /After the independent reviewer returns a final-review result, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and require `phase_detail=final_review_recording_ready` before recording the result with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass\|fail --summary-file <final-review-summary>`\./);
+  assert.match(reviewSkill, /Pass the exact approved plan path into the reviewer context\. When runtime-owned execution evidence or task-packet context is already available from the current workflow handoff, pass it through as supplemental context; do not make the public flow harvest it manually\./);
   assert.match(reviewSkill, /Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base locally derivable from repository state\./);
-  assert.match(reviewSkill, /project-scoped code-review companion artifact/);
-  assert.match(reviewSkill, /\{user\}-\{safe-branch\}-code-review-\{datetime\}\.md/);
+  assert.match(reviewSkill, /Keep review artifacts runtime-owned:/);
+  assert.doesNotMatch(reviewSkill, /project-scoped code-review companion artifact/);
+  assert.doesNotMatch(reviewSkill, /\{user\}-\{safe-branch\}-code-review-\{datetime\}\.md/);
   assert.match(reviewSkill, /dedicated fresh-context reviewer independent of the implementation context/);
-  assert.match(reviewSkill, /\*\*Review Stage:\*\* featureforge:requesting-code-review/);
-  assert.match(reviewSkill, /\*\*Reviewer Provenance:\*\* dedicated-independent/);
-  assert.match(reviewSkill, /\*\*Reviewer Source:\*\* fresh-context-subagent/);
-  assert.match(reviewSkill, /\*\*Reviewer ID:\*\* 019d3550-c932-7bb2-9903-33f68d7c30ca/);
-  assert.match(reviewSkill, /\*\*Reviewer Artifact Path:\*\* `\$_FEATUREFORGE_STATE_DIR\/projects\/\$SLUG\/\{user\}-\{safe-branch\}-independent-review-\{datetime\}\.md`/);
-  assert.match(reviewSkill, /\*\*Reviewer Artifact Fingerprint:\*\*/);
-  assert.match(reviewSkill, /\*\*Distinct From Stages:\*\* featureforge:executing-plans, featureforge:subagent-driven-development/);
-  assert.match(reviewSkill, /\*\*Recorded Execution Deviations:\*\* none/);
-  assert.match(reviewSkill, /\*\*Deviation Review Verdict:\*\* not_required/);
-  assert.match(reviewSkill, /\*\*Branch:\*\* feature\/foo/);
-  assert.match(reviewSkill, /\*\*Repo:\*\* featureforge/);
-  assert.match(reviewSkill, /Recorded Execution Deviations: present/);
-  assert.match(reviewSkill, /Deviation Review Verdict: pass/);
-  assert.match(reviewSkill, /\*\*Generated By:\*\* featureforge:requesting-code-review/);
-  assert.match(reviewSkill, /derived companion for reviewer provenance and audit traceability/);
+  assert.doesNotMatch(reviewSkill, /\*\*Review Stage:\*\* featureforge:requesting-code-review/);
+  assert.doesNotMatch(reviewSkill, /\*\*Reviewer Artifact Path:\*\*/);
+  assert.doesNotMatch(reviewSkill, /\*\*Generated By:\*\* featureforge:requesting-code-review/);
+  assert.doesNotMatch(reviewSkill, /derived companion for reviewer provenance and audit traceability/);
   assert.doesNotMatch(reviewSkill, /git log --oneline \| grep "Task 1"/);
   assert.doesNotMatch(reviewSkill, /git rev-parse HEAD~1/);
   assert.match(reviewSkill, /CONTRACT_STATE=\$\(printf '%s\\n' "\$ANALYZE_JSON" \| node -e 'const fs = require\("fs"\); const parsed = JSON\.parse\(fs\.readFileSync\(0, "utf8"\)\); process\.stdout\.write\(parsed\.contract_state \|\| ""\)'/);
@@ -635,13 +625,15 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewSkill, /if \[ "\$PHASE" != "final_review_pending" \] \|\| \[ "\$PHASE_DETAIL" != "final_review_dispatch_required" \]; then/);
   assert.doesNotMatch(reviewSkill, /REVIEW_DISPATCH_JSON=/);
   assert.doesNotMatch(reviewSkill, /REVIEW_DISPATCH_ACTION=/);
-  assert.match(reviewSkill, /if \[ -z "\$DISPATCH_ID" \]; then/);
+  assert.doesNotMatch(reviewSkill, /DISPATCH_ID=/);
   assert.doesNotMatch(reviewSkill, /REVIEW_DISPATCH_ALLOWED=/);
   assert.doesNotMatch(reviewSkill, /REVIEW_GATE_JSON/);
   assert.doesNotMatch(reviewSkill, /review gate rejected the current execution evidence/);
   assert.match(reviewSkill, /RECORDING_READY_JSON=\$\("\$_FEATUREFORGE_BIN" workflow operator --plan "\$APPROVED_PLAN_PATH" --external-review-result-ready --json\)/);
   assert.match(reviewSkill, /if \[ "\$RECORDING_PHASE_DETAIL" != "final_review_recording_ready" \]; then/);
-  assert.match(reviewSkill, /"\$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "\$APPROVED_PLAN_PATH" --dispatch-id "\$DISPATCH_ID" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary\.md/);
+  assert.match(reviewSkill, /"\$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "\$APPROVED_PLAN_PATH" --reviewer-source fresh-context-subagent --reviewer-id 019d3550-c932-7bb2-9903-33f68d7c30ca --result pass --summary-file review-summary\.md/);
+  assert.doesNotMatch(reviewSkill, /STATUS_JSON=/);
+  assert.doesNotMatch(reviewSkill, /TASK_PACKET_CONTEXT_TASK_1=/);
 
   const finishSkill = readUtf8(getSkillPath('finishing-a-development-branch'));
   assert.match(finishSkill, /rejects branch-completion handoff if the approved plan is execution-dirty or malformed/);
@@ -741,11 +733,11 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   );
   assert.match(
     executingPlans,
-    /rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]`/i,
+    /rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]`/i,
   );
   assert.match(
     executingPlans,
-    /featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]/,
+    /featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]/,
   );
   assert.match(executingPlans, /does not require per-dispatch user-consent prompts/);
   assert.match(executingPlans, /Non-execution ad-hoc delegation still follows normal user-consent policy/);
@@ -756,7 +748,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(subagentSkill, /The coordinator owns every `git commit`, `git merge`, and `git push` for this workflow/);
   assert.match(
     subagentSkill,
-    /If workflow\/operator reports `task_review_dispatch_required`, treat it as a compatibility\/debug lane and keep routing through workflow\/operator plus intent-level commands; do not expand the normal closure loop into manual low-level command choreography\./,
+    /If workflow\/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep routing through workflow\/operator plus the intent-level commands; do not expand the normal closure loop into low-level dispatch-lineage management\./,
   );
   assert.match(
     subagentSkill,
@@ -768,21 +760,21 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   );
   assert.match(
     subagentSkill,
-    /Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]`\./,
+    /Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]`\./,
   );
   assert.match(
     subagentSkill,
-    /featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]/,
+    /featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass\|fail --review-summary-file <review-summary> --verification-result pass\|fail\|not-run \[--verification-summary-file <path> when verification ran\]/,
   );
   assert.match(subagentSkill, /run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`/i);
   assertOrderedSubstrings(executingPlans, 'skills/executing-plans/SKILL.md task-boundary loop', [
     'after review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`',
-    'rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`',
+    'rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`',
     'no exceptions: only after close-current-task succeeds may Task `N+1` begin',
   ]);
   assertOrderedSubstrings(subagentSkill, 'skills/subagent-driven-development/SKILL.md task-boundary loop', [
     'After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.',
-    'Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --dispatch-id <dispatch-id> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.',
+    'Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.',
     'No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.',
   ]);
   assert.match(subagentSkill, /does not require per-dispatch user-consent prompts/);
@@ -838,7 +830,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       content,
-      /featureforge plan execution advance-late-stage --plan <approved-plan-path> --dispatch-id <dispatch-id> --reviewer-source <source> --reviewer-id <id> --result pass\|fail --summary-file <final-review-summary>/,
+      /featureforge plan execution advance-late-stage --plan <approved-plan-path> --reviewer-source <source> --reviewer-id <id> --result pass\|fail --summary-file <final-review-summary>/,
       `${label} should include the exact final-review late-stage command`,
     );
     assert.doesNotMatch(
@@ -878,8 +870,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       content,
-      /`task_closure_recording_ready`[\s\S]*`recording_context\.task_number`[\s\S]*`recording_context\.dispatch_id`/,
-      `${label} should require task recording_context task_number and dispatch_id`,
+      /`task_closure_recording_ready`[\s\S]*`recording_context\.task_number`/,
+      `${label} should require task recording_context task_number`,
     );
     assert.match(
       content,
@@ -893,8 +885,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       content,
-      /`final_review_recording_ready`[\s\S]*`recording_context\.dispatch_id`[\s\S]*`recording_context\.branch_closure_id`/,
-      `${label} should require final-review recording_context dispatch_id and branch_closure_id`,
+      /`final_review_recording_ready`[\s\S]*`recording_context\.branch_closure_id`/,
+      `${label} should require final-review recording_context branch_closure_id`,
     );
     assert.match(
       content,

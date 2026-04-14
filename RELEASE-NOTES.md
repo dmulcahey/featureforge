@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-- No unreleased changes yet.
+- internalize normal-path task/final-review dispatch-lineage binding so operator-led `close-current-task` and `advance-late-stage` no longer require public `--dispatch-id`
+- remove public normal-path `record-review-dispatch` choreography from active review/execution guidance while keeping the compatibility/debug primitive available off the main path
+- align runtime routing, schemas, skill docs, shared review-state reference guidance, and regression coverage on the refactored public command mapping
+- refresh checked-in repo runtime binaries and darwin prebuilt artifacts so the shipped CLI help matches the refactored command contract
+
+### Breaking Output Contract Changes
+
+- `workflow operator --json`: bump `schema_version` to `2` and change normal task/final-review late-stage guidance so `next_action`/`recommended_command` now point at intent-level `close-current-task` and `advance-late-stage` recording commands instead of public `record-review-dispatch` choreography or required public `--dispatch-id` bindings
 
 ## v1.9.0 - 2026-04-11
 

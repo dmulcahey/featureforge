@@ -935,9 +935,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "close current task",
             "continue execution",
             "request task review",
-            "bind task review dispatch lineage",
             "request final review",
-            "bind final review dispatch lineage",
             "execution reentry required",
             "hand off",
             "pivot / return to planning",
@@ -1038,13 +1036,13 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     assert_schema_pointer_required(
         &schema,
         "/$defs/PublicRecordingContext/anyOf/1",
-        &["task_number", "dispatch_id"],
+        &["task_number"],
         &mut issues,
     );
     assert_phase_detail_recording_context_required(
         &schema,
         "task_closure_recording_ready",
-        &["task_number", "dispatch_id"],
+        &["task_number"],
         &mut issues,
     );
     assert_phase_detail_recording_context_required(
@@ -1062,7 +1060,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     assert_phase_detail_recording_context_required(
         &schema,
         "final_review_recording_ready",
-        &["dispatch_id", "branch_closure_id"],
+        &["branch_closure_id"],
         &mut issues,
     );
     assert_phase_detail_field_forbidden_outside_allowed_phase_details(
@@ -1288,7 +1286,9 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
         .as_object()
         .expect("workflow-operator schema should contain properties");
 
-    assert_eq!(properties["schema_version"]["const"], Value::from(1));
+    assert_eq!(properties["schema_version"]["const"], Value::from(2));
+    assert_eq!(properties["schema_version"]["minimum"], Value::from(2));
+    assert_eq!(properties["schema_version"]["maximum"], Value::from(2));
     for phase in [
         "executing",
         "task_closure_pending",
@@ -1374,13 +1374,13 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
     assert_schema_pointer_required(
         &generated_operator_json,
         "/$defs/WorkflowOperatorRecordingContext/anyOf/1",
-        &["task_number", "dispatch_id"],
+        &["task_number"],
         &mut issues,
     );
     assert_phase_detail_recording_context_required(
         &generated_operator_json,
         "task_closure_recording_ready",
-        &["task_number", "dispatch_id"],
+        &["task_number"],
         &mut issues,
     );
     assert_phase_detail_recording_context_required(
@@ -1398,7 +1398,7 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
     assert_phase_detail_recording_context_required(
         &generated_operator_json,
         "final_review_recording_ready",
-        &["dispatch_id", "branch_closure_id"],
+        &["branch_closure_id"],
         &mut issues,
     );
     assert_phase_detail_field_forbidden_outside_allowed_phase_details(

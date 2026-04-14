@@ -1373,11 +1373,15 @@ fn dedicated_final_review_receipt_requires_reviewer_artifact_strategy_checkpoint
     .expect("review artifact should write");
 
     let receipt = parse_final_review_receipt(&review_path);
-    let error =
-        validate_fixture_review_receipt(&receipt, &review_path, repo, Some(STRATEGY_CHECKPOINT_FINGERPRINT))
-            .expect_err(
-                "dedicated final review should require reviewer artifact strategy checkpoint binding",
-            );
+    let error = validate_fixture_review_receipt(
+        &receipt,
+        &review_path,
+        repo,
+        Some(STRATEGY_CHECKPOINT_FINGERPRINT),
+    )
+    .expect_err(
+        "dedicated final review should require reviewer artifact strategy checkpoint binding",
+    );
     assert_eq!(
         error,
         FinalReviewReceiptIssue::ReviewerArtifactContractMismatch
@@ -1958,13 +1962,11 @@ fn gate_finish_requires_final_review_artifact() {
         "missing review artifact should block finish"
     );
     assert!(
-        gate["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| {
-                codes.iter().any(|code| {
-                    code == "review_artifact_missing" || code == "review_artifact_malformed"
-                })
-            }),
+        gate["reason_codes"].as_array().is_some_and(|codes| {
+            codes.iter().any(|code| {
+                code == "review_artifact_missing" || code == "review_artifact_malformed"
+            })
+        }),
         "gate-finish should fail closed when final-review authoritative bindings are missing, got {}",
         pretty_json(&gate)
     );

@@ -65,8 +65,11 @@ pub(crate) fn release_readiness_required_follow_up(
     operator: &ExecutionRoutingState,
 ) -> Option<String> {
     blocked_follow_up_for_operator(operator).and_then(|required_follow_up| {
-        matches!(required_follow_up.as_str(), "advance_late_stage" | "repair_review_state")
-            .then_some(required_follow_up)
+        matches!(
+            required_follow_up.as_str(),
+            "advance_late_stage" | "repair_review_state"
+        )
+        .then_some(required_follow_up)
     })
 }
 

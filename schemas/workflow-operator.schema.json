@@ -47,9 +47,7 @@
         "close current task",
         "continue execution",
         "request task review",
-        "bind task review dispatch lineage",
         "request final review",
-        "bind final review dispatch lineage",
         "execution reentry required",
         "hand off",
         "pivot / return to planning",
@@ -113,8 +111,7 @@
         },
         {
           "required": [
-            "task_number",
-            "dispatch_id"
+            "task_number"
           ]
         }
       ],
@@ -157,8 +154,7 @@
         "properties": {
           "recording_context": {
             "required": [
-              "task_number",
-              "dispatch_id"
+              "task_number"
             ]
           }
         },
@@ -221,7 +217,6 @@
         "properties": {
           "recording_context": {
             "required": [
-              "dispatch_id",
               "branch_closure_id"
             ]
           }
@@ -365,10 +360,10 @@
       "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema"
     },
     "schema_version": {
-      "const": 1,
+      "const": 2,
       "format": "uint32",
-      "maximum": 1,
-      "minimum": 1,
+      "maximum": 2,
+      "minimum": 2,
       "type": "integer"
     },
     "spec_path": {

@@ -73,14 +73,12 @@ pub(crate) fn intent_level_command_template(
         phase_detail,
         plan_path,
         task_number,
-        dispatch_id,
+        dispatch_id: _dispatch_id,
     } = inputs;
 
     let mut next_action = None;
     let recommended_command = match phase_detail {
-        "task_review_dispatch_required" => {
-            None
-        }
+        "task_review_dispatch_required" => None,
         "task_review_result_pending" => {
             next_action = Some(String::from("wait for external review result"));
             Some(None)
@@ -88,12 +86,8 @@ pub(crate) fn intent_level_command_template(
         "task_closure_recording_ready" => {
             next_action = Some(String::from("close current task"));
             let task_number = task_number.unwrap_or_default();
-            let dispatch_id = dispatch_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("<dispatch-id>");
             Some(Some(format!(
-                "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --dispatch-id {dispatch_id} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
+                "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
             )))
         }
         "finish_completion_gate_ready" | "finish_review_gate_ready" => {
@@ -118,21 +112,15 @@ pub(crate) fn intent_level_command_template(
                 "featureforge plan execution advance-late-stage --plan {plan_path} --result ready|blocked --summary-file <path>"
             )))
         }
-        "final_review_dispatch_required" => {
-            None
-        }
+        "final_review_dispatch_required" => None,
         "final_review_outcome_pending" => {
             next_action = Some(String::from("wait for external review result"));
             Some(None)
         }
         "final_review_recording_ready" => {
             next_action = Some(String::from("advance late stage"));
-            let dispatch_id = dispatch_id
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("<id>");
             Some(Some(format!(
-                "featureforge plan execution advance-late-stage --plan {plan_path} --dispatch-id {dispatch_id} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
+                "featureforge plan execution advance-late-stage --plan {plan_path} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
             )))
         }
         "test_plan_refresh_required" => {
@@ -1395,7 +1383,9 @@ pub(crate) fn current_late_stage_branch_bindings(
             (None, None)
         };
 
-    let current_qa_record_id = closure_graph.current_browser_qa_record_id().map(str::to_owned);
+    let current_qa_record_id = closure_graph
+        .current_browser_qa_record_id()
+        .map(str::to_owned);
     let current_qa_record = current_qa_record_id
         .as_deref()
         .and_then(|record_id| authoritative_state.browser_qa_record_by_id(record_id))

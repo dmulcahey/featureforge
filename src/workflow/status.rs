@@ -37,7 +37,7 @@ const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
 const ACTIVE_IMPLEMENTATION_TARGET_INDEX: &str =
     "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md";
 const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
-const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 1;
+const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowRoute {
@@ -395,7 +395,6 @@ impl WorkflowRuntime {
 
         Ok(route)
     }
-
 }
 
 fn normalize_workflow_route(mut route: WorkflowRoute) -> WorkflowRoute {
@@ -1461,7 +1460,7 @@ fn tighten_workflow_operator_phase_bound_recording_context_contracts(
     append_operator_phase_bound_recording_context_requirements(
         schema,
         "task_closure_recording_ready",
-        &["task_number", "dispatch_id"],
+        &["task_number"],
     )?;
     append_operator_phase_bound_recording_context_requirements(
         schema,
@@ -1476,7 +1475,7 @@ fn tighten_workflow_operator_phase_bound_recording_context_contracts(
     append_operator_phase_bound_recording_context_requirements(
         schema,
         "final_review_recording_ready",
-        &["dispatch_id", "branch_closure_id"],
+        &["branch_closure_id"],
     )?;
     append_operator_phase_detail_field_forbidden_outside_allowed_phase_details(
         schema,
@@ -1555,7 +1554,7 @@ fn tighten_operator_recording_context_schema(
         String::from("anyOf"),
         serde_json::json!([
             {"required": ["branch_closure_id"]},
-            {"required": ["task_number", "dispatch_id"]}
+            {"required": ["task_number"]}
         ]),
     );
     Ok(())

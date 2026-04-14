@@ -340,8 +340,9 @@ pub(crate) fn restore_review_state_projection_overlays(
             .map(|identity| identity.reviewed_state_id.as_str()),
     );
 
-    let current_release_readiness_record_id =
-        late_stage_bindings.current_release_readiness_record_id.clone();
+    let current_release_readiness_record_id = late_stage_bindings
+        .current_release_readiness_record_id
+        .clone();
     if authoritative_state
         .current_release_readiness_record_id()
         .as_deref()

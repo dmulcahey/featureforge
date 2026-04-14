@@ -253,7 +253,7 @@ pub struct CloseCurrentTaskArgs {
     #[arg(long)]
     pub task: u32,
     #[arg(long = "dispatch-id")]
-    pub dispatch_id: String,
+    pub dispatch_id: Option<String>,
     #[arg(long = "review-result", value_enum)]
     pub review_result: ReviewOutcomeArg,
     #[arg(long = "review-summary-file")]

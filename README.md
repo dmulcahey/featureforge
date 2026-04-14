@@ -86,8 +86,7 @@ After `repair-review-state`, treat that command's own `recommended_command` as t
 Task closure is enforced at task boundaries, not only at the end of the full plan:
 
 - after implementation steps complete and review plus verification are ready, run `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `close-current-task` as the authoritative task-closure command
-- if workflow/operator reports `task_review_dispatch_required`, request external review and rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`; if that reroute still lacks dispatch lineage, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope task --task <blocking_task>` once, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`, then continue intent-level commands
-- if workflow/operator reports `final_review_dispatch_required`, request external final review and rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`; if that reroute still lacks dispatch lineage, run `featureforge plan execution record-review-dispatch --plan <approved-plan-path> --scope final-review` once, rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready`, then continue intent-level commands
+- if workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep the normal path on workflow/operator plus the intent-level commands; do not route the normal path through low-level dispatch primitives
 - compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement

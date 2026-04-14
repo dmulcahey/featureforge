@@ -7505,9 +7505,7 @@ fn task_boundary_status_ignores_prior_task_review_dispatch_missing_when_current_
         status_before_task2["recommended_command"]
             .as_str()
             .is_some_and(|command| command
-                == format!(
-                    "featureforge plan execution advance-late-stage --plan {PLAN_REL}"
-                )),
+                == format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}")),
         "status should expose the canonical late-stage branch-closure command, got {status_before_task2}"
     );
 }
@@ -7946,9 +7944,7 @@ fn task_boundary_status_ignores_non_independent_review_receipt_when_current_clos
         status_before_task2["recommended_command"]
             .as_str()
             .is_some_and(|command| command
-                == format!(
-                    "featureforge plan execution advance-late-stage --plan {PLAN_REL}"
-                )),
+                == format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}")),
         "status should expose the canonical late-stage branch-closure command, got {status_before_task2}"
     );
 }
@@ -9571,7 +9567,11 @@ fn gate_finish_rejects_code_review_receipt_regressions_when_authoritative_record
             "gate finish with mutated code-review artifact",
         );
 
-        assert_eq!(gate_finish["allowed"], false, "case {}: {}", case_name, gate_finish);
+        assert_eq!(
+            gate_finish["allowed"], false,
+            "case {}: {}",
+            case_name, gate_finish
+        );
         assert!(
             gate_finish["reason_codes"]
                 .as_array()
@@ -9905,7 +9905,13 @@ fn gate_finish_rejects_current_qa_record_base_branch_binding_regressions() {
         let state = state_dir.path();
         let base_branch = branch_name(repo);
         let (_test_plan_path, _qa_path, _review_path, _release_path) =
-            prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+            prepare_finished_single_step_finish_gate_fixture(
+                repo,
+                state,
+                "yes",
+                true,
+                &base_branch,
+            );
         let mut harness_state: Value = serde_json::from_str(
             &fs::read_to_string(harness_state_file_path(repo, state))
                 .expect("harness state should be readable for QA base-branch regression cases"),
@@ -9925,13 +9931,16 @@ fn gate_finish_rejects_current_qa_record_base_branch_binding_regressions() {
             &["gate-finish", "--plan", PLAN_REL],
             "gate finish with mutated current QA base-branch binding",
         );
-        assert_eq!(gate_finish["allowed"], false, "case {case_name}: {gate_finish}");
+        assert_eq!(
+            gate_finish["allowed"], false,
+            "case {case_name}: {gate_finish}"
+        );
         assert!(
             gate_finish["reason_codes"]
                 .as_array()
-                .is_some_and(|codes| codes.iter().any(|code| {
-                    code.as_str() == Some(expected_reason_code)
-                })),
+                .is_some_and(|codes| codes
+                    .iter()
+                    .any(|code| { code.as_str() == Some(expected_reason_code) })),
             "case {case_name}: expected reason code {expected_reason_code}, got {gate_finish}",
         );
     }
@@ -10440,7 +10449,8 @@ fn gate_finish_rejects_final_review_when_release_record_binding_mismatches_curre
     let repo = repo_dir.path();
     let state = state_dir.path();
     let base_branch = branch_name(repo);
-    let _ = prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
 
     let state_path = harness_state_file_path(repo, state);
     let mut harness_state: Value = serde_json::from_str(
@@ -10492,7 +10502,8 @@ fn gate_finish_rejects_browser_qa_when_final_review_binding_mismatches_current_i
     let repo = repo_dir.path();
     let state = state_dir.path();
     let base_branch = branch_name(repo);
-    let _ = prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
 
     let state_path = harness_state_file_path(repo, state);
     let mut harness_state: Value = serde_json::from_str(
@@ -10544,7 +10555,8 @@ fn status_and_gate_finish_do_not_infer_missing_current_qa_binding_from_history()
     let repo = repo_dir.path();
     let state = state_dir.path();
     let base_branch = branch_name(repo);
-    let _ = prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
 
     let mut harness_state: Value = serde_json::from_str(
         &fs::read_to_string(harness_state_file_path(repo, state))
@@ -10571,7 +10583,11 @@ fn status_and_gate_finish_do_not_infer_missing_current_qa_binding_from_history()
         Value::from("qa_recording_required"),
         "json: {status}"
     );
-    assert_eq!(status["next_action"], Value::from("run QA"), "json: {status}");
+    assert_eq!(
+        status["next_action"],
+        Value::from("run QA"),
+        "json: {status}"
+    );
 
     let gate_finish = run_shell_json(
         repo,
@@ -10579,7 +10595,11 @@ fn status_and_gate_finish_do_not_infer_missing_current_qa_binding_from_history()
         &["gate-finish", "--plan", PLAN_REL],
         "gate-finish should fail closed when browser-QA current binding is missing even if QA history exists",
     );
-    assert_eq!(gate_finish["allowed"], Value::Bool(false), "json: {gate_finish}");
+    assert_eq!(
+        gate_finish["allowed"],
+        Value::Bool(false),
+        "json: {gate_finish}"
+    );
     assert!(
         gate_finish["reason_codes"].as_array().is_some_and(|codes| {
             codes
@@ -15610,7 +15630,11 @@ fn runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_diges
         &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
         "FS-04 rebuild-evidence projection regeneration should not mutate authoritative state digest",
     );
-    assert_eq!(rebuild["counts"]["planned"], Value::from(0), "json: {rebuild}");
+    assert_eq!(
+        rebuild["counts"]["planned"],
+        Value::from(0),
+        "json: {rebuild}"
+    );
     assert_eq!(rebuild["counts"]["noop"], Value::from(1), "json: {rebuild}");
     assert_eq!(
         authoritative_state_digest(repo, state),
@@ -20061,7 +20085,11 @@ fn rebuild_evidence_release_projection_regeneration_uses_bound_record_base_branc
         &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
         "rebuild-evidence should regenerate release projection with bound record base branch",
     );
-    assert_eq!(rebuild["counts"]["failed"], Value::from(0), "json: {rebuild}");
+    assert_eq!(
+        rebuild["counts"]["failed"],
+        Value::from(0),
+        "json: {rebuild}"
+    );
 
     let regenerated_release_projection = fs::read_dir(project_artifact_dir(repo, state))
         .expect("project artifact directory should be readable")
@@ -20145,9 +20173,9 @@ fn rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_proje
     assert!(
         gate_finish_before_rebuild["reason_codes"]
             .as_array()
-            .is_some_and(|codes| codes.iter().any(|code| {
-                code == "review_receipt_reviewer_fingerprint_mismatch"
-            })),
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| { code == "review_receipt_reviewer_fingerprint_mismatch" })),
         "tampered reviewer projection should surface fingerprint mismatch before rebuild, got {gate_finish_before_rebuild}",
     );
 
@@ -20301,7 +20329,7 @@ fn rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projectio
 
 #[test]
 fn rebuild_evidence_rejects_non_runtime_owned_reviewer_projection_path_in_authoritative_final_review()
-{
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-rebuild-evidence-rejects-escaped-reviewer-path");
     let repo = repo_dir.path();
@@ -20379,7 +20407,10 @@ fn rebuild_evidence_rejects_non_runtime_owned_reviewer_projection_path_in_author
         "rebuild-evidence should fail closed when authoritative final-review references a non-runtime-owned reviewer path",
     );
     if rebuild_failure.get("error_class").is_some() {
-        assert_eq!(rebuild_failure["error_class"], Value::from("StaleProvenance"));
+        assert_eq!(
+            rebuild_failure["error_class"],
+            Value::from("StaleProvenance")
+        );
     } else {
         assert!(
             rebuild_failure["targets"]

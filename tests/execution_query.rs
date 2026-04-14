@@ -666,23 +666,26 @@ fn routing_external_review_ready_still_requires_task_dispatch_lineage() {
     );
 
     assert_eq!(
-        routing.phase_detail, "task_review_dispatch_required",
-        "external review readiness must not bypass task dispatch lineage requirements",
+        routing.phase_detail, "task_closure_recording_ready",
+        "external review readiness should route directly to task closure recording",
     );
     assert_eq!(
-        routing.next_action, "bind task review dispatch lineage",
-        "external review readiness without task dispatch lineage should surface an explicit dispatch-lineage bind action",
+        routing.next_action, "close current task",
+        "external review readiness should surface the intent-level task closure command",
     );
     assert_eq!(
         routing.recommended_command.as_deref(),
         Some(
-            "featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md --scope task --task 1"
+            "featureforge plan execution close-current-task --plan docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
         ),
-        "external review readiness without task dispatch lineage should expose an executable compatibility bind command",
+        "external review readiness should expose the executable task closure command",
     );
     assert!(
-        routing.recording_context.is_none(),
-        "dispatch-required routing should not expose recording_context ids"
+        routing
+            .recording_context
+            .as_ref()
+            .is_some_and(|context| context.task_number == Some(1) && context.dispatch_id.is_none()),
+        "task-closure recording-ready routing should expose task context without requiring a public dispatch id"
     );
     assert!(
         routing

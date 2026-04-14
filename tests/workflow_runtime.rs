@@ -7365,7 +7365,7 @@ fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() 
         plan_rel,
         1,
         &[
-            ("schema_version", Value::from(1)),
+            ("schema_version", Value::from(2)),
             ("harness_phase", Value::from("final_review_pending")),
             ("latest_authoritative_sequence", Value::from(17)),
             ("dependency_index_state", Value::from("stale")),
@@ -7616,7 +7616,7 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
         plan_rel,
         1,
         &[
-            ("schema_version", Value::from(1)),
+            ("schema_version", Value::from(2)),
             ("harness_phase", Value::from("ready_for_branch_completion")),
             ("latest_authoritative_sequence", Value::from(17)),
         ],
@@ -7700,7 +7700,7 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_relea
         plan_rel,
         1,
         &[
-            ("schema_version", Value::from(1)),
+            ("schema_version", Value::from(2)),
             ("harness_phase", Value::from("ready_for_branch_completion")),
             ("latest_authoritative_sequence", Value::from(17)),
         ],
@@ -8189,7 +8189,10 @@ fn canonical_workflow_phase_routes_test_plan_generator_mismatch_back_to_plan_eng
 
     assert_eq!(phase_json["phase"], "qa_pending");
     assert_eq!(phase_json["next_action"], "refresh test plan");
-    assert_eq!(handoff_json["recommended_skill"], "featureforge:plan-eng-review");
+    assert_eq!(
+        handoff_json["recommended_skill"],
+        "featureforge:plan-eng-review"
+    );
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "QaArtifactNotFresh");
     assert_eq!(gate_finish_json["reason_codes"][0], "qa_artifact_missing");
@@ -8286,7 +8289,7 @@ fn canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pen
         plan_rel,
         1,
         &[
-            ("schema_version", Value::from(1)),
+            ("schema_version", Value::from(2)),
             ("harness_phase", Value::from("qa_pending")),
             ("browser_qa_state", Value::from("fresh")),
         ],
@@ -8386,7 +8389,7 @@ fn canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to
         plan_rel,
         1,
         &[
-            ("schema_version", Value::from(1)),
+            ("schema_version", Value::from(2)),
             ("harness_phase", Value::from("qa_pending")),
             ("browser_qa_state", Value::from("fresh")),
         ],
@@ -8491,7 +8494,7 @@ fn assert_authoritative_qa_source_test_plan_header_failure(
         plan_rel,
         1,
         &[
-            ("schema_version", Value::from(1)),
+            ("schema_version", Value::from(2)),
             ("harness_phase", Value::from("qa_pending")),
             ("browser_qa_state", Value::from("fresh")),
             (
@@ -8594,7 +8597,7 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
         plan_rel,
         1,
         &[
-            ("schema_version", Value::from(1)),
+            ("schema_version", Value::from(2)),
             ("dependency_index_state", Value::from("fresh")),
             ("final_review_state", Value::from("not_required")),
             ("browser_qa_state", Value::from("not_required")),
@@ -9392,7 +9395,10 @@ fn runtime_remediation_fs04_repair_returns_route_consumed_by_operator() {
         .as_str()
         .expect("FS-04 repair-review-state should emit required_follow_up");
     assert!(
-        matches!(required_follow_up, "advance_late_stage" | "execution_reentry"),
+        matches!(
+            required_follow_up,
+            "advance_late_stage" | "execution_reentry"
+        ),
         "FS-04 repair-review-state should emit one authoritative follow-up, got {required_follow_up}"
     );
 
@@ -9438,10 +9444,7 @@ fn runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker() {
         1,
         &[
             ("current_branch_closure_id", Value::Null),
-            (
-                "current_branch_closure_reviewed_state_id",
-                Value::Null,
-            ),
+            ("current_branch_closure_reviewed_state_id", Value::Null),
             ("current_branch_closure_contract_identity", Value::Null),
             ("resume_task", Value::from(1_u64)),
             ("resume_step", Value::from(1_u64)),
@@ -9479,11 +9482,14 @@ fn runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker() {
         Value::from("release_readiness_recording_ready"),
         "FS-08 stale blocker should remain a concrete late-stage prerequisite route instead of resuming execution"
     );
-    assert_eq!(operator_json["next_action"], Value::from("advance late stage"));
+    assert_eq!(
+        operator_json["next_action"],
+        Value::from("advance late stage")
+    );
     assert!(
-        operator_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("featureforge plan execution advance-late-stage --plan")),
+        operator_json["recommended_command"].as_str().is_some_and(
+            |command| command.contains("featureforge plan execution advance-late-stage --plan")
+        ),
         "FS-08 stale blocker should keep an explicit late-stage remediation command"
     );
 }
@@ -9529,7 +9535,10 @@ fn runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operat
         .as_str()
         .expect("FS-04 compiled-cli repair-review-state should emit required_follow_up");
     assert!(
-        matches!(required_follow_up, "advance_late_stage" | "execution_reentry"),
+        matches!(
+            required_follow_up,
+            "advance_late_stage" | "execution_reentry"
+        ),
         "FS-04 compiled-cli repair-review-state should emit one authoritative follow-up, got {required_follow_up}"
     );
 
@@ -9575,10 +9584,7 @@ fn runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_bloc
         1,
         &[
             ("current_branch_closure_id", Value::Null),
-            (
-                "current_branch_closure_reviewed_state_id",
-                Value::Null,
-            ),
+            ("current_branch_closure_reviewed_state_id", Value::Null),
             ("current_branch_closure_contract_identity", Value::Null),
             ("resume_task", Value::from(1_u64)),
             ("resume_step", Value::from(1_u64)),
@@ -9616,11 +9622,14 @@ fn runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_bloc
         Value::from("release_readiness_recording_ready"),
         "FS-08 compiled-cli stale blocker should remain a concrete late-stage prerequisite route instead of resuming execution"
     );
-    assert_eq!(operator_json["next_action"], Value::from("advance late stage"));
+    assert_eq!(
+        operator_json["next_action"],
+        Value::from("advance late stage")
+    );
     assert!(
-        operator_json["recommended_command"]
-            .as_str()
-            .is_some_and(|command| command.contains("featureforge plan execution advance-late-stage --plan")),
+        operator_json["recommended_command"].as_str().is_some_and(
+            |command| command.contains("featureforge plan execution advance-late-stage --plan")
+        ),
         "FS-08 compiled-cli stale blocker should keep an explicit late-stage remediation command"
     );
 }
@@ -9690,7 +9699,10 @@ fn runtime_remediation_fs09_repair_exposes_next_blocker_immediately() {
     );
     assert_public_route_parity(&operator_json, &status_json, None);
     assert!(
-        matches!(required_follow_up.as_str(), "advance_late_stage" | "execution_reentry"),
+        matches!(
+            required_follow_up.as_str(),
+            "advance_late_stage" | "execution_reentry"
+        ),
         "FS-09 repair should expose one post-repair blocker, got {required_follow_up}"
     );
 }
@@ -9764,8 +9776,8 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
         "runtime-remediation inventory should retain function-level traceability coverage"
     );
     for scenario in [
-        "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09",
-        "FS-10", "FS-11", "FS-12",
+        "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10",
+        "FS-11", "FS-12",
     ] {
         assert!(
             inventory.contains(scenario),
@@ -9810,7 +9822,9 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
         ),
         (
             "FS-06",
-            &["tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity"],
+            &[
+                "tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity",
+            ],
         ),
         (
             "FS-07",

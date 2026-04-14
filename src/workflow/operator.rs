@@ -22,7 +22,7 @@ use crate::workflow::status::{WorkflowPhase, WorkflowRoute};
 const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 2;
 const WORKFLOW_DOCTOR_SCHEMA_VERSION: u32 = 2;
 const WORKFLOW_HANDOFF_SCHEMA_VERSION: u32 = 2;
-const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 1;
+const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -87,12 +87,8 @@ enum WorkflowOperatorNextActionSchema {
     ContinueExecution,
     #[serde(rename = "request task review")]
     RequestTaskReview,
-    #[serde(rename = "bind task review dispatch lineage")]
-    BindTaskReviewDispatchLineage,
     #[serde(rename = "request final review")]
     RequestFinalReview,
-    #[serde(rename = "bind final review dispatch lineage")]
-    BindFinalReviewDispatchLineage,
     #[serde(rename = "execution reentry required")]
     ExecutionReentryRequired,
     #[serde(rename = "hand off")]
@@ -199,7 +195,7 @@ pub struct WorkflowHandoff {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowOperator {
-    #[schemars(range(min = 1, max = 1))]
+    #[schemars(range(min = 2, max = 2))]
     pub schema_version: u32,
     #[schemars(with = "WorkflowOperatorPhaseSchema")]
     pub phase: String,
@@ -1311,21 +1307,6 @@ fn task_boundary_next_step_text(context: &OperatorContext) -> Option<String> {
         reason_code,
         "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
     ) {
-        if let Some(compat_dispatch_command) = context
-            .operator_recommended_command
-            .as_deref()
-            .filter(|command| command.contains("record-review-dispatch"))
-        {
-            if context.route.plan_path.is_empty() {
-                return Some(format!(
-                    "{reason} Run `{compat_dispatch_command}` once to bind dispatch lineage, then rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and continue intent-level task closure."
-                ));
-            }
-            return Some(format!(
-                "{reason} Run `{compat_dispatch_command}` once to bind dispatch lineage, then rerun `featureforge workflow operator --plan {} --external-review-result-ready` and continue intent-level task closure.",
-                context.route.plan_path
-            ));
-        }
         if context.route.plan_path.is_empty() {
             return Some(format!(
                 "{reason} Request fresh-context dedicated-independent review, then rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and continue intent-level task closure."

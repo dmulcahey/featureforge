@@ -566,8 +566,8 @@ pub fn repair_review_state(
         fallback_command,
     );
 
-    let public_required_follow_up = normalize_public_required_follow_up(required_follow_up.as_deref())
-        .map(str::to_owned);
+    let public_required_follow_up =
+        normalize_public_required_follow_up(required_follow_up.as_deref()).map(str::to_owned);
     if let Some(required_follow_up) = public_required_follow_up {
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
