@@ -8,7 +8,7 @@ You are reviewing code changes for production readiness against the shared Featu
 1. Review `{WHAT_WAS_IMPLEMENTED}`
 2. Compare the diff against `{PLAN_OR_REQUIREMENTS}`
 3. When provided, read the approved plan and execution evidence paths below
-4. Use the detected base branch and commit range below
+4. Use the provided base branch and commit range below
 5. Apply the checklist from `review/checklist.md`
 6. Categorize issues as Critical, Important, or Minor
 7. Assess production readiness, including plan deviation against completed task packets when plan-routed context is present

@@ -19,11 +19,13 @@ an additional lower-level runtime/shared-truth test.
 | `FS-10` | PR `#34` bug class | stale persisted follow-up conflicts with live current truth | stale follow-up ignored/cleared; live closure truth wins | `<=1` |
 | `FS-11` | late-stage precedence | release-facing drift after review or direct review-first attempt | document release precedence enforced before final review, then QA | `<=3` |
 | `FS-12` | cross-session diagnosis | derived receipt/projection missing with authoritative records intact | normal closure/late-stage routing remains valid; projection regenerates without truth mutation | `<=3` |
+| `FS-13` | final-review deviation disposition | failed final review with recorded deviations and independent deviation adjudication | deviation disposition remains independently validated and fail-before-mutation compatibility guards hold | `<=2` |
 
 ## Coverage Map
 
 - `FS-01`:
   - `tests/workflow_runtime.rs::runtime_remediation_fs01_shared_route_parity_for_missing_current_closure`
+  - `tests/workflow_shell_smoke.rs::plan_execution_record_release_readiness_primitive_uses_shared_routing_when_stale`
 - `FS-02`:
   - `tests/workflow_runtime_final_review.rs::fs02_late_stage_drift_routes_consistently_across_operator_and_status`
   - `tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget`
@@ -39,6 +41,7 @@ an additional lower-level runtime/shared-truth test.
 - `FS-05`:
   - `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
   - `tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
+  - `tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation`
   - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases`
 - `FS-06`:
   - `tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity`
@@ -64,12 +67,17 @@ an additional lower-level runtime/shared-truth test.
   - `tests/plan_execution.rs::rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projection_is_missing`
   - `tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered`
   - `tests/plan_execution_final_review.rs::fs12_missing_final_review_projection_regenerates_without_truth_mutation`
+- `FS-13`:
+  - `tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails`
+  - `tests/plan_execution_final_review.rs::dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass`
+  - `tests/plan_execution_final_review.rs::dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict`
 
 ## Function-Level Traceability
 
 - `FS-01`
   - Shared runtime: `tests/workflow_runtime.rs::runtime_remediation_fs01_shared_route_parity_for_missing_current_closure`
   - Compiled CLI parity: `tests/workflow_shell_smoke.rs::compiled_cli_route_parity_probe_for_late_stage_refresh_fixture`
+  - Compiled CLI stale reroute parity guard: `tests/workflow_shell_smoke.rs::plan_execution_record_release_readiness_primitive_uses_shared_routing_when_stale`
 - `FS-02`
   - Shared runtime: `tests/workflow_runtime_final_review.rs::fs02_late_stage_drift_routes_consistently_across_operator_and_status`
   - Compiled CLI parity: `tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget`
@@ -85,6 +93,7 @@ an additional lower-level runtime/shared-truth test.
   - Direct-vs-compiled CLI repair-route parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli`
 - `FS-05`
   - Plan-execution no-mutation invariants: `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
+  - Compatibility final-review reviewer-source no-mutation invariant: `tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation`
   - Compatibility alias no-mutation invariant: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases`
 - `FS-06`
   - Helper vs compiled CLI parity lock: `tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity`
@@ -108,6 +117,10 @@ an additional lower-level runtime/shared-truth test.
 - `FS-12`
   - Plan-execution projection regeneration invariants: `tests/plan_execution.rs::rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projection_is_missing`
   - Final-review projection regeneration invariants: `tests/plan_execution_final_review.rs::fs12_missing_final_review_projection_regenerates_without_truth_mutation`
+- `FS-13`
+  - Compiled CLI final-review deviation disposition independence: `tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails`
+  - Final-review receipt acceptance for failed result with independent deviation pass: `tests/plan_execution_final_review.rs::dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass`
+  - Final-review receipt rejection for failed deviation verdict: `tests/plan_execution_final_review.rs::dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict`
 
 - Task 12 command-budget gates (compiled CLI):
   - `task_close_happy_path_runtime_management_budget_is_capped` (`tests/workflow_shell_smoke.rs`) `<=3`

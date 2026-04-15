@@ -118,7 +118,7 @@ fi
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
-Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base aligned with runtime-owned workflow context when available and otherwise restrict fallback to repository-local branch metadata.
+Do not use PR metadata or repo default-branch APIs as a fallback. For workflow-routed review, require `BASE_BRANCH` from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`). For non-plan-routed review, require an explicitly provided `BASE_BRANCH`.
 
 The reviewer MUST use the shared review checklist from `review/checklist.md` in the repo when available, otherwise fall back to the installed FeatureForge copy.
 

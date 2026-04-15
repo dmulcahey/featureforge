@@ -231,7 +231,7 @@ Use the shared rubric from the current template and state the final Health Score
 Write the local report to:
 - `$REPORT_DIR/qa-report-{domain}-{YYYY-MM-DD}.md`
 
-When a current-branch test-plan artifact exists, also write a project-scoped outcome artifact:
+When a current-branch test-plan artifact exists, runtime emits a project-scoped outcome artifact:
 
 ```bash
 _SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
