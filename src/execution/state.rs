@@ -1020,7 +1020,11 @@ impl ExecutionRuntime {
                             &gate,
                             args.external_review_result_ready,
                         ) {
-                            apply_out_of_phase_gate_contract(&context, &mut gate);
+                            apply_out_of_phase_gate_contract(
+                                &context,
+                                &mut gate,
+                                args.external_review_result_ready,
+                            );
                         } else {
                             apply_specific_gate_follow_up_contract(
                                 &context,
@@ -1050,7 +1054,11 @@ impl ExecutionRuntime {
                         &gate,
                         args.external_review_result_ready,
                     ) {
-                        apply_out_of_phase_gate_contract(&context, &mut gate);
+                        apply_out_of_phase_gate_contract(
+                            &context,
+                            &mut gate,
+                            args.external_review_result_ready,
+                        );
                     } else {
                         apply_specific_gate_follow_up_contract(
                             &context,
@@ -1085,7 +1093,7 @@ impl ExecutionRuntime {
                 if let Err(error) = validate_review_dispatch_request(&context, args, cycle_target) {
                     if error.error_class == FailureClass::ExecutionStateNotReady.as_str() {
                         let mut gate = review_dispatch_out_of_phase_gate(error.message);
-                        apply_out_of_phase_gate_contract(&context, &mut gate);
+                        apply_out_of_phase_gate_contract(&context, &mut gate, false);
                         return Ok(gate);
                     }
                     return Err(error);
@@ -1102,7 +1110,7 @@ impl ExecutionRuntime {
                 {
                     if error.error_class == FailureClass::ExecutionStateNotReady.as_str() {
                         let mut gate = review_dispatch_out_of_phase_gate(error.message);
-                        apply_out_of_phase_gate_contract(&reloaded, &mut gate);
+                        apply_out_of_phase_gate_contract(&reloaded, &mut gate, false);
                         return Ok(gate);
                     }
                     return Err(error);
@@ -1250,7 +1258,11 @@ impl ExecutionRuntime {
                 &gate,
                 args.external_review_result_ready,
             ) {
-                apply_out_of_phase_gate_contract(&context, &mut gate);
+                apply_out_of_phase_gate_contract(
+                    &context,
+                    &mut gate,
+                    args.external_review_result_ready,
+                );
             } else {
                 apply_specific_gate_follow_up_contract(
                     &context,
@@ -1470,12 +1482,20 @@ fn specific_gate_reason_is_direct_follow_up(
     None
 }
 
-fn apply_out_of_phase_gate_contract(context: &ExecutionContext, gate: &mut GateResult) {
+fn apply_out_of_phase_gate_contract(
+    context: &ExecutionContext,
+    gate: &mut GateResult,
+    external_review_result_ready: bool,
+) {
     gate.code = Some(String::from("out_of_phase_requery_required"));
-    gate.recommended_command = Some(format!(
-        "featureforge workflow operator --plan {}",
-        context.plan_rel
-    ));
+    gate.recommended_command = Some(if external_review_result_ready {
+        format!(
+            "featureforge workflow operator --plan {} --external-review-result-ready",
+            context.plan_rel
+        )
+    } else {
+        format!("featureforge workflow operator --plan {}", context.plan_rel)
+    });
     gate.rederive_via_workflow_operator = Some(true);
 }
 
@@ -1593,7 +1613,7 @@ fn record_review_dispatch_blocked_output_from_gate(
                     .iter()
                     .any(|code| code.starts_with("prior_task_"));
         if gate.allowed || direct_follow_up.is_none() || task_scope_prior_task_requires_requery {
-            apply_out_of_phase_gate_contract(context, &mut gate);
+            apply_out_of_phase_gate_contract(context, &mut gate, false);
         } else {
             gate.recommended_command = match direct_follow_up {
                 Some("gate_finish") => Some(format!(

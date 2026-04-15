@@ -26143,7 +26143,9 @@ fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
     );
     assert_eq!(
         advance_final["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready"
+        ))
     );
     assert_eq!(
         advance_final["rederive_via_workflow_operator"],
@@ -26180,7 +26182,9 @@ fn late_stage_out_of_phase_requery_happens_before_summary_validation() {
     );
     assert_eq!(
         primitive_final["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready"
+        ))
     );
     assert_eq!(
         primitive_final["rederive_via_workflow_operator"],
@@ -26254,7 +26258,7 @@ fn advance_late_stage_final_review_rejects_unapproved_reviewer_source_before_mut
         "Fixture summary for invalid reviewer-source final-review validation.\n",
     );
     let digest_before = authoritative_state_digest(repo, state);
-    let output = run_rust(
+    let output = run_shell(
         repo,
         state,
         &[
@@ -26363,7 +26367,7 @@ fn record_final_review_rejects_unapproved_reviewer_source_before_mutation() {
         "Fixture summary for invalid reviewer-source compatibility final-review validation.\n",
     );
     let digest_before = authoritative_state_digest(repo, state);
-    let output = run_rust(
+    let output = run_shell(
         repo,
         state,
         &[
@@ -26505,7 +26509,9 @@ fn late_stage_primitive_rerun_equivalence_requires_matching_supplied_bindings() 
     );
     assert_eq!(
         mismatched_final["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {PLAN_REL}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {PLAN_REL} --external-review-result-ready"
+        ))
     );
     assert_eq!(
         mismatched_final["rederive_via_workflow_operator"],

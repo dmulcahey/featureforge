@@ -868,7 +868,7 @@ fn record_workflow_transfer(
             reason: reason.to_owned(),
             record_path: None,
             code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(plan)),
+            recommended_command: Some(recommended_operator_command(plan, false)),
             rederive_via_workflow_operator: Some(true),
             trace_summary: String::from(
                 "transfer failed closed because workflow/operator does not currently route to handoff recording.",
@@ -2611,7 +2611,7 @@ pub fn record_qa(
             branch_closure_id,
             result: args.result.as_str().to_owned(),
             code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan)),
+            recommended_command: Some(recommended_operator_command(&args.plan, false)),
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
@@ -2630,7 +2630,7 @@ pub fn record_qa(
             branch_closure_id,
             result: args.result.as_str().to_owned(),
             code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan)),
+            recommended_command: Some(recommended_operator_command(&args.plan, false)),
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
@@ -2659,7 +2659,7 @@ pub fn record_qa(
                 branch_closure_id,
                 result: args.result.as_str().to_owned(),
                 code: Some(String::from("out_of_phase_requery_required")),
-                recommended_command: Some(recommended_operator_command(&args.plan)),
+                recommended_command: Some(recommended_operator_command(&args.plan, false)),
                 rederive_via_workflow_operator: Some(true),
                 required_follow_up: None,
                 trace_summary: String::from(
@@ -2700,7 +2700,7 @@ pub fn record_qa(
             branch_closure_id,
             result: args.result.as_str().to_owned(),
             code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan)),
+            recommended_command: Some(recommended_operator_command(&args.plan, false)),
             rederive_via_workflow_operator: Some(true),
             required_follow_up: None,
             trace_summary: String::from(
@@ -2753,7 +2753,7 @@ pub fn record_qa(
                 branch_closure_id,
                 result: args.result.as_str().to_owned(),
                 code: Some(String::from("out_of_phase_requery_required")),
-                recommended_command: Some(recommended_operator_command(&args.plan)),
+                recommended_command: Some(recommended_operator_command(&args.plan, false)),
                 rederive_via_workflow_operator: Some(true),
                 required_follow_up: None,
                 trace_summary: String::from(
@@ -3546,8 +3546,15 @@ fn current_workflow_operator(
     query_workflow_routing_state_for_runtime(runtime, Some(plan), external_review_result_ready)
 }
 
-fn recommended_operator_command(plan: &Path) -> String {
-    format!("featureforge workflow operator --plan {}", plan.display())
+fn recommended_operator_command(plan: &Path, external_review_result_ready: bool) -> String {
+    if external_review_result_ready {
+        format!(
+            "featureforge workflow operator --plan {} --external-review-result-ready",
+            plan.display()
+        )
+    } else {
+        format!("featureforge workflow operator --plan {}", plan.display())
+    }
 }
 
 fn shared_out_of_phase_close_current_task_output(
@@ -3564,7 +3571,7 @@ fn shared_out_of_phase_close_current_task_output(
         superseded_task_closure_ids: Vec::new(),
         closure_record_id: None,
         code: Some(String::from("out_of_phase_requery_required")),
-        recommended_command: Some(recommended_operator_command(plan)),
+        recommended_command: Some(recommended_operator_command(plan, true)),
         rederive_via_workflow_operator: Some(true),
         required_follow_up: None,
         trace_summary: trace_summary.to_owned(),
@@ -3580,7 +3587,7 @@ fn shared_out_of_phase_record_branch_closure_output(
         action: String::from("blocked"),
         branch_closure_id,
         code: Some(String::from("out_of_phase_requery_required")),
-        recommended_command: Some(recommended_operator_command(plan)),
+        recommended_command: Some(recommended_operator_command(plan, false)),
         rederive_via_workflow_operator: Some(true),
         superseded_branch_closure_ids: Vec::new(),
         required_follow_up: None,
@@ -3608,7 +3615,10 @@ fn shared_out_of_phase_advance_late_stage_output(
         dispatch_id,
         result: result.to_owned(),
         code: Some(String::from("out_of_phase_requery_required")),
-        recommended_command: Some(recommended_operator_command(plan)),
+        recommended_command: Some(recommended_operator_command(
+            plan,
+            stage_path == "final_review",
+        )),
         rederive_via_workflow_operator: Some(true),
         required_follow_up: None,
         trace_summary: trace_summary.to_owned(),
@@ -5854,7 +5864,9 @@ mod unit_tests {
         );
         assert_eq!(
             output.recommended_command.as_deref(),
-            Some("featureforge workflow operator --plan docs/featureforge/plans/example.md")
+            Some(
+                "featureforge workflow operator --plan docs/featureforge/plans/example.md --external-review-result-ready",
+            )
         );
         assert_eq!(output.rederive_via_workflow_operator, Some(true));
         assert_eq!(output.required_follow_up, None);

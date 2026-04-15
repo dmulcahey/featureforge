@@ -156,30 +156,37 @@ fn normal_path_command_help_hides_dispatch_id_plumbing() {
 
 #[test]
 fn direct_compatibility_command_help_marks_non_normal_flow_usage() {
-    for compatibility_command in [
-        "record-review-dispatch",
-        "record-branch-closure",
-        "record-release-readiness",
-        "record-final-review",
-        "record-qa",
-        "rebuild-evidence",
-    ] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_featureforge"))
-            .args(["plan", "execution", compatibility_command, "--help"])
-            .output()
-            .unwrap_or_else(|error| {
-                panic!("plan execution {compatibility_command} --help should run: {error}")
-            });
-        assert!(
-            output.status.success(),
-            "expected plan execution {compatibility_command} --help to succeed, got {:?}",
-            output.status
-        );
-        let stdout = String::from_utf8(output.stdout)
-            .expect("compatibility command help stdout should be utf-8");
-        assert!(
-            stdout.contains("Compatibility/debug"),
-            "direct compatibility command help should explicitly mark non-normal flow usage for `{compatibility_command}`, got:\n{stdout}"
-        );
+    for binary in featureforge_help_binaries() {
+        for compatibility_command in [
+            "record-review-dispatch",
+            "record-branch-closure",
+            "record-release-readiness",
+            "record-final-review",
+            "record-qa",
+            "rebuild-evidence",
+        ] {
+            let output = std::process::Command::new(&binary)
+                .args(["plan", "execution", compatibility_command, "--help"])
+                .output()
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "plan execution {compatibility_command} --help should run for binary {}: {error}",
+                        binary.display()
+                    )
+                });
+            assert!(
+                output.status.success(),
+                "expected plan execution {compatibility_command} --help to succeed for binary {}, got {:?}",
+                binary.display(),
+                output.status
+            );
+            let stdout = String::from_utf8(output.stdout)
+                .expect("compatibility command help stdout should be utf-8");
+            assert!(
+                stdout.contains("Compatibility/debug"),
+                "direct compatibility command help should explicitly mark non-normal flow usage for `{compatibility_command}` on binary {}, got:\n{stdout}",
+                binary.display()
+            );
+        }
     }
 }

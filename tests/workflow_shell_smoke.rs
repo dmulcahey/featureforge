@@ -4180,7 +4180,7 @@ fn workflow_operator_routes_task_review_result_ready_to_close_current_task() {
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
     setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
-    let dispatch = run_plan_execution_json(
+    let dispatch = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -4207,7 +4207,7 @@ fn workflow_operator_routes_task_review_result_ready_to_close_current_task() {
         ],
     );
 
-    let operator_json = run_featureforge_with_env_json(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &[
@@ -4218,7 +4218,6 @@ fn workflow_operator_routes_task_review_result_ready_to_close_current_task() {
             "--external-review-result-ready",
             "--json",
         ],
-        &[],
         "workflow operator json for task review result ready",
     );
 
@@ -4467,7 +4466,7 @@ fn plan_execution_close_current_task_stale_dispatch_validation_happens_before_su
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let dispatch = run_plan_execution_json(
+    let dispatch = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -4533,7 +4532,7 @@ fn plan_execution_close_current_task_requires_fresh_reviewed_state_after_dispatc
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
-    let dispatch = run_plan_execution_json(
+    let dispatch = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -4612,7 +4611,7 @@ fn workflow_operator_routes_stale_task_review_dispatch_to_repair_review_state() 
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
 
-    let dispatch = run_plan_execution_json(
+    let dispatch = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -4662,7 +4661,12 @@ fn workflow_operator_routes_stale_task_review_dispatch_to_repair_review_state() 
     let gate_review = run_plan_execution_json(
         repo,
         state,
-        &["gate-review", "--plan", plan_rel],
+        &[
+            "gate-review",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+        ],
         "gate-review should let task-scope repair outrank a persisted branch reroute when current task-closure truth becomes invalid",
     );
     assert_eq!(gate_review["allowed"], Value::Bool(false));
@@ -4676,7 +4680,12 @@ fn workflow_operator_routes_stale_task_review_dispatch_to_repair_review_state() 
     let gate_finish = run_plan_execution_json(
         repo,
         state,
-        &["gate-finish", "--plan", plan_rel],
+        &[
+            "gate-finish",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+        ],
         "gate-finish should let task-scope repair outrank a persisted branch reroute when current task-closure truth becomes invalid",
     );
     assert_eq!(gate_finish["allowed"], Value::Bool(false));
@@ -6472,7 +6481,7 @@ fn workflow_operator_allows_fresh_task_redispatch_after_failed_task_review() {
         .expect("failed review recovery fixture should expose second dispatch id")
         .to_owned();
 
-    let operator_json = run_featureforge_with_env_json(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &[
@@ -6483,7 +6492,6 @@ fn workflow_operator_allows_fresh_task_redispatch_after_failed_task_review() {
             "--external-review-result-ready",
             "--json",
         ],
-        &[],
         "workflow operator should allow fresh review readiness after a failed task review is redispached",
     );
     assert_eq!(operator_json["phase"], "task_closure_pending");
@@ -6878,7 +6886,7 @@ fn workflow_operator_waits_for_final_review_result_after_dispatch() {
             ("last_final_review_artifact_fingerprint", Value::Null),
         ],
     );
-    let dispatch = run_plan_execution_json(
+    let dispatch = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -6964,7 +6972,7 @@ fn workflow_operator_routes_final_review_result_ready_to_advance_late_stage() {
     assert_eq!(dispatch["allowed"], Value::Bool(true));
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
 
-    let operator_json = run_featureforge_with_env_json(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &[
@@ -6975,7 +6983,6 @@ fn workflow_operator_routes_final_review_result_ready_to_advance_late_stage() {
             "--external-review-result-ready",
             "--json",
         ],
-        &[],
         "workflow operator json for final review result ready",
     );
 
@@ -7019,7 +7026,7 @@ fn workflow_operator_routes_dispatched_final_review_with_missing_release_overlay
         "human-reviewer-fixture-001",
     );
     mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
-    let dispatch = run_plan_execution_json(
+    let dispatch = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -7034,7 +7041,7 @@ fn workflow_operator_routes_dispatched_final_review_with_missing_release_overlay
     assert_eq!(dispatch["allowed"], Value::Bool(true));
     clear_current_authoritative_release_readiness(repo, state);
 
-    let operator_json = run_featureforge_with_env_json(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &[
@@ -7045,7 +7052,6 @@ fn workflow_operator_routes_dispatched_final_review_with_missing_release_overlay
             "--external-review-result-ready",
             "--json",
         ],
-        &[],
         "workflow operator should reroute dispatched final review without release readiness",
     );
     let status_json = run_plan_execution_json(
@@ -7104,7 +7110,7 @@ fn workflow_operator_reroutes_failed_final_review_back_to_release_prerequisite()
         ],
     );
 
-    let operator_json = run_featureforge_with_env_json(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &[
@@ -7115,7 +7121,6 @@ fn workflow_operator_reroutes_failed_final_review_back_to_release_prerequisite()
             "--external-review-result-ready",
             "--json",
         ],
-        &[],
         "workflow operator should keep release prerequisite routing ahead of failed final-review reentry",
     );
 
@@ -7154,7 +7159,7 @@ fn workflow_operator_reroutes_dispatched_final_review_blocked_release_ready_to_r
     assert_eq!(dispatch["allowed"], Value::Bool(true));
     set_current_authoritative_release_readiness_result(repo, state, "blocked");
 
-    let operator_json = run_featureforge_with_env_json(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &[
@@ -7165,7 +7170,6 @@ fn workflow_operator_reroutes_dispatched_final_review_blocked_release_ready_to_r
             "--external-review-result-ready",
             "--json",
         ],
-        &[],
         "workflow operator should reroute blocked final review back to release blocker resolution",
     );
 
@@ -7905,7 +7909,9 @@ fn plan_execution_record_final_review_primitive_rejects_overlay_only_branch_clos
     );
     assert_eq!(
         review_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+        ))
     );
     assert_eq!(
         review_json["rederive_via_workflow_operator"],
@@ -7931,7 +7937,7 @@ fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disp
     write_matching_topology_downgrade_record(repo, state, plan_rel, &base_branch);
     mark_branch_review_artifacts_with_runtime_deviation_pass(repo, state);
 
-    let dispatch = run_plan_execution_json(
+    let dispatch = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -7945,7 +7951,7 @@ fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disp
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
 
-    let operator_json = run_featureforge_with_env_json(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &[
@@ -7956,7 +7962,6 @@ fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disp
             "--external-review-result-ready",
             "--json",
         ],
-        &[],
         "workflow operator json for runtime-deviation final review fixture",
     );
     let dispatch_id = operator_json["recording_context"]["dispatch_id"]
@@ -8034,7 +8039,7 @@ fn plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_indepe
     write_matching_topology_downgrade_record(repo, state, plan_rel, &base_branch);
     mark_branch_review_artifacts_with_runtime_deviation_pass(repo, state);
 
-    let dispatch = run_plan_execution_json(
+    let dispatch = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -8048,7 +8053,7 @@ fn plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_indepe
     );
     assert_eq!(dispatch["allowed"], Value::Bool(true));
 
-    let operator_json = run_featureforge_with_env_json(
+    let operator_json = run_featureforge_json_real_cli(
         repo,
         state,
         &[
@@ -8059,7 +8064,6 @@ fn plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_indepe
             "--external-review-result-ready",
             "--json",
         ],
-        &[],
         "workflow operator json for failed-result runtime-deviation final review fixture",
     );
     let _dispatch_id = operator_json["recording_context"]["dispatch_id"]
@@ -8071,7 +8075,7 @@ fn plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_indepe
         &summary_path,
         "Independent final review failed after runtime topology downgrade review.\n",
     );
-    let review_json = run_plan_execution_json(
+    let review_json = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -8260,7 +8264,9 @@ fn plan_execution_advance_late_stage_final_review_blocked_release_ready_requires
     );
     assert_eq!(
         review_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+        ))
     );
     assert_eq!(
         review_json["rederive_via_workflow_operator"],
@@ -8447,7 +8453,9 @@ fn plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_confli
     assert_eq!(conflicting["code"], "out_of_phase_requery_required");
     assert_eq!(
         conflicting["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}"))
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+        ))
     );
     assert_eq!(
         conflicting["rederive_via_workflow_operator"],
@@ -9155,7 +9163,9 @@ fn plan_execution_advance_late_stage_final_review_requires_dispatch_follow_up() 
     assert_eq!(review_json["required_follow_up"], Value::Null);
     assert_eq!(
         review_json["recommended_command"],
-        Value::from(format!("featureforge workflow operator --plan {plan_rel}")),
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+        )),
         "json: {review_json}"
     );
 }
@@ -13435,6 +13445,34 @@ fn plan_execution_gate_review_out_of_phase_requires_workflow_requery() {
         gate_review["rederive_via_workflow_operator"],
         Value::Bool(true)
     );
+
+    let gate_review_external_ready = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "gate-review",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+        ],
+        "gate-review should preserve external-ready context in out-of-phase workflow-operator reroutes",
+    );
+    assert_eq!(gate_review_external_ready["allowed"], false);
+    assert_eq!(gate_review_external_ready["action"], "blocked");
+    assert_eq!(
+        gate_review_external_ready["code"],
+        "out_of_phase_requery_required"
+    );
+    assert_eq!(
+        gate_review_external_ready["recommended_command"],
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+        ))
+    );
+    assert_eq!(
+        gate_review_external_ready["rederive_via_workflow_operator"],
+        Value::Bool(true)
+    );
 }
 
 #[test]
@@ -13502,6 +13540,34 @@ fn plan_execution_gate_finish_out_of_phase_requires_workflow_requery() {
     );
     assert_eq!(
         gate_finish["rederive_via_workflow_operator"],
+        Value::Bool(true)
+    );
+
+    let gate_finish_external_ready = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "gate-finish",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+        ],
+        "gate-finish should preserve external-ready context in out-of-phase workflow-operator reroutes",
+    );
+    assert_eq!(gate_finish_external_ready["allowed"], false);
+    assert_eq!(gate_finish_external_ready["action"], "blocked");
+    assert_eq!(
+        gate_finish_external_ready["code"],
+        "out_of_phase_requery_required"
+    );
+    assert_eq!(
+        gate_finish_external_ready["recommended_command"],
+        Value::from(format!(
+            "featureforge workflow operator --plan {plan_rel} --external-review-result-ready"
+        ))
+    );
+    assert_eq!(
+        gate_finish_external_ready["rederive_via_workflow_operator"],
         Value::Bool(true)
     );
 }

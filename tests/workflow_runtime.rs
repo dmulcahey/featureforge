@@ -9818,6 +9818,7 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             &[
                 "tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation",
                 "tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation",
+                "tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation",
                 "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases",
             ],
         ),

@@ -1901,6 +1901,7 @@ test('runtime-remediation regression inventory fixture stays complete', () => {
   }
   for (const [scenario, anchor] of [
     ['FS-05', 'tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation'],
+    ['FS-05', 'tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation'],
     ['FS-11', 'tests/plan_execution_final_review.rs::fs11_gate_finish_rejects_final_review_release_binding_mismatch'],
     ['FS-12', 'tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered'],
     ['FS-13', 'tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails'],
