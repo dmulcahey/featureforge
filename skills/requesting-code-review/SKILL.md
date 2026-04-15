@@ -102,11 +102,11 @@ For late-stage phase/action/skill grounding, reference `review/late-stage-preced
 - If the current review is not governed by an approved FeatureForge plan, skip this execution-state gate and continue with the normal diff review.
 
 **2. Use the provided base branch context and derive the review range:**
-Keep base-branch selection runtime-aligned and stable for this review. For plan-routed final review, `BASE_BRANCH` must come from the runtime-owned release lineage/document-release context. For non-plan-routed review, provide `BASE_BRANCH` explicitly before running this step. Do not redetect it here.
+Keep base-branch selection runtime-aligned and stable for this review. For plan-routed final review, `BASE_BRANCH` must come from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`) and stay aligned with the runtime-owned release lineage/document-release context. For non-plan-routed review, provide `BASE_BRANCH` explicitly before running this step. Do not redetect it here.
 
 ```bash
 if [ -z "$BASE_BRANCH" ]; then
-  echo "Missing BASE_BRANCH. Set it from runtime-owned release lineage (plan-routed) or provide it explicitly (non-plan-routed) before continuing."
+  echo "Missing BASE_BRANCH. Set it from workflow/operator base_branch and runtime-owned release lineage (plan-routed) or provide it explicitly (non-plan-routed) before continuing."
   exit 1
 fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true

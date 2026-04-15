@@ -892,6 +892,18 @@ fn mutate_and_review_state_use_recording_boundary_for_transition_writes() {
 }
 
 #[test]
+fn reconcile_review_state_threads_external_review_ready_through_routing_requeries() {
+    let review_state_source = fs::read_to_string(repo_root().join("src/execution/review_state.rs"))
+        .expect("execution review_state source should be readable");
+    assert!(
+        !review_state_source.contains(
+            "query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false)"
+        ),
+        "reconcile-review-state should not hardcode external_review_result_ready=false when requerying authoritative routing",
+    );
+}
+
+#[test]
 fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
     let state_source = fs::read_to_string(repo_root().join("src/execution/state.rs"))
         .expect("execution state source should be readable");
@@ -927,6 +939,30 @@ fn explicit_mutation_paths_keep_strict_authoritative_state_validation() {
     assert!(
         !checkpoint_source.contains("load_authoritative_transition_state_relaxed("),
         "gate-review checkpoint mutation must not bypass active-contract validation with the relaxed transition-state loader",
+    );
+}
+
+#[test]
+fn rebuild_evidence_refresh_claims_write_authority_before_loading_authoritative_state() {
+    let mutate_source = fs::read_to_string(repo_root().join("src/execution/mutate.rs"))
+        .expect("execution mutate source should be readable");
+    let refresh_start = mutate_source
+        .find("fn refresh_rebuild_downstream_truth(")
+        .expect("mutate.rs should keep refresh_rebuild_downstream_truth");
+    let refresh_end = mutate_source[refresh_start..]
+        .find("fn ensure_task_dispatch_id_matches(")
+        .map(|offset| refresh_start + offset)
+        .expect("mutate.rs should keep ensure_task_dispatch_id_matches after rebuild refresh");
+    let refresh_source = &mutate_source[refresh_start..refresh_end];
+    let claim_index = refresh_source
+        .find("claim_step_write_authority(runtime)")
+        .expect("rebuild refresh should claim write authority");
+    let load_index = refresh_source
+        .find("load_authoritative_transition_state(&context)")
+        .expect("rebuild refresh should load authoritative transition state");
+    assert!(
+        claim_index < load_index,
+        "rebuild-evidence downstream projection refresh must claim write authority before loading authoritative state used for regeneration",
     );
 }
 
@@ -1129,6 +1165,51 @@ fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct
                 "advance_late_stage" | "execution_reentry" | "request_external_review"
             )),
         "FS-04 repair-review-state should expose one authoritative blocker follow-up"
+    );
+}
+
+#[test]
+fn runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift()
+{
+    let command = [
+        "plan",
+        "execution",
+        "repair-review-state",
+        "--plan",
+        PLAN_REL,
+        "--external-review-result-ready",
+    ];
+
+    let mut results = Vec::new();
+    for (label, real_cli) in [("direct", false), ("compiled-cli", true)] {
+        let (repo_dir, state_dir) = init_repo(&format!(
+            "contracts-boundary-runtime-remediation-fs04-repair-flag-{label}"
+        ));
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        setup_task_boundary_blocked_case(repo, state);
+        let output = run_featureforge_output(repo, state, &command, real_cli, label);
+        assert!(
+            output.status.success(),
+            "FS-04 {label} path should accept external-review-result-ready and return a routed repair result\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let routed = parse_json_output(
+            &output,
+            &format!("FS-04 {label} repair-review-state flag acceptance"),
+        );
+        results.push((label, routed));
+    }
+
+    assert_eq!(results[0].1["action"], results[1].1["action"]);
+    assert_eq!(
+        results[0].1["required_follow_up"],
+        results[1].1["required_follow_up"]
+    );
+    assert_eq!(
+        results[0].1["recommended_command"],
+        results[1].1["recommended_command"]
     );
 }
 

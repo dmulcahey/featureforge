@@ -7368,8 +7368,20 @@ fn workflow_operator_final_review_external_ready_without_dispatch_lineage_surfac
         ],
         "status should expose final-review dispatch lineage bind command when external review result is ready but dispatch lineage is missing",
     );
+    let explain_json = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "explain-review-state",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+        ],
+        "explain-review-state should honor external review readiness when final-review recording is ready",
+    );
 
     assert_public_route_parity(&operator_json, &status_json, None);
+    assert_eq!(operator_json["base_branch"], Value::from(base_branch.clone()));
     assert_eq!(operator_json["phase"], "final_review_pending");
     assert_eq!(
         operator_json["phase_detail"],
@@ -7381,6 +7393,104 @@ fn workflow_operator_final_review_external_ready_without_dispatch_lineage_surfac
         Value::from(format!(
             "featureforge plan execution advance-late-stage --plan {plan_rel} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
         ))
+    );
+    assert_eq!(explain_json["next_action"], operator_json["next_action"]);
+    assert_eq!(explain_json["recommended_command"], operator_json["recommended_command"]);
+}
+
+#[test]
+fn repair_review_state_honors_external_review_ready_after_restoring_final_review_overlays() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("repair-review-state-final-review-overlay-external-ready");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        &[],
+        "workflow operator should expose final-review recording readiness before overlay repair",
+    );
+    assert_eq!(operator_json["phase"], "final_review_pending");
+    assert_eq!(
+        operator_json["phase_detail"],
+        Value::from("final_review_recording_ready")
+    );
+
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("current_branch_closure_reviewed_state_id", Value::Null),
+            ("current_branch_closure_contract_identity", Value::Null),
+        ],
+    );
+
+    let repair = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "repair-review-state",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+        ],
+        "repair-review-state should preserve external-review-ready final-review routing after restoring overlays",
+    );
+    assert_eq!(repair["action"], Value::from("reconciled"));
+    assert_eq!(repair["required_follow_up"], Value::Null);
+    let actions = repair["actions_performed"]
+        .as_array()
+        .expect("repair-review-state should expose actions_performed array");
+    for expected_action in [
+        "restored_current_branch_closure_reviewed_state",
+        "restored_current_branch_closure_contract_identity",
+        "restored_current_release_readiness_overlay",
+    ] {
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.as_str() == Some(expected_action)),
+            "repair-review-state should restore {expected_action} before resuming final-review recording, got {repair}",
+        );
+    }
+    assert_eq!(repair["recommended_command"], operator_json["recommended_command"]);
+
+    let post_repair_operator = run_featureforge_with_env_json(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        &[],
+        "workflow operator should remain final-review recording ready after repair restores overlays",
+    );
+    assert_eq!(
+        post_repair_operator["phase_detail"],
+        Value::from("final_review_recording_ready")
+    );
+    assert_eq!(
+        post_repair_operator["recommended_command"],
+        operator_json["recommended_command"]
     );
 }
 
@@ -7483,6 +7593,11 @@ fn workflow_operator_routes_final_review_pending_without_current_closure_to_reco
     assert_eq!(
         operator_json["review_state_status"],
         "missing_current_closure"
+    );
+    assert_eq!(
+        operator_json["base_branch"],
+        Value::from(base_branch),
+        "document-release branch-closure refresh route should still surface runtime-owned base_branch context",
     );
     assert_eq!(operator_json["next_action"], "advance late stage");
     assert_eq!(
@@ -12775,6 +12890,59 @@ fn workflow_operator_routes_qa_pending_to_record_qa() {
             "featureforge plan execution advance-late-stage --plan {plan_rel} --result pass|fail --summary-file <path>"
         ))
     );
+}
+
+#[test]
+fn advance_late_stage_records_qa_from_public_operator_route() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("plan-execution-advance-late-stage-qa-route");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_qa_pending_case(repo, state, plan_rel, &base_branch);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[(
+            "current_branch_closure_id",
+            Value::from("branch-release-closure"),
+        )],
+    );
+
+    let summary_path = repo.join("qa-summary.md");
+    write_file(
+        &summary_path,
+        "Browser QA passed against the approved test plan.\n",
+    );
+    let qa_json = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "advance-late-stage",
+            "--plan",
+            plan_rel,
+            "--result",
+            "pass",
+            "--summary-file",
+            summary_path.to_str().expect("summary path should be utf-8"),
+        ],
+        "advance-late-stage should honor the public qa_recording_required command path",
+    );
+
+    assert_eq!(qa_json["action"], "recorded");
+    assert_eq!(qa_json["stage_path"], "browser_qa");
+    assert_eq!(qa_json["delegated_primitive"], "record-qa");
+    assert_eq!(qa_json["result"], "pass");
+    assert_eq!(qa_json["branch_closure_id"], "branch-release-closure");
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator after qa advance-late-stage recording",
+    );
+    assert_eq!(operator_json["phase"], "ready_for_branch_completion");
 }
 
 #[test]

@@ -1380,7 +1380,19 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/document-release/SKILL.md"),
+        "For workflow-routed work, `BASE_BRANCH` is runtime-owned context from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`) and the active release-readiness lineage. Use that exact value and do not redetect.",
+    );
+    assert_file_contains(
+        root.join("skills/document-release/SKILL.md"),
         "Do not use PR metadata or repo default-branch APIs as a fallback",
+    );
+    assert_file_not_contains(
+        root.join("skills/document-release/SKILL.md"),
+        "origin/HEAD",
+    );
+    assert_file_not_contains(
+        root.join("skills/document-release/SKILL.md"),
+        "branch.<current>.gh-merge-base",
     );
     assert_file_contains(
         root.join("skills/document-release/SKILL.md"),
@@ -1743,7 +1755,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "For plan-routed completion, use the exact `Base Branch` from the fresh release-readiness artifact instead of redetecting the target branch.",
+        "For plan-routed completion, use the exact `base_branch` from `featureforge workflow operator --plan <approved-plan-path> --json` instead of redetecting the target branch.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -1752,6 +1764,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
         "Use the exact `<base-branch>` resolved in Step 2. Do not redetect it during PR creation.",
+    );
+    assert_file_not_contains(
+        root.join("skills/finishing-a-development-branch/SKILL.md"),
+        "If a fresh release-readiness artifact is already present, its `**Base Branch:**` header must match that runtime-owned `base_branch`; if it is missing or blank, stop and return to `featureforge:document-release`.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -1802,7 +1818,32 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("docs/featureforge/reference")
             .join("2026-04-01-review-state-reference.md"),
-        "same routing decision as workflow/operator for `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command`",
+        "same routing decision as workflow/operator for `harness_phase`, `phase_detail`, `review_state_status`, `next_action`, `recommended_command`, `blocking_scope`, `blocking_reason_codes`, and `external_wait_state`",
+    );
+    assert_file_contains(
+        root.join("docs/featureforge/reference")
+            .join("2026-04-01-review-state-reference.md"),
+        "`blocking_scope`",
+    );
+    assert_file_contains(
+        root.join("docs/featureforge/reference")
+            .join("2026-04-01-review-state-reference.md"),
+        "`blocking_reason_codes`",
+    );
+    assert_file_contains(
+        root.join("docs/featureforge/reference")
+            .join("2026-04-01-review-state-reference.md"),
+        "`external_wait_state`",
+    );
+    assert_file_contains(
+        root.join("docs/featureforge/reference")
+            .join("2026-04-01-review-state-reference.md"),
+        "compare `status --plan <path> --external-review-result-ready` to `workflow operator --plan <path> --external-review-result-ready`",
+    );
+    assert_file_not_contains(
+        root.join("docs/featureforge/reference")
+            .join("2026-04-01-review-state-reference.md"),
+        "compare `workflow doctor --plan <path> --external-review-result-ready`",
     );
 
     assert_file_not_contains(
@@ -2127,7 +2168,52 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
-        "runtime-provided base-branch context from `document-release` and release-lineage routing",
+        "runtime-provided base-branch context from `workflow operator` (`base_branch`) and release-lineage routing",
+    );
+    assert_file_contains(
+        root.join("agents/code-reviewer.instructions.md"),
+        "runtime-owned base-branch contract as the active workflow guidance: use caller-provided `workflow operator --plan <approved-plan-path> --json` `base_branch` / release-lineage context when available",
+    );
+    assert_file_contains(
+        root.join("agents/code-reviewer.instructions.md"),
+        "When runtime-owned execution evidence, completed task-packet context, or coverage-matrix excerpts are included in the handoff, read them too and use them as supplemental plan-routed review context",
+    );
+    assert_file_contains(
+        root.join("agents/code-reviewer.instructions.md"),
+        "Treat provided-but-stale or unreadable execution evidence as a blocking issue for plan-routed final review, but do not require the public flow to harvest supplemental evidence or task-packet context manually when the handoff omitted it",
+    );
+    assert_file_contains(
+        root.join("agents/code-reviewer.md"),
+        "runtime-owned base-branch contract as the active workflow guidance: use caller-provided `workflow operator --plan <approved-plan-path> --json` `base_branch` / release-lineage context when available",
+    );
+    assert_file_contains(
+        root.join("agents/code-reviewer.md"),
+        "When runtime-owned execution evidence, completed task-packet context, or coverage-matrix excerpts are included in the handoff, read them too and use them as supplemental plan-routed review context",
+    );
+    assert_file_contains(
+        root.join("agents/code-reviewer.md"),
+        "Treat provided-but-stale or unreadable execution evidence as a blocking issue for plan-routed final review, but do not require the public flow to harvest supplemental evidence or task-packet context manually when the handoff omitted it",
+    );
+    assert_file_not_contains(
+        root.join("agents/code-reviewer.instructions.md"),
+        "origin/HEAD",
+    );
+    assert_file_not_contains(
+        root.join("agents/code-reviewer.instructions.md"),
+        "branch.<current>.gh-merge-base",
+    );
+    assert_file_not_contains(root.join("agents/code-reviewer.md"), "origin/HEAD");
+    assert_file_not_contains(
+        root.join("agents/code-reviewer.md"),
+        "branch.<current>.gh-merge-base",
+    );
+    assert_file_not_contains(
+        root.join("agents/code-reviewer.instructions.md"),
+        "Treat missing or stale execution evidence as a blocking issue for plan-routed final review",
+    );
+    assert_file_not_contains(
+        root.join("agents/code-reviewer.md"),
+        "Treat missing or stale execution evidence as a blocking issue for plan-routed final review",
     );
     assert_file_not_contains(
         root.join("skills/requesting-code-review/code-reviewer.md"),
@@ -2201,6 +2287,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_not_contains(
         root.join("RELEASE-NOTES.md"),
         "featureforge plan execution gate-review-dispatch",
+    );
+    assert_file_contains(
+        root.join("RELEASE-NOTES.md"),
+        "windows prebuilt artifacts",
     );
     assert_file_contains(
         root.join("review/late-stage-precedence-reference.md"),

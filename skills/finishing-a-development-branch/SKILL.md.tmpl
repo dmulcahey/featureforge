@@ -201,8 +201,8 @@ featureforge repo-safety check --intent write --stage featureforge:finishing-a-d
 
 If the current work is governed by an approved FeatureForge plan:
 
-- For plan-routed completion, use the exact `Base Branch` from the fresh release-readiness artifact instead of redetecting the target branch.
-- If the fresh release-readiness artifact is missing or its `**Base Branch:**` header is blank, stop and return to `featureforge:document-release`.
+- For plan-routed completion, use the exact `base_branch` from `featureforge workflow operator --plan <approved-plan-path> --json` instead of redetecting the target branch.
+- Treat release-readiness markdown as a derived handoff artifact. Do not read its `**Base Branch:**` header back into routing or branch-selection decisions; use the runtime-owned `base_branch` from workflow/operator instead.
 
 If the current work is not governed by an approved FeatureForge plan, require an explicit `<base-branch>` value and keep it stable for this run:
 

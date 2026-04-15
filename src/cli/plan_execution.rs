@@ -158,6 +158,12 @@ pub struct StatusArgs {
     pub external_review_result_ready: bool,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct PlanPathArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReviewDispatchScopeArg {
@@ -252,7 +258,7 @@ pub struct CloseCurrentTaskArgs {
     pub plan: PathBuf,
     #[arg(long)]
     pub task: u32,
-    #[arg(long = "dispatch-id")]
+    #[arg(long = "dispatch-id", hide = true)]
     pub dispatch_id: Option<String>,
     #[arg(long = "review-result", value_enum)]
     pub review_result: ReviewOutcomeArg,
@@ -286,7 +292,7 @@ pub struct RecordReleaseReadinessArgs {
 pub struct AdvanceLateStageArgs {
     #[arg(long)]
     pub plan: PathBuf,
-    #[arg(long = "dispatch-id")]
+    #[arg(long = "dispatch-id", hide = true)]
     pub dispatch_id: Option<String>,
     #[arg(long = "branch-closure-id", hide = true)]
     pub branch_closure_id: Option<String>,

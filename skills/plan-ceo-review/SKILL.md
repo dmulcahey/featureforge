@@ -250,18 +250,7 @@ Run repo-appropriate commands such as:
 
 ```bash
 if [ -z "$BASE_BRANCH" ]; then
-  BASE_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master; do
-    if git show-ref --verify --quiet "refs/heads/$candidate" || git show-ref --verify --quiet "refs/remotes/origin/$candidate"; then
-      BASE_BRANCH="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  echo "Missing BASE_BRANCH for the review audit. Set BASE_BRANCH explicitly before continuing."
+  echo "Missing BASE_BRANCH for the review audit. Set BASE_BRANCH explicitly before continuing instead of re-deriving it locally."
   exit 1
 fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true

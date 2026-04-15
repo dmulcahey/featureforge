@@ -100,6 +100,27 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
 }
 
 #[test]
+fn normal_path_command_help_hides_dispatch_id_plumbing() {
+    for command in ["close-current-task", "advance-late-stage"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_featureforge"))
+            .args(["plan", "execution", command, "--help"])
+            .output()
+            .unwrap_or_else(|error| panic!("plan execution {command} --help should run: {error}"));
+        assert!(
+            output.status.success(),
+            "expected plan execution {command} --help to succeed, got {:?}",
+            output.status
+        );
+        let stdout = String::from_utf8(output.stdout)
+            .expect("normal-path command help stdout should be utf-8");
+        assert!(
+            !stdout.contains("--dispatch-id"),
+            "plan execution {command} --help should not expose --dispatch-id plumbing, got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
 fn direct_compatibility_command_help_marks_non_normal_flow_usage() {
     for compatibility_command in [
         "record-review-dispatch",

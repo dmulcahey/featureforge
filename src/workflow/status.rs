@@ -16,6 +16,7 @@ use crate::contracts::runtime::{
 };
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
 use crate::diagnostics::{DiagnosticError, FailureClass};
+use crate::execution::current_truth::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS;
 use crate::execution::topology::{
     ensure_plan_fidelity_source_spec_is_approved, parse_plan_fidelity_review_artifact,
     validate_plan_fidelity_review_artifact,
@@ -1496,11 +1497,7 @@ fn tighten_workflow_operator_phase_bound_recording_context_contracts(
     append_operator_phase_detail_field_omitted_only_in_lanes(
         schema,
         "recommended_command",
-        &[
-            "task_review_result_pending",
-            "final_review_outcome_pending",
-            "test_plan_refresh_required",
-        ],
+        RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
     )?;
     Ok(())
 }

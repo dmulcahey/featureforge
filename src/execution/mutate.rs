@@ -88,10 +88,11 @@ use crate::execution::state::{
     normalize_begin_request, normalize_complete_request, normalize_note_request,
     normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
     normalize_transfer_request, require_normalized_text, require_preflight_acceptance,
-    require_prior_task_closure_for_begin, status_from_context, still_current_task_closure_records,
-    structural_current_task_closure_failures, task_completion_lineage_fingerprint,
-    task_scope_review_state_repair_reason, task_scope_structural_review_state_reason,
-    usable_current_branch_closure_identity, validate_expected_fingerprint,
+    require_prior_task_closure_for_begin, status_from_context_with_shared_routing,
+    still_current_task_closure_records, structural_current_task_closure_failures,
+    task_completion_lineage_fingerprint, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason, usable_current_branch_closure_identity,
+    validate_expected_fingerprint,
 };
 use crate::execution::transitions::{
     AuthoritativeTransitionState, BranchClosureRecord, CurrentTaskClosureRecord, StepCommand,
@@ -816,7 +817,7 @@ fn status_with_shared_routing_or_context(
                     .message
                     .contains("Legacy pre-harness execution evidence is no longer accepted") =>
         {
-            status_from_context(fallback_context)
+            status_from_context_with_shared_routing(runtime, fallback_context, false)
         }
         Err(error) => Err(error),
     }
@@ -1841,13 +1842,17 @@ pub fn advance_late_stage(
     let supplied_result_label = advance_late_stage_result_label(args.result);
     let current_branch_closure = current_authoritative_branch_closure_binding_optional(&context)?;
     let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
+    let operator_without_external_review = current_workflow_operator(runtime, &args.plan, false);
     let final_review_recording_requested = args.dispatch_id.is_some()
         || args.reviewer_source.is_some()
         || args.reviewer_id.is_some()
-        || matches!(
+        || (matches!(
             args.result,
             Some(AdvanceLateStageResultArg::Pass | AdvanceLateStageResultArg::Fail)
-        );
+        ) && operator_without_external_review
+            .as_ref()
+            .ok()
+            .is_some_and(|operator| operator.phase == "final_review_pending"));
     if final_review_recording_requested {
         if args.branch_closure_id.is_some() {
             return Err(JsonFailure::new(
@@ -2236,7 +2241,7 @@ pub fn advance_late_stage(
             "release_readiness_argument_mismatch: release-readiness advance-late-stage does not accept final-review-only arguments.",
         ));
     }
-    let operator = match current_workflow_operator(runtime, &args.plan, false) {
+    let operator = match operator_without_external_review {
         Ok(operator) => operator,
         Err(error) if error.error_class == FailureClass::InstructionParseFailed.as_str() => {
             return Ok(shared_out_of_phase_advance_late_stage_output(
@@ -3113,6 +3118,7 @@ fn refresh_rebuild_downstream_truth(
     plan: &Path,
 ) -> Result<(), JsonFailure> {
     let context = load_execution_context_for_exact_plan(runtime, plan)?;
+    let _write_authority = claim_step_write_authority(runtime)?;
     let authoritative_state = load_authoritative_transition_state(&context)?;
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         let _ = regenerate_projection_artifacts_from_authoritative_state(
@@ -5764,6 +5770,7 @@ mod unit_tests {
             final_review_dispatch_id: None,
             current_branch_closure_id: None,
             current_release_readiness_result: None,
+            base_branch: None,
         };
 
         assert_eq!(
@@ -5822,6 +5829,7 @@ mod unit_tests {
             final_review_dispatch_id: None,
             current_branch_closure_id: None,
             current_release_readiness_result: None,
+            base_branch: None,
         };
 
         let output = advance_late_stage_follow_up_or_requery_output(
@@ -5896,6 +5904,7 @@ mod unit_tests {
             final_review_dispatch_id: None,
             current_branch_closure_id: None,
             current_release_readiness_result: None,
+            base_branch: None,
         };
 
         let output = advance_late_stage_follow_up_or_requery_output(
@@ -5969,6 +5978,7 @@ mod unit_tests {
             final_review_dispatch_id: None,
             current_branch_closure_id: None,
             current_release_readiness_result: None,
+            base_branch: None,
         };
 
         assert_eq!(
@@ -6032,6 +6042,7 @@ mod unit_tests {
             final_review_dispatch_id: None,
             current_branch_closure_id: None,
             current_release_readiness_result: None,
+            base_branch: None,
         };
 
         assert_eq!(

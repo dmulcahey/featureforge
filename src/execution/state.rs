@@ -31,6 +31,7 @@ use crate::execution::closure_graph::{
 };
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, FollowUpOverrideInputs, IntentLevelCommandTemplateInputs,
+    RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
     branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
     branch_closure_rerecording_assessment,
     branch_contract_identity as shared_branch_contract_identity,
@@ -92,7 +93,9 @@ use crate::execution::observability::{
 };
 use crate::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state_for_runtime,
-    query_workflow_routing_state_for_runtime_with_read_scope, required_follow_up_from_routing,
+    query_workflow_routing_state_for_runtime_with_read_scope,
+    query_workflow_routing_state_for_runtime_with_read_scope_best_effort,
+    required_follow_up_from_routing,
 };
 use crate::execution::topology::{
     RecommendOutput, default_preflight_chunking_strategy, default_preflight_evaluator_policy,
@@ -832,19 +835,12 @@ impl ExecutionRuntime {
 
     pub fn status(&self, args: &StatusArgs) -> Result<PlanExecutionStatus, JsonFailure> {
         let mut read_scope = load_execution_read_scope(self, &args.plan, true)?;
-        let routing = query_workflow_routing_state_for_runtime_with_read_scope(
+        apply_shared_routing_projection_to_read_scope(
             self,
-            &read_scope,
+            &mut read_scope,
             args.external_review_result_ready,
+            true,
         )?;
-        project_routing_decision_onto_status(&mut read_scope.status, &routing);
-        let gate_finish = routing
-            .gate_finish
-            .clone()
-            .unwrap_or_else(|| gate_finish_from_context(&read_scope.context));
-        read_scope.status.blocking_records =
-            compute_status_blocking_records(&read_scope.context, &read_scope.status, &gate_finish)?;
-        require_public_exact_execution_command(&read_scope.context, &read_scope.status)?;
         Ok(read_scope.status)
     }
 
@@ -1274,6 +1270,67 @@ fn project_routing_decision_onto_status(
     status.blocking_scope = routing.blocking_scope.clone();
     status.external_wait_state = routing.external_wait_state.clone();
     status.blocking_reason_codes = routing.blocking_reason_codes.clone();
+}
+
+pub(crate) fn apply_shared_routing_projection_to_read_scope(
+    runtime: &ExecutionRuntime,
+    read_scope: &mut ExecutionReadScope,
+    external_review_result_ready: bool,
+    require_exact_execution_command: bool,
+) -> Result<(), JsonFailure> {
+    let routing = if require_exact_execution_command {
+        query_workflow_routing_state_for_runtime_with_read_scope(
+            runtime,
+            read_scope,
+            external_review_result_ready,
+        )?
+    } else {
+        query_workflow_routing_state_for_runtime_with_read_scope_best_effort(
+            runtime,
+            read_scope,
+            external_review_result_ready,
+        )?
+    };
+    project_routing_decision_onto_status(&mut read_scope.status, &routing);
+    let gate_finish = routing
+        .gate_finish
+        .clone()
+        .unwrap_or_else(|| gate_finish_from_context(&read_scope.context));
+    read_scope.status.blocking_records =
+        compute_status_blocking_records(&read_scope.context, &read_scope.status, &gate_finish)?;
+    if require_exact_execution_command {
+        require_public_exact_execution_command(&read_scope.context, &read_scope.status)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn status_from_context_with_shared_routing(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    external_review_result_ready: bool,
+) -> Result<PlanExecutionStatus, JsonFailure> {
+    let authoritative_state = load_authoritative_transition_state_relaxed(context)?;
+    let overlay = status_overlay_from_authoritative_snapshot(context, authoritative_state.as_ref())?;
+    let status = status_from_context_with_overlay(
+        context,
+        overlay.as_ref(),
+        true,
+        authoritative_state.as_ref(),
+        true,
+    )?;
+    let mut read_scope = ExecutionReadScope {
+        context: context.clone(),
+        status,
+        overlay,
+        authoritative_state,
+    };
+    apply_shared_routing_projection_to_read_scope(
+        runtime,
+        &mut read_scope,
+        external_review_result_ready,
+        false,
+    )?;
+    Ok(read_scope.status)
 }
 
 pub(crate) struct ExecutionReadScope {
@@ -2497,11 +2554,7 @@ fn tighten_plan_execution_phase_bound_recording_context_contracts(
     append_phase_detail_field_omitted_only_in_lanes(
         schema_json,
         "recommended_command",
-        &[
-            "task_review_result_pending",
-            "final_review_outcome_pending",
-            "test_plan_refresh_required",
-        ],
+        RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
     )?;
     Ok(())
 }
@@ -2789,7 +2842,7 @@ pub(crate) fn load_execution_read_scope(
     let local_tracked_tree_sha = context.current_tracked_tree_sha()?;
     let local_evidence_progress_present =
         status.execution_fingerprint != compute_execution_fingerprint(&context.plan_source, None);
-    if let Some(adopted_scope) = started_execution_read_scope_from_same_branch_worktree(
+    let mut read_scope = if let Some(adopted_scope) = started_execution_read_scope_from_same_branch_worktree(
         runtime,
         &context.plan_rel,
         &local_contract_plan_fingerprint,
@@ -2798,17 +2851,20 @@ pub(crate) fn load_execution_read_scope(
         &status,
         exact_plan_override,
     )? {
-        return Ok(adopted_scope);
-    }
-    Ok(ExecutionReadScope {
-        context,
-        status,
-        overlay,
-        authoritative_state,
-    })
+        adopted_scope
+    } else {
+        ExecutionReadScope {
+            context,
+            status,
+            overlay,
+            authoritative_state,
+        }
+    };
+    apply_shared_routing_projection_to_read_scope(runtime, &mut read_scope, false, false)?;
+    Ok(read_scope)
 }
 
-fn status_overlay_from_authoritative_snapshot(
+pub(crate) fn status_overlay_from_authoritative_snapshot(
     context: &ExecutionContext,
     authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> Result<Option<StatusAuthoritativeOverlay>, JsonFailure> {

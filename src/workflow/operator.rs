@@ -221,6 +221,8 @@ pub struct WorkflowOperator {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_task: Option<u32>,
@@ -269,6 +271,7 @@ struct OperatorContext {
     operator_execution_command_context: Option<WorkflowOperatorExecutionCommandContext>,
     operator_next_action: String,
     operator_recommended_command: Option<String>,
+    operator_base_branch: Option<String>,
     operator_blocking_scope: Option<String>,
     operator_blocking_task: Option<u32>,
     operator_external_wait_state: Option<String>,
@@ -740,6 +743,7 @@ fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> Workf
         execution_command_context: context.operator_execution_command_context.clone(),
         next_action: context.operator_next_action.clone(),
         recommended_command: context.operator_recommended_command.clone(),
+        base_branch: context.operator_base_branch.clone(),
         blocking_scope: context.operator_blocking_scope.clone(),
         blocking_task: context.operator_blocking_task,
         external_wait_state: context.operator_external_wait_state.clone(),
@@ -935,6 +939,7 @@ fn build_context_from_routing(
         execution_command_context,
         next_action,
         recommended_command,
+        base_branch,
         blocking_scope,
         blocking_task,
         external_wait_state,
@@ -961,6 +966,7 @@ fn build_context_from_routing(
     let operator_phase_detail = phase_detail;
     let operator_next_action = next_action;
     let operator_recommended_command = recommended_command;
+    let operator_base_branch = base_branch;
     let plan_contract = if route.status == "implementation_ready" {
         analyze_plan_if_available(&route).map_err(JsonFailure::from)?
     } else {
@@ -984,6 +990,7 @@ fn build_context_from_routing(
         operator_execution_command_context,
         operator_next_action,
         operator_recommended_command,
+        operator_base_branch,
         operator_blocking_scope: blocking_scope,
         operator_blocking_task: blocking_task,
         operator_external_wait_state: external_wait_state,
@@ -1466,6 +1473,7 @@ mod tests {
             recommended_command: Some(String::from(
                 "featureforge plan execution complete --plan docs/featureforge/plans/sample.md --task 1 --step 2 --source featureforge:executing-plans --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint abcdef",
             )),
+            base_branch: Some(String::from("main")),
             blocking_scope: Some(String::from("task")),
             blocking_task: Some(1),
             external_wait_state: None,

@@ -20,7 +20,7 @@ When you need explicit late-stage phase/action/skill grounding while updating do
 
 ## Step 0: Require base branch context
 
-For workflow-routed work, `BASE_BRANCH` is runtime-owned context from the active release-readiness lineage. Use that exact value and do not redetect.
+For workflow-routed work, `BASE_BRANCH` is runtime-owned context from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`) and the active release-readiness lineage. Use that exact value and do not redetect.
 
 For non-workflow work, require `BASE_BRANCH` explicitly and keep it stable for this run:
 

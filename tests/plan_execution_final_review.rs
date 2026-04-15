@@ -1916,6 +1916,30 @@ fn run_plan_execution_json_real_cli(
     parse_json(&run(command, context), context)
 }
 
+fn run_plan_execution_failure_json_real_cli(
+    repo: &Path,
+    state: &Path,
+    args: &[&str],
+    context: &str,
+) -> Value {
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["plan", "execution"])
+        .args(args);
+    let output = run(command, context);
+    assert!(
+        !output.status.success(),
+        "{context} should fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stderr)
+        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
+}
+
 #[test]
 fn gate_finish_requires_final_review_artifact() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-missing-review");
@@ -1969,6 +1993,253 @@ fn gate_finish_requires_final_review_artifact() {
         }),
         "gate-finish should fail closed when final-review authoritative bindings are missing, got {}",
         pretty_json(&gate)
+    );
+}
+
+#[test]
+fn rebuild_evidence_rejects_tampered_authoritative_final_review_projection_content() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-projection-tampered-authoritative-content");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_base_branch(repo);
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    let _ = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight for tampered authoritative final-review projection fixture",
+    );
+
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+    let authoritative_review_fingerprint = sha256_hex(
+        fs::read(&review_path)
+            .expect("source final-review artifact should be readable for authoritative tamper fixture")
+            .as_slice(),
+    );
+    let authoritative_review_path =
+        harness_authoritative_artifacts_dir(state, &repo_slug, &branch)
+            .join(format!("final-review-{authoritative_review_fingerprint}.md"));
+    let harness_state_path = harness_state_path(state, &repo_slug, &branch);
+    let harness_before: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
+    )
+    .expect("harness state should remain valid json");
+    let state_digest_before = sha256_hex(
+        &serde_json::to_vec(&harness_before).expect("harness state json should serialize"),
+    );
+    let project_artifacts = project_artifact_dir(repo, state);
+    let deleted_projection_path =
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review")
+            .expect("tamper fixture should expose a readable project code-review projection");
+    fs::remove_file(&deleted_projection_path)
+        .expect("tamper fixture should allow deleting the derived project code-review projection");
+    write_file(
+        &authoritative_review_path,
+        "# Code Review Result\n**tampered:** true\n",
+    );
+
+    let failure = run_plan_execution_failure_json_real_cli(
+        repo,
+        state,
+        &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
+        "rebuild-evidence should fail closed when authoritative final-review projection content is tampered",
+    );
+    assert_eq!(failure["error_class"], "StaleProvenance", "json: {failure}");
+    assert!(
+        failure["message"].as_str().is_some_and(|message| message.contains(
+            "Projection regeneration requires readable authoritative final review artifact"
+        ) || message.contains("Projection regeneration refused authoritative final review artifact")
+            || message.contains(
+                "Projection regeneration could not restore reviewer projection content that matches authoritative final-review bindings."
+            )),
+        "failure should explain authoritative projection provenance mismatch, got {failure}",
+    );
+    assert_eq!(
+        sha256_hex(
+            &serde_json::to_vec(
+                &serde_json::from_str::<Value>(
+                    &fs::read_to_string(&harness_state_path)
+                        .expect("harness state should remain readable after failed rebuild"),
+                )
+                .expect("harness state should remain valid json after failed rebuild"),
+            )
+            .expect("harness state json should serialize after failed rebuild"),
+        ),
+        state_digest_before,
+        "tampered authoritative final-review projection regeneration must not mutate authoritative truth"
+    );
+    assert!(
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review").is_none(),
+        "tampered authoritative projection must not regenerate a derived code-review projection"
+    );
+}
+
+#[test]
+fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_from_machine_state() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-projection-missing-authoritative-content");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_base_branch(repo);
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    let _ = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight for missing authoritative final-review projection fixture",
+    );
+
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+    let authoritative_review_fingerprint = sha256_hex(
+        fs::read(&review_path)
+            .expect("source final-review artifact should be readable for authoritative missing fixture")
+            .as_slice(),
+    );
+    let authoritative_review_path =
+        harness_authoritative_artifacts_dir(state, &repo_slug, &branch)
+            .join(format!("final-review-{authoritative_review_fingerprint}.md"));
+    let harness_state_path = harness_state_path(state, &repo_slug, &branch);
+    let harness_before: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
+    )
+    .expect("harness state should remain valid json");
+    let state_digest_before = sha256_hex(
+        &serde_json::to_vec(&harness_before).expect("harness state json should serialize"),
+    );
+    let final_review_record_id = harness_before["current_final_review_record_id"]
+        .as_str()
+        .expect("missing authoritative fixture should expose current final-review record id")
+        .to_owned();
+    let project_artifacts = project_artifact_dir(repo, state);
+    let deleted_projection_path =
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review")
+            .expect("missing authoritative fixture should expose a readable project code-review projection");
+    fs::remove_file(&deleted_projection_path)
+        .expect("missing authoritative fixture should allow deleting the derived code-review projection");
+    fs::remove_file(&authoritative_review_path)
+        .expect("missing authoritative fixture should allow deleting the authoritative final-review projection");
+
+    let rebuild = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
+        "rebuild-evidence should regenerate when authoritative final-review markdown is missing",
+    );
+    assert_eq!(rebuild["counts"]["rebuilt"], Value::from(0), "json: {rebuild}");
+    assert!(
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review").is_some(),
+        "missing authoritative fixture should restore a readable code-review projection artifact"
+    );
+
+    let harness_after: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("harness state should remain readable after missing-authoritative regeneration"),
+    )
+    .expect("harness state should remain valid json after missing-authoritative regeneration");
+    let state_digest_after = sha256_hex(
+        &serde_json::to_vec(&harness_after).expect("harness state json should serialize"),
+    );
+    assert_eq!(
+        harness_after["current_final_review_record_id"],
+        Value::from(final_review_record_id)
+    );
+    assert_eq!(
+        state_digest_after, state_digest_before,
+        "missing authoritative final-review projection regeneration must not mutate authoritative truth"
+    );
+}
+
+#[test]
+fn rebuild_evidence_fails_closed_when_projection_refresh_hits_live_write_authority_conflict() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-projection-write-authority-conflict");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_base_branch(repo);
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    let _ = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight for rebuild-evidence write-authority conflict fixture",
+    );
+
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+    let authoritative_review_fingerprint = sha256_hex(
+        fs::read(&review_path)
+            .expect("source final-review artifact should be readable for write-authority fixture")
+            .as_slice(),
+    );
+    let authoritative_review_path =
+        harness_authoritative_artifacts_dir(state, &repo_slug, &branch)
+            .join(format!("final-review-{authoritative_review_fingerprint}.md"));
+    fs::remove_file(&authoritative_review_path)
+        .expect("write-authority fixture should allow deleting authoritative final-review projection");
+    let project_artifacts = project_artifact_dir(repo, state);
+    let deleted_projection_path =
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review")
+            .expect("write-authority fixture should expose a readable project code-review projection");
+    fs::remove_file(&deleted_projection_path)
+        .expect("write-authority fixture should allow deleting the derived project code-review projection");
+
+    let lock_path = harness_state_path(state, &repo_slug, &branch)
+        .parent()
+        .expect("harness state path should have a parent")
+        .join("write-authority.lock");
+    let mut holder_cmd = Command::new("sh");
+    holder_cmd.args(["-c", "sleep 30"]);
+    let mut holder = holder_cmd
+        .spawn()
+        .expect("live write-authority fixture process should spawn");
+    write_file(&lock_path, &format!("pid={}\n", holder.id()));
+
+    let failure = run_plan_execution_failure_json_real_cli(
+        repo,
+        state,
+        &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
+        "rebuild-evidence should fail closed when projection refresh hits a live write-authority conflict",
+    );
+    let _ = holder.kill();
+    let _ = holder.wait();
+
+    assert_eq!(
+        failure["error_class"], "ConcurrentWriterConflict",
+        "json: {failure}"
+    );
+    assert!(
+        failure["message"].as_str().is_some_and(|message| message.contains(
+            "Another runtime writer currently holds authoritative mutation authority."
+        )),
+        "failure should report the live write-authority conflict, got {failure}",
+    );
+    assert!(
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review").is_none(),
+        "live write-authority conflicts must not regenerate derived projections"
     );
 }
 

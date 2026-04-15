@@ -625,21 +625,44 @@ fn regenerate_final_review_projection(
     } else {
         record.summary.as_str()
     };
-    let authoritative_projection =
-        record
-            .final_review_fingerprint
-            .as_deref()
-            .and_then(|fingerprint| {
-                let path = harness_authoritative_artifact_path(
-                    &runtime.state_dir,
-                    &runtime.repo_slug,
-                    &runtime.branch_name,
-                    &format!("final-review-{fingerprint}.md"),
-                );
-                read_authoritative_projection(runtime, "final-review", fingerprint, "final review")
-                    .ok()
-                    .map(|source| (path, source))
-            });
+    let authoritative_projection = if let Some(fingerprint) =
+        record.final_review_fingerprint.as_deref()
+    {
+        let path = harness_authoritative_artifact_path(
+            &runtime.state_dir,
+            &runtime.repo_slug,
+            &runtime.branch_name,
+            &format!("final-review-{fingerprint}.md"),
+        );
+        match fs::read_to_string(&path) {
+            Ok(source) => {
+                let observed_fingerprint = sha256_hex(source.as_bytes());
+                if observed_fingerprint != fingerprint {
+                    return Err(JsonFailure::new(
+                        FailureClass::StaleProvenance,
+                        format!(
+                            "Projection regeneration refused authoritative final review artifact {} because fingerprint {} does not match expected {fingerprint}.",
+                            path.display(),
+                            observed_fingerprint
+                        ),
+                    ));
+                }
+                Some((path, source))
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(JsonFailure::new(
+                    FailureClass::StaleProvenance,
+                    format!(
+                        "Projection regeneration requires readable authoritative final review artifact {}: {error}",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+    } else {
+        None
+    };
     let (
         authoritative_document,
         authoritative_generated_at,

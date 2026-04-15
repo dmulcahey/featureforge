@@ -118,6 +118,7 @@ pub struct WorkflowExecutionState {
     pub current_final_review_result: Option<String>,
     pub current_qa_branch_closure_id: Option<String>,
     pub current_qa_result: Option<String>,
+    pub base_branch: Option<String>,
     pub qa_requirement: Option<String>,
     pub qa_pending_test_plan_refresh_required: bool,
     pub persisted_repair_review_state_follow_up: Option<String>,
@@ -170,6 +171,7 @@ pub struct ExecutionRoutingState {
     pub final_review_dispatch_id: Option<String>,
     pub current_branch_closure_id: Option<String>,
     pub current_release_readiness_result: Option<String>,
+    pub base_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -436,7 +438,7 @@ pub fn query_workflow_execution_state(
     runtime: &ExecutionRuntime,
     plan_path: &str,
 ) -> Result<WorkflowExecutionState, JsonFailure> {
-    query_workflow_execution_state_internal(runtime, plan_path, false, None)
+    query_workflow_execution_state_internal(runtime, plan_path, false, None, true)
 }
 
 fn query_workflow_execution_state_internal(
@@ -444,6 +446,7 @@ fn query_workflow_execution_state_internal(
     plan_path: &str,
     exact_plan_override: bool,
     preloaded_read_scope: Option<&ExecutionReadScope>,
+    require_exact_execution_command: bool,
 ) -> Result<WorkflowExecutionState, JsonFailure> {
     if plan_path.is_empty() {
         return Ok(WorkflowExecutionState::default());
@@ -461,7 +464,9 @@ fn query_workflow_execution_state_internal(
     let execution_status = read_scope.status.clone();
     let overlay = read_scope.overlay.clone();
     let authoritative_state = read_scope.authoritative_state.as_ref();
-    require_public_exact_execution_command(&context, &execution_status)?;
+    if require_exact_execution_command {
+        require_public_exact_execution_command(&context, &execution_status)?;
+    }
     let mut preflight = None;
     let mut gate_review = None;
     let mut gate_finish = None;
@@ -590,6 +595,25 @@ fn query_workflow_execution_state_internal(
     let current_final_review_result = late_stage_bindings.current_final_review_result;
     let current_qa_branch_closure_id = late_stage_bindings.current_qa_branch_closure_id;
     let current_qa_result = late_stage_bindings.current_qa_result;
+    let base_branch = authoritative_state.and_then(|state| {
+        authoritative_current_branch_closure_id
+            .as_deref()
+            .or(current_final_review_branch_closure_id.as_deref())
+            .or(current_qa_branch_closure_id.as_deref())
+            .or(finish_review_gate_pass_branch_closure_id.as_deref())
+            .and_then(|branch_closure_id| {
+                state
+                    .branch_closure_record(branch_closure_id)
+                    .map(|record| record.base_branch)
+            })
+            .or_else(|| {
+                state
+                    .current_release_readiness_record()
+                    .map(|record| record.base_branch)
+            })
+            .or_else(|| state.current_final_review_record().map(|record| record.base_branch))
+            .or_else(|| state.current_browser_qa_record().map(|record| record.base_branch))
+    });
     let qa_pending_test_plan_refresh_required =
         shared_normalized_plan_qa_requirement(context.plan_document.qa_requirement.as_deref())
             .as_deref()
@@ -613,6 +637,7 @@ fn query_workflow_execution_state_internal(
         current_final_review_result,
         current_qa_branch_closure_id,
         current_qa_result,
+        base_branch,
         qa_requirement: shared_normalized_plan_qa_requirement(
             context.plan_document.qa_requirement.as_deref(),
         ),
@@ -633,6 +658,7 @@ pub fn query_workflow_routing_state(
         external_review_result_ready,
         None,
         None,
+        true,
     )
 }
 
@@ -647,6 +673,7 @@ pub fn query_workflow_routing_state_for_runtime(
         external_review_result_ready,
         Some(runtime),
         None,
+        true,
     )
 }
 
@@ -661,6 +688,22 @@ pub(crate) fn query_workflow_routing_state_for_runtime_with_read_scope(
         external_review_result_ready,
         Some(runtime),
         Some(read_scope),
+        true,
+    )
+}
+
+pub(crate) fn query_workflow_routing_state_for_runtime_with_read_scope_best_effort(
+    runtime: &ExecutionRuntime,
+    read_scope: &ExecutionReadScope,
+    external_review_result_ready: bool,
+) -> Result<ExecutionRoutingState, JsonFailure> {
+    query_workflow_routing_state_internal(
+        &runtime.repo_root,
+        Some(std::path::Path::new(read_scope.context.plan_rel.as_str())),
+        external_review_result_ready,
+        Some(runtime),
+        Some(read_scope),
+        false,
     )
 }
 
@@ -670,6 +713,7 @@ fn query_workflow_routing_state_internal(
     external_review_result_ready: bool,
     runtime_override: Option<&ExecutionRuntime>,
     preloaded_read_scope: Option<&ExecutionReadScope>,
+    require_exact_execution_command: bool,
 ) -> Result<ExecutionRoutingState, JsonFailure> {
     let workflow = if let Some(runtime) = runtime_override {
         WorkflowRuntime::discover_read_only_for_state_dir(&runtime.repo_root, &runtime.state_dir)
@@ -698,6 +742,7 @@ fn query_workflow_routing_state_internal(
     let mut current_final_review_result = None;
     let mut current_qa_branch_closure_id = None;
     let mut current_qa_result = None;
+    let mut base_branch = None;
     let mut qa_requirement = None;
     let mut qa_pending_test_plan_refresh_required = false;
     let mut persisted_repair_review_state_follow_up = None;
@@ -717,6 +762,7 @@ fn query_workflow_routing_state_internal(
             &route.plan_path,
             explicit_plan_query,
             preloaded_read_scope,
+            require_exact_execution_command,
         )?;
         let WorkflowExecutionState {
             execution_status: workflow_execution_status,
@@ -737,6 +783,7 @@ fn query_workflow_routing_state_internal(
             current_final_review_result: workflow_current_final_review_result,
             current_qa_branch_closure_id: workflow_current_qa_branch_closure_id,
             current_qa_result: workflow_current_qa_result,
+            base_branch: workflow_base_branch,
             qa_requirement: workflow_qa_requirement,
             qa_pending_test_plan_refresh_required: workflow_qa_pending_test_plan_refresh_required,
             persisted_repair_review_state_follow_up:
@@ -757,6 +804,7 @@ fn query_workflow_routing_state_internal(
         current_final_review_result = workflow_current_final_review_result;
         current_qa_branch_closure_id = workflow_current_qa_branch_closure_id;
         current_qa_result = workflow_current_qa_result;
+        base_branch = workflow_base_branch;
         qa_requirement = workflow_qa_requirement;
         qa_pending_test_plan_refresh_required = workflow_qa_pending_test_plan_refresh_required;
         persisted_repair_review_state_follow_up = workflow_persisted_repair_review_state_follow_up;
@@ -905,23 +953,32 @@ fn query_workflow_routing_state_internal(
                 )
             }
         } else if repair_review_state_follow_up.as_deref() == Some("execution_reentry") {
-            let (execution_command_context, recommended_command) =
-                required_execution_command_for_routing(
-                    current_dir,
-                    runtime_override,
-                    &plan_path,
-                    status,
-                    exact_plan_query,
-                    "workflow/operator could not derive the exact execution command required after repair-review-state rerouted late-stage review truth back to execution.",
-                )?;
+            let exact_execution_command = required_execution_command_for_routing(
+                current_dir,
+                runtime_override,
+                &plan_path,
+                status,
+                exact_plan_query,
+                "workflow/operator could not derive the exact execution command required after repair-review-state rerouted late-stage review truth back to execution.",
+            );
+            let (execution_command_context, recommended_command) = if require_exact_execution_command {
+                let (execution_command_context, recommended_command) = exact_execution_command?;
+                (Some(execution_command_context), Some(recommended_command))
+            } else {
+                exact_execution_command
+                    .ok()
+                    .map_or((None, None), |(execution_command_context, recommended_command)| {
+                        (Some(execution_command_context), Some(recommended_command))
+                    })
+            };
             (
                 String::from("executing"),
                 String::from("execution_reentry_required"),
                 String::from("clean"),
                 None,
-                Some(execution_command_context),
+                execution_command_context,
                 String::from("execution reentry required"),
-                Some(recommended_command),
+                recommended_command,
             )
         } else if repair_review_state_follow_up.as_deref() == Some("record_branch_closure") {
             (
@@ -1008,23 +1065,35 @@ fn query_workflow_routing_state_internal(
                     )),
                 ),
                 _ => {
+                    let exact_execution_command = required_execution_command_for_routing(
+                        current_dir,
+                        runtime_override,
+                        &plan_path,
+                        status,
+                        exact_plan_query,
+                        "workflow/operator could not derive the execution reentry command required after a negative review outcome.",
+                    );
                     let (execution_command_context, recommended_command) =
-                        required_execution_command_for_routing(
-                            current_dir,
-                            runtime_override,
-                            &plan_path,
-                            status,
-                            exact_plan_query,
-                            "workflow/operator could not derive the execution reentry command required after a negative review outcome.",
-                        )?;
+                        if require_exact_execution_command {
+                            let (execution_command_context, recommended_command) =
+                                exact_execution_command?;
+                            (Some(execution_command_context), Some(recommended_command))
+                        } else {
+                            exact_execution_command.ok().map_or(
+                                (None, None),
+                                |(execution_command_context, recommended_command)| {
+                                    (Some(execution_command_context), Some(recommended_command))
+                                },
+                            )
+                        };
                     (
                         String::from("executing"),
                         String::from("execution_reentry_required"),
                         String::from("clean"),
                         None,
-                        Some(execution_command_context),
+                        execution_command_context,
                         String::from("execution reentry required"),
-                        Some(recommended_command),
+                        recommended_command,
                     )
                 }
             }
@@ -1384,19 +1453,28 @@ fn query_workflow_routing_state_internal(
                                 || (phase_detail == "execution_in_progress"
                                     && !shared_execution_state_has_open_steps(status)))
                         {
-                            let (exact_command, exact_recommended) =
-                                required_execution_command_for_routing(
-                                    current_dir,
-                                    runtime_override,
-                                    &plan_path,
-                                    status,
-                                    exact_plan_query,
-                                    "workflow/operator could not derive the exact execution command for marker-free execution reentry.",
-                                )?;
-                            phase_detail = String::from("execution_reentry_required");
-                            next_action = String::from("execution reentry required");
-                            execution_command_context = Some(exact_command);
-                            recommended_command = Some(exact_recommended);
+                            let exact_execution_command = required_execution_command_for_routing(
+                                current_dir,
+                                runtime_override,
+                                &plan_path,
+                                status,
+                                exact_plan_query,
+                                "workflow/operator could not derive the exact execution command for marker-free execution reentry.",
+                            );
+                            if require_exact_execution_command {
+                                let (exact_command, exact_recommended) = exact_execution_command?;
+                                phase_detail = String::from("execution_reentry_required");
+                                next_action = String::from("execution reentry required");
+                                execution_command_context = Some(exact_command);
+                                recommended_command = Some(exact_recommended);
+                            } else if let Ok((exact_command, exact_recommended)) =
+                                exact_execution_command
+                            {
+                                phase_detail = String::from("execution_reentry_required");
+                                next_action = String::from("execution reentry required");
+                                execution_command_context = Some(exact_command);
+                                recommended_command = Some(exact_recommended);
+                            }
                         }
                         (
                             String::from("executing"),
@@ -1409,23 +1487,35 @@ fn query_workflow_routing_state_internal(
                         )
                     }
                     "repairing" => {
+                        let exact_execution_command = required_execution_command_for_routing(
+                            current_dir,
+                            runtime_override,
+                            &plan_path,
+                            status,
+                            exact_plan_query,
+                            "workflow/operator could not derive the exact execution command for the current execution state.",
+                        );
                         let (execution_command_context, recommended_command) =
-                            required_execution_command_for_routing(
-                                current_dir,
-                                runtime_override,
-                                &plan_path,
-                                status,
-                                exact_plan_query,
-                                "workflow/operator could not derive the exact execution command for the current execution state.",
-                            )?;
+                            if require_exact_execution_command {
+                                let (execution_command_context, recommended_command) =
+                                    exact_execution_command?;
+                                (Some(execution_command_context), Some(recommended_command))
+                            } else {
+                                exact_execution_command.ok().map_or(
+                                    (None, None),
+                                    |(execution_command_context, recommended_command)| {
+                                        (Some(execution_command_context), Some(recommended_command))
+                                    },
+                                )
+                            };
                         (
                             String::from("executing"),
                             String::from("execution_reentry_required"),
                             String::from("clean"),
                             None,
-                            Some(execution_command_context),
+                            execution_command_context,
                             String::from("execution reentry required"),
-                            Some(recommended_command),
+                            recommended_command,
                         )
                     }
                     "execution_preflight" | "implementation_handoff" => (
@@ -1600,6 +1690,7 @@ fn query_workflow_routing_state_internal(
         final_review_dispatch_id,
         current_branch_closure_id,
         current_release_readiness_result,
+        base_branch,
     })
 }
 

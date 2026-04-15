@@ -80,11 +80,18 @@ pub fn explain_review_state(
 ) -> Result<ExplainReviewStateOutput, JsonFailure> {
     let snapshot = query_review_state(runtime, args)?;
     let (next_action, recommended_command) =
-        match query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false) {
+        match query_workflow_routing_state_for_runtime(
+            runtime,
+            Some(&args.plan),
+            args.external_review_result_ready,
+        ) {
             Ok(routing) => (routing.next_action, routing.recommended_command),
             Err(_) => (
                 String::from("requery workflow operator"),
-                Some(recommended_operator_command(args)),
+                Some(recommended_operator_command(
+                    args,
+                    args.external_review_result_ready,
+                )),
             ),
         };
     Ok(ExplainReviewStateOutput {
@@ -177,8 +184,12 @@ pub fn reconcile_review_state(
     }
     if snapshot.missing_derived_overlays.is_empty() && snapshot.stale_unreviewed_closures.is_empty()
     {
-        let routing =
-            query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false).ok();
+        let routing = query_workflow_routing_state_for_runtime(
+            runtime,
+            Some(&args.plan),
+            args.external_review_result_ready,
+        )
+        .ok();
         if routing
             .as_ref()
             .is_some_and(routing_projects_review_state_execution_reentry)
@@ -249,7 +260,7 @@ pub fn reconcile_review_state(
                 runtime,
                 args,
                 Some("execution_reentry"),
-                recommended_operator_command(args),
+                recommended_operator_command(args, args.external_review_result_ready),
             ),
             trace_summary: String::from(
                 "No derived review-state overlays required reconciliation.",
@@ -277,7 +288,7 @@ pub fn reconcile_review_state(
                 runtime,
                 args,
                 Some("execution_reentry"),
-                recommended_operator_command(args),
+                recommended_operator_command(args, args.external_review_result_ready),
             ),
             trace_summary: if restored_any_overlays {
                 String::from(
@@ -291,8 +302,12 @@ pub fn reconcile_review_state(
         });
     }
     if actions_performed.is_empty() && !refreshed.missing_derived_overlays.is_empty() {
-        let refreshed_routing =
-            query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false).ok();
+        let refreshed_routing = query_workflow_routing_state_for_runtime(
+            runtime,
+            Some(&args.plan),
+            args.external_review_result_ready,
+        )
+        .ok();
         let late_stage_repair_command = format!(
             "featureforge plan execution repair-review-state --plan {}",
             args.plan.display()
@@ -315,7 +330,7 @@ pub fn reconcile_review_state(
         {
             late_stage_repair_command.clone()
         } else {
-            recommended_operator_command(args)
+            recommended_operator_command(args, args.external_review_result_ready)
         };
         return Ok(ReconcileReviewStateOutput {
             action: String::from("blocked"),
@@ -331,8 +346,12 @@ pub fn reconcile_review_state(
             ),
         });
     }
-    let refreshed_routing =
-        query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false).ok();
+    let refreshed_routing = query_workflow_routing_state_for_runtime(
+        runtime,
+        Some(&args.plan),
+        args.external_review_result_ready,
+    )
+    .ok();
     if refreshed_routing
         .as_ref()
         .is_some_and(|routing| late_stage_branch_closure_recording_required(routing, args))
@@ -400,7 +419,7 @@ pub fn reconcile_review_state(
         stale_unreviewed_closures: refreshed.stale_unreviewed_closures,
         missing_derived_overlays: refreshed.missing_derived_overlays,
         actions_performed,
-        recommended_command: recommended_operator_command(args),
+        recommended_command: recommended_operator_command(args, args.external_review_result_ready),
         trace_summary: String::from(
             "Reconciled missing derived review-state overlays from authoritative closure records.",
         ),
@@ -411,11 +430,12 @@ pub fn repair_review_state(
     runtime: &ExecutionRuntime,
     args: &StatusArgs,
 ) -> Result<RepairReviewStateOutput, JsonFailure> {
+    let status_args = args.clone();
     let mut actions_performed = Vec::new();
     let read_scope = load_execution_read_scope(runtime, &args.plan, true)?;
     let context = read_scope.context;
     let mut status = read_scope.status;
-    let mut snapshot = query_review_state(runtime, args)?;
+    let mut snapshot = query_review_state(runtime, &status_args)?;
     let mut task_scope_structural_reason =
         task_scope_structural_review_state_reason(&status).map(str::to_owned);
     let mut branch_scope_structural_reason =
@@ -437,14 +457,14 @@ pub fn repair_review_state(
     }
     if !actions_performed.is_empty() {
         status = load_execution_read_scope(runtime, &args.plan, true)?.status;
-        snapshot = query_review_state(runtime, args)?;
+        snapshot = query_review_state(runtime, &status_args)?;
         task_scope_structural_reason =
             task_scope_structural_review_state_reason(&status).map(str::to_owned);
         branch_scope_structural_reason =
             current_branch_closure_structural_review_state_reason(&status).map(str::to_owned);
     }
     let unrecoverable_task_scope_task =
-        unrecoverable_task_scope_authority_loss_task(runtime, args)?;
+        unrecoverable_task_scope_authority_loss_task(runtime, &status_args)?;
     let execution_reentry_tasks = execution_reentry_current_task_closure_tasks(&context)?;
     let execution_reentry_targets = execution_reentry_current_task_closure_targets(&context)?;
     let mut force_execution_reentry_follow_up = false;
@@ -452,7 +472,7 @@ pub fn repair_review_state(
         force_execution_reentry_follow_up = true;
         clear_task_scope_state_for_structural_repair(
             runtime,
-            args,
+            &status_args,
             &execution_reentry_targets,
             status.blocking_task,
             &mut actions_performed,
@@ -463,28 +483,36 @@ pub fn repair_review_state(
     let branch_rerecording_unsupported_reason = branch_rerecording_assessment.unsupported_reason;
     if branch_scope_structural_reason.is_some() && !branch_rerecording_supported {
         force_execution_reentry_follow_up = true;
-        clear_branch_scope_state_for_execution_reentry(runtime, args, &mut actions_performed)?;
+        clear_branch_scope_state_for_execution_reentry(
+            runtime,
+            &status_args,
+            &mut actions_performed,
+        )?;
     }
     if !snapshot.missing_derived_overlays.is_empty() {
         if missing_derived_task_scope_overlays(&snapshot.missing_derived_overlays) {
             force_execution_reentry_follow_up = true;
             clear_task_review_dispatch_lineage_for_execution_reentry(
                 runtime,
-                args,
+                &status_args,
                 unrecoverable_task_scope_task,
                 &mut actions_performed,
             )?;
         }
         if !branch_rerecording_supported {
             force_execution_reentry_follow_up = true;
-            clear_branch_scope_state_for_execution_reentry(runtime, args, &mut actions_performed)?;
+            clear_branch_scope_state_for_execution_reentry(
+                runtime,
+                &status_args,
+                &mut actions_performed,
+            )?;
         }
     }
     if let Some(task_number) = unrecoverable_task_scope_task {
         force_execution_reentry_follow_up = true;
         clear_task_scope_state_for_execution_reentry(
             runtime,
-            args,
+            &status_args,
             &execution_reentry_tasks,
             Some(task_number),
             &mut actions_performed,
@@ -496,19 +524,24 @@ pub fn repair_review_state(
         force_execution_reentry_follow_up = true;
         clear_task_scope_state_for_execution_reentry(
             runtime,
-            args,
+            &status_args,
             &execution_reentry_tasks,
             status.blocking_task,
             &mut actions_performed,
         )?;
     }
     if !actions_performed.is_empty() {
-        snapshot = query_review_state(runtime, args)?;
+        snapshot = query_review_state(runtime, &status_args)?;
     }
 
-    let routing = query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false).ok();
+    let routing = query_workflow_routing_state_for_runtime(
+        runtime,
+        Some(&status_args.plan),
+        status_args.external_review_result_ready,
+    )
+    .ok();
     let mut required_follow_up = routing.as_ref().and_then(|routing| {
-        repair_required_follow_up_from_routing(routing, args, branch_rerecording_supported)
+        repair_required_follow_up_from_routing(routing, &status_args, branch_rerecording_supported)
     });
     let branch_closure_rerecording_now_available = branch_rerecording_supported
         && snapshot.current_branch_closure.is_none()
@@ -558,10 +591,12 @@ pub fn repair_review_state(
     let fallback_command = routing
         .as_ref()
         .and_then(|routing| routing.recommended_command.clone())
-        .unwrap_or_else(|| recommended_operator_command(args));
+        .unwrap_or_else(|| {
+            recommended_operator_command(&status_args, status_args.external_review_result_ready)
+        });
     let recommended_command = recommended_follow_up_command(
         runtime,
-        args,
+        &status_args,
         required_follow_up.as_deref(),
         fallback_command,
     );
@@ -930,8 +965,11 @@ fn recommended_follow_up_command(
     {
         return exact_command.recommended_command;
     }
-    let Ok(routing) = query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false)
-    else {
+    let Ok(routing) = query_workflow_routing_state_for_runtime(
+        runtime,
+        Some(&args.plan),
+        args.external_review_result_ready,
+    ) else {
         return fallback;
     };
     let routing_follow_up = required_follow_up_from_routing(&routing);
@@ -955,11 +993,12 @@ fn normalize_persisted_review_state_follow_up(required_follow_up: Option<&str>) 
     }
 }
 
-fn recommended_operator_command(args: &StatusArgs) -> String {
-    format!(
-        "featureforge workflow operator --plan {}",
-        args.plan.display()
-    )
+fn recommended_operator_command(args: &StatusArgs, external_review_result_ready: bool) -> String {
+    let mut command = format!("featureforge workflow operator --plan {}", args.plan.display());
+    if external_review_result_ready {
+        command.push_str(" --external-review-result-ready");
+    }
+    command
 }
 
 fn recommended_branch_closure_command(args: &StatusArgs) -> String {

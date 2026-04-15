@@ -36,28 +36,16 @@ Treat plan-routed review context as completed task packets plus coverage matrix 
 **Base:** {BASE_SHA}
 **Head:** {HEAD_SHA}
 
-Use the runtime-provided base-branch context from `document-release` and release-lineage routing.
+Use the runtime-provided base-branch context from `workflow operator` (`base_branch`) and release-lineage routing.
 Treat `{BASE_BRANCH}` as authoritative when it is provided.
-If it is missing, derive it locally from `origin/HEAD` first, then fall back to `main`/`master`; stop only if it is still missing.
+If it is missing, stop and request explicit `BASE_BRANCH` instead of re-deriving it locally.
 
 ```bash
 CHECKLIST_PATH="review/checklist.md"
 [ -f "$CHECKLIST_PATH" ] || CHECKLIST_PATH="$HOME/.featureforge/install/review/checklist.md"
 [ -z "{APPROVED_PLAN_PATH}" ] || cat "{APPROVED_PLAN_PATH}"
 [ -z "{EXECUTION_EVIDENCE_PATH}" ] || cat "{EXECUTION_EVIDENCE_PATH}"
-BASE_BRANCH_EFFECTIVE="{BASE_BRANCH}"
-if [ -z "$BASE_BRANCH_EFFECTIVE" ]; then
-  BASE_BRANCH_EFFECTIVE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
-fi
-if [ -z "$BASE_BRANCH_EFFECTIVE" ]; then
-  for candidate in main master; do
-    if git show-ref --verify --quiet "refs/heads/$candidate" || git show-ref --verify --quiet "refs/remotes/origin/$candidate"; then
-      BASE_BRANCH_EFFECTIVE="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH_EFFECTIVE" ]; then
+if [ -z "{BASE_BRANCH}" ]; then
   echo "Missing base branch context; stop and request explicit BASE_BRANCH."
   exit 1
 fi

@@ -73,7 +73,7 @@ Planning chain in plain language:
 The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; use `featureforge workflow status --refresh` only to discover the approved plan path, then route with workflow/operator.
 
 Execution starts from an engineering-approved plan and the exact approved plan path.
-Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command (`begin`, `close-current-task`, `repair-review-state`, `advance-late-stage`) for the current phase.
+Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command for the current phase. Common normal-path commands include `begin`, `close-current-task`, `repair-review-state`, and `advance-late-stage`; the broader public execution surface also includes commands such as `note`, `complete`, `reopen`, `transfer`, and compatibility/diagnostic helpers when the route or workflow boundary requires them.
 
 `featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.
 

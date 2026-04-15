@@ -45,6 +45,16 @@ pub(crate) struct CurrentLateStageBranchBindings {
     pub current_qa_result: Option<String>,
 }
 
+pub(crate) const RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS: &[&str] = &[
+    "task_review_dispatch_required",
+    "task_review_result_pending",
+    "finish_review_gate_ready",
+    "finish_completion_gate_ready",
+    "final_review_dispatch_required",
+    "final_review_outcome_pending",
+    "test_plan_refresh_required",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReviewStateRepairReroute {
     None,

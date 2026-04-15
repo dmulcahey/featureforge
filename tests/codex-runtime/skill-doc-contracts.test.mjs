@@ -650,9 +650,13 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(finishSkill, /Treat the current-branch test-plan artifact as a QA scope\/provenance input only when its `Source Plan`, `Source Plan Revision`, and `Head SHA` match the exact approved plan path, revision, and current branch HEAD from the workflow context\./);
   assert.match(finishSkill, /Match current-branch artifacts by their `\*\*Branch:\*\*` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`\./);
   assert.doesNotMatch(finishSkill, /\*-"?\$BRANCH"?-test-plan-\*/);
-  assert.match(finishSkill, /For plan-routed completion, use the exact `Base Branch` from the fresh release-readiness artifact instead of redetecting the target branch\./);
+  assert.match(finishSkill, /For plan-routed completion, use the exact `base_branch` from `featureforge workflow operator --plan <approved-plan-path> --json` instead of redetecting the target branch\./);
   assert.match(finishSkill, /The Step 2 `<base-branch>` value stays authoritative for Options A, B, and D\./);
   assert.match(finishSkill, /Use the exact `<base-branch>` resolved in Step 2\. Do not redetect it during PR creation\./);
+  assert.doesNotMatch(
+    finishSkill,
+    /If a fresh release-readiness artifact is already present, its `\*\*Base Branch:\*\*` header must match that runtime-owned `base_branch`; if it is missing or blank, stop and return to `featureforge:document-release`\./,
+  );
   assert.match(
     finishSkill,
     /If the current work is governed by an approved FeatureForge plan and workflow\/operator does not route to branch completion, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts\./,
@@ -674,7 +678,10 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewPrompt, /`Source Plan`, `Source Plan Revision`, `Strategy Checkpoint Fingerprint`, `Branch`, `Repo`, `Base Branch`, `Head SHA`/);
   assert.match(reviewPrompt, /When approved plan and execution evidence paths are provided, read both artifacts and verify that checked-off plan steps are semantically satisfied by the implementation and explicitly evidenced\./);
   assert.match(reviewPrompt, /When execution evidence documents recorded topology downgrades or other execution deviations, explicitly inspect them and state whether those deviations pass final review\./);
-  assert.match(reviewPrompt, /runtime-provided base-branch context from `document-release` and release-lineage routing/);
+  assert.match(reviewPrompt, /runtime-provided base-branch context from `workflow operator` \(`base_branch`\) and release-lineage routing/);
+  assert.doesNotMatch(reviewPrompt, /git symbolic-ref --short refs\/remotes\/origin\/HEAD/);
+  assert.doesNotMatch(reviewPrompt, /for candidate in main master/);
+  assert.doesNotMatch(reviewPrompt, /BASE_BRANCH_EFFECTIVE=/);
   assert.doesNotMatch(reviewPrompt, /gh pr view --json baseRefName/);
 
   const subagentReviewPrompt = readUtf8(path.join(REPO_ROOT, 'skills/subagent-driven-development/code-quality-reviewer-prompt.md'));
@@ -1394,6 +1401,8 @@ test('planning review sync docs describe additive review summaries and richer QA
   assert.match(ceoReview, /note `UI_SCOPE` for Section 11/);
   assert.match(ceoReview, /Present each expansion opportunity as its own individual interactive user question\./);
   assert.match(ceoReview, /Do not use PR metadata or repo default-branch APIs as a fallback; keep the system audit locally derivable from repository state\./);
+  assert.doesNotMatch(ceoReview, /git symbolic-ref --short refs\/remotes\/origin\/HEAD/);
+  assert.doesNotMatch(ceoReview, /for candidate in main master/);
   assert.doesNotMatch(ceoReview, /gh pr view --json baseRefName/);
 
   const engReview = readUtf8(getSkillPath('plan-eng-review'));
@@ -1420,6 +1429,8 @@ test('planning review sync docs describe additive review summaries and richer QA
   assert.match(qaOnly, /## E2E Test Decision Matrix/);
   assert.match(qaOnly, /Do not use PR metadata or repo default-branch APIs as a fallback; keep diff-aware scoping locally derivable from repository state\./);
   assert.match(qaOnly, /Match current-branch artifacts by their `\*\*Branch:\*\*` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`\./);
+  assert.doesNotMatch(qaOnly, /git symbolic-ref --short refs\/remotes\/origin\/HEAD/);
+  assert.doesNotMatch(qaOnly, /for candidate in main master/);
   assert.doesNotMatch(qaOnly, /\*-"?\$BRANCH"?-test-plan-\*/);
   assert.doesNotMatch(qaOnly, /gh pr view --json baseRefName/);
 });
@@ -1470,6 +1481,10 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   assert.match(documentRelease, /workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone\./);
   assert.match(
     documentRelease,
+    /For workflow-routed work, `BASE_BRANCH` is runtime-owned context from `featureforge workflow operator --plan <approved-plan-path> --json` \(`base_branch`\) and the active release-readiness lineage\. Use that exact value and do not redetect\./,
+  );
+  assert.match(
+    documentRelease,
     /For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow\/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`\./,
   );
   assert.match(documentRelease, /Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness\./);
@@ -1486,6 +1501,28 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   assert.doesNotMatch(documentRelease, /if \[ "\$PHASE_DETAIL" != "release_readiness_recording_ready" \]; then/);
   assert.match(documentRelease, /If workflow\/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions\./);
   assert.doesNotMatch(documentRelease, /\[--write-target git-commit\]/);
+  assert.doesNotMatch(documentRelease, /origin\/HEAD/);
+  assert.doesNotMatch(documentRelease, /branch\.<current>\.gh-merge-base/);
+
+  const generatedReviewerAgent = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.md'));
+  assert.match(
+    generatedReviewerAgent,
+    /runtime-owned base-branch contract as the active workflow guidance: use caller-provided `workflow operator --plan <approved-plan-path> --json` `base_branch` \/ release-lineage context when available/,
+  );
+  assert.match(
+    generatedReviewerAgent,
+    /When runtime-owned execution evidence, completed task-packet context, or coverage-matrix excerpts are included in the handoff, read them too and use them as supplemental plan-routed review context/,
+  );
+  assert.match(
+    generatedReviewerAgent,
+    /Treat provided-but-stale or unreadable execution evidence as a blocking issue for plan-routed final review, but do not require the public flow to harvest supplemental evidence or task-packet context manually when the handoff omitted it/,
+  );
+  assert.doesNotMatch(generatedReviewerAgent, /origin\/HEAD/);
+  assert.doesNotMatch(generatedReviewerAgent, /branch\.<current>\.gh-merge-base/);
+  assert.doesNotMatch(
+    generatedReviewerAgent,
+    /Treat missing or stale execution evidence as a blocking issue for plan-routed final review/,
+  );
 
   const finishSkill = readUtf8(getSkillPath('finishing-a-development-branch'));
   assert.match(finishSkill, /A review stops being fresh as soon as new repo changes land, including release-doc or metadata edits from `featureforge:document-release`/);
@@ -1790,6 +1827,11 @@ test('active docs describe the post-session-entry routing contract', () => {
     releaseNotes,
     /workflow status --refresh.*needs_user_choice.*bypassed.*session_entry_unresolved.*session_entry_bypassed.*schema_version.*3/is,
     'RELEASE-NOTES.md should enumerate the workflow status output removals and retained route schema version',
+  );
+  assert.match(
+    releaseNotes,
+    /windows prebuilt artifacts/i,
+    'RELEASE-NOTES.md should mention refreshed windows prebuilt artifacts when the checked-in windows binary changes',
   );
 });
 

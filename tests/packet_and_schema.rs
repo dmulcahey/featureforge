@@ -1085,7 +1085,11 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         &schema,
         "recommended_command",
         &[
+            "task_review_dispatch_required",
             "task_review_result_pending",
+            "finish_review_gate_ready",
+            "finish_completion_gate_ready",
+            "final_review_dispatch_required",
             "final_review_outcome_pending",
             "test_plan_refresh_required",
         ],
@@ -1423,7 +1427,11 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
         &generated_operator_json,
         "recommended_command",
         &[
+            "task_review_dispatch_required",
             "task_review_result_pending",
+            "finish_review_gate_ready",
+            "finish_completion_gate_ready",
+            "final_review_dispatch_required",
             "final_review_outcome_pending",
             "test_plan_refresh_required",
         ],
