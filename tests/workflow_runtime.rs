@@ -9777,14 +9777,14 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
     );
     for scenario in [
         "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10",
-        "FS-11", "FS-12",
+        "FS-11", "FS-12", "FS-13",
     ] {
         assert!(
             inventory.contains(scenario),
             "runtime-remediation inventory should include {scenario}"
         );
     }
-    let required_function_traceability_anchors: [(&str, &[&str]); 12] = [
+    let required_function_traceability_anchors: [(&str, &[&str]); 13] = [
         (
             "FS-01",
             &[
@@ -9817,6 +9817,7 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             "FS-05",
             &[
                 "tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation",
+                "tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation",
                 "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases",
             ],
         ),
@@ -9859,13 +9860,23 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             &[
                 "tests/workflow_runtime_final_review.rs::fs11_document_release_precedes_final_review_after_release_truth_stales",
                 "tests/plan_execution_final_review.rs::fs11_status_routes_release_readiness_before_final_review_when_release_state_stales",
+                "tests/plan_execution_final_review.rs::fs11_gate_finish_rejects_final_review_release_binding_mismatch",
             ],
         ),
         (
             "FS-12",
             &[
                 "tests/plan_execution.rs::rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projection_is_missing",
+                "tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered",
                 "tests/plan_execution_final_review.rs::fs12_missing_final_review_projection_regenerates_without_truth_mutation",
+            ],
+        ),
+        (
+            "FS-13",
+            &[
+                "tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails",
+                "tests/plan_execution_final_review.rs::dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass",
+                "tests/plan_execution_final_review.rs::dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict",
             ],
         ),
     ];

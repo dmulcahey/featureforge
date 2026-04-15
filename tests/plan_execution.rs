@@ -26750,6 +26750,18 @@ fn runtime_remediation_inventory_includes_plan_execution_invariant_regressions()
     );
     assert!(
         inventory.contains(
+            "tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation"
+        ),
+        "runtime-remediation inventory should map FS-05 to final-review scope no-mutation coverage in plan execution"
+    );
+    assert!(
+        inventory.contains(
+            "tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation"
+        ),
+        "runtime-remediation inventory should map FS-05 to final-review reviewer-source no-mutation coverage in plan execution"
+    );
+    assert!(
+        inventory.contains(
             "tests/plan_execution.rs::rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projection_is_missing"
         ),
         "runtime-remediation inventory should map FS-12 to explicit projection-regeneration coverage in plan execution"

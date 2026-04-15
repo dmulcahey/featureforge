@@ -1015,10 +1015,18 @@ impl ExecutionRuntime {
                     gate.finish_review_gate_pass_branch_closure_id =
                         finish_review_gate_pass_branch_closure_id(&context)?;
                     if !gate.allowed {
-                        if gate_should_rederive_via_workflow_operator(&context, &gate) {
+                        if gate_should_rederive_via_workflow_operator(
+                            &context,
+                            &gate,
+                            args.external_review_result_ready,
+                        ) {
                             apply_out_of_phase_gate_contract(&context, &mut gate);
                         } else {
-                            apply_specific_gate_follow_up_contract(&context, &mut gate);
+                            apply_specific_gate_follow_up_contract(
+                                &context,
+                                &mut gate,
+                                args.external_review_result_ready,
+                            );
                         }
                     }
                     return Ok(gate);
@@ -1037,10 +1045,18 @@ impl ExecutionRuntime {
                 gate.current_branch_reviewed_state_id = current_branch_reviewed_state_id(&context);
                 gate.current_branch_closure_id = current_branch_closure_id(&context);
                 if !gate.allowed {
-                    if gate_should_rederive_via_workflow_operator(&context, &gate) {
+                    if gate_should_rederive_via_workflow_operator(
+                        &context,
+                        &gate,
+                        args.external_review_result_ready,
+                    ) {
                         apply_out_of_phase_gate_contract(&context, &mut gate);
                     } else {
-                        apply_specific_gate_follow_up_contract(&context, &mut gate);
+                        apply_specific_gate_follow_up_contract(
+                            &context,
+                            &mut gate,
+                            args.external_review_result_ready,
+                        );
                     }
                 }
                 Ok(gate)
@@ -1229,10 +1245,18 @@ impl ExecutionRuntime {
         gate.finish_review_gate_pass_branch_closure_id =
             finish_review_gate_pass_branch_closure_id(&context)?;
         if !gate.allowed {
-            if gate_should_rederive_via_workflow_operator(&context, &gate) {
+            if gate_should_rederive_via_workflow_operator(
+                &context,
+                &gate,
+                args.external_review_result_ready,
+            ) {
                 apply_out_of_phase_gate_contract(&context, &mut gate);
             } else {
-                apply_specific_gate_follow_up_contract(&context, &mut gate);
+                apply_specific_gate_follow_up_contract(
+                    &context,
+                    &mut gate,
+                    args.external_review_result_ready,
+                );
             }
         }
         Ok(gate)
@@ -1341,11 +1365,14 @@ pub(crate) struct ExecutionReadScope {
     pub(crate) authoritative_state: Option<AuthoritativeTransitionState>,
 }
 
-fn gate_follow_up_routing_state(context: &ExecutionContext) -> Option<ExecutionRoutingState> {
+fn gate_follow_up_routing_state(
+    context: &ExecutionContext,
+    external_review_result_ready: bool,
+) -> Option<ExecutionRoutingState> {
     query_workflow_routing_state_for_runtime(
         &context.runtime,
         Some(Path::new(context.plan_rel.as_str())),
-        false,
+        external_review_result_ready,
     )
     .ok()
 }
@@ -1368,8 +1395,11 @@ fn current_branch_closure_missing_gate_follow_up(
 fn gate_should_rederive_via_workflow_operator(
     context: &ExecutionContext,
     gate: &GateResult,
+    external_review_result_ready: bool,
 ) -> bool {
-    gate.allowed || specific_gate_reason_is_direct_follow_up(context, gate).is_none()
+    gate.allowed
+        || specific_gate_reason_is_direct_follow_up(context, gate, external_review_result_ready)
+            .is_none()
 }
 
 fn specific_gate_reason_is_explicit_direct_follow_up(
@@ -1394,29 +1424,6 @@ fn specific_gate_reason_is_explicit_direct_follow_up(
         .reason_codes
         .iter()
         .any(|code| code == "current_task_closure_overlay_restore_required")
-    {
-        return Some("repair_review_state");
-    }
-    if gate.reason_codes.iter().any(|code| {
-        matches!(
-            code.as_str(),
-            "prior_task_review_dispatch_stale"
-                | "prior_task_current_closure_stale"
-                | "prior_task_current_closure_invalid"
-                | "prior_task_current_closure_reviewed_state_malformed"
-        )
-    }) {
-        return Some("repair_review_state");
-    }
-    if gate.reason_codes.iter().any(|code| {
-        code.contains("review_dispatch_stale") || code.contains("current_closure_stale")
-    }) {
-        return Some("repair_review_state");
-    }
-    if gate
-        .reason_codes
-        .iter()
-        .any(|code| code.starts_with("prior_task_"))
     {
         return Some("repair_review_state");
     }
@@ -1445,8 +1452,9 @@ fn specific_gate_reason_is_explicit_direct_follow_up(
 fn specific_gate_reason_is_direct_follow_up(
     context: &ExecutionContext,
     gate: &GateResult,
+    external_review_result_ready: bool,
 ) -> Option<&'static str> {
-    let routing = gate_follow_up_routing_state(context);
+    let routing = gate_follow_up_routing_state(context, external_review_result_ready);
     if let Some(reason) = specific_gate_reason_is_explicit_direct_follow_up(gate, routing.as_ref())
     {
         return Some(reason);
@@ -1471,29 +1479,35 @@ fn apply_out_of_phase_gate_contract(context: &ExecutionContext, gate: &mut GateR
     gate.rederive_via_workflow_operator = Some(true);
 }
 
-fn apply_specific_gate_follow_up_contract(context: &ExecutionContext, gate: &mut GateResult) {
+fn apply_specific_gate_follow_up_contract(
+    context: &ExecutionContext,
+    gate: &mut GateResult,
+    external_review_result_ready: bool,
+) {
     if gate.recommended_command.is_some() {
         return;
     }
-    gate.recommended_command = match specific_gate_reason_is_direct_follow_up(context, gate) {
-        Some("gate_finish") => Some(format!(
-            "featureforge plan execution gate-finish --plan {}",
-            context.plan_rel
-        )),
-        Some("gate_review") => Some(format!(
-            "featureforge plan execution gate-review --plan {}",
-            context.plan_rel
-        )),
-        Some("record_branch_closure") => Some(format!(
-            "featureforge plan execution advance-late-stage --plan {}",
-            context.plan_rel
-        )),
-        Some("repair_review_state") => Some(format!(
-            "featureforge plan execution repair-review-state --plan {}",
-            context.plan_rel
-        )),
-        _ => None,
-    };
+    gate.recommended_command =
+        match specific_gate_reason_is_direct_follow_up(context, gate, external_review_result_ready)
+        {
+            Some("gate_finish") => Some(format!(
+                "featureforge plan execution gate-finish --plan {}",
+                context.plan_rel
+            )),
+            Some("gate_review") => Some(format!(
+                "featureforge plan execution gate-review --plan {}",
+                context.plan_rel
+            )),
+            Some("record_branch_closure") => Some(format!(
+                "featureforge plan execution advance-late-stage --plan {}",
+                context.plan_rel
+            )),
+            Some("repair_review_state") => Some(format!(
+                "featureforge plan execution repair-review-state --plan {}",
+                context.plan_rel
+            )),
+            _ => None,
+        };
 }
 
 fn record_review_dispatch_blocked_output(
@@ -1569,7 +1583,7 @@ fn record_review_dispatch_blocked_output_from_gate(
             ))
         };
     } else {
-        let routing = gate_follow_up_routing_state(context);
+        let routing = gate_follow_up_routing_state(context, false);
         let direct_follow_up =
             specific_gate_reason_is_explicit_direct_follow_up(&gate, routing.as_ref());
         let task_scope_prior_task_requires_requery =
