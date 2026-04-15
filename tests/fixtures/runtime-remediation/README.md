@@ -93,6 +93,7 @@ an additional lower-level runtime/shared-truth test.
   - Direct-vs-compiled CLI repair-route parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli`
 - `FS-05`
   - Plan-execution no-mutation invariants: `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
+  - Plan-execution no-mutation invariant for final-review scope task-field rejection: `tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
   - Compatibility final-review reviewer-source no-mutation invariant: `tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation`
   - Compatibility alias no-mutation invariant: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases`
 - `FS-06`
@@ -114,8 +115,10 @@ an additional lower-level runtime/shared-truth test.
 - `FS-11`
   - Shared runtime precedence: `tests/workflow_runtime_final_review.rs::fs11_document_release_precedes_final_review_after_release_truth_stales`
   - Compiled CLI precedence: `tests/plan_execution_final_review.rs::fs11_status_routes_release_readiness_before_final_review_when_release_state_stales`
+  - Finish-gate release-binding mismatch rejection: `tests/plan_execution_final_review.rs::fs11_gate_finish_rejects_final_review_release_binding_mismatch`
 - `FS-12`
   - Plan-execution projection regeneration invariants: `tests/plan_execution.rs::rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projection_is_missing`
+  - Plan-execution projection regeneration invariants (tampered final-review projection): `tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered`
   - Final-review projection regeneration invariants: `tests/plan_execution_final_review.rs::fs12_missing_final_review_projection_regenerates_without_truth_mutation`
 - `FS-13`
   - Compiled CLI final-review deviation disposition independence: `tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails`

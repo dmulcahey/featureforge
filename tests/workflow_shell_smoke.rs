@@ -7381,7 +7381,10 @@ fn workflow_operator_final_review_external_ready_without_dispatch_lineage_surfac
     );
 
     assert_public_route_parity(&operator_json, &status_json, None);
-    assert_eq!(operator_json["base_branch"], Value::from(base_branch.clone()));
+    assert_eq!(
+        operator_json["base_branch"],
+        Value::from(base_branch.clone())
+    );
     assert_eq!(operator_json["phase"], "final_review_pending");
     assert_eq!(
         operator_json["phase_detail"],
@@ -7395,7 +7398,10 @@ fn workflow_operator_final_review_external_ready_without_dispatch_lineage_surfac
         ))
     );
     assert_eq!(explain_json["next_action"], operator_json["next_action"]);
-    assert_eq!(explain_json["recommended_command"], operator_json["recommended_command"]);
+    assert_eq!(
+        explain_json["recommended_command"],
+        operator_json["recommended_command"]
+    );
 }
 
 #[test]
@@ -7468,7 +7474,10 @@ fn repair_review_state_honors_external_review_ready_after_restoring_final_review
             "repair-review-state should restore {expected_action} before resuming final-review recording, got {repair}",
         );
     }
-    assert_eq!(repair["recommended_command"], operator_json["recommended_command"]);
+    assert_eq!(
+        repair["recommended_command"],
+        operator_json["recommended_command"]
+    );
 
     let post_repair_operator = run_featureforge_with_env_json(
         repo,
@@ -8011,8 +8020,8 @@ fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disp
 }
 
 #[test]
-fn plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails(
-) {
+fn plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails()
+ {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-deviation-fail-result");
     let repo = repo_dir.path();
@@ -12872,7 +12881,10 @@ fn plan_execution_record_release_readiness_primitive_uses_shared_routing_when_st
     );
     assert_eq!(operator_json["phase"], "executing");
     assert_eq!(operator_json["phase_detail"], "execution_reentry_required");
-    assert_eq!(operator_json["review_state_status"], "missing_current_closure");
+    assert_eq!(
+        operator_json["review_state_status"],
+        "missing_current_closure"
+    );
 
     let blocked = run_plan_execution_json(
         repo,

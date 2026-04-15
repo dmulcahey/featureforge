@@ -187,7 +187,7 @@ If `TODOS.md` exists:
 
 For workflow-routed implementation work, runtime emits a project-scoped release-readiness companion artifact:
 
-- Require the exact approved plan path from the current workflow context before writing the release-readiness companion artifact.
+- Require the exact approved plan path from the current workflow context before recording release-readiness via `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` so runtime can render the companion artifact.
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - If the approved plan path or revision is unavailable, stop and return to the current workflow instead of writing a partial artifact.
 - Use the runtime-provided base branch from Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
@@ -204,6 +204,8 @@ DATETIME=$(date +%Y%m%d-%H%M%S)
 HEAD_SHA=$(git rev-parse HEAD)
 mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
 ```
+
+Use this snippet only to inspect runtime-emitted artifact locations after recording; do not use it to hand-write companion artifacts.
 
 For workflow-routed release-readiness, the runtime writes the derived companion artifact to:
 - `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/featureforge-{safe-branch}-release-readiness-{datetime}.md`

@@ -80,13 +80,13 @@ When a test-plan artifact includes richer additive sections such as `## Coverage
 If no artifact exists, use:
 1. Explicit user scope
 2. Conversation context
-3. `diff-aware` inference from the current branch
+3. `diff-aware` scope from `BASE_BRANCH...HEAD`
 
 ## Modes
 
 ### diff-aware
 
-If no URL is provided and the repo is on a feature branch, automatically enter `diff-aware` mode:
+If no URL is provided, run `diff-aware` mode with an explicitly provided `BASE_BRANCH`:
 
 ```bash
 if [ -z "$BASE_BRANCH" ]; then
@@ -201,6 +201,8 @@ USER=$(whoami)
 DATETIME=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
 ```
+
+Use this snippet only to inspect runtime-emitted artifact locations after recording; do not use it to hand-write finish-gate artifacts.
 
 For workflow-routed QA, the runtime writes the derived companion artifact to:
 - `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/featureforge-{safe-branch}-test-outcome-{datetime}.md`

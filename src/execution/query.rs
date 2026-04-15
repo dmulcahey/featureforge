@@ -611,8 +611,16 @@ fn query_workflow_execution_state_internal(
                     .current_release_readiness_record()
                     .map(|record| record.base_branch)
             })
-            .or_else(|| state.current_final_review_record().map(|record| record.base_branch))
-            .or_else(|| state.current_browser_qa_record().map(|record| record.base_branch))
+            .or_else(|| {
+                state
+                    .current_final_review_record()
+                    .map(|record| record.base_branch)
+            })
+            .or_else(|| {
+                state
+                    .current_browser_qa_record()
+                    .map(|record| record.base_branch)
+            })
     });
     let qa_pending_test_plan_refresh_required =
         shared_normalized_plan_qa_requirement(context.plan_document.qa_requirement.as_deref())
@@ -961,16 +969,18 @@ fn query_workflow_routing_state_internal(
                 exact_plan_query,
                 "workflow/operator could not derive the exact execution command required after repair-review-state rerouted late-stage review truth back to execution.",
             );
-            let (execution_command_context, recommended_command) = if require_exact_execution_command {
-                let (execution_command_context, recommended_command) = exact_execution_command?;
-                (Some(execution_command_context), Some(recommended_command))
-            } else {
-                exact_execution_command
-                    .ok()
-                    .map_or((None, None), |(execution_command_context, recommended_command)| {
-                        (Some(execution_command_context), Some(recommended_command))
-                    })
-            };
+            let (execution_command_context, recommended_command) =
+                if require_exact_execution_command {
+                    let (execution_command_context, recommended_command) = exact_execution_command?;
+                    (Some(execution_command_context), Some(recommended_command))
+                } else {
+                    exact_execution_command.ok().map_or(
+                        (None, None),
+                        |(execution_command_context, recommended_command)| {
+                            (Some(execution_command_context), Some(recommended_command))
+                        },
+                    )
+                };
             (
                 String::from("executing"),
                 String::from("execution_reentry_required"),

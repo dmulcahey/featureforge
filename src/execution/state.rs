@@ -1310,7 +1310,8 @@ pub(crate) fn status_from_context_with_shared_routing(
     external_review_result_ready: bool,
 ) -> Result<PlanExecutionStatus, JsonFailure> {
     let authoritative_state = load_authoritative_transition_state_relaxed(context)?;
-    let overlay = status_overlay_from_authoritative_snapshot(context, authoritative_state.as_ref())?;
+    let overlay =
+        status_overlay_from_authoritative_snapshot(context, authoritative_state.as_ref())?;
     let status = status_from_context_with_overlay(
         context,
         overlay.as_ref(),
@@ -2811,15 +2812,16 @@ pub(crate) fn load_execution_read_scope(
     let local_tracked_tree_sha = context.current_tracked_tree_sha()?;
     let local_evidence_progress_present =
         status.execution_fingerprint != compute_execution_fingerprint(&context.plan_source, None);
-    let mut read_scope = if let Some(adopted_scope) = started_execution_read_scope_from_same_branch_worktree(
-        runtime,
-        &context.plan_rel,
-        &local_contract_plan_fingerprint,
-        &local_tracked_tree_sha,
-        local_evidence_progress_present,
-        &status,
-        exact_plan_override,
-    )? {
+    let mut read_scope = if let Some(adopted_scope) =
+        started_execution_read_scope_from_same_branch_worktree(
+            runtime,
+            &context.plan_rel,
+            &local_contract_plan_fingerprint,
+            &local_tracked_tree_sha,
+            local_evidence_progress_present,
+            &status,
+            exact_plan_override,
+        )? {
         adopted_scope
     } else {
         ExecutionReadScope {

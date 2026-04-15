@@ -15,7 +15,7 @@ Code-reviewer sub-agent / custom agent:
   PLAN_OR_REQUIREMENTS: Task N from [plan-file]
   APPROVED_PLAN_PATH: [exact approved plan path for plan-routed final review, otherwise blank]
   EXECUTION_EVIDENCE_PATH: [helper-reported evidence path for plan-routed final review, otherwise blank]
-  BASE_BRANCH: [detected base branch]
+  BASE_BRANCH: [runtime-provided base branch for plan-routed review, otherwise explicitly provided base branch]
   BASE_SHA: [commit before task]
   HEAD_SHA: [current commit]
   DESCRIPTION: [task summary]

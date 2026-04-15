@@ -26724,7 +26724,7 @@ fn runtime_remediation_inventory_includes_plan_execution_invariant_regressions()
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-remediation/README.md"),
     )
     .expect("runtime-remediation inventory should be readable");
-    for scenario in ["FS-03", "FS-04", "FS-05", "FS-12"] {
+    for scenario in ["FS-03", "FS-04", "FS-05", "FS-12", "FS-13"] {
         assert!(
             inventory.contains(scenario),
             "runtime-remediation inventory should include {scenario}"
@@ -26753,5 +26753,29 @@ fn runtime_remediation_inventory_includes_plan_execution_invariant_regressions()
             "tests/plan_execution.rs::rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projection_is_missing"
         ),
         "runtime-remediation inventory should map FS-12 to explicit projection-regeneration coverage in plan execution"
+    );
+    assert!(
+        inventory.contains(
+            "tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered"
+        ),
+        "runtime-remediation inventory should map FS-12 to tampered final-review projection regeneration coverage in plan execution"
+    );
+    assert!(
+        inventory.contains(
+            "tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails"
+        ),
+        "runtime-remediation inventory should map FS-13 to compiled-cli deviation-disposition independence coverage"
+    );
+    assert!(
+        inventory.contains(
+            "tests/plan_execution_final_review.rs::dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass"
+        ),
+        "runtime-remediation inventory should map FS-13 to final-review receipt acceptance coverage for failed review with independent deviation pass"
+    );
+    assert!(
+        inventory.contains(
+            "tests/plan_execution_final_review.rs::dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict"
+        ),
+        "runtime-remediation inventory should map FS-13 to final-review receipt rejection coverage for failed deviation verdict"
     );
 }

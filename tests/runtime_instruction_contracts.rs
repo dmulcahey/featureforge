@@ -1400,10 +1400,7 @@ fn workflow_enhancement_contracts_are_documented_consistently() {
         root.join("skills/document-release/SKILL.md"),
         "Do not use PR metadata or repo default-branch APIs as a fallback",
     );
-    assert_file_not_contains(
-        root.join("skills/document-release/SKILL.md"),
-        "origin/HEAD",
-    );
+    assert_file_not_contains(root.join("skills/document-release/SKILL.md"), "origin/HEAD");
     assert_file_not_contains(
         root.join("skills/document-release/SKILL.md"),
         "branch.<current>.gh-merge-base",
@@ -2034,6 +2031,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/qa-only/SKILL.md"),
+        "If no URL is provided, run `diff-aware` mode with an explicitly provided `BASE_BRANCH`:",
+    );
+    assert_file_contains(
+        root.join("skills/qa-only/SKILL.md"),
         "Match current-branch artifacts by their `**Branch:**` header, not by a filename substring glob, so `my-feature` cannot masquerade as `feature`.",
     );
     assert_file_not_contains(
@@ -2043,6 +2044,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_not_contains(
         root.join("skills/qa-only/SKILL.md"),
         "gh pr view --json baseRefName",
+    );
+    assert_file_not_contains(
+        root.join("skills/qa-only/SKILL.md"),
+        "`diff-aware` inference from the current branch",
+    );
+    assert_file_not_contains(
+        root.join("skills/qa-only/SKILL.md"),
+        "automatically enter `diff-aware` mode",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -2302,10 +2311,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
         root.join("RELEASE-NOTES.md"),
         "featureforge plan execution gate-review-dispatch",
     );
-    assert_file_contains(
-        root.join("RELEASE-NOTES.md"),
-        "windows prebuilt artifacts",
-    );
+    assert_file_contains(root.join("RELEASE-NOTES.md"), "windows prebuilt artifacts");
     assert_file_contains(
         root.join("RELEASE-NOTES.md"),
         "same runtime-owned routing decision instead of allowing diagnostic/status drift",
@@ -2333,6 +2339,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_not_contains(
         root.join("skills/document-release/SKILL.md"),
         "also write a project-scoped release-readiness companion artifact",
+    );
+    assert_file_not_contains(
+        root.join("skills/document-release/SKILL.md"),
+        "before writing the release-readiness companion artifact",
     );
     assert_file_not_contains(
         root.join("skills/qa-only/SKILL.md"),
@@ -2799,7 +2809,7 @@ fn runtime_remediation_inventory_is_visible_to_instruction_contract_tests() {
     let inventory = read_utf8(repo_root().join("tests/fixtures/runtime-remediation/README.md"));
     for scenario in [
         "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10",
-        "FS-11", "FS-12",
+        "FS-11", "FS-12", "FS-13",
     ] {
         assert_contains(
             &inventory,

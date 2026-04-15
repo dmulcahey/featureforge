@@ -896,9 +896,8 @@ fn reconcile_review_state_threads_external_review_ready_through_routing_requerie
     let review_state_source = fs::read_to_string(repo_root().join("src/execution/review_state.rs"))
         .expect("execution review_state source should be readable");
     assert!(
-        !review_state_source.contains(
-            "query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false)"
-        ),
+        !review_state_source
+            .contains("query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false)"),
         "reconcile-review-state should not hardcode external_review_result_ready=false when requerying authoritative routing",
     );
 }
@@ -1213,7 +1212,7 @@ fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct
 
 #[test]
 fn runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift()
-{
+ {
     let command = [
         "plan",
         "execution",

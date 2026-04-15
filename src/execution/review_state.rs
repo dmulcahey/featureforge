@@ -79,21 +79,20 @@ pub fn explain_review_state(
     args: &StatusArgs,
 ) -> Result<ExplainReviewStateOutput, JsonFailure> {
     let snapshot = query_review_state(runtime, args)?;
-    let (next_action, recommended_command) =
-        match query_workflow_routing_state_for_runtime(
-            runtime,
-            Some(&args.plan),
-            args.external_review_result_ready,
-        ) {
-            Ok(routing) => (routing.next_action, routing.recommended_command),
-            Err(_) => (
-                String::from("requery workflow operator"),
-                Some(recommended_operator_command(
-                    args,
-                    args.external_review_result_ready,
-                )),
-            ),
-        };
+    let (next_action, recommended_command) = match query_workflow_routing_state_for_runtime(
+        runtime,
+        Some(&args.plan),
+        args.external_review_result_ready,
+    ) {
+        Ok(routing) => (routing.next_action, routing.recommended_command),
+        Err(_) => (
+            String::from("requery workflow operator"),
+            Some(recommended_operator_command(
+                args,
+                args.external_review_result_ready,
+            )),
+        ),
+    };
     Ok(ExplainReviewStateOutput {
         current_task_closures: snapshot.current_task_closures,
         current_branch_closure: snapshot.current_branch_closure,
@@ -994,7 +993,10 @@ fn normalize_persisted_review_state_follow_up(required_follow_up: Option<&str>) 
 }
 
 fn recommended_operator_command(args: &StatusArgs, external_review_result_ready: bool) -> String {
-    let mut command = format!("featureforge workflow operator --plan {}", args.plan.display());
+    let mut command = format!(
+        "featureforge workflow operator --plan {}",
+        args.plan.display()
+    );
     if external_review_result_ready {
         command.push_str(" --external-review-result-ready");
     }
