@@ -26295,6 +26295,117 @@ fn advance_late_stage_final_review_rejects_unapproved_reviewer_source_before_mut
 }
 
 #[test]
+fn record_final_review_rejects_unapproved_reviewer_source_before_mutation() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-record-final-review-invalid-reviewer-source-no-mutation");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    let _ = accept_execution_preflight(repo, state, PLAN_REL);
+    let _ =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "yes", true, &base_branch);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "harness_phase": "final_review_pending",
+            "current_final_review_record_id": Value::Null,
+            "current_final_review_branch_closure_id": Value::Null,
+            "current_final_review_dispatch_id": Value::Null,
+            "current_final_review_reviewer_source": Value::Null,
+            "current_final_review_reviewer_id": Value::Null,
+            "current_final_review_result": Value::Null,
+            "current_final_review_summary_hash": Value::Null,
+            "final_review_record_history": {}
+        }),
+    );
+
+    let operator = {
+        let mut command = Command::new(compiled_featureforge_path());
+        command
+            .current_dir(repo)
+            .env("FEATUREFORGE_STATE_DIR", state)
+            .args([
+                "workflow",
+                "operator",
+                "--plan",
+                PLAN_REL,
+                "--external-review-result-ready",
+                "--json",
+            ]);
+        parse_json(
+            &run(
+                command,
+                "workflow operator should expose final-review recording-ready route for compatibility invalid reviewer-source validation",
+            ),
+            "workflow operator should expose final-review recording-ready route for compatibility invalid reviewer-source validation",
+        )
+    };
+    assert_eq!(
+        operator["phase_detail"],
+        Value::from("final_review_recording_ready"),
+        "fixture sanity check should expose a final-review recording-ready lane before compatibility invalid reviewer-source validation: {operator}"
+    );
+    let dispatch_id = operator["recording_context"]["dispatch_id"]
+        .as_str()
+        .expect("recording-ready operator output should expose dispatch_id")
+        .to_owned();
+    let branch_closure_id = operator["recording_context"]["branch_closure_id"]
+        .as_str()
+        .expect("recording-ready operator output should expose branch_closure_id")
+        .to_owned();
+
+    let summary_path = repo.join("invalid-reviewer-source-primitive-summary.md");
+    write_file(
+        &summary_path,
+        "Fixture summary for invalid reviewer-source compatibility final-review validation.\n",
+    );
+    let digest_before = authoritative_state_digest(repo, state);
+    let output = run_rust(
+        repo,
+        state,
+        &[
+            "record-final-review",
+            "--plan",
+            PLAN_REL,
+            "--branch-closure-id",
+            &branch_closure_id,
+            "--dispatch-id",
+            &dispatch_id,
+            "--reviewer-source",
+            "unapproved-reviewer-source",
+            "--reviewer-id",
+            "reviewer-fixture-001",
+            "--result",
+            "pass",
+            "--summary-file",
+            summary_path
+                .to_str()
+                .expect("invalid reviewer-source summary path should be utf-8"),
+        ],
+        "record-final-review invalid reviewer-source should fail before mutation",
+    );
+    let failure = parse_failure_json(
+        &output,
+        "record-final-review invalid reviewer-source should fail before mutation",
+    );
+    assert_eq!(failure["error_class"], "InvalidCommandInput");
+    assert!(
+        failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("reviewer_source")),
+        "invalid reviewer-source failure should explain allowed reviewer-source contract, got {failure}"
+    );
+    assert_eq!(
+        authoritative_state_digest(repo, state),
+        digest_before,
+        "compatibility final-review reviewer-source must fail before authoritative mutation"
+    );
+}
+
+#[test]
 fn late_stage_primitive_rerun_equivalence_requires_matching_supplied_bindings() {
     let (repo_dir, state_dir) = init_repo("plan-execution-late-stage-rerun-binding-mismatch");
     let repo = repo_dir.path();

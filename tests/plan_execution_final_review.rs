@@ -1765,6 +1765,157 @@ fn dedicated_final_review_receipt_requires_passed_deviation_disposition_when_nee
 }
 
 #[test]
+fn dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-deviation-pass-on-failed-review");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let reviewer_artifact_path = reviewer_artifact_path_from_review(&review_path);
+    let reviewer_original =
+        fs::read_to_string(&reviewer_artifact_path).expect("reviewer artifact should read");
+    fs::write(
+        &reviewer_artifact_path,
+        reviewer_original
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** pass",
+            )
+            .replace("**Result:** pass", "**Result:** fail"),
+    )
+    .expect("reviewer artifact should write");
+    let reviewer_artifact_fingerprint = sha256_hex(
+        &fs::read(&reviewer_artifact_path).expect("updated reviewer artifact should read"),
+    );
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    let current_review = parse_final_review_receipt(&review_path);
+    fs::write(
+        &review_path,
+        original
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** pass",
+            )
+            .replace("**Result:** pass", "**Result:** fail")
+            .replace(
+                current_review
+                    .reviewer_artifact_fingerprint
+                    .as_deref()
+                    .expect("review receipt should expose reviewer artifact fingerprint"),
+                &reviewer_artifact_fingerprint,
+            ),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let expectations = FinalReviewReceiptExpectations {
+        expected_plan_path: PLAN_REL,
+        expected_plan_revision: 1,
+        expected_strategy_checkpoint_fingerprint: None,
+        expected_branch: &branch_name(repo),
+        expected_repo: &repo_slug(repo),
+        expected_head_sha: &current_head_sha(repo),
+        expected_base_branch: &expected_base_branch(repo),
+        expected_result: "fail",
+        deviations_required: true,
+    };
+    validate_final_review_receipt(&receipt, &review_path, &expectations).expect(
+        "deviation-aware final review should accept a passing deviation verdict even when the overall review result is fail",
+    );
+}
+
+#[test]
+fn dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-deviation-fail-on-failed-review");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let reviewer_artifact_path = reviewer_artifact_path_from_review(&review_path);
+    let reviewer_original =
+        fs::read_to_string(&reviewer_artifact_path).expect("reviewer artifact should read");
+    fs::write(
+        &reviewer_artifact_path,
+        reviewer_original
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** fail",
+            )
+            .replace("**Result:** pass", "**Result:** fail"),
+    )
+    .expect("reviewer artifact should write");
+    let reviewer_artifact_fingerprint = sha256_hex(
+        &fs::read(&reviewer_artifact_path).expect("updated reviewer artifact should read"),
+    );
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    let current_review = parse_final_review_receipt(&review_path);
+    fs::write(
+        &review_path,
+        original
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** fail",
+            )
+            .replace("**Result:** pass", "**Result:** fail")
+            .replace(
+                current_review
+                    .reviewer_artifact_fingerprint
+                    .as_deref()
+                    .expect("review receipt should expose reviewer artifact fingerprint"),
+                &reviewer_artifact_fingerprint,
+            ),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let expectations = FinalReviewReceiptExpectations {
+        expected_plan_path: PLAN_REL,
+        expected_plan_revision: 1,
+        expected_strategy_checkpoint_fingerprint: None,
+        expected_branch: &branch_name(repo),
+        expected_repo: &repo_slug(repo),
+        expected_head_sha: &current_head_sha(repo),
+        expected_base_branch: &expected_base_branch(repo),
+        expected_result: "fail",
+        deviations_required: true,
+    };
+    let error = validate_final_review_receipt(&receipt, &review_path, &expectations)
+        .expect_err("deviation-aware final review should reject failed deviation verdicts");
+    assert_eq!(
+        error,
+        FinalReviewReceiptIssue::DeviationReviewVerdictMismatch
+    );
+    assert_eq!(
+        error.reason_code(),
+        "review_receipt_deviation_verdict_mismatch"
+    );
+}
+
+#[test]
 fn dedicated_final_review_receipt_requires_explicit_no_deviation_disposition() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-no-deviation-disposition");
     let repo = repo_dir.path();

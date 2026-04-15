@@ -324,11 +324,7 @@ pub fn validate_final_review_receipt(
         "none"
     };
     let expected_deviation_verdict = if expectations.deviations_required {
-        if expected_result == "pass" {
-            "pass"
-        } else {
-            "fail"
-        }
+        "pass"
     } else {
         "not_required"
     };

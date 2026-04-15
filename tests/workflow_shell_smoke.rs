@@ -7609,7 +7609,7 @@ fn workflow_operator_routes_final_review_pending_without_current_closure_to_reco
 }
 
 #[test]
-fn plan_execution_advance_late_stage_records_final_review() {
+fn plan_execution_advance_late_stage_records_final_review_without_explicit_dispatch_id() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-record");
     let repo = repo_dir.path();
@@ -7661,8 +7661,6 @@ fn plan_execution_advance_late_stage_records_final_review() {
             "advance-late-stage",
             "--plan",
             plan_rel,
-            "--dispatch-id",
-            &dispatch_id,
             "--reviewer-source",
             "fresh-context-subagent",
             "--reviewer-id",
@@ -7672,12 +7670,18 @@ fn plan_execution_advance_late_stage_records_final_review() {
             "--summary-file",
             summary_path.to_str().expect("summary path should be utf-8"),
         ],
-        "advance-late-stage final review command should succeed",
+        "advance-late-stage final review command without explicit dispatch-id should succeed",
     );
 
     assert_eq!(review_json["action"], "recorded");
     assert_eq!(review_json["stage_path"], "final_review");
     assert_eq!(review_json["delegated_primitive"], "record-final-review");
+    let authoritative_state = authoritative_harness_state(repo, state);
+    assert_eq!(
+        authoritative_state["current_final_review_dispatch_id"],
+        Value::from(dispatch_id),
+        "normal-path final review should bind the runtime-owned dispatch lineage without requiring a public --dispatch-id",
+    );
 
     let operator_json = run_featureforge_with_env_json(
         repo,
@@ -8003,6 +8007,104 @@ fn plan_execution_advance_late_stage_final_review_records_runtime_deviation_disp
     assert!(
         receipt.reviewer_artifact_path.is_some(),
         "runtime-deviation final review should bind reviewer artifact path"
+    );
+}
+
+#[test]
+fn plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails(
+) {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) = init_repo("plan-execution-final-review-deviation-fail-result");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    mark_current_branch_closure_release_ready(repo, state, "branch-release-closure");
+    write_matching_topology_downgrade_record(repo, state, plan_rel, &base_branch);
+    mark_branch_review_artifacts_with_runtime_deviation_pass(repo, state);
+
+    let dispatch = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "record-review-dispatch",
+            "--plan",
+            plan_rel,
+            "--scope",
+            "final-review",
+        ],
+        "plan execution final review dispatch for failed-result runtime-deviation fixture",
+    );
+    assert_eq!(dispatch["allowed"], Value::Bool(true));
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            plan_rel,
+            "--external-review-result-ready",
+            "--json",
+        ],
+        &[],
+        "workflow operator json for failed-result runtime-deviation final review fixture",
+    );
+    let _dispatch_id = operator_json["recording_context"]["dispatch_id"]
+        .as_str()
+        .expect("failed-result runtime-deviation fixture should expose dispatch_id");
+
+    let summary_path = repo.join("final-review-deviation-fail-summary.md");
+    write_file(
+        &summary_path,
+        "Independent final review failed after runtime topology downgrade review.\n",
+    );
+    let review_json = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "advance-late-stage",
+            "--plan",
+            plan_rel,
+            "--reviewer-source",
+            "fresh-context-subagent",
+            "--reviewer-id",
+            "reviewer-fixture-001",
+            "--result",
+            "fail",
+            "--summary-file",
+            summary_path.to_str().expect("summary path should be utf-8"),
+        ],
+        "advance-late-stage final review should keep runtime deviation disposition independent from the overall review result",
+    );
+    assert_eq!(review_json["action"], "recorded");
+
+    let authoritative_state = authoritative_harness_state(repo, state);
+    let final_review_fingerprint = authoritative_state["last_final_review_artifact_fingerprint"]
+        .as_str()
+        .expect("failed-result runtime-deviation final review should publish authoritative artifact fingerprint");
+    let final_review_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo, state),
+        &current_branch_name(repo),
+        &format!("final-review-{final_review_fingerprint}.md"),
+    );
+    let final_review_source = fs::read_to_string(&final_review_path)
+        .expect("failed-result runtime-deviation final review artifact should be readable");
+    assert!(
+        final_review_source.contains("**Recorded Execution Deviations:** present"),
+        "final review artifact should record runtime deviation presence even on failed review: {final_review_source}"
+    );
+    assert!(
+        final_review_source.contains("**Deviation Review Verdict:** pass"),
+        "final review artifact should keep a passing deviation verdict independent from the overall failed review result: {final_review_source}"
+    );
+    assert!(
+        final_review_source.contains("**Result:** fail"),
+        "final review artifact should still preserve the overall failed review result: {final_review_source}"
     );
 }
 
@@ -12705,7 +12807,94 @@ fn plan_execution_record_release_readiness_primitive_rejects_overlay_only_branch
 
     assert_eq!(release_json["action"], "blocked");
     assert_eq!(release_json["code"], Value::Null);
-    assert_eq!(release_json["required_follow_up"], "record_branch_closure");
+    assert_eq!(release_json["required_follow_up"], "advance_late_stage");
+}
+
+#[test]
+fn plan_execution_record_release_readiness_primitive_uses_shared_routing_when_stale() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-record-release-readiness-stale-missing-closure");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_document_release_pending_case(repo, state, plan_rel, &base_branch);
+    upsert_plan_header(repo, plan_rel, "Late-Stage Surface", "README.md");
+
+    let branch_closure = run_plan_execution_json(
+        repo,
+        state,
+        &["record-branch-closure", "--plan", plan_rel],
+        "record-branch-closure should establish a current branch closure before stale missing-current-closure release-readiness primitive coverage",
+    );
+    assert_eq!(branch_closure["action"], "recorded");
+    let branch_closure_id = branch_closure["branch_closure_id"]
+        .as_str()
+        .expect("branch closure should expose branch_closure_id")
+        .to_owned();
+
+    let summary_path = repo.join("release-readiness-stale-missing-closure-summary.md");
+    write_file(
+        &summary_path,
+        "Release readiness replay should defer to shared stale reroute truth.\n",
+    );
+
+    append_tracked_repo_line(
+        repo,
+        "README.md",
+        "trusted late-stage drift before stale missing-current-closure primitive coverage",
+    );
+    let reroute = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "repair-review-state should persist late-stage branch reroute before stale missing-current-closure primitive coverage",
+    );
+    assert_eq!(reroute["required_follow_up"], "advance_late_stage");
+
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("current_task_closure_records", serde_json::json!({})),
+            ("current_branch_closure_id", Value::Null),
+            ("current_branch_closure_reviewed_state_id", Value::Null),
+            ("current_branch_closure_contract_identity", Value::Null),
+        ],
+    );
+
+    let operator_json = run_featureforge_with_env_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        &[],
+        "workflow operator should require execution reentry when stale reroute baseline disappears",
+    );
+    assert_eq!(operator_json["phase"], "executing");
+    assert_eq!(operator_json["phase_detail"], "execution_reentry_required");
+    assert_eq!(operator_json["review_state_status"], "missing_current_closure");
+
+    let blocked = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "record-release-readiness",
+            "--plan",
+            plan_rel,
+            "--branch-closure-id",
+            &branch_closure_id,
+            "--result",
+            "ready",
+            "--summary-file",
+            summary_path.to_str().expect("summary path should be utf-8"),
+        ],
+        "record-release-readiness should fail closed through shared routing instead of hardcoding a direct advance_late_stage follow-up",
+    );
+    assert_eq!(blocked["action"], "blocked");
+    assert_eq!(blocked["code"], Value::Null);
+    assert_eq!(blocked["recommended_command"], Value::Null);
+    assert_eq!(blocked["rederive_via_workflow_operator"], Value::Null);
+    assert_eq!(blocked["required_follow_up"], "repair_review_state");
 }
 
 #[test]

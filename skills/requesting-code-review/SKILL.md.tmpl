@@ -76,7 +76,7 @@ fi
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
-Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base locally derivable from repository state.
+Do not use PR metadata or repo default-branch APIs as a fallback; keep the review base aligned with runtime-owned workflow context when available and otherwise restrict fallback to repository-local branch metadata.
 
 The reviewer MUST use the shared review checklist from `review/checklist.md` in the repo when available, otherwise fall back to the installed FeatureForge copy.
 

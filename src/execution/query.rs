@@ -190,11 +190,11 @@ struct WorkflowRoutingDecision {
 }
 
 pub(crate) fn required_follow_up_from_routing(routing: &ExecutionRoutingState) -> Option<String> {
-    if routing.phase_detail == "branch_closure_recording_required_for_release_readiness" {
-        return Some(String::from("advance_late_stage"));
-    }
     if routing_requires_review_state_repair(routing) {
         return Some(String::from("repair_review_state"));
+    }
+    if routing.phase_detail == "branch_closure_recording_required_for_release_readiness" {
+        return Some(String::from("advance_late_stage"));
     }
     match routing.phase_detail.as_str() {
         "task_review_dispatch_required" | "final_review_dispatch_required" => {

@@ -158,11 +158,7 @@ fn render_final_review_artifacts_with_generated_at(
         "none"
     };
     let deviation_review_verdict = if inputs.deviations_required {
-        if inputs.result == "pass" {
-            "pass"
-        } else {
-            "fail"
-        }
+        "pass"
     } else {
         "not_required"
     };

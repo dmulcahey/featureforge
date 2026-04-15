@@ -5,11 +5,14 @@
 - internalize normal-path task/final-review dispatch-lineage binding so operator-led `close-current-task` and `advance-late-stage` no longer require public `--dispatch-id`
 - remove public normal-path `record-review-dispatch` choreography from active review/execution guidance while keeping the compatibility/debug primitive available off the main path
 - align runtime routing, schemas, skill docs, shared review-state reference guidance, and regression coverage on the refactored public command mapping
+- keep `plan execution status --json` and `workflow operator --json` on the same runtime-owned routing decision instead of allowing diagnostic/status drift
+- harden `rebuild-evidence` as projection-only regeneration that fails closed with append-only/manual-repair blockers instead of rewriting authoritative proof in place
 - refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts so the shipped CLI help matches the refactored command contract
 
 ### Breaking Output Contract Changes
 
 - `workflow operator --json`: bump `schema_version` to `2`, add the runtime-owned `base_branch` field for downstream workflow guidance, and change normal task/final-review late-stage guidance so `next_action`/`recommended_command` now point at intent-level `close-current-task` and `advance-late-stage` recording commands instead of public `record-review-dispatch` choreography or required public `--dispatch-id` bindings
+- `plan execution status --json`: align the diagnostic surface with the runtime-owned route by exposing the same `harness_phase`, `next_action`/`recommended_command` vocabulary, and late-stage `recording_context` fields while keeping status diagnostic-only
 
 ## v1.9.0 - 2026-04-11
 

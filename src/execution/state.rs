@@ -1375,15 +1375,6 @@ fn specific_gate_reason_is_explicit_direct_follow_up(
     gate: &GateResult,
     routing: Option<&ExecutionRoutingState>,
 ) -> Option<&'static str> {
-    let late_stage_truth_missing = gate.reason_codes.iter().any(|code| {
-        matches!(
-            code.as_str(),
-            "release_docs_state_missing"
-                | "final_review_state_missing"
-                | "browser_qa_state_missing"
-        )
-    });
-
     if gate
         .reason_codes
         .iter()
@@ -1446,28 +1437,6 @@ fn specific_gate_reason_is_explicit_direct_follow_up(
         })
     {
         return Some("repair_review_state");
-    }
-    if late_stage_truth_missing {
-        return None;
-    }
-    if gate
-        .reason_codes
-        .iter()
-        .any(|code| reason_code_indicates_stale_unreviewed(code))
-        && !gate
-            .reason_codes
-            .iter()
-            .any(|code| code == "late_stage_surface_not_declared")
-    {
-        return Some("record_branch_closure");
-    }
-    if gate
-        .reason_codes
-        .iter()
-        .any(|code| code == "current_branch_closure_id_missing")
-    {
-        let _ = routing;
-        return Some("record_branch_closure");
     }
     None
 }

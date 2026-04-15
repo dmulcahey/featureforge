@@ -967,6 +967,49 @@ fn rebuild_evidence_refresh_claims_write_authority_before_loading_authoritative_
 }
 
 #[test]
+fn gate_follow_up_contract_prefers_shared_routing_over_stale_branch_closure_heuristics() {
+    let query_source = fs::read_to_string(repo_root().join("src/execution/query.rs"))
+        .expect("execution query source should be readable");
+    let follow_up_start = query_source
+        .find("pub(crate) fn required_follow_up_from_routing(")
+        .expect("query.rs should keep required_follow_up_from_routing");
+    let follow_up_end = query_source[follow_up_start..]
+        .find("fn routing_requires_review_state_repair(")
+        .map(|offset| follow_up_start + offset)
+        .expect("query.rs should keep routing_requires_review_state_repair");
+    let follow_up_source = &query_source[follow_up_start..follow_up_end];
+    let repair_index = follow_up_source
+        .find("routing_requires_review_state_repair(routing)")
+        .expect("required_follow_up_from_routing should consult shared repair routing");
+    let late_stage_index = follow_up_source
+        .find("routing.phase_detail == \"branch_closure_recording_required_for_release_readiness\"")
+        .expect("required_follow_up_from_routing should keep the branch-closure recording lane");
+    assert!(
+        repair_index < late_stage_index,
+        "required_follow_up_from_routing must prefer shared repair routing before late-stage branch-closure follow-up fallback"
+    );
+
+    let state_source = fs::read_to_string(repo_root().join("src/execution/state.rs"))
+        .expect("execution state source should be readable");
+    let explicit_start = state_source
+        .find("fn specific_gate_reason_is_explicit_direct_follow_up(")
+        .expect("state.rs should keep specific_gate_reason_is_explicit_direct_follow_up");
+    let explicit_end = state_source[explicit_start..]
+        .find("fn specific_gate_reason_is_direct_follow_up(")
+        .map(|offset| explicit_start + offset)
+        .expect("state.rs should keep specific_gate_reason_is_direct_follow_up");
+    let explicit_source = &state_source[explicit_start..explicit_end];
+    assert!(
+        !explicit_source.contains("reason_code_indicates_stale_unreviewed"),
+        "gate follow-up compatibility fallback must not re-derive branch-closure routing from stale_unreviewed reason-code heuristics",
+    );
+    assert!(
+        !explicit_source.contains("current_branch_closure_id_missing"),
+        "gate follow-up compatibility fallback must not hardcode current_branch_closure_id_missing into a direct branch-closure recommendation",
+    );
+}
+
+#[test]
 fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
     let inventory = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-remediation/README.md"),

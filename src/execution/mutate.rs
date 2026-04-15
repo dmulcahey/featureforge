@@ -2499,21 +2499,22 @@ pub fn record_release_readiness(
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
     let current_branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
     let Some(current_branch_closure_id) = current_branch_closure_id else {
-        return Ok(AdvanceLateStageOutput {
-            action: String::from("blocked"),
-            stage_path: String::from("release_readiness"),
-            delegated_primitive: String::from("record-release-readiness"),
+        let params = AdvanceLateStageOutputContext {
+            stage_path: "release_readiness",
+            delegated_primitive: "record-release-readiness",
             branch_closure_id: Some(args.branch_closure_id.clone()),
             dispatch_id: None,
-            result: args.result.as_str().to_owned(),
-            code: None,
-            recommended_command: None,
-            rederive_via_workflow_operator: None,
-            required_follow_up: Some(String::from("record_branch_closure")),
-            trace_summary: String::from(
-                "record-release-readiness failed closed because no authoritative current branch closure is available.",
-            ),
-        });
+            result: args.result.as_str(),
+            trace_summary: "record-release-readiness failed closed because no authoritative current branch closure is available.",
+        };
+        if let Ok(operator) = current_workflow_operator(runtime, &args.plan, false) {
+            return Ok(release_readiness_follow_up_or_requery_output(
+                &operator, &args.plan, params,
+            ));
+        }
+        return Ok(shared_out_of_phase_advance_late_stage_output(
+            &args.plan, params,
+        ));
     };
     if current_branch_closure_id != args.branch_closure_id {
         return Ok(shared_out_of_phase_advance_late_stage_output(
@@ -5726,7 +5727,7 @@ mod unit_tests {
     }
 
     #[test]
-    fn blocked_follow_up_prefers_branch_closure_when_repair_routes_there() {
+    fn blocked_follow_up_prefers_shared_repair_route_before_branch_closure_fallback() {
         let operator = ExecutionRoutingState {
             route: WorkflowRoute {
                 schema_version: 3,
@@ -5775,11 +5776,11 @@ mod unit_tests {
 
         assert_eq!(
             blocked_follow_up_for_operator(&operator),
-            Some(String::from("advance_late_stage"))
+            Some(String::from("repair_review_state"))
         );
         assert_eq!(
             late_stage_required_follow_up("final_review", &operator),
-            None
+            Some(String::from("repair_review_state"))
         );
     }
 
