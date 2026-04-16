@@ -13427,7 +13427,7 @@ fn plan_execution_gate_review_out_of_phase_requires_workflow_requery() {
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_with_current_closure_case(repo, state, plan_rel, &base_branch);
 
-    let gate_review = run_plan_execution_json(
+    let gate_review = run_plan_execution_json_real_cli(
         repo,
         state,
         &["gate-review", "--plan", plan_rel],
@@ -13446,7 +13446,7 @@ fn plan_execution_gate_review_out_of_phase_requires_workflow_requery() {
         Value::Bool(true)
     );
 
-    let gate_review_external_ready = run_plan_execution_json(
+    let gate_review_external_ready = run_plan_execution_json_real_cli(
         repo,
         state,
         &[
@@ -13524,7 +13524,7 @@ fn plan_execution_gate_finish_out_of_phase_requires_workflow_requery() {
     let base_branch = expected_release_base_branch(repo);
     setup_document_release_pending_with_current_closure_case(repo, state, plan_rel, &base_branch);
 
-    let gate_finish = run_plan_execution_json(
+    let gate_finish = run_plan_execution_json_real_cli(
         repo,
         state,
         &["gate-finish", "--plan", plan_rel],
@@ -13543,7 +13543,7 @@ fn plan_execution_gate_finish_out_of_phase_requires_workflow_requery() {
         Value::Bool(true)
     );
 
-    let gate_finish_external_ready = run_plan_execution_json(
+    let gate_finish_external_ready = run_plan_execution_json_real_cli(
         repo,
         state,
         &[

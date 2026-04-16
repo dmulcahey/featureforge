@@ -108,6 +108,7 @@ use crate::execution::transitions::{
     classify_review_state_field, load_authoritative_transition_state,
     load_authoritative_transition_state_relaxed,
 };
+use crate::execution::workflow_operator_requery_command;
 use crate::git::{
     canonicalize_repo_root_path, commit_object_fingerprint, derive_repo_slug,
     discover_repo_context, discover_repository, is_ancestor_commit as shared_is_ancestor_commit,
@@ -1488,14 +1489,10 @@ fn apply_out_of_phase_gate_contract(
     external_review_result_ready: bool,
 ) {
     gate.code = Some(String::from("out_of_phase_requery_required"));
-    gate.recommended_command = Some(if external_review_result_ready {
-        format!(
-            "featureforge workflow operator --plan {} --external-review-result-ready",
-            context.plan_rel
-        )
-    } else {
-        format!("featureforge workflow operator --plan {}", context.plan_rel)
-    });
+    gate.recommended_command = Some(workflow_operator_requery_command(
+        Path::new(&context.plan_rel),
+        external_review_result_ready,
+    ));
     gate.rederive_via_workflow_operator = Some(true);
 }
 

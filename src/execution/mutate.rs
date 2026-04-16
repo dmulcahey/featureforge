@@ -99,6 +99,7 @@ use crate::execution::transitions::{
     claim_step_write_authority, enforce_active_contract_scope, enforce_authoritative_phase,
     load_authoritative_transition_state,
 };
+use crate::execution::workflow_operator_requery_command;
 use crate::git::{commit_object_fingerprint, discover_repository};
 use crate::paths::{
     harness_authoritative_artifact_path, normalize_repo_relative_path,
@@ -1919,6 +1920,7 @@ pub fn advance_late_stage(
                         branch_closure_id: branch_closure_id.clone(),
                         dispatch_id: None,
                         result,
+                        external_review_result_ready: true,
                         trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                     },
                 ));
@@ -1966,6 +1968,7 @@ pub fn advance_late_stage(
                     branch_closure_id: branch_closure_id.clone(),
                     dispatch_id: None,
                     result,
+                    external_review_result_ready: true,
                     trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                 },
             ));
@@ -2000,6 +2003,7 @@ pub fn advance_late_stage(
                         branch_closure_id: branch_closure_id.clone(),
                         dispatch_id: Some(dispatch_id.clone()),
                         result,
+                        external_review_result_ready: true,
                         trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                     },
                 ));
@@ -2038,6 +2042,7 @@ pub fn advance_late_stage(
                     branch_closure_id: branch_closure_id.clone(),
                     dispatch_id: Some(dispatch_id.clone()),
                     result,
+                    external_review_result_ready: true,
                     trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                 },
             ));
@@ -2118,6 +2123,7 @@ pub fn advance_late_stage(
                         branch_closure_id: Some(branch_closure_id.clone()),
                         dispatch_id: Some(dispatch_id.clone()),
                         result,
+                        external_review_result_ready: true,
                         trace_summary: "advance-late-stage failed closed because the current final-review record is no longer authoritative and workflow/operator must re-derive the next safe step.",
                     },
                 ));
@@ -2252,6 +2258,7 @@ pub fn advance_late_stage(
                     branch_closure_id: branch_closure_id.clone(),
                     dispatch_id: None,
                     result: supplied_result_label,
+                    external_review_result_ready: false,
                     trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
                 },
             ));
@@ -2366,6 +2373,7 @@ pub fn advance_late_stage(
                 branch_closure_id: branch_closure_id.clone(),
                 dispatch_id: None,
                 result,
+                external_review_result_ready: false,
                 trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
             },
         ));
@@ -2505,6 +2513,7 @@ pub fn record_release_readiness(
             branch_closure_id: Some(args.branch_closure_id.clone()),
             dispatch_id: None,
             result: args.result.as_str(),
+            external_review_result_ready: false,
             trace_summary: "record-release-readiness failed closed because no authoritative current branch closure is available.",
         };
         if let Ok(operator) = current_workflow_operator(runtime, &args.plan, false) {
@@ -2525,6 +2534,7 @@ pub fn record_release_readiness(
                 branch_closure_id: Some(args.branch_closure_id.clone()),
                 dispatch_id: None,
                 result: args.result.as_str(),
+                external_review_result_ready: false,
                 trace_summary: "record-release-readiness failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
             },
         ));
@@ -2566,6 +2576,7 @@ pub fn record_final_review(
                 branch_closure_id: Some(args.branch_closure_id.clone()),
                 dispatch_id: Some(args.dispatch_id.clone()),
                 result: args.result.as_str(),
+                external_review_result_ready: true,
                 trace_summary: "record-final-review failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
             },
         ));
@@ -3547,14 +3558,7 @@ fn current_workflow_operator(
 }
 
 fn recommended_operator_command(plan: &Path, external_review_result_ready: bool) -> String {
-    if external_review_result_ready {
-        format!(
-            "featureforge workflow operator --plan {} --external-review-result-ready",
-            plan.display()
-        )
-    } else {
-        format!("featureforge workflow operator --plan {}", plan.display())
-    }
+    workflow_operator_requery_command(plan, external_review_result_ready)
 }
 
 fn shared_out_of_phase_close_current_task_output(
@@ -3605,6 +3609,7 @@ fn shared_out_of_phase_advance_late_stage_output(
         branch_closure_id,
         dispatch_id,
         result,
+        external_review_result_ready,
         trace_summary,
     } = params;
     AdvanceLateStageOutput {
@@ -3617,7 +3622,7 @@ fn shared_out_of_phase_advance_late_stage_output(
         code: Some(String::from("out_of_phase_requery_required")),
         recommended_command: Some(recommended_operator_command(
             plan,
-            stage_path == "final_review",
+            external_review_result_ready,
         )),
         rederive_via_workflow_operator: Some(true),
         required_follow_up: None,
@@ -3631,6 +3636,7 @@ struct AdvanceLateStageOutputContext<'a> {
     branch_closure_id: Option<String>,
     dispatch_id: Option<String>,
     result: &'a str,
+    external_review_result_ready: bool,
     trace_summary: &'a str,
 }
 
@@ -3646,6 +3652,7 @@ fn advance_late_stage_follow_up_or_requery_output(
         branch_closure_id,
         dispatch_id,
         result,
+        external_review_result_ready,
         trace_summary,
     } = params;
     if let Some(required_follow_up) = late_stage_required_follow_up(stage_path, operator) {
@@ -3662,6 +3669,7 @@ fn advance_late_stage_follow_up_or_requery_output(
                     branch_closure_id,
                     dispatch_id,
                     result,
+                    external_review_result_ready,
                     trace_summary,
                 },
             );
@@ -3688,6 +3696,7 @@ fn advance_late_stage_follow_up_or_requery_output(
             branch_closure_id,
             dispatch_id,
             result,
+            external_review_result_ready,
             trace_summary,
         },
     )
@@ -3704,6 +3713,7 @@ fn release_readiness_follow_up_or_requery_output(
         branch_closure_id,
         dispatch_id,
         result,
+        external_review_result_ready,
         trace_summary,
     } = params;
     if let Some(required_follow_up) = release_readiness_required_follow_up(operator) {
@@ -3729,6 +3739,7 @@ fn release_readiness_follow_up_or_requery_output(
             branch_closure_id,
             dispatch_id,
             result,
+            external_review_result_ready,
             trace_summary,
         },
     )
@@ -5853,6 +5864,7 @@ mod unit_tests {
                 branch_closure_id: Some(String::from("branch-closure-1")),
                 dispatch_id: Some(String::from("dispatch-123")),
                 result: "pass",
+                external_review_result_ready: true,
                 trace_summary: "advance-late-stage failed closed because workflow/operator requery is required.",
             },
         );
@@ -5930,6 +5942,7 @@ mod unit_tests {
                 branch_closure_id: Some(String::from("branch-closure-1")),
                 dispatch_id: Some(String::from("dispatch-123")),
                 result: "pass",
+                external_review_result_ready: true,
                 trace_summary: "advance-late-stage follow-up required.",
             },
         );
