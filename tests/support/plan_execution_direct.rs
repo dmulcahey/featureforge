@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::{ExitStatus, Output};
 
 use clap::Parser;
-use featureforge::cli::plan_execution::PlanExecutionCommand;
+use featureforge::cli::plan_execution::{InternalPlanExecutionCommand, PlanExecutionCommand};
 use featureforge::cli::{Cli, Command as RootCommand, PlanCommand};
 use featureforge::diagnostics::JsonFailure;
 use featureforge::execution::mutate;
@@ -136,6 +136,11 @@ fn execute_plan_execution_command_json(
         PlanExecutionCommand::Status(args) => Ok(to_json!(runtime.status(&args)?)),
         PlanExecutionCommand::Recommend(args) => Ok(to_json!(runtime.recommend(&args)?)),
         PlanExecutionCommand::Preflight(args) => Ok(to_json!(runtime.preflight(&args)?)),
+        PlanExecutionCommand::Internal(internal) => match internal.command {
+            InternalPlanExecutionCommand::ReconcileReviewState(args) => Ok(to_json!(
+                review_state::reconcile_review_state(runtime, &args)?
+            )),
+        },
         PlanExecutionCommand::RebuildEvidence(args) => {
             let output = mutate::rebuild_evidence(runtime, &args)?;
             Ok(DirectPlanExecutionSuccess {
@@ -160,9 +165,6 @@ fn execute_plan_execution_command_json(
         }
         PlanExecutionCommand::ExplainReviewState(args) => Ok(to_json!(
             review_state::explain_review_state(runtime, &args)?
-        )),
-        PlanExecutionCommand::ReconcileReviewState(args) => Ok(to_json!(
-            review_state::reconcile_review_state(runtime, &args)?
         )),
         PlanExecutionCommand::GateFinish(args) => Ok(to_json!(runtime.gate_finish(&args)?)),
         PlanExecutionCommand::CloseCurrentTask(args) => {

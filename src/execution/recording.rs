@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::current_truth::current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings;
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, validated_current_branch_closure_identity,
 };
@@ -55,6 +56,7 @@ pub(crate) struct BranchClosureWrite<'a> {
     pub(crate) provenance_basis: &'a str,
     pub(crate) closure_status: &'a str,
     pub(crate) superseded_branch_closure_ids: &'a [String],
+    pub(crate) branch_closure_fingerprint: Option<&'a str>,
 }
 
 pub(crate) struct ReleaseReadinessWrite<'a> {
@@ -74,11 +76,13 @@ pub(crate) struct ReleaseReadinessWrite<'a> {
 
 pub(crate) struct FinalReviewWrite<'a> {
     pub(crate) branch_closure_id: &'a str,
+    pub(crate) release_readiness_record_id: &'a str,
     pub(crate) dispatch_id: &'a str,
     pub(crate) reviewer_source: &'a str,
     pub(crate) reviewer_id: &'a str,
     pub(crate) result: &'a str,
     pub(crate) final_review_fingerprint: Option<&'a str>,
+    pub(crate) deviations_required: Option<bool>,
     pub(crate) browser_qa_required: Option<bool>,
     pub(crate) source_plan_path: &'a str,
     pub(crate) source_plan_revision: u32,
@@ -92,6 +96,7 @@ pub(crate) struct FinalReviewWrite<'a> {
 
 pub(crate) struct BrowserQaWrite<'a> {
     pub(crate) branch_closure_id: &'a str,
+    pub(crate) final_review_record_id: &'a str,
     pub(crate) source_plan_path: &'a str,
     pub(crate) source_plan_revision: u32,
     pub(crate) repo_slug: &'a str,
@@ -166,6 +171,7 @@ pub(crate) fn record_current_branch_closure(
         provenance_basis: input.provenance_basis,
         closure_status: input.closure_status,
         superseded_branch_closure_ids: input.superseded_branch_closure_ids,
+        branch_closure_fingerprint: input.branch_closure_fingerprint,
     })?;
     authoritative_state.append_superseded_branch_closure_ids(
         input
@@ -208,11 +214,13 @@ pub(crate) fn record_final_review(
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_final_review_result(FinalReviewMilestoneRecord {
         branch_closure_id: input.branch_closure_id,
+        release_readiness_record_id: input.release_readiness_record_id,
         dispatch_id: input.dispatch_id,
         reviewer_source: input.reviewer_source,
         reviewer_id: input.reviewer_id,
         result: input.result,
         final_review_fingerprint: input.final_review_fingerprint,
+        deviations_required: input.deviations_required,
         browser_qa_required: input.browser_qa_required,
         source_plan_path: input.source_plan_path,
         source_plan_revision: input.source_plan_revision,
@@ -232,6 +240,7 @@ pub(crate) fn record_browser_qa(
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_browser_qa_result(BrowserQaResultRecord {
         branch_closure_id: input.branch_closure_id,
+        final_review_record_id: input.final_review_record_id,
         source_plan_path: input.source_plan_path,
         source_plan_revision: input.source_plan_revision,
         repo_slug: input.repo_slug,
@@ -246,69 +255,6 @@ pub(crate) fn record_browser_qa(
         generated_by_identity: input.generated_by_identity,
     })?;
     authoritative_state.persist_if_dirty_with_failpoint(None)
-}
-
-pub(crate) fn restore_current_task_closure_overlays(
-    runtime: &ExecutionRuntime,
-    context: &ExecutionContext,
-) -> Result<Vec<String>, JsonFailure> {
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let mut authoritative_state = load_authoritative_transition_state(context)?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "reconcile-review-state requires authoritative harness state.",
-        ));
-    };
-
-    let mut actions_performed = Vec::new();
-    if authoritative_state.restore_current_task_closure_records_from_history()? {
-        actions_performed.push(String::from("restored_current_task_closure_records"));
-    }
-    if authoritative_state.restore_task_closure_negative_result_records_from_history()? {
-        actions_performed.push(String::from(
-            "restored_task_closure_negative_result_records",
-        ));
-    }
-    if actions_performed.is_empty() {
-        return Ok(actions_performed);
-    }
-
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
-    Ok(actions_performed)
-}
-
-pub(crate) fn restore_current_branch_closure_overlay(
-    runtime: &ExecutionRuntime,
-    context: &ExecutionContext,
-    branch_closure_id: &str,
-    reviewed_state_id: &str,
-    contract_identity: &str,
-) -> Result<bool, JsonFailure> {
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let mut authoritative_state = load_authoritative_transition_state(context)?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "reconcile-review-state requires authoritative harness state.",
-        ));
-    };
-    let Some(current_identity) = validated_current_branch_closure_identity(context) else {
-        return Ok(false);
-    };
-    if current_identity.branch_closure_id != branch_closure_id
-        || current_identity.reviewed_state_id != reviewed_state_id
-        || current_identity.contract_identity != contract_identity
-    {
-        return Ok(false);
-    }
-    authoritative_state.restore_current_branch_closure_overlay_fields(
-        branch_closure_id,
-        reviewed_state_id,
-        contract_identity,
-    )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
-    Ok(true)
 }
 
 pub(crate) fn clear_current_branch_closure_for_structural_repair(
@@ -327,13 +273,10 @@ pub(crate) fn clear_current_branch_closure_for_structural_repair(
     Ok(true)
 }
 
-pub(crate) fn restore_current_late_stage_overlays(
+pub(crate) fn restore_review_state_projection_overlays(
     runtime: &ExecutionRuntime,
     context: &ExecutionContext,
 ) -> Result<Vec<String>, JsonFailure> {
-    if validated_current_branch_closure_identity(context).is_none() {
-        return Ok(Vec::new());
-    }
     let _write_authority = claim_step_write_authority(runtime)?;
     let mut authoritative_state = load_authoritative_transition_state(context)?;
     let Some(authoritative_state) = authoritative_state.as_mut() else {
@@ -344,14 +287,103 @@ pub(crate) fn restore_current_late_stage_overlays(
     };
 
     let mut actions_performed = Vec::new();
-    if authoritative_state.restore_current_release_readiness_overlay_fields()? {
-        actions_performed.push(String::from("restored_current_release_readiness_overlay"));
+    let mut push_action = |action: &str| {
+        if !actions_performed.iter().any(|existing| existing == action) {
+            actions_performed.push(action.to_owned());
+        }
+    };
+    if authoritative_state.restore_current_task_closure_records_from_history()? {
+        push_action("restored_current_task_closure_records");
     }
-    if authoritative_state.restore_current_final_review_overlay_fields()? {
-        actions_performed.push(String::from("restored_current_final_review_overlay"));
+    if authoritative_state.restore_task_closure_negative_result_records_from_history()? {
+        push_action("restored_task_closure_negative_result_records");
     }
-    if authoritative_state.restore_current_browser_qa_overlay_fields()? {
-        actions_performed.push(String::from("restored_current_browser_qa_overlay"));
+
+    let current_branch_identity = validated_current_branch_closure_identity(context);
+    if let Some(current_identity) = current_branch_identity.as_ref() {
+        let branch_id_changed = authoritative_state
+            .current_branch_closure_overlay_id()
+            .as_deref()
+            != Some(current_identity.branch_closure_id.as_str());
+        let reviewed_state_changed = authoritative_state
+            .current_branch_closure_overlay_reviewed_state_id()
+            .as_deref()
+            != Some(current_identity.reviewed_state_id.as_str());
+        let contract_identity_changed = authoritative_state
+            .current_branch_closure_overlay_contract_identity()
+            .as_deref()
+            != Some(current_identity.contract_identity.as_str());
+        if branch_id_changed || reviewed_state_changed || contract_identity_changed {
+            if branch_id_changed {
+                push_action("restored_current_branch_closure_id");
+            }
+            if reviewed_state_changed {
+                push_action("restored_current_branch_closure_reviewed_state");
+            }
+            if contract_identity_changed {
+                push_action("restored_current_branch_closure_contract_identity");
+            }
+            authoritative_state.restore_current_branch_closure_overlay_fields(
+                &current_identity.branch_closure_id,
+                &current_identity.reviewed_state_id,
+                &current_identity.contract_identity,
+            )?;
+        }
+    }
+    let late_stage_bindings = shared_current_late_stage_branch_bindings(
+        Some(authoritative_state),
+        current_branch_identity
+            .as_ref()
+            .map(|identity| identity.branch_closure_id.as_str()),
+        current_branch_identity
+            .as_ref()
+            .map(|identity| identity.reviewed_state_id.as_str()),
+    );
+
+    let current_release_readiness_record_id = late_stage_bindings
+        .current_release_readiness_record_id
+        .clone();
+    if authoritative_state
+        .current_release_readiness_record_id()
+        .as_deref()
+        != current_release_readiness_record_id.as_deref()
+    {
+        authoritative_state.set_current_release_readiness_record_id_cache(
+            current_release_readiness_record_id.as_deref(),
+        )?;
+        push_action("restored_current_release_readiness_overlay");
+    }
+    if current_release_readiness_record_id.is_some()
+        && authoritative_state.restore_current_release_readiness_overlay_fields()?
+    {
+        push_action("restored_current_release_readiness_overlay");
+    }
+
+    let current_final_review_record_id = late_stage_bindings.current_final_review_record_id.clone();
+    if authoritative_state
+        .current_final_review_record_id()
+        .as_deref()
+        != current_final_review_record_id.as_deref()
+    {
+        authoritative_state
+            .set_current_final_review_record_id_cache(current_final_review_record_id.as_deref())?;
+        push_action("restored_current_final_review_overlay");
+    }
+    if current_final_review_record_id.is_some()
+        && authoritative_state.restore_current_final_review_overlay_fields()?
+    {
+        push_action("restored_current_final_review_overlay");
+    }
+
+    let current_qa_record_id = late_stage_bindings.current_qa_record_id.clone();
+    if authoritative_state.current_qa_record_id().as_deref() != current_qa_record_id.as_deref() {
+        authoritative_state.set_current_qa_record_id_cache(current_qa_record_id.as_deref())?;
+        push_action("restored_current_browser_qa_overlay");
+    }
+    if current_qa_record_id.is_some()
+        && authoritative_state.restore_current_browser_qa_overlay_fields()?
+    {
+        push_action("restored_current_browser_qa_overlay");
     }
     if actions_performed.is_empty() {
         return Ok(actions_performed);

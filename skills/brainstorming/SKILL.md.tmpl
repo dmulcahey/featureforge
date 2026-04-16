@@ -132,11 +132,7 @@ digraph brainstorming {
 
 - Write the validated design (spec) to `docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
-- Before writing the spec, record the intended spec path with `expect`:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow expect --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
-```
+- Use that repo-relative spec path consistently in later review and workflow/operator commands; do not route through compatibility-only `workflow expect` or `workflow sync` helpers.
 
 - Every spec MUST include these header lines immediately below the title:
 
@@ -163,11 +159,7 @@ digraph brainstorming {
 - If Layer 2 does not materially affect the chosen design, `Landscape Snapshot` remains optional.
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Commit the design document to git
-- After the spec is written or updated, runs `sync --artifact spec`:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow sync --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
-```
+- After the spec is written or updated, continue using the same repo-relative spec path in downstream review and workflow/operator commands.
 
 **Protected-Branch Repo-Write Gate:**
 

@@ -122,43 +122,17 @@ When a test-plan artifact includes richer additive sections such as `## Coverage
 If no artifact exists, use:
 1. Explicit user scope
 2. Conversation context
-3. `diff-aware` inference from the current branch
+3. `diff-aware` scope from `BASE_BRANCH...HEAD`
 
 ## Modes
 
 ### diff-aware
 
-If no URL is provided and the repo is on a feature branch, automatically enter `diff-aware` mode:
+If no URL is provided, run `diff-aware` mode with an explicitly provided `BASE_BRANCH`:
 
 ```bash
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-BASE_BRANCH=""
-if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  case "$CURRENT_BRANCH" in
-    main|master|develop|dev|trunk)
-      BASE_BRANCH="$CURRENT_BRANCH"
-      ;;
-  esac
-  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git config --get "branch.$CURRENT_BRANCH.gh-merge-base" 2>/dev/null || true)
-fi
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)
 if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master develop dev trunk; do
-    if git show-ref --verify --quiet "refs/heads/$candidate"; then
-      BASE_BRANCH="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  NON_CURRENT_BRANCHES=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vxF "$CURRENT_BRANCH" || true)
-  NON_CURRENT_BRANCH_COUNT=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d' | wc -l | tr -d ' ')
-  if [ "$NON_CURRENT_BRANCH_COUNT" = "1" ]; then
-    BASE_BRANCH=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d')
-  fi
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  echo "Could not determine the base branch for diff-aware QA scoping. Stop and resolve it before continuing."
+  echo "Missing BASE_BRANCH. For workflow-routed QA, use the runtime-owned release-lineage base branch; otherwise set BASE_BRANCH explicitly before continuing instead of re-deriving it locally."
   exit 1
 fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
@@ -166,7 +140,7 @@ git diff "origin/$BASE_BRANCH...HEAD" --name-only 2>/dev/null || git diff "$BASE
 git log "origin/$BASE_BRANCH"..HEAD --oneline 2>/dev/null || git log "$BASE_BRANCH"..HEAD --oneline
 ```
 
-Do not use PR metadata or repo default-branch APIs as a fallback; keep diff-aware scoping aligned with `document-release`, `requesting-code-review`, and `gate-finish`.
+Do not use PR metadata or repo default-branch APIs as a fallback; keep diff-aware scoping locally derivable from repository state.
 
 From the changed files, infer:
 - affected pages and routes
@@ -257,7 +231,7 @@ Use the shared rubric from the current template and state the final Health Score
 Write the local report to:
 - `$REPORT_DIR/qa-report-{domain}-{YYYY-MM-DD}.md`
 
-When a current-branch test-plan artifact exists, also write a project-scoped outcome artifact:
+When a current-branch test-plan artifact exists, runtime emits a project-scoped outcome artifact:
 
 ```bash
 _SLUG_ENV=$("$_FEATUREFORGE_BIN" repo slug 2>/dev/null || true)
@@ -270,14 +244,16 @@ DATETIME=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
 ```
 
-Write to:
-- `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-test-outcome-{datetime}.md`
+Use this snippet only to inspect runtime-emitted artifact locations after recording; do not use it to hand-write finish-gate artifacts.
 
-For workflow-routed QA with a current-branch test-plan artifact, this project artifact is the structured finish-gate input. Copy `Source Plan` and `Source Plan Revision` from that exact artifact and point `Source Test Plan` at that exact artifact path.
+For workflow-routed QA, the runtime writes the derived companion artifact to:
+- `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/featureforge-{safe-branch}-test-outcome-{datetime}.md`
 
-If no current-branch test-plan artifact exists, do not fabricate `Source Plan`, `Source Plan Revision`, or `Source Test Plan` headers just to make the artifact look workflow-routed. In that case, keep the local `qa-report` as the authoritative ad-hoc QA output and say explicitly that no finish-gate artifact was produced.
+Use the local `qa-report` and screenshots as source evidence, but do not hand-write the structured finish-gate artifact; the runtime renders it after workflow-routed QA recording.
 
-Use this structure:
+If a current-branch test-plan artifact exists, the runtime copies `Source Plan`, `Source Plan Revision`, and `Source Test Plan` into the derived artifact. If no current-branch test-plan artifact exists, the runtime omits `Source Test Plan`; do not fabricate workflow-routed headers just to make the artifact look current.
+
+Derived workflow-routed structure:
 
 ```markdown
 # QA Result
@@ -286,9 +262,12 @@ Use this structure:
 **Source Test Plan:** `~/.featureforge/projects/.../test-plan.md`
 **Branch:** feature/foo
 **Repo:** featureforge
+**Base Branch:** main
 **Head SHA:** abc1234
+**Current Reviewed Branch State ID:** git_tree:abc1234
+**Branch Closure ID:** branch-release-closure
 **Result:** pass
-**Generated By:** featureforge:qa-only
+**Generated By:** featureforge/qa
 **Generated At:** 2026-03-22T15:05:00Z
 
 ## Summary
@@ -303,6 +282,8 @@ Allowed `**Result:**` values:
 - `pass`
 - `fail`
 - `blocked`
+
+For ad-hoc QA without workflow-routed recording, keep the local `qa-report` as the authoritative output and say explicitly that no workflow-routed finish-gate artifact was produced.
 
 ## Output structure
 

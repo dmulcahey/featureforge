@@ -53,6 +53,7 @@ fn validate_fixture_review_receipt(
         expected_repo: &repo_slug(repo),
         expected_head_sha: &current_head_sha(repo),
         expected_base_branch: &expected_base_branch(repo),
+        expected_result: "pass",
         deviations_required: false,
     };
     validate_final_review_receipt(receipt, review_path, &expectations)
@@ -492,6 +493,62 @@ fn merge_harness_state_payload(repo: &Path, state: &Path, patch: &Value) {
     write_harness_state_payload(repo, state, &payload);
 }
 
+fn clear_current_record_binding(
+    repo: &Path,
+    state: &Path,
+    current_id_field: &str,
+    history_field: &str,
+) {
+    let path = harness_state_path(state, &repo_slug(repo), &branch_name(repo));
+    let source = fs::read_to_string(&path).expect("existing harness state should be readable");
+    let mut payload: Value =
+        serde_json::from_str(&source).expect("existing harness state should be valid json");
+    let payload_object = payload
+        .as_object_mut()
+        .expect("existing harness state should be a json object");
+    if let Some(current_record_id) = payload_object
+        .get(current_id_field)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        && let Some(history) = payload_object
+            .get_mut(history_field)
+            .and_then(Value::as_object_mut)
+    {
+        history.remove(&current_record_id);
+    }
+    payload_object.insert(current_id_field.to_owned(), Value::Null);
+    write_harness_state_payload(repo, state, &payload);
+}
+
+fn set_current_history_record_field(
+    repo: &Path,
+    state: &Path,
+    current_id_field: &str,
+    history_field: &str,
+    field: &str,
+    value: Value,
+) {
+    let path = harness_state_path(state, &repo_slug(repo), &branch_name(repo));
+    let source = fs::read_to_string(&path).expect("existing harness state should be readable");
+    let mut payload: Value =
+        serde_json::from_str(&source).expect("existing harness state should be valid json");
+    let current_record_id = payload
+        .get(current_id_field)
+        .and_then(Value::as_str)
+        .expect("current record id should exist for fixture mutation")
+        .to_owned();
+    let history = payload
+        .get_mut(history_field)
+        .and_then(Value::as_object_mut)
+        .expect("history should be a JSON object for fixture mutation");
+    let record = history
+        .get_mut(&current_record_id)
+        .and_then(Value::as_object_mut)
+        .expect("current record payload should exist for fixture mutation");
+    record.insert(field.to_owned(), value);
+    write_harness_state_payload(repo, state, &payload);
+}
+
 fn pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
 }
@@ -519,7 +576,7 @@ fn write_finish_ready_harness_state_with_reason_codes(
     let (
         review_fingerprint,
         final_review_record_id,
-        final_review_record_history,
+        mut final_review_record_history,
         current_final_review_dispatch_id,
         current_final_review_reviewer_source,
         current_final_review_reviewer_id,
@@ -593,6 +650,16 @@ fn write_finish_ready_harness_state_with_reason_codes(
     let release_summary = "Release-readiness artifact fixture for final-review gate coverage.";
     let release_summary_hash = sha256_hex(release_summary.as_bytes());
     let release_record_id = format!("release-readiness-record-{release_fingerprint}");
+    if let Some(record_id) = final_review_record_id.as_str()
+        && let Some(record) = final_review_record_history
+            .get_mut(record_id)
+            .and_then(Value::as_object_mut)
+    {
+        record.insert(
+            String::from("release_readiness_record_id"),
+            Value::from(release_record_id.clone()),
+        );
+    }
     let task_review_summary = "Task closure review fixture for final-review gate coverage.";
     let task_review_summary_hash = sha256_hex(task_review_summary.as_bytes());
     let task_verification_summary =
@@ -1266,6 +1333,123 @@ fn dedicated_final_review_receipt_requires_reviewer_artifact_contract_binding() 
 }
 
 #[test]
+fn dedicated_final_review_receipt_requires_reviewer_artifact_strategy_checkpoint_binding() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-reviewer-strategy-checkpoint-binding");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let reviewer_artifact_path = reviewer_artifact_path_from_review(&review_path);
+    let reviewer_artifact_source =
+        fs::read_to_string(&reviewer_artifact_path).expect("reviewer artifact should read");
+    fs::write(
+        &reviewer_artifact_path,
+        reviewer_artifact_source.replace(
+            &format!(
+                "**Strategy Checkpoint Fingerprint:** {STRATEGY_CHECKPOINT_FINGERPRINT}"
+            ),
+            "**Strategy Checkpoint Fingerprint:** ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ),
+    )
+    .expect("reviewer artifact should write");
+    let reviewer_artifact_fingerprint =
+        sha256_hex(&fs::read(&reviewer_artifact_path).expect("reviewer artifact should read"));
+    let receipt = parse_final_review_receipt(&review_path);
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    fs::write(
+        &review_path,
+        original.replace(
+            receipt
+                .reviewer_artifact_fingerprint
+                .as_deref()
+                .expect("review receipt should include reviewer artifact fingerprint"),
+            &reviewer_artifact_fingerprint,
+        ),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let error = validate_fixture_review_receipt(
+        &receipt,
+        &review_path,
+        repo,
+        Some(STRATEGY_CHECKPOINT_FINGERPRINT),
+    )
+    .expect_err(
+        "dedicated final review should require reviewer artifact strategy checkpoint binding",
+    );
+    assert_eq!(
+        error,
+        FinalReviewReceiptIssue::ReviewerArtifactContractMismatch
+    );
+    assert_eq!(
+        error.reason_code(),
+        "review_receipt_reviewer_artifact_contract_mismatch"
+    );
+}
+
+#[test]
+fn dedicated_final_review_receipt_requires_reviewer_artifact_deviation_disposition_binding() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-reviewer-deviation-disposition-binding");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let reviewer_artifact_path = reviewer_artifact_path_from_review(&review_path);
+    let reviewer_artifact_source =
+        fs::read_to_string(&reviewer_artifact_path).expect("reviewer artifact should read");
+    fs::write(
+        &reviewer_artifact_path,
+        reviewer_artifact_source
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** pass",
+            ),
+    )
+    .expect("reviewer artifact should write");
+    let reviewer_artifact_fingerprint =
+        sha256_hex(&fs::read(&reviewer_artifact_path).expect("reviewer artifact should read"));
+    let receipt = parse_final_review_receipt(&review_path);
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    fs::write(
+        &review_path,
+        original.replace(
+            receipt
+                .reviewer_artifact_fingerprint
+                .as_deref()
+                .expect("review receipt should include reviewer artifact fingerprint"),
+            &reviewer_artifact_fingerprint,
+        ),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let error = validate_fixture_review_receipt(&receipt, &review_path, repo, None).expect_err(
+        "dedicated final review should require reviewer artifact deviation disposition binding",
+    );
+    assert_eq!(
+        error,
+        FinalReviewReceiptIssue::ReviewerArtifactContractMismatch
+    );
+    assert_eq!(
+        error.reason_code(),
+        "review_receipt_reviewer_artifact_contract_mismatch"
+    );
+}
+
+#[test]
 fn dedicated_final_review_receipt_requires_reviewer_artifact_base_branch_binding() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-reviewer-base-branch-binding");
@@ -1565,10 +1749,162 @@ fn dedicated_final_review_receipt_requires_passed_deviation_disposition_when_nee
         expected_repo: &repo_slug(repo),
         expected_head_sha: &current_head_sha(repo),
         expected_base_branch: &expected_base_branch(repo),
+        expected_result: "pass",
         deviations_required: true,
     };
     let error = validate_final_review_receipt(&receipt, &review_path, &expectations)
         .expect_err("deviation-aware final review should require a passing disposition");
+    assert_eq!(
+        error,
+        FinalReviewReceiptIssue::DeviationReviewVerdictMismatch
+    );
+    assert_eq!(
+        error.reason_code(),
+        "review_receipt_deviation_verdict_mismatch"
+    );
+}
+
+#[test]
+fn dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-deviation-pass-on-failed-review");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let reviewer_artifact_path = reviewer_artifact_path_from_review(&review_path);
+    let reviewer_original =
+        fs::read_to_string(&reviewer_artifact_path).expect("reviewer artifact should read");
+    fs::write(
+        &reviewer_artifact_path,
+        reviewer_original
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** pass",
+            )
+            .replace("**Result:** pass", "**Result:** fail"),
+    )
+    .expect("reviewer artifact should write");
+    let reviewer_artifact_fingerprint = sha256_hex(
+        &fs::read(&reviewer_artifact_path).expect("updated reviewer artifact should read"),
+    );
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    let current_review = parse_final_review_receipt(&review_path);
+    fs::write(
+        &review_path,
+        original
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** pass",
+            )
+            .replace("**Result:** pass", "**Result:** fail")
+            .replace(
+                current_review
+                    .reviewer_artifact_fingerprint
+                    .as_deref()
+                    .expect("review receipt should expose reviewer artifact fingerprint"),
+                &reviewer_artifact_fingerprint,
+            ),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let expectations = FinalReviewReceiptExpectations {
+        expected_plan_path: PLAN_REL,
+        expected_plan_revision: 1,
+        expected_strategy_checkpoint_fingerprint: None,
+        expected_branch: &branch_name(repo),
+        expected_repo: &repo_slug(repo),
+        expected_head_sha: &current_head_sha(repo),
+        expected_base_branch: &expected_base_branch(repo),
+        expected_result: "fail",
+        deviations_required: true,
+    };
+    validate_final_review_receipt(&receipt, &review_path, &expectations).expect(
+        "deviation-aware final review should accept a passing deviation verdict even when the overall review result is fail",
+    );
+}
+
+#[test]
+fn dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-deviation-fail-on-failed-review");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let base_branch = expected_base_branch(repo);
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    let reviewer_artifact_path = reviewer_artifact_path_from_review(&review_path);
+    let reviewer_original =
+        fs::read_to_string(&reviewer_artifact_path).expect("reviewer artifact should read");
+    fs::write(
+        &reviewer_artifact_path,
+        reviewer_original
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** fail",
+            )
+            .replace("**Result:** pass", "**Result:** fail"),
+    )
+    .expect("reviewer artifact should write");
+    let reviewer_artifact_fingerprint = sha256_hex(
+        &fs::read(&reviewer_artifact_path).expect("updated reviewer artifact should read"),
+    );
+    let original = fs::read_to_string(&review_path).expect("review artifact should read");
+    let current_review = parse_final_review_receipt(&review_path);
+    fs::write(
+        &review_path,
+        original
+            .replace(
+                "**Recorded Execution Deviations:** none",
+                "**Recorded Execution Deviations:** present",
+            )
+            .replace(
+                "**Deviation Review Verdict:** not_required",
+                "**Deviation Review Verdict:** fail",
+            )
+            .replace("**Result:** pass", "**Result:** fail")
+            .replace(
+                current_review
+                    .reviewer_artifact_fingerprint
+                    .as_deref()
+                    .expect("review receipt should expose reviewer artifact fingerprint"),
+                &reviewer_artifact_fingerprint,
+            ),
+    )
+    .expect("review artifact should write");
+
+    let receipt = parse_final_review_receipt(&review_path);
+    let expectations = FinalReviewReceiptExpectations {
+        expected_plan_path: PLAN_REL,
+        expected_plan_revision: 1,
+        expected_strategy_checkpoint_fingerprint: None,
+        expected_branch: &branch_name(repo),
+        expected_repo: &repo_slug(repo),
+        expected_head_sha: &current_head_sha(repo),
+        expected_base_branch: &expected_base_branch(repo),
+        expected_result: "fail",
+        deviations_required: true,
+    };
+    let error = validate_final_review_receipt(&receipt, &review_path, &expectations)
+        .expect_err("deviation-aware final review should reject failed deviation verdicts");
     assert_eq!(
         error,
         FinalReviewReceiptIssue::DeviationReviewVerdictMismatch
@@ -1716,9 +2052,434 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
     parse_json(&run(command, context), context)
 }
 
+fn run_plan_execution_json_real_cli(
+    repo: &Path,
+    state: &Path,
+    args: &[&str],
+    context: &str,
+) -> Value {
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["plan", "execution"])
+        .args(args);
+    parse_json(&run(command, context), context)
+}
+
+fn run_plan_execution_failure_json_real_cli(
+    repo: &Path,
+    state: &Path,
+    args: &[&str],
+    context: &str,
+) -> Value {
+    let mut command = Command::new(compiled_featureforge_path());
+    command
+        .current_dir(repo)
+        .env("FEATUREFORGE_STATE_DIR", state)
+        .args(["plan", "execution"])
+        .args(args);
+    let output = run(command, context);
+    assert!(
+        !output.status.success(),
+        "{context} should fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stderr)
+        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
+}
+
 #[test]
 fn gate_finish_requires_final_review_artifact() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-missing-review");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let base_branch = expected_base_branch(repo);
+    write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    clear_current_record_binding(
+        repo,
+        state,
+        "current_final_review_record_id",
+        "final_review_record_history",
+    );
+    merge_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "current_final_review_branch_closure_id": Value::Null,
+            "current_final_review_dispatch_id": Value::Null,
+            "current_final_review_reviewer_source": Value::Null,
+            "current_final_review_reviewer_id": Value::Null,
+            "current_final_review_result": Value::Null,
+            "current_final_review_summary_hash": Value::Null
+        }),
+    );
+
+    let gate = run_plan_execution_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate-finish should run",
+    );
+
+    assert_eq!(
+        gate["allowed"], false,
+        "missing review artifact should block finish"
+    );
+    assert!(
+        gate["reason_codes"].as_array().is_some_and(|codes| {
+            codes.iter().any(|code| {
+                code == "review_artifact_missing" || code == "review_artifact_malformed"
+            })
+        }),
+        "gate-finish should fail closed when final-review authoritative bindings are missing, got {}",
+        pretty_json(&gate)
+    );
+}
+
+#[test]
+fn rebuild_evidence_rejects_tampered_authoritative_final_review_projection_content() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-projection-tampered-authoritative-content");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_base_branch(repo);
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    let _ = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight for tampered authoritative final-review projection fixture",
+    );
+
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+    let authoritative_review_fingerprint = sha256_hex(
+        fs::read(&review_path)
+            .expect(
+                "source final-review artifact should be readable for authoritative tamper fixture",
+            )
+            .as_slice(),
+    );
+    let authoritative_review_path = harness_authoritative_artifacts_dir(state, &repo_slug, &branch)
+        .join(format!(
+            "final-review-{authoritative_review_fingerprint}.md"
+        ));
+    let harness_state_path = harness_state_path(state, &repo_slug, &branch);
+    let harness_before: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
+    )
+    .expect("harness state should remain valid json");
+    let state_digest_before = sha256_hex(
+        &serde_json::to_vec(&harness_before).expect("harness state json should serialize"),
+    );
+    let project_artifacts = project_artifact_dir(repo, state);
+    let deleted_projection_path =
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review")
+            .expect("tamper fixture should expose a readable project code-review projection");
+    fs::remove_file(&deleted_projection_path)
+        .expect("tamper fixture should allow deleting the derived project code-review projection");
+    write_file(
+        &authoritative_review_path,
+        "# Code Review Result\n**tampered:** true\n",
+    );
+
+    let failure = run_plan_execution_failure_json_real_cli(
+        repo,
+        state,
+        &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
+        "rebuild-evidence should fail closed when authoritative final-review projection content is tampered",
+    );
+    assert_eq!(failure["error_class"], "StaleProvenance", "json: {failure}");
+    assert!(
+        failure["message"].as_str().is_some_and(|message| message.contains(
+            "Projection regeneration requires readable authoritative final review artifact"
+        ) || message.contains("Projection regeneration refused authoritative final review artifact")
+            || message.contains(
+                "Projection regeneration could not restore reviewer projection content that matches authoritative final-review bindings."
+            )),
+        "failure should explain authoritative projection provenance mismatch, got {failure}",
+    );
+    assert_eq!(
+        sha256_hex(
+            &serde_json::to_vec(
+                &serde_json::from_str::<Value>(
+                    &fs::read_to_string(&harness_state_path)
+                        .expect("harness state should remain readable after failed rebuild"),
+                )
+                .expect("harness state should remain valid json after failed rebuild"),
+            )
+            .expect("harness state json should serialize after failed rebuild"),
+        ),
+        state_digest_before,
+        "tampered authoritative final-review projection regeneration must not mutate authoritative truth"
+    );
+    assert!(
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review").is_none(),
+        "tampered authoritative projection must not regenerate a derived code-review projection"
+    );
+}
+
+#[test]
+fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_from_machine_state() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-projection-missing-authoritative-content");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_base_branch(repo);
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    let _ = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight for missing authoritative final-review projection fixture",
+    );
+
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+    let authoritative_review_fingerprint = sha256_hex(
+        fs::read(&review_path)
+            .expect(
+                "source final-review artifact should be readable for authoritative missing fixture",
+            )
+            .as_slice(),
+    );
+    let authoritative_review_path = harness_authoritative_artifacts_dir(state, &repo_slug, &branch)
+        .join(format!(
+            "final-review-{authoritative_review_fingerprint}.md"
+        ));
+    let harness_state_path = harness_state_path(state, &repo_slug, &branch);
+    let harness_before: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
+    )
+    .expect("harness state should remain valid json");
+    let state_digest_before = sha256_hex(
+        &serde_json::to_vec(&harness_before).expect("harness state json should serialize"),
+    );
+    let final_review_record_id = harness_before["current_final_review_record_id"]
+        .as_str()
+        .expect("missing authoritative fixture should expose current final-review record id")
+        .to_owned();
+    let project_artifacts = project_artifact_dir(repo, state);
+    let deleted_projection_path =
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review").expect(
+            "missing authoritative fixture should expose a readable project code-review projection",
+        );
+    fs::remove_file(&deleted_projection_path).expect(
+        "missing authoritative fixture should allow deleting the derived code-review projection",
+    );
+    fs::remove_file(&authoritative_review_path)
+        .expect("missing authoritative fixture should allow deleting the authoritative final-review projection");
+
+    let gate_before_rebuild = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate-finish should continue to trust authoritative final-review state when derived final-review markdown is missing",
+    );
+    assert_eq!(
+        gate_before_rebuild["allowed"],
+        Value::Bool(true),
+        "json: {gate_before_rebuild}"
+    );
+
+    let rebuild = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
+        "rebuild-evidence should regenerate when authoritative final-review markdown is missing",
+    );
+    assert_eq!(
+        rebuild["counts"]["rebuilt"],
+        Value::from(0),
+        "json: {rebuild}"
+    );
+    assert!(
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review").is_some(),
+        "missing authoritative fixture should restore a readable code-review projection artifact"
+    );
+
+    let gate_after_rebuild = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate-finish should remain ready after rebuild regenerates derived final-review projections",
+    );
+    assert_eq!(
+        gate_after_rebuild["allowed"],
+        Value::Bool(true),
+        "json: {gate_after_rebuild}"
+    );
+
+    let harness_after: Value =
+        serde_json::from_str(&fs::read_to_string(&harness_state_path).expect(
+            "harness state should remain readable after missing-authoritative regeneration",
+        ))
+        .expect("harness state should remain valid json after missing-authoritative regeneration");
+    let state_digest_after = sha256_hex(
+        &serde_json::to_vec(&harness_after).expect("harness state json should serialize"),
+    );
+    assert_eq!(
+        harness_after["current_final_review_record_id"],
+        Value::from(final_review_record_id)
+    );
+    assert_eq!(
+        state_digest_after, state_digest_before,
+        "missing authoritative final-review projection regeneration must not mutate authoritative truth"
+    );
+}
+
+#[test]
+fn rebuild_evidence_fails_closed_when_projection_refresh_hits_live_write_authority_conflict() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-projection-write-authority-conflict");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_base_branch(repo);
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let review_path = write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    let _ = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight for rebuild-evidence write-authority conflict fixture",
+    );
+
+    let branch = branch_name(repo);
+    let repo_slug = repo_slug(repo);
+    let authoritative_review_fingerprint = sha256_hex(
+        fs::read(&review_path)
+            .expect("source final-review artifact should be readable for write-authority fixture")
+            .as_slice(),
+    );
+    let authoritative_review_path = harness_authoritative_artifacts_dir(state, &repo_slug, &branch)
+        .join(format!(
+            "final-review-{authoritative_review_fingerprint}.md"
+        ));
+    fs::remove_file(&authoritative_review_path).expect(
+        "write-authority fixture should allow deleting authoritative final-review projection",
+    );
+    let project_artifacts = project_artifact_dir(repo, state);
+    let deleted_projection_path =
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review").expect(
+            "write-authority fixture should expose a readable project code-review projection",
+        );
+    fs::remove_file(&deleted_projection_path).expect(
+        "write-authority fixture should allow deleting the derived project code-review projection",
+    );
+
+    let lock_path = harness_state_path(state, &repo_slug, &branch)
+        .parent()
+        .expect("harness state path should have a parent")
+        .join("write-authority.lock");
+    let mut holder_cmd = Command::new("sh");
+    holder_cmd.args(["-c", "sleep 30"]);
+    let mut holder = holder_cmd
+        .spawn()
+        .expect("live write-authority fixture process should spawn");
+    write_file(&lock_path, &format!("pid={}\n", holder.id()));
+
+    let failure = run_plan_execution_failure_json_real_cli(
+        repo,
+        state,
+        &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
+        "rebuild-evidence should fail closed when projection refresh hits a live write-authority conflict",
+    );
+    let _ = holder.kill();
+    let _ = holder.wait();
+
+    assert_eq!(
+        failure["error_class"], "ConcurrentWriterConflict",
+        "json: {failure}"
+    );
+    assert!(
+        failure["message"].as_str().is_some_and(|message| message
+            .contains("Another runtime writer currently holds authoritative mutation authority.")),
+        "failure should report the live write-authority conflict, got {failure}",
+    );
+    assert!(
+        latest_branch_artifact_path(&project_artifacts, &branch, "code-review").is_none(),
+        "live write-authority conflicts must not regenerate derived projections"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_current_final_review_without_authoritative_fingerprint_binding() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-missing-authoritative-fingerprint");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let base_branch = expected_base_branch(repo);
+    write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    set_current_history_record_field(
+        repo,
+        state,
+        "current_final_review_record_id",
+        "final_review_record_history",
+        "final_review_fingerprint",
+        Value::Null,
+    );
+
+    let gate = run_plan_execution_json(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate-finish should fail closed when current final-review fingerprint binding is missing",
+    );
+
+    assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
+    assert_eq!(gate["failure_class"], "MalformedExecutionState");
+    assert!(
+        gate["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code == "review_artifact_malformed")),
+        "gate-finish should report review_artifact_malformed for missing authoritative fingerprint binding, got {}",
+        pretty_json(&gate)
+    );
+}
+
+#[test]
+fn gate_finish_rejects_current_final_review_without_strategy_checkpoint_binding() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-missing-strategy-checkpoint-binding");
     let repo = repo_dir.path();
     let state = state_dir.path();
 
@@ -1735,13 +2496,7 @@ fn gate_finish_requires_final_review_artifact() {
         repo,
         state,
         &json!({
-            "current_final_review_branch_closure_id": Value::Null,
-            "current_final_review_dispatch_id": Value::Null,
-            "current_final_review_reviewer_source": Value::Null,
-            "current_final_review_reviewer_id": Value::Null,
-            "current_final_review_result": Value::Null,
-            "current_final_review_summary_hash": Value::Null,
-            "current_final_review_record_id": Value::Null
+            "last_strategy_checkpoint_fingerprint": Value::Null,
         }),
     );
 
@@ -1749,18 +2504,16 @@ fn gate_finish_requires_final_review_artifact() {
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should run",
+        "gate-finish should fail closed when strategy checkpoint binding is missing",
     );
 
-    assert_eq!(
-        gate["allowed"], false,
-        "missing review artifact should block finish"
-    );
+    assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
+    assert_eq!(gate["failure_class"], "MalformedExecutionState");
     assert!(
         gate["reason_codes"]
             .as_array()
-            .is_some_and(|codes| codes.iter().any(|code| code == "review_artifact_missing")),
-        "gate-finish should require a final review artifact, got {}",
+            .is_some_and(|codes| codes.iter().any(|code| code == "review_artifact_malformed")),
+        "gate-finish should report review_artifact_malformed when authoritative strategy checkpoint binding is missing, got {}",
         pretty_json(&gate)
     );
 }
@@ -1797,7 +2550,7 @@ fn gate_finish_accepts_fresh_non_browser_review_chain() {
 }
 
 #[test]
-fn gate_finish_rejects_review_without_dedicated_provenance() {
+fn gate_finish_accepts_review_when_only_receipt_provenance_text_is_mutated() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-missing-provenance");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1825,26 +2578,14 @@ fn gate_finish_rejects_review_without_dedicated_provenance() {
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should reject non-dedicated final review provenance",
+        "gate-finish should not rely on receipt provenance text for authoritative readiness",
     );
 
-    assert_eq!(
-        gate["allowed"],
-        false,
-        "gate-finish should reject final review artifacts that deny runtime-recorded deviations, got {}",
-        pretty_json(&gate)
-    );
-    assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .any(|code| code == "review_receipt_not_dedicated")),
-        "gate-finish should reject final review artifacts without dedicated-independent provenance, got {}",
-        pretty_json(&gate)
-    );
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_rejects_review_with_non_independent_reviewer_source() {
+fn gate_finish_accepts_review_when_receipt_reviewer_source_text_is_mutated() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-non-independent-reviewer-source");
     let repo = repo_dir.path();
@@ -1873,21 +2614,14 @@ fn gate_finish_rejects_review_with_non_independent_reviewer_source() {
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should reject non-independent reviewer source",
+        "gate-finish should not rely on receipt reviewer source text for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false);
-    assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .any(|code| code == "review_receipt_reviewer_source_not_independent")),
-        "gate-finish should reject final review artifacts with non-independent reviewer source, got {}",
-        pretty_json(&gate)
-    );
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_rejects_review_without_reviewer_artifact_path() {
+fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_missing() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-missing-reviewer-artifact-path");
     let repo = repo_dir.path();
@@ -1920,21 +2654,14 @@ fn gate_finish_rejects_review_without_reviewer_artifact_path() {
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should reject missing reviewer artifact path",
+        "gate-finish should not rely on receipt reviewer artifact-path text for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false);
-    assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .any(|code| code == "review_receipt_reviewer_artifact_path_missing")),
-        "gate-finish should reject final review artifacts missing reviewer artifact path, got {}",
-        pretty_json(&gate)
-    );
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_rejects_review_with_unreadable_reviewer_artifact_path() {
+fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_unreadable() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-unreadable-reviewer-artifact-path");
     let repo = repo_dir.path();
@@ -1956,22 +2683,14 @@ fn gate_finish_rejects_review_with_unreadable_reviewer_artifact_path() {
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should reject unreadable reviewer artifact path",
+        "gate-finish should not rely on receipt reviewer artifact file readability for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false);
-    assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .any(|code| code == "review_receipt_reviewer_artifact_unreadable")),
-        "gate-finish should reject final review artifacts with unreadable reviewer artifact path, got {}",
-        pretty_json(&gate)
-    );
-    assert_eq!(gate["failure_class"], "ReviewArtifactNotFresh");
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_rejects_review_with_invalid_deviation_verdict() {
+fn gate_finish_accepts_review_when_receipt_deviation_verdict_text_is_mutated() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-invalid-deviation-verdict");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2004,23 +2723,15 @@ fn gate_finish_rejects_review_with_invalid_deviation_verdict() {
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should reject invalid deviation verdicts",
+        "gate-finish should not rely on receipt deviation-verdict text for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false);
-    assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| {
-            codes
-                .iter()
-                .any(|code| code == "review_receipt_deviation_record_mismatch")
-        }),
-        "gate-finish should reject final review artifacts that claim deviations when the runtime recorded none, got {}",
-        pretty_json(&gate)
-    );
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_requires_deviation_review_when_runtime_records_topology_downgrade() {
+fn gate_finish_accepts_review_when_runtime_records_topology_downgrade_but_authoritative_review_is_current()
+ {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-runtime-recorded-deviation");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2050,19 +2761,10 @@ fn gate_finish_requires_deviation_review_when_runtime_records_topology_downgrade
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should require explicit deviation review when runtime recorded a topology downgrade",
+        "gate-finish should trust authoritative final-review milestone bindings over mutable receipt text",
     );
 
-    assert_eq!(gate["allowed"], false);
-    assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| {
-            codes
-                .iter()
-                .any(|code| code == "review_receipt_deviation_record_mismatch")
-        }),
-        "gate-finish should reject final review artifacts that deny runtime-recorded deviations, got {}",
-        pretty_json(&gate)
-    );
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
@@ -2107,4 +2809,197 @@ fn gate_finish_ignores_reason_code_deviation_without_matching_downgrade_record()
         "gate-finish should ignore reason-code-only deviation hints, got {}",
         pretty_json(&gate)
     );
+}
+
+#[test]
+fn fs11_status_routes_release_readiness_before_final_review_when_release_state_stales() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-final-review-fs11-release-precedence");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let base_branch = expected_base_branch(repo);
+    write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    merge_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "release_docs_state": "missing",
+            "current_release_readiness_result": Value::Null,
+            "current_release_readiness_summary_hash": Value::Null,
+            "current_release_readiness_record_id": Value::Null
+        }),
+    );
+
+    let status = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status should route stale release truth before final review in FS-11 fixture (compiled CLI contract)",
+    );
+    assert_eq!(status["phase"], Value::from("document_release_pending"));
+    assert_eq!(status["next_action"], Value::from("advance late stage"));
+    let phase_detail = status["phase_detail"]
+        .as_str()
+        .expect("FS-11 compiled-CLI precedence fixture should expose phase_detail");
+    assert!(
+        matches!(
+            phase_detail,
+            "branch_closure_recording_required_for_release_readiness"
+                | "release_readiness_recording_ready"
+        ),
+        "FS-11 compiled-CLI precedence fixture must stay on the document-release lane, got {phase_detail}: {status}"
+    );
+    let expected_command = if phase_detail == "release_readiness_recording_ready" {
+        format!(
+            "featureforge plan execution advance-late-stage --plan {PLAN_REL} --result ready|blocked --summary-file <path>"
+        )
+    } else {
+        format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}")
+    };
+    assert_eq!(status["recommended_command"], Value::from(expected_command));
+}
+
+#[test]
+fn fs11_gate_finish_rejects_final_review_release_binding_mismatch() {
+    let (repo_dir, state_dir) =
+        init_repo("plan-execution-final-review-fs11-release-binding-mismatch");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let base_branch = expected_base_branch(repo);
+    write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+
+    let state_path = harness_state_path(state, &repo_slug(repo), &branch_name(repo));
+    let mut payload: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path).expect("harness state should be readable"),
+    )
+    .expect("harness state should be valid json");
+    let final_review_record_id = payload["current_final_review_record_id"]
+        .as_str()
+        .expect("fixture should expose current final-review record id")
+        .to_owned();
+    payload
+        .get_mut("final_review_record_history")
+        .and_then(Value::as_object_mut)
+        .and_then(|history| history.get_mut(&final_review_record_id))
+        .and_then(Value::as_object_mut)
+        .expect("fixture final-review record should exist")
+        .insert(
+            String::from("release_readiness_record_id"),
+            Value::from("release-readiness-record-foreign"),
+        );
+    write_harness_state_payload(repo, state, &payload);
+
+    let gate_finish = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "FS-11 gate-finish should fail closed when final-review release binding mismatches the current release identity",
+    );
+    assert_eq!(gate_finish["allowed"], false, "json: {gate_finish}");
+    assert!(
+        gate_finish["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "review_artifact_release_binding_mismatch")),
+        "FS-11 gate-finish should surface explicit final-review->release identity mismatch, got {gate_finish}"
+    );
+}
+
+#[test]
+fn fs12_missing_final_review_projection_regenerates_without_truth_mutation() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-final-review-fs12-projection-regen");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(repo);
+    write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
+    write_test_plan_artifact(repo, state, "no");
+    let base_branch = expected_base_branch(repo);
+    write_code_review_artifact(repo, state, &base_branch);
+    write_release_readiness_artifact(repo, state, &base_branch);
+    write_finish_ready_harness_state_with_reason_codes(repo, state, &[]);
+    let _ = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "preflight for FS-12 projection-regeneration fixture",
+    );
+    let harness_state_path = harness_state_path(state, &repo_slug(repo), &branch_name(repo));
+    let harness_before: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path).expect("harness state should be readable"),
+    )
+    .expect("harness state should remain valid json");
+    let state_digest_before = sha256_hex(
+        &serde_json::to_vec(&harness_before).expect("harness state json should serialize"),
+    );
+    let final_review_record_id = harness_before["current_final_review_record_id"]
+        .as_str()
+        .expect("FS-12 fixture should expose current final-review record id")
+        .to_owned();
+    let project_artifacts = project_artifact_dir(repo, state);
+    let deleted_projection_path =
+        latest_branch_artifact_path(&project_artifacts, &branch_name(repo), "code-review")
+            .expect("FS-12 fixture should expose a readable project code-review projection");
+    fs::remove_file(&deleted_projection_path)
+        .expect("FS-12 fixture should allow deleting the derived project projection artifact");
+
+    let rebuild = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
+        "rebuild-evidence should regenerate missing late-stage projections in FS-12 fixture",
+    );
+    assert_eq!(
+        rebuild["counts"]["rebuilt"],
+        Value::from(0),
+        "json: {rebuild}"
+    );
+    assert!(
+        latest_branch_artifact_path(&project_artifacts, &branch_name(repo), "code-review")
+            .is_some(),
+        "FS-12 projection regeneration should restore a readable code-review projection artifact"
+    );
+
+    let harness_after: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("harness state should remain readable after projection regeneration"),
+    )
+    .expect("harness state should remain valid json after projection regeneration");
+    let state_digest_after = sha256_hex(
+        &serde_json::to_vec(&harness_after).expect("harness state json should serialize"),
+    );
+    assert_eq!(
+        harness_after["current_final_review_record_id"],
+        Value::from(final_review_record_id)
+    );
+    assert_eq!(
+        state_digest_after, state_digest_before,
+        "FS-12 projection regeneration must not mutate authoritative truth"
+    );
+
+    let gate = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate-finish should stay passable after FS-12 projection regeneration",
+    );
+    assert_eq!(gate["allowed"], Value::Bool(true), "json: {gate}");
 }

@@ -22,11 +22,7 @@ description: Use when a written FeatureForge design or architecture spec needs C
 - If any header line is missing or malformed, normalize the spec to this contract before continuing and treat it as `Draft`.
 - `brainstorming` is only valid while the spec remains `Draft`. A `CEO Approved` spec must end with `**Last Reviewed By:** plan-ceo-review`.
 - When review decisions change the written spec, update the spec document before continuing.
-- After each spec edit (including final approval edits), runs `sync --artifact spec` for the spec path:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow sync --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
-```
+- After each spec edit (including final approval edits), keep using the same repo-relative spec path in later workflow/operator and writing-plans handoffs; do not route through compatibility-only `workflow sync`.
 
 **Protected-Branch Repo-Write Gate:**
 
@@ -161,34 +157,8 @@ Before doing anything else, run a system audit. This is not the spec review. It 
 Run repo-appropriate commands such as:
 
 ```bash
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-BASE_BRANCH=""
-if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  case "$CURRENT_BRANCH" in
-    main|master|develop|dev|trunk)
-      BASE_BRANCH="$CURRENT_BRANCH"
-      ;;
-  esac
-  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git config --get "branch.$CURRENT_BRANCH.gh-merge-base" 2>/dev/null || true)
-fi
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)
 if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master develop dev trunk; do
-    if git show-ref --verify --quiet "refs/heads/$candidate"; then
-      BASE_BRANCH="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  NON_CURRENT_BRANCHES=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vxF "$CURRENT_BRANCH" || true)
-  NON_CURRENT_BRANCH_COUNT=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d' | wc -l | tr -d ' ')
-  if [ "$NON_CURRENT_BRANCH_COUNT" = "1" ]; then
-    BASE_BRANCH=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d')
-  fi
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  echo "Could not determine the base branch for the review audit. Stop and resolve it before continuing."
+  echo "Missing BASE_BRANCH for the review audit. Set BASE_BRANCH explicitly before continuing instead of re-deriving it locally."
   exit 1
 fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
@@ -199,7 +169,7 @@ rg -l "TODO|FIXME|HACK|XXX"
 find . -type f -not -path "*/.git/*" | head -20
 ```
 
-Do not use PR metadata or repo default-branch APIs as a fallback; keep the system audit aligned with `document-release`, `requesting-code-review`, and `gate-finish`.
+Do not use PR metadata or repo default-branch APIs as a fallback; keep the system audit locally derivable from repository state.
 
 Then read `AGENTS.md`, `AGENTS.override.md`, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, `TODOS.md`, and any existing architecture docs. If this repo stores prompt, eval, or workflow conventions in project docs, read those too.
 

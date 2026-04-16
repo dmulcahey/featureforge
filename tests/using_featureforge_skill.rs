@@ -214,13 +214,17 @@ simulate_one() {{
 fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
     let content = read_skill_doc();
     for pattern in [
-        "If helpers are unavailable, fallback stays minimal and conservative:",
-        "Manual fallback must not infer readiness from the legacy thin header subset.",
+        "If helper calls fail:",
+        "Do not re-derive `phase`, `phase_detail`, readiness, or late-stage precedence from markdown headers.",
+        "Do not invent or continue a parallel manual routing graph.",
+        "If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.",
+        "Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.",
+        "Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
         "If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.",
         "Explicit memory-oriented requests such as setting up `docs/project_notes/` or recording durable bugs, decisions, key facts, or issue breadcrumbs should route to `featureforge:project-memory`.",
         "Do not add `featureforge:project-memory` to the default mandatory workflow stack.",
         "When product-work artifact state already points at another active workflow stage, follow that workflow owner first and treat project memory as optional follow-up support unless the user is explicitly asking to work on project memory itself, in which case the explicit project-memory route above takes precedence over helper-derived workflow routes and execution handoff paths.",
-        "In manual fallback, choose this route only for explicit memory-oriented requests; vague mentions of notes or docs are not enough.",
+        "If helper routing still cannot be recovered, fail closed to the earlier safe stage (`featureforge:brainstorming`) or remain in the current execution flow; do not route directly into implementation or late-stage recording from fallback logic.",
         "_FEATUREFORGE_STATE_DIR=\"${FEATUREFORGE_STATE_DIR:-$HOME/.featureforge}\"",
     ] {
         assert!(
@@ -259,22 +263,27 @@ fn using_featureforge_skill_uses_shared_preamble_without_session_entry_gate() {
         !content.contains("SP_TEST_WORKFLOW_NEXT_SKILL"),
         "using-featureforge skill should not expose the test route env var"
     );
+    assert!(
+        !content.contains(
+            "If the JSON result is not `implementation_ready` and contains a non-empty `next_skill`, use that route as compatibility fallback."
+        ),
+        "using-featureforge skill should not keep next_skill compatibility routing text in the normal helper flow"
+    );
+    assert!(
+        !content.contains(
+            "featureforge plan execution recommend --plan <approved-plan-path> --isolated-agents <available|unavailable> --session-intent <stay|separate|unknown> --workspace-prepared <yes|no|unknown>"
+        ),
+        "using-featureforge skill should not route execution ownership through the deprecated recommend helper"
+    );
     let explicit_memory_route_index = content
         .find("If the user is explicitly asking to set up or repair project memory under `docs/project_notes/`, or to log a bug fix in project memory, record a decision in project memory, update key facts in project memory, or otherwise record durable bugs, decisions, key facts, or issue breadcrumbs in repo-visible project memory, short-circuit helper-derived workflow routes and execution handoff paths and route to `featureforge:project-memory`.")
         .expect("using-featureforge skill should document explicit-memory routing precedence");
-    let generic_next_skill_index = content
-        .find("If the JSON result is not `implementation_ready` and contains a non-empty `next_skill`, use that route as compatibility fallback.")
-        .expect("using-featureforge skill should still document generic next_skill routing");
     let implementation_ready_index = content
         .find("If the JSON result reports `status` `implementation_ready`, immediately call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` using that exact approved plan path.")
         .expect("using-featureforge skill should still document implementation-ready handoff routing");
     assert!(
         explicit_memory_route_index < implementation_ready_index,
         "explicit project-memory routing should be documented before the implementation-ready handoff rule"
-    );
-    assert!(
-        implementation_ready_index < generic_next_skill_index,
-        "implementation-ready operator routing should be documented before the compatibility next_skill fallback"
     );
 
     let preamble = extract_bash_block(&content, "## Preamble (run first)");
@@ -489,5 +498,20 @@ fn using_featureforge_project_memory_carveout_stays_explicit_and_workflow_bound(
         handoff_vague_entry["selected_route"],
         Value::String(String::from("featureforge:executing-plans")),
         "non-explicit requests should preserve the implementation-ready handoff route",
+    );
+}
+
+#[test]
+fn runtime_remediation_inventory_is_available_to_skill_route_contracts() {
+    let inventory =
+        fs::read_to_string(repo_root().join("tests/fixtures/runtime-remediation/README.md"))
+            .expect("runtime-remediation inventory should be readable");
+    assert!(
+        inventory.contains("FS-03"),
+        "runtime-remediation inventory should include FS-03 redispatch contradiction coverage",
+    );
+    assert!(
+        inventory.contains("FS-09"),
+        "runtime-remediation inventory should include FS-09 post-repair blocker coverage",
     );
 }

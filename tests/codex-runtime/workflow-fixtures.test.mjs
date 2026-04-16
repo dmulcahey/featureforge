@@ -333,3 +333,19 @@ test('repo-local config and historical docs use the featureforge archive layout'
     `docs/${RETIRED_PRODUCT} should be removed after the archive move`,
   );
 });
+
+test('runtime-remediation fixture index exists and maps scenario coverage', () => {
+  const inventory = readUtf8(path.join(REPO_ROOT, 'tests/fixtures/runtime-remediation/README.md'));
+  assert.match(inventory, /^# Runtime Remediation Regression Inventory/m);
+  assert.match(inventory, /Coverage Map/);
+  assert.match(
+    inventory,
+    /tests\/workflow_runtime\.rs/,
+    'inventory should map runtime remediation coverage to workflow runtime tests',
+  );
+  assert.match(
+    inventory,
+    /tests\/workflow_shell_smoke\.rs/,
+    'inventory should map runtime remediation coverage to workflow shell smoke tests',
+  );
+});

@@ -87,6 +87,15 @@ pub fn run() -> std::process::ExitCode {
                         cli::plan_execution::PlanExecutionCommand::Preflight(args) => {
                             emit_json(runtime.preflight(&args))
                         }
+                        cli::plan_execution::PlanExecutionCommand::Internal(internal) => {
+                            match internal.command {
+                                cli::plan_execution::InternalPlanExecutionCommand::ReconcileReviewState(args) => {
+                                    emit_json(execution::review_state::reconcile_review_state(
+                                        &runtime, &args,
+                                    ))
+                                }
+                            }
+                        }
                         cli::plan_execution::PlanExecutionCommand::RebuildEvidence(args) => {
                             let result = execution::mutate::rebuild_evidence(&runtime, &args);
                             if args.json {
@@ -145,11 +154,6 @@ pub fn run() -> std::process::ExitCode {
                         }
                         cli::plan_execution::PlanExecutionCommand::ExplainReviewState(args) => {
                             emit_json(execution::review_state::explain_review_state(
-                                &runtime, &args,
-                            ))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::ReconcileReviewState(args) => {
-                            emit_json(execution::review_state::reconcile_review_state(
                                 &runtime, &args,
                             ))
                         }
@@ -319,12 +323,12 @@ pub fn run() -> std::process::ExitCode {
                 cli::workflow::WorkflowCommand::Doctor(args) => {
                     if args.json {
                         emit_json(
-                            workflow::operator::doctor(&current_dir)
+                            workflow::operator::doctor_with_args(&current_dir, &args)
                                 .map_err(map_read_only_workflow_failure),
                         )
                     } else {
                         emit_text(
-                            workflow::operator::render_doctor(&current_dir)
+                            workflow::operator::render_doctor_with_args(&current_dir, &args)
                                 .map_err(map_read_only_workflow_failure),
                         )
                     }

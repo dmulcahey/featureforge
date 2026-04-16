@@ -8,13 +8,14 @@ use serde::Serialize;
 use crate::cli::plan_execution::StatusArgs;
 use crate::diagnostics::JsonFailure;
 use crate::execution::current_truth::{
-    branch_closure_rerecording_supported, missing_derived_task_scope_overlays,
+    BranchRerecordingUnsupportedReason, branch_closure_rerecording_assessment,
+    missing_derived_task_scope_overlays, task_scope_stale_review_state_reason_present,
 };
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
 use crate::execution::leases::load_status_authoritative_overlay_checked;
 use crate::execution::query::{
-    ExecutionRoutingState, ReviewStateBranchClosure, ReviewStateSnapshot, ReviewStateTaskClosure,
-    query_review_state, query_workflow_routing_state_for_runtime, required_follow_up_from_routing,
+    ExecutionRoutingState, ReviewStateBranchClosure, ReviewStateTaskClosure, query_review_state,
+    query_workflow_routing_state_for_runtime, required_follow_up_from_routing,
 };
 use crate::execution::recording::{
     clear_current_branch_closure_for_structural_repair,
@@ -23,14 +24,13 @@ use crate::execution::recording::{
     clear_current_task_closure_results_for_structural_repair_scope_keys,
     clear_task_review_dispatch_lineage_for_execution_reentry as clear_task_dispatch_lineage,
     clear_task_review_dispatch_lineage_for_structural_repair as clear_task_dispatch_lineage_for_structural_repair_recording,
-    persist_review_state_repair_follow_up,
-    restore_current_branch_closure_overlay as persist_current_branch_closure_overlay,
-    restore_current_late_stage_overlays, restore_current_task_closure_overlays,
+    persist_review_state_repair_follow_up, restore_review_state_projection_overlays,
 };
 use crate::execution::state::{
     ExecutionRuntime, current_branch_closure_structural_review_state_reason,
     execution_reentry_current_task_closure_targets, execution_reentry_current_task_closure_tasks,
     load_execution_context_for_exact_plan, load_execution_read_scope,
+    resolve_exact_execution_command_from_context, task_scope_review_state_repair_reason,
     task_scope_structural_review_state_reason,
 };
 use crate::execution::transitions::load_authoritative_transition_state_relaxed;
@@ -79,14 +79,20 @@ pub fn explain_review_state(
     args: &StatusArgs,
 ) -> Result<ExplainReviewStateOutput, JsonFailure> {
     let snapshot = query_review_state(runtime, args)?;
-    let (next_action, recommended_command) =
-        match query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false) {
-            Ok(routing) => (routing.next_action, routing.recommended_command),
-            Err(_) => (
-                String::from("requery workflow operator"),
-                Some(recommended_operator_command(args)),
-            ),
-        };
+    let (next_action, recommended_command) = match query_workflow_routing_state_for_runtime(
+        runtime,
+        Some(&args.plan),
+        args.external_review_result_ready,
+    ) {
+        Ok(routing) => (routing.next_action, routing.recommended_command),
+        Err(_) => (
+            String::from("requery workflow operator"),
+            Some(recommended_operator_command(
+                args,
+                args.external_review_result_ready,
+            )),
+        ),
+    };
     Ok(ExplainReviewStateOutput {
         current_task_closures: snapshot.current_task_closures,
         current_branch_closure: snapshot.current_branch_closure,
@@ -107,7 +113,9 @@ pub fn reconcile_review_state(
     let read_scope = load_execution_read_scope(runtime, &args.plan, true)?;
     let context = read_scope.context;
     let status = read_scope.status;
-    let branch_rerecording_supported = branch_closure_rerecording_supported(&context)?;
+    let branch_rerecording_assessment = branch_closure_rerecording_assessment(&context)?;
+    let branch_rerecording_supported = branch_rerecording_assessment.supported;
+    let branch_rerecording_unsupported_reason = branch_rerecording_assessment.unsupported_reason;
     if let Some(reason_code) = task_scope_structural_review_state_reason(&status) {
         return Ok(ReconcileReviewStateOutput {
             action: String::from("blocked"),
@@ -157,21 +165,51 @@ pub fn reconcile_review_state(
                     ),
                 }
             } else {
-                match reason_code {
-                    "current_branch_closure_reviewed_state_malformed" => String::from(
-                        "Reconcile review state cannot repair a malformed current branch-closure reviewed-state identity, and no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required.",
-                    ),
-                    _ => String::from(
-                        "Reconcile review state cannot repair the current branch-closure review-state blocker, and no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required.",
-                    ),
-                }
+                branch_rerecording_unavailable_trace(
+                    branch_rerecording_unsupported_reason,
+                    match reason_code {
+                        "current_branch_closure_reviewed_state_malformed" => {
+                            "Reconcile review state cannot repair a malformed current branch-closure reviewed-state identity, and no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required."
+                        }
+                        _ => {
+                            "Reconcile review state cannot repair the current branch-closure review-state blocker, and no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required."
+                        }
+                    },
+                    "Reconcile review state cannot repair the current branch-closure review-state blocker because the approved plan does not declare Late-Stage Surface metadata, so execution reentry is still required.",
+                    "Reconcile review state cannot repair the current branch-closure review-state blocker because tracked drift escapes the approved Late-Stage Surface, so execution reentry is still required.",
+                )
             },
         });
     }
     if snapshot.missing_derived_overlays.is_empty() && snapshot.stale_unreviewed_closures.is_empty()
     {
-        let routing =
-            query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false).ok();
+        let routing = query_workflow_routing_state_for_runtime(
+            runtime,
+            Some(&args.plan),
+            args.external_review_result_ready,
+        )
+        .ok();
+        if routing
+            .as_ref()
+            .is_some_and(routing_projects_review_state_execution_reentry)
+        {
+            return Ok(ReconcileReviewStateOutput {
+                action: String::from("blocked"),
+                current_task_closures: snapshot.current_task_closures,
+                current_branch_closure: snapshot.current_branch_closure,
+                superseded_closures: snapshot.superseded_closures,
+                stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
+                missing_derived_overlays: snapshot.missing_derived_overlays,
+                actions_performed: Vec::new(),
+                recommended_command: format!(
+                    "featureforge plan execution repair-review-state --plan {}",
+                    args.plan.display()
+                ),
+                trace_summary: String::from(
+                    "Reconcile review state cannot resolve this repair-state blocker; repair-review-state must rederive the exact execution reentry target.",
+                ),
+            });
+        }
         if routing
             .as_ref()
             .is_some_and(|routing| late_stage_branch_closure_recording_required(routing, args))
@@ -200,8 +238,11 @@ pub fn reconcile_review_state(
                         "Reconcile review state cannot mint a missing current branch closure; branch closure must be recorded before late-stage progression can continue.",
                     )
                 } else {
-                    String::from(
+                    branch_rerecording_unavailable_trace(
+                        branch_rerecording_unsupported_reason,
                         "Reconcile review state cannot mint a missing current branch closure because no still-current task-closure baseline remains to derive it, so execution reentry is still required.",
+                        "Reconcile review state cannot mint a missing current branch closure because the approved plan does not declare Late-Stage Surface metadata, so execution reentry is still required.",
+                        "Reconcile review state cannot mint a missing current branch closure because tracked drift escapes the approved Late-Stage Surface, so execution reentry is still required.",
                     )
                 },
             });
@@ -214,7 +255,12 @@ pub fn reconcile_review_state(
             stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed: Vec::new(),
-            recommended_command: recommended_operator_command(args),
+            recommended_command: recommended_follow_up_command(
+                runtime,
+                args,
+                Some("execution_reentry"),
+                recommended_operator_command(args, args.external_review_result_ready),
+            ),
             trace_summary: String::from(
                 "No derived review-state overlays required reconciliation.",
             ),
@@ -224,10 +270,7 @@ pub fn reconcile_review_state(
     let actions_performed = if snapshot.missing_derived_overlays.is_empty() {
         Vec::new()
     } else {
-        let mut actions_performed = restore_current_task_closure_overlays(runtime, &context)?;
-        actions_performed.extend(restore_current_branch_closure_overlay(runtime, args)?);
-        actions_performed.extend(restore_current_late_stage_overlays(runtime, &context)?);
-        actions_performed
+        restore_review_state_projection_overlays(runtime, &context)?
     };
     let restored_any_overlays = !actions_performed.is_empty();
     let refreshed = query_review_state(runtime, args)?;
@@ -240,7 +283,12 @@ pub fn reconcile_review_state(
             stale_unreviewed_closures: refreshed.stale_unreviewed_closures,
             missing_derived_overlays: refreshed.missing_derived_overlays,
             actions_performed,
-            recommended_command: recommended_operator_command(args),
+            recommended_command: recommended_follow_up_command(
+                runtime,
+                args,
+                Some("execution_reentry"),
+                recommended_operator_command(args, args.external_review_result_ready),
+            ),
             trace_summary: if restored_any_overlays {
                 String::from(
                     "Reconcile review state restored derivable overlays, but the reviewed state remains stale_unreviewed and still requires a new execution or recording flow.",
@@ -253,21 +301,23 @@ pub fn reconcile_review_state(
         });
     }
     if actions_performed.is_empty() && !refreshed.missing_derived_overlays.is_empty() {
-        let refreshed_routing =
-            query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false).ok();
+        let refreshed_routing = query_workflow_routing_state_for_runtime(
+            runtime,
+            Some(&args.plan),
+            args.external_review_result_ready,
+        )
+        .ok();
         let late_stage_repair_command = format!(
             "featureforge plan execution repair-review-state --plan {}",
             args.plan.display()
         );
-        let refreshed_branch_rerecording_supported =
-            branch_closure_rerecording_supported(&context)?;
         let recommended_command = if refreshed_routing
             .as_ref()
             .is_some_and(|routing| late_stage_branch_closure_recording_required(routing, args))
         {
             if refreshed_routing.as_ref().is_some_and(|routing| {
                 routing.phase_detail == "branch_closure_recording_required_for_release_readiness"
-            }) && refreshed_branch_rerecording_supported
+            }) && branch_rerecording_supported
             {
                 recommended_branch_closure_command(args)
             } else {
@@ -279,7 +329,7 @@ pub fn reconcile_review_state(
         {
             late_stage_repair_command.clone()
         } else {
-            recommended_operator_command(args)
+            recommended_operator_command(args, args.external_review_result_ready)
         };
         return Ok(ReconcileReviewStateOutput {
             action: String::from("blocked"),
@@ -295,14 +345,16 @@ pub fn reconcile_review_state(
             ),
         });
     }
-    let refreshed_routing =
-        query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false).ok();
+    let refreshed_routing = query_workflow_routing_state_for_runtime(
+        runtime,
+        Some(&args.plan),
+        args.external_review_result_ready,
+    )
+    .ok();
     if refreshed_routing
         .as_ref()
         .is_some_and(|routing| late_stage_branch_closure_recording_required(routing, args))
     {
-        let refreshed_branch_rerecording_supported =
-            branch_closure_rerecording_supported(&context)?;
         let recommend_branch_closure = refreshed_routing.as_ref().is_some_and(|routing| {
             routing.phase_detail == "branch_closure_recording_required_for_release_readiness"
         });
@@ -314,9 +366,7 @@ pub fn reconcile_review_state(
             stale_unreviewed_closures: refreshed.stale_unreviewed_closures,
             missing_derived_overlays: refreshed.missing_derived_overlays,
             actions_performed,
-            recommended_command: if recommend_branch_closure
-                && refreshed_branch_rerecording_supported
-            {
+            recommended_command: if recommend_branch_closure && branch_rerecording_supported {
                 recommended_branch_closure_command(args)
             } else {
                 format!(
@@ -324,7 +374,7 @@ pub fn reconcile_review_state(
                     args.plan.display()
                 )
             },
-            trace_summary: if refreshed_branch_rerecording_supported {
+            trace_summary: if branch_rerecording_supported {
                 if restored_any_overlays {
                     String::from(
                         "Reconcile review state restored derivable overlays, but branch closure must still be recorded before late-stage progression can continue.",
@@ -334,13 +384,24 @@ pub fn reconcile_review_state(
                         "Reconcile review state cannot mint a missing current branch closure; branch closure must be recorded before late-stage progression can continue.",
                     )
                 }
-            } else if restored_any_overlays {
-                String::from(
-                    "Reconcile review state restored derivable overlays, but no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required.",
-                )
             } else {
-                String::from(
-                    "Reconcile review state cannot mint a missing current branch closure because no still-current task-closure baseline remains to derive it, so execution reentry is still required.",
+                branch_rerecording_unavailable_trace(
+                    branch_rerecording_unsupported_reason,
+                    if restored_any_overlays {
+                        "Reconcile review state restored derivable overlays, but no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required."
+                    } else {
+                        "Reconcile review state cannot mint a missing current branch closure because no still-current task-closure baseline remains to derive it, so execution reentry is still required."
+                    },
+                    if restored_any_overlays {
+                        "Reconcile review state restored derivable overlays, but the approved plan does not declare Late-Stage Surface metadata, so execution reentry is still required."
+                    } else {
+                        "Reconcile review state cannot mint a missing current branch closure because the approved plan does not declare Late-Stage Surface metadata, so execution reentry is still required."
+                    },
+                    if restored_any_overlays {
+                        "Reconcile review state restored derivable overlays, but tracked drift escapes the approved Late-Stage Surface, so execution reentry is still required."
+                    } else {
+                        "Reconcile review state cannot mint a missing current branch closure because tracked drift escapes the approved Late-Stage Surface, so execution reentry is still required."
+                    },
                 )
             },
         });
@@ -357,7 +418,7 @@ pub fn reconcile_review_state(
         stale_unreviewed_closures: refreshed.stale_unreviewed_closures,
         missing_derived_overlays: refreshed.missing_derived_overlays,
         actions_performed,
-        recommended_command: recommended_operator_command(args),
+        recommended_command: recommended_operator_command(args, args.external_review_result_ready),
         trace_summary: String::from(
             "Reconciled missing derived review-state overlays from authoritative closure records.",
         ),
@@ -368,276 +429,180 @@ pub fn repair_review_state(
     runtime: &ExecutionRuntime,
     args: &StatusArgs,
 ) -> Result<RepairReviewStateOutput, JsonFailure> {
+    let status_args = args.clone();
     let mut actions_performed = Vec::new();
     let read_scope = load_execution_read_scope(runtime, &args.plan, true)?;
     let context = read_scope.context;
     let mut status = read_scope.status;
-    let mut snapshot = query_review_state(runtime, args)?;
-    if !snapshot.missing_derived_overlays.is_empty() {
-        let reconcile = reconcile_review_state(runtime, args)?;
-        actions_performed = reconcile.actions_performed;
+    let mut snapshot = query_review_state(runtime, &status_args)?;
+    let mut task_scope_structural_reason =
+        task_scope_structural_review_state_reason(&status).map(str::to_owned);
+    let mut branch_scope_structural_reason =
+        current_branch_closure_structural_review_state_reason(&status).map(str::to_owned);
+    let should_attempt_overlay_restore = !snapshot.missing_derived_overlays.is_empty()
+        || task_scope_structural_reason.is_some()
+        || branch_scope_structural_reason.is_some();
+    if should_attempt_overlay_restore
+        && load_authoritative_transition_state_relaxed(&context)?.is_some()
+    {
+        let restored = restore_review_state_projection_overlays(runtime, &context)?;
+        if !restored.is_empty() {
+            for action in restored {
+                if !actions_performed.iter().any(|existing| existing == &action) {
+                    actions_performed.push(action);
+                }
+            }
+        }
+    }
+    if !actions_performed.is_empty() {
         status = load_execution_read_scope(runtime, &args.plan, true)?.status;
-        snapshot = query_review_state(runtime, args)?;
+        snapshot = query_review_state(runtime, &status_args)?;
+        task_scope_structural_reason =
+            task_scope_structural_review_state_reason(&status).map(str::to_owned);
+        branch_scope_structural_reason =
+            current_branch_closure_structural_review_state_reason(&status).map(str::to_owned);
     }
     let unrecoverable_task_scope_task =
-        unrecoverable_task_scope_authority_loss_task(runtime, args)?;
+        unrecoverable_task_scope_authority_loss_task(runtime, &status_args)?;
     let execution_reentry_tasks = execution_reentry_current_task_closure_tasks(&context)?;
     let execution_reentry_targets = execution_reentry_current_task_closure_targets(&context)?;
-    if let Some(reason_code) = task_scope_structural_review_state_reason(&status) {
+    let mut force_execution_reentry_follow_up = false;
+    if task_scope_structural_reason.is_some() {
+        force_execution_reentry_follow_up = true;
         clear_task_scope_state_for_structural_repair(
             runtime,
-            args,
+            &status_args,
             &execution_reentry_targets,
             status.blocking_task,
             &mut actions_performed,
         )?;
-        persist_review_state_repair_follow_up(runtime, &context, None)?;
-        let refreshed = query_review_state(runtime, args)?;
-        return Ok(RepairReviewStateOutput {
-            action: String::from("blocked"),
-            current_task_closures: refreshed.current_task_closures,
-            current_branch_closure: refreshed.current_branch_closure,
-            superseded_closures: refreshed.superseded_closures,
-            stale_unreviewed_closures: refreshed.stale_unreviewed_closures,
-            missing_derived_overlays: refreshed.missing_derived_overlays,
-            actions_performed,
-            required_follow_up: Some(String::from("execution_reentry")),
-            recommended_command: recommended_operator_command(args),
-            trace_summary: match reason_code {
-                "prior_task_current_closure_invalid" => String::from(
-                    "Repair review state detected structurally invalid current task-closure provenance, so execution reentry is still required before any new closure or milestone can be recorded.",
-                ),
-                "prior_task_current_closure_reviewed_state_malformed" => String::from(
-                    "Repair review state detected a malformed current task-closure reviewed-state identity, so execution reentry is still required before any new closure or milestone can be recorded.",
-                ),
-                _ => String::from(
-                    "Repair review state detected a structural current task-closure review-state blocker, so execution reentry is still required before any new closure or milestone can be recorded.",
-                ),
-            },
-        });
     }
-    let branch_rerecording_supported = branch_closure_rerecording_supported(&context)?;
-    if let Some(reason_code) = current_branch_closure_structural_review_state_reason(&status) {
-        if !branch_rerecording_supported {
-            clear_branch_scope_state_for_execution_reentry(runtime, args, &mut actions_performed)?;
-            persist_review_state_repair_follow_up(runtime, &context, Some("execution_reentry"))?;
-            let refreshed = query_review_state(runtime, args)?;
-            return Ok(blocked_execution_reentry_output(
-                refreshed,
-                actions_performed,
-                args,
-                match reason_code {
-                    "current_branch_closure_reviewed_state_malformed" => {
-                        "Repair review state detected a malformed current branch-closure reviewed-state identity, but no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required."
-                    }
-                    _ => {
-                        "Repair review state detected a structural current branch-closure review-state blocker, but no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required."
-                    }
-                },
-            ));
-        }
-        persist_review_state_repair_follow_up(runtime, &context, Some("record_branch_closure"))?;
-        let refreshed = query_review_state(runtime, args)?;
-        return Ok(RepairReviewStateOutput {
-            action: String::from("blocked"),
-            current_task_closures: refreshed.current_task_closures,
-            current_branch_closure: refreshed.current_branch_closure,
-            superseded_closures: refreshed.superseded_closures,
-            stale_unreviewed_closures: refreshed.stale_unreviewed_closures,
-            missing_derived_overlays: refreshed.missing_derived_overlays,
-            actions_performed,
-            required_follow_up: Some(String::from("record_branch_closure")),
-            recommended_command: recommended_branch_closure_command(args),
-            trace_summary: match reason_code {
-                "current_branch_closure_reviewed_state_malformed" => String::from(
-                    "Repair review state detected a malformed current branch-closure reviewed-state identity, so branch closure must be re-recorded before late-stage progression can continue.",
-                ),
-                _ => String::from(
-                    "Repair review state detected a structural current branch-closure review-state blocker, so branch closure must be re-recorded before late-stage progression can continue.",
-                ),
-            },
-        });
+    let branch_rerecording_assessment = branch_closure_rerecording_assessment(&context)?;
+    let branch_rerecording_supported = branch_rerecording_assessment.supported;
+    let branch_rerecording_unsupported_reason = branch_rerecording_assessment.unsupported_reason;
+    if branch_scope_structural_reason.is_some() && !branch_rerecording_supported {
+        force_execution_reentry_follow_up = true;
+        clear_branch_scope_state_for_execution_reentry(
+            runtime,
+            &status_args,
+            &mut actions_performed,
+        )?;
     }
     if !snapshot.missing_derived_overlays.is_empty() {
         if missing_derived_task_scope_overlays(&snapshot.missing_derived_overlays) {
+            force_execution_reentry_follow_up = true;
             clear_task_review_dispatch_lineage_for_execution_reentry(
                 runtime,
-                args,
+                &status_args,
                 unrecoverable_task_scope_task,
                 &mut actions_performed,
             )?;
-            persist_review_state_repair_follow_up(runtime, &context, None)?;
-            return Ok(RepairReviewStateOutput {
-                action: String::from("blocked"),
-                current_task_closures: snapshot.current_task_closures,
-                current_branch_closure: snapshot.current_branch_closure,
-                superseded_closures: snapshot.superseded_closures,
-                stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
-                missing_derived_overlays: snapshot.missing_derived_overlays,
-                actions_performed,
-                required_follow_up: Some(String::from("execution_reentry")),
-                recommended_command: recommended_operator_command(args),
-                trace_summary: String::from(
-                    "Repair review state could not derive the missing task-scope overlays from authoritative closure records, so execution reentry is still required before any new closure or milestone can be recorded.",
-                ),
-            });
-        }
-        if !snapshot.stale_unreviewed_closures.is_empty() {
-            let (required_follow_up, recommended_command, trace_summary) = if snapshot
-                .branch_drift_confined_to_late_stage_surface
-                && branch_rerecording_supported
-            {
-                (
-                    Some(String::from("record_branch_closure")),
-                    recommended_branch_closure_command(args),
-                    String::from(
-                        "Repair review state could not restore every derived overlay, but the remaining stale_unreviewed drift is confined to the trusted Late-Stage Surface, so branch closure re-recording is still the next safe step.",
-                    ),
-                )
-            } else {
-                (
-                    Some(String::from("execution_reentry")),
-                    recommended_operator_command(args),
-                    String::from(
-                        "Repair review state could not restore every derived overlay, and the reviewed state remains stale_unreviewed, so execution reentry is still required before any new closure or milestone can be recorded.",
-                    ),
-                )
-            };
-            persist_review_state_repair_follow_up(
-                runtime,
-                &context,
-                required_follow_up.as_deref(),
-            )?;
-            return Ok(RepairReviewStateOutput {
-                action: String::from("blocked"),
-                current_task_closures: snapshot.current_task_closures,
-                current_branch_closure: snapshot.current_branch_closure,
-                superseded_closures: snapshot.superseded_closures,
-                stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
-                missing_derived_overlays: snapshot.missing_derived_overlays,
-                actions_performed,
-                required_follow_up,
-                recommended_command,
-                trace_summary,
-            });
         }
         if !branch_rerecording_supported {
-            clear_branch_scope_state_for_execution_reentry(runtime, args, &mut actions_performed)?;
-            persist_review_state_repair_follow_up(runtime, &context, Some("execution_reentry"))?;
-            let refreshed = query_review_state(runtime, args)?;
-            return Ok(blocked_execution_reentry_output(
-                refreshed,
-                actions_performed,
-                args,
-                "Repair review state could not derive the missing overlays from authoritative closure records, and no still-current task-closure baseline remains to rebuild the current branch closure, so execution reentry is still required.",
-            ));
+            force_execution_reentry_follow_up = true;
+            clear_branch_scope_state_for_execution_reentry(
+                runtime,
+                &status_args,
+                &mut actions_performed,
+            )?;
         }
-        persist_review_state_repair_follow_up(runtime, &context, Some("record_branch_closure"))?;
-        return Ok(RepairReviewStateOutput {
-            action: String::from("blocked"),
-            current_task_closures: snapshot.current_task_closures,
-            current_branch_closure: snapshot.current_branch_closure,
-            superseded_closures: snapshot.superseded_closures,
-            stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
-            missing_derived_overlays: snapshot.missing_derived_overlays,
-            actions_performed,
-            required_follow_up: Some(String::from("record_branch_closure")),
-            recommended_command: recommended_branch_closure_command(args),
-            trace_summary: String::from(
-                "Repair review state could not derive the missing overlays from authoritative closure records, so branch closure must be re-recorded to restore the missing derived state.",
-            ),
-        });
     }
     if let Some(task_number) = unrecoverable_task_scope_task {
+        force_execution_reentry_follow_up = true;
         clear_task_scope_state_for_execution_reentry(
             runtime,
-            args,
+            &status_args,
             &execution_reentry_tasks,
             Some(task_number),
             &mut actions_performed,
         )?;
-        persist_review_state_repair_follow_up(runtime, &context, None)?;
-        let refreshed = query_review_state(runtime, args)?;
-        return Ok(RepairReviewStateOutput {
-            action: String::from("blocked"),
-            current_task_closures: refreshed.current_task_closures,
-            current_branch_closure: refreshed.current_branch_closure,
-            superseded_closures: refreshed.superseded_closures,
-            stale_unreviewed_closures: refreshed.stale_unreviewed_closures,
-            missing_derived_overlays: refreshed.missing_derived_overlays,
-            actions_performed,
-            required_follow_up: Some(String::from("execution_reentry")),
-            recommended_command: recommended_operator_command(args),
-            trace_summary: String::from(
-                "Repair review state could not recover authoritative task-scope closure truth after task review dispatch completed, so execution reentry is still required before any new closure or milestone can be recorded.",
-            ),
-        });
+    }
+    if !(snapshot.stale_unreviewed_closures.is_empty()
+        || snapshot.branch_drift_confined_to_late_stage_surface && branch_rerecording_supported)
+    {
+        force_execution_reentry_follow_up = true;
+        clear_task_scope_state_for_execution_reentry(
+            runtime,
+            &status_args,
+            &execution_reentry_tasks,
+            status.blocking_task,
+            &mut actions_performed,
+        )?;
+    }
+    if !actions_performed.is_empty() {
+        snapshot = query_review_state(runtime, &status_args)?;
+    }
+
+    let routing = query_workflow_routing_state_for_runtime(
+        runtime,
+        Some(&status_args.plan),
+        status_args.external_review_result_ready,
+    )
+    .ok();
+    let mut required_follow_up = routing.as_ref().and_then(|routing| {
+        repair_required_follow_up_from_routing(routing, &status_args, branch_rerecording_supported)
+    });
+    let branch_closure_rerecording_now_available = branch_rerecording_supported
+        && snapshot.current_branch_closure.is_none()
+        && !snapshot.current_task_closures.is_empty()
+        && snapshot.missing_derived_overlays.is_empty()
+        && (snapshot.stale_unreviewed_closures.is_empty()
+            || snapshot.branch_drift_confined_to_late_stage_surface);
+    if branch_closure_rerecording_now_available {
+        required_follow_up = Some(String::from("record_branch_closure"));
+    }
+    if force_execution_reentry_follow_up {
+        required_follow_up = Some(String::from("execution_reentry"));
+    }
+    let structural_branch_reroute_available = branch_scope_structural_reason.is_some()
+        && branch_rerecording_supported
+        && snapshot.current_branch_closure.is_none()
+        && !snapshot.current_task_closures.is_empty();
+    if structural_branch_reroute_available {
+        required_follow_up = Some(String::from("record_branch_closure"));
     }
     let repaired_any_overlays = !actions_performed.is_empty();
-    if !snapshot.stale_unreviewed_closures.is_empty() {
-        let (required_follow_up, recommended_command, trace_summary) = if snapshot
-            .branch_drift_confined_to_late_stage_surface
-            && branch_rerecording_supported
-        {
-            (
-                Some(String::from("record_branch_closure")),
-                recommended_branch_closure_command(args),
-                String::from(
-                    "Review state is stale_unreviewed, but the tracked drift is confined to the trusted Late-Stage Surface, so branch closure re-recording is the next safe step.",
-                ),
-            )
-        } else {
-            clear_task_scope_state_for_execution_reentry(
-                runtime,
-                args,
-                &execution_reentry_tasks,
-                status.blocking_task,
-                &mut actions_performed,
-            )?;
-            (
-                Some(String::from("execution_reentry")),
-                recommended_operator_command(args),
-                String::from(
-                    "Review state is stale_unreviewed and requires execution reentry before any new closure or milestone can be recorded.",
-                ),
-            )
-        };
-        persist_review_state_repair_follow_up(runtime, &context, required_follow_up.as_deref())?;
-        let refreshed = if required_follow_up.as_deref() == Some("execution_reentry") {
-            query_review_state(runtime, args)?
-        } else {
-            snapshot.clone()
-        };
-        return Ok(RepairReviewStateOutput {
-            action: String::from("blocked"),
-            current_task_closures: refreshed.current_task_closures,
-            current_branch_closure: refreshed.current_branch_closure,
-            superseded_closures: refreshed.superseded_closures,
-            stale_unreviewed_closures: refreshed.stale_unreviewed_closures,
-            missing_derived_overlays: refreshed.missing_derived_overlays,
-            actions_performed,
-            required_follow_up,
-            recommended_command,
-            trace_summary,
-        });
-    }
-    let routing = query_workflow_routing_state_for_runtime(runtime, Some(&args.plan), false).ok();
-    if routing
-        .as_ref()
-        .is_some_and(|routing| late_stage_branch_closure_recording_required(routing, args))
+    let restored_overlay_actions_only = repaired_any_overlays
+        && actions_performed
+            .iter()
+            .all(|action| action.starts_with("restored_"));
+    let task_scope_stale_reason_present = task_scope_stale_review_state_reason_present(
+        task_scope_review_state_repair_reason(&status),
+    );
+    let reconciled_overlay_restore_now_current = restored_overlay_actions_only
+        && snapshot.missing_derived_overlays.is_empty()
+        && snapshot.stale_unreviewed_closures.is_empty()
+        && task_scope_structural_reason.is_none()
+        && branch_scope_structural_reason.is_none()
+        && !task_scope_stale_reason_present;
+    if reconciled_overlay_restore_now_current
+        && matches!(
+            required_follow_up.as_deref(),
+            Some("execution_reentry" | "request_external_review")
+        )
     {
-        if !branch_rerecording_supported {
-            clear_branch_scope_state_for_execution_reentry(runtime, args, &mut actions_performed)?;
-            persist_review_state_repair_follow_up(runtime, &context, Some("execution_reentry"))?;
-            let refreshed = query_review_state(runtime, args)?;
-            return Ok(blocked_execution_reentry_output(
-                refreshed,
-                actions_performed,
-                args,
-                "Repair review state cannot mint a missing current branch closure because no still-current task-closure baseline remains to derive it, so execution reentry is still required.",
-            ));
-        }
-        persist_review_state_repair_follow_up(runtime, &context, Some("record_branch_closure"))?;
+        required_follow_up = None;
+    }
+    let persisted_required_follow_up =
+        normalize_persisted_review_state_follow_up(required_follow_up.as_deref());
+    persist_review_state_repair_follow_up(runtime, &context, persisted_required_follow_up)?;
+
+    let fallback_command = routing
+        .as_ref()
+        .and_then(|routing| routing.recommended_command.clone())
+        .unwrap_or_else(|| {
+            recommended_operator_command(&status_args, status_args.external_review_result_ready)
+        });
+    let recommended_command = recommended_follow_up_command(
+        runtime,
+        &status_args,
+        required_follow_up.as_deref(),
+        fallback_command,
+    );
+
+    let public_required_follow_up =
+        normalize_public_required_follow_up(required_follow_up.as_deref()).map(str::to_owned);
+    if let Some(required_follow_up) = public_required_follow_up {
         return Ok(RepairReviewStateOutput {
             action: String::from("blocked"),
             current_task_closures: snapshot.current_task_closures,
@@ -646,14 +611,17 @@ pub fn repair_review_state(
             stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
             missing_derived_overlays: snapshot.missing_derived_overlays,
             actions_performed,
-            required_follow_up: Some(String::from("record_branch_closure")),
-            recommended_command: recommended_branch_closure_command(args),
-            trace_summary: String::from(
-                "Repair review state cannot mint a missing current branch closure; branch closure must be recorded before late-stage progression can continue.",
+            required_follow_up: Some(required_follow_up.clone()),
+            recommended_command,
+            trace_summary: repair_follow_up_trace_summary(
+                required_follow_up.as_str(),
+                branch_rerecording_unsupported_reason,
+                task_scope_structural_reason.as_deref(),
+                branch_scope_structural_reason.as_deref(),
             ),
         });
     }
-    persist_review_state_repair_follow_up(runtime, &context, None)?;
+
     Ok(RepairReviewStateOutput {
         action: if repaired_any_overlays {
             String::from("reconciled")
@@ -667,7 +635,7 @@ pub fn repair_review_state(
         missing_derived_overlays: snapshot.missing_derived_overlays,
         actions_performed,
         required_follow_up: None,
-        recommended_command: recommended_operator_command(args),
+        recommended_command,
         trace_summary: if repaired_any_overlays {
             String::from(
                 "Repaired missing derived review-state overlays from authoritative closure records.",
@@ -886,101 +854,158 @@ fn routing_projects_review_state_execution_reentry(routing: &ExecutionRoutingSta
         && required_follow_up_from_routing(routing).as_deref() == Some("repair_review_state")
 }
 
-fn blocked_execution_reentry_output(
-    snapshot: ReviewStateSnapshot,
-    actions_performed: Vec<String>,
+fn repair_required_follow_up_from_routing(
+    routing: &ExecutionRoutingState,
     args: &StatusArgs,
-    trace_summary: &str,
-) -> RepairReviewStateOutput {
-    RepairReviewStateOutput {
-        action: String::from("blocked"),
-        current_task_closures: snapshot.current_task_closures,
-        current_branch_closure: snapshot.current_branch_closure,
-        superseded_closures: snapshot.superseded_closures,
-        stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
-        missing_derived_overlays: snapshot.missing_derived_overlays,
-        actions_performed,
-        required_follow_up: Some(String::from("execution_reentry")),
-        recommended_command: recommended_operator_command(args),
-        trace_summary: trace_summary.to_owned(),
+    branch_rerecording_supported: bool,
+) -> Option<String> {
+    if late_stage_branch_closure_recording_required(routing, args) {
+        return if branch_rerecording_supported {
+            Some(String::from("record_branch_closure"))
+        } else {
+            Some(String::from("execution_reentry"))
+        };
+    }
+
+    match required_follow_up_from_routing(routing).as_deref() {
+        Some("repair_review_state") | Some("execution_reentry") => {
+            Some(String::from("execution_reentry"))
+        }
+        Some(follow_up) => Some(follow_up.to_owned()),
+        None => None,
     }
 }
 
-fn restore_current_branch_closure_overlay(
+fn repair_follow_up_trace_summary(
+    required_follow_up: &str,
+    branch_rerecording_unsupported_reason: Option<BranchRerecordingUnsupportedReason>,
+    task_scope_structural_reason: Option<&str>,
+    branch_scope_structural_reason: Option<&str>,
+) -> String {
+    match required_follow_up {
+        "record_branch_closure" | "advance_late_stage" => String::from(
+            "Repair review state reconciled projections and refreshed routing; branch closure must be re-recorded before late-stage progression can continue.",
+        ),
+        "execution_reentry" => {
+            if task_scope_structural_reason.is_some() {
+                return String::from(
+                    "Repair review state reconciled structural task-scope blockers, but execution reentry is still required before progress can continue.",
+                );
+            }
+            if branch_scope_structural_reason.is_some()
+                || branch_rerecording_unsupported_reason.is_some()
+            {
+                return branch_rerecording_unavailable_trace(
+                    branch_rerecording_unsupported_reason,
+                    "Repair review state reconciled available branch-scope state, but no still-current task-closure baseline remains to derive a replacement branch closure, so execution reentry is still required.",
+                    "Repair review state reconciled available branch-scope state, but the approved plan does not declare Late-Stage Surface metadata, so execution reentry is still required.",
+                    "Repair review state reconciled available branch-scope state, but tracked drift escapes the approved Late-Stage Surface, so execution reentry is still required.",
+                );
+            }
+            String::from(
+                "Repair review state reconciled projections and refreshed routing; execution reentry is still required before progress can continue.",
+            )
+        }
+        "request_external_review" => String::from(
+            "Repair review state reconciled projections and refreshed routing; an external review dispatch is the next required step.",
+        ),
+        "resolve_release_blocker" => String::from(
+            "Repair review state reconciled projections and refreshed routing; release blockers must be resolved before late-stage progression can continue.",
+        ),
+        "record_handoff" => String::from(
+            "Repair review state reconciled projections and refreshed routing; record a handoff before continuing.",
+        ),
+        "record_pivot" => String::from(
+            "Repair review state reconciled projections and refreshed routing; planning reentry is required before continuing.",
+        ),
+        _ => {
+            format!(
+                "Repair review state reconciled projections and refreshed routing; required follow-up is {required_follow_up}."
+            )
+        }
+    }
+}
+
+fn branch_rerecording_unavailable_trace(
+    unsupported_reason: Option<BranchRerecordingUnsupportedReason>,
+    missing_task_closure_baseline_message: &str,
+    missing_late_stage_surface_message: &str,
+    drift_escapes_late_stage_surface_message: &str,
+) -> String {
+    match unsupported_reason {
+        Some(BranchRerecordingUnsupportedReason::LateStageSurfaceNotDeclared) => {
+            String::from(missing_late_stage_surface_message)
+        }
+        Some(BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface) => {
+            String::from(drift_escapes_late_stage_surface_message)
+        }
+        Some(BranchRerecordingUnsupportedReason::MissingTaskClosureBaseline) | None => {
+            String::from(missing_task_closure_baseline_message)
+        }
+    }
+}
+
+fn recommended_follow_up_command(
     runtime: &ExecutionRuntime,
     args: &StatusArgs,
-) -> Result<Vec<String>, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    let snapshot = query_review_state(runtime, args)?;
-    let overlay = load_status_authoritative_overlay_checked(&context)?;
-    let Some(current_branch_closure) = snapshot.current_branch_closure else {
-        return Ok(Vec::new());
-    };
-    let branch_closure_id = current_branch_closure.branch_closure_id;
-    let Some(reviewed_state_id) = current_branch_closure.reviewed_state_id else {
-        return Ok(Vec::new());
-    };
-    let Some(contract_identity) = current_branch_closure.contract_identity else {
-        return Ok(Vec::new());
-    };
-    let mut actions_performed = Vec::new();
-    if overlay
-        .as_ref()
-        .and_then(|overlay| overlay.current_branch_closure_id.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        != Some(branch_closure_id.as_str())
+    required_follow_up: Option<&str>,
+    fallback: String,
+) -> String {
+    if required_follow_up == Some("record_branch_closure") {
+        return recommended_branch_closure_command(args);
+    }
+    if required_follow_up == Some("execution_reentry")
+        && let Ok(read_scope) = load_execution_read_scope(runtime, &args.plan, true)
+        && let Some(exact_command) = resolve_exact_execution_command_from_context(
+            &read_scope.context,
+            &read_scope.status,
+            &read_scope.context.plan_rel,
+        )
     {
-        actions_performed.push(String::from("restored_current_branch_closure_id"));
+        return exact_command.recommended_command;
     }
-    if overlay
-        .as_ref()
-        .and_then(|overlay| overlay.current_branch_closure_reviewed_state_id.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        != Some(reviewed_state_id.as_str())
-    {
-        actions_performed.push(String::from(
-            "restored_current_branch_closure_reviewed_state",
-        ));
-    }
-    if overlay
-        .as_ref()
-        .and_then(|overlay| overlay.current_branch_closure_contract_identity.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        != Some(contract_identity.as_str())
-    {
-        actions_performed.push(String::from(
-            "restored_current_branch_closure_contract_identity",
-        ));
-    }
-    if actions_performed.is_empty() {
-        return Ok(actions_performed);
-    }
-
-    if !persist_current_branch_closure_overlay(
+    let Ok(routing) = query_workflow_routing_state_for_runtime(
         runtime,
-        &context,
-        &branch_closure_id,
-        reviewed_state_id.trim(),
-        contract_identity.trim(),
-    )? {
-        return Ok(Vec::new());
+        Some(&args.plan),
+        args.external_review_result_ready,
+    ) else {
+        return fallback;
+    };
+    let routing_follow_up = required_follow_up_from_routing(&routing);
+    if required_follow_up.is_none() || routing_follow_up.as_deref() == required_follow_up {
+        return routing.recommended_command.unwrap_or(fallback);
     }
-    Ok(actions_performed)
+    fallback
 }
 
-fn recommended_operator_command(args: &StatusArgs) -> String {
-    format!(
+fn normalize_public_required_follow_up(required_follow_up: Option<&str>) -> Option<&str> {
+    match required_follow_up {
+        Some("record_branch_closure") => Some("advance_late_stage"),
+        other => other,
+    }
+}
+
+fn normalize_persisted_review_state_follow_up(required_follow_up: Option<&str>) -> Option<&str> {
+    match required_follow_up {
+        Some("advance_late_stage") => Some("record_branch_closure"),
+        other => other,
+    }
+}
+
+fn recommended_operator_command(args: &StatusArgs, external_review_result_ready: bool) -> String {
+    let mut command = format!(
         "featureforge workflow operator --plan {}",
         args.plan.display()
-    )
+    );
+    if external_review_result_ready {
+        command.push_str(" --external-review-result-ready");
+    }
+    command
 }
 
 fn recommended_branch_closure_command(args: &StatusArgs) -> String {
     format!(
-        "featureforge plan execution record-branch-closure --plan {}",
+        "featureforge plan execution advance-late-stage --plan {}",
         args.plan.display()
     )
 }

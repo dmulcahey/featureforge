@@ -43,20 +43,18 @@
     "WorkflowOperatorNextActionSchema": {
       "enum": [
         "advance late stage",
+        "finish branch",
         "close current task",
         "continue execution",
-        "dispatch review",
-        "dispatch final review",
+        "request task review",
+        "request final review",
         "execution reentry required",
         "hand off",
         "pivot / return to planning",
-        "record branch closure",
         "refresh test plan",
         "repair review state / reenter execution",
         "resolve release blocker",
         "run QA",
-        "run finish completion gate",
-        "run finish review gate",
         "wait for external review result"
       ],
       "type": "string"
@@ -113,8 +111,7 @@
         },
         {
           "required": [
-            "task_number",
-            "dispatch_id"
+            "task_number"
           ]
         }
       ],
@@ -157,8 +154,7 @@
         "properties": {
           "recording_context": {
             "required": [
-              "task_number",
-              "dispatch_id"
+              "task_number"
             ]
           }
         },
@@ -221,7 +217,6 @@
         "properties": {
           "recording_context": {
             "required": [
-              "dispatch_id",
               "branch_closure_id"
             ]
           }
@@ -278,7 +273,11 @@
         "properties": {
           "phase_detail": {
             "enum": [
+              "task_review_dispatch_required",
               "task_review_result_pending",
+              "finish_review_gate_ready",
+              "finish_completion_gate_ready",
+              "final_review_dispatch_required",
               "final_review_outcome_pending",
               "test_plan_refresh_required"
             ]
@@ -295,8 +294,40 @@
     }
   ],
   "properties": {
+    "base_branch": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "blocking_reason_codes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "blocking_scope": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "blocking_task": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "execution_command_context": {
       "$ref": "#/$defs/WorkflowOperatorExecutionCommandContext"
+    },
+    "external_wait_state": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "finish_review_gate_pass_branch_closure_id": {
       "type": [
@@ -339,10 +370,10 @@
       "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema"
     },
     "schema_version": {
-      "const": 1,
+      "const": 2,
       "format": "uint32",
-      "maximum": 1,
-      "minimum": 1,
+      "maximum": 2,
+      "minimum": 2,
       "type": "integer"
     },
     "spec_path": {

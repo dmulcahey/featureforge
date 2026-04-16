@@ -18,11 +18,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Save plans to:** `docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
-- Before writing the plan, record the intended plan path with `expect`:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow expect --artifact plan --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md
-```
+- Use that repo-relative plan path consistently in later review and workflow/operator commands; do not route through compatibility-only `workflow expect` or `workflow sync` helpers.
 
 ## Protected-Branch Repo-Write Gate
 
@@ -137,7 +133,7 @@ This structure informs the task decomposition. Each task should produce self-con
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For Codex and GitHub Copilot workers:** REQUIRED: Use the execution skill recommended by `featureforge plan execution recommend --plan <approved-plan-path>` after engineering approval; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For Codex and GitHub Copilot workers:** REQUIRED: Use `featureforge workflow operator --plan <approved-plan-path>` as routing authority after engineering approval, and follow the runtime-selected execution owner skill; do not choose solely from isolated-agent availability. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Workflow State:** Draft
 **Plan Revision:** 1
@@ -278,11 +274,7 @@ After saving the full plan:
   --plan docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md
 ```
 
-1. After the plan is written or updated, runs `sync --artifact plan`:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow sync --artifact plan --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md
-```
+1. After the plan is written or updated, continue using the same repo-relative plan path in plan-fidelity-review and workflow/operator handoffs.
 
 2. Invoke `featureforge:plan-fidelity-review`.
 3. Do NOT invoke `featureforge:plan-eng-review` directly from `writing-plans`; `plan-fidelity-review` owns dedicated independent review plus runtime-owned receipt recording.

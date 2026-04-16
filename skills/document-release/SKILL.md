@@ -56,51 +56,25 @@ For workflow-routed implementation work, this is the required `document-release`
 
 For workflow-routed terminal sequencing, `featureforge:document-release` must run before the terminal `featureforge:requesting-code-review` whole-diff gate.
 
-`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: `gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint, while `record-review-dispatch` is owned by `featureforge:requesting-code-review`.
+`featureforge:document-release` does not replace checkpoint reviews and does not own review-dispatch minting. Keep command-boundary semantics explicit: low-level compatibility/debug commands stay out of the normal-path flow.
 
 When you need explicit late-stage phase/action/skill grounding while updating docs, cite `review/late-stage-precedence-reference.md`.
 
-## Step 0: Detect base branch
+## Step 0: Require base branch context
 
-Determine which branch this work targets:
+For workflow-routed work, `BASE_BRANCH` is runtime-owned context from `featureforge workflow operator --plan <approved-plan-path> --json` (`base_branch`) and the active release-readiness lineage. Use that exact value and do not redetect.
+
+For non-workflow work, require `BASE_BRANCH` explicitly and keep it stable for this run:
 
 ```bash
-BASE_BRANCH=""
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  case "$CURRENT_BRANCH" in
-    main|master|develop|dev|trunk)
-      BASE_BRANCH="$CURRENT_BRANCH"
-      ;;
-  esac
-  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git config --get "branch.$CURRENT_BRANCH.gh-merge-base" 2>/dev/null || true)
-fi
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)
 if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master develop dev trunk; do
-    if git show-ref --verify --quiet "refs/heads/$candidate"; then
-      BASE_BRANCH="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  NON_CURRENT_BRANCHES=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vxF "$CURRENT_BRANCH" || true)
-  NON_CURRENT_BRANCH_COUNT=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d' | wc -l | tr -d ' ')
-  if [ "$NON_CURRENT_BRANCH_COUNT" = "1" ]; then
-    BASE_BRANCH=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d')
-  fi
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  echo "Could not determine the base branch target. Stop and resolve it before writing release-readiness artifacts."
+  echo "Missing BASE_BRANCH. Set it explicitly before writing release-facing docs."
   exit 1
 fi
 git fetch origin "$BASE_BRANCH" --quiet 2>/dev/null || true
 ```
 
-Use the detected branch as "the base branch" in the steps below.
-Do not use PR metadata or repo default-branch APIs as a fallback; `gate-finish` only accepts locally derivable base-branch evidence.
-Do not fall back to the current branch when it is the only local branch; stop instead of guessing.
+Do not use PR metadata or repo default-branch APIs as a fallback.
 
 ## Core rules
 
@@ -253,12 +227,12 @@ If `TODOS.md` exists:
 
 ## Step 7.5: Structured Release-Readiness Companion Artifact
 
-For workflow-routed implementation work, also write a project-scoped release-readiness companion artifact:
+For workflow-routed implementation work, runtime emits a project-scoped release-readiness companion artifact:
 
-- Require the exact approved plan path from the current workflow context before writing the release-readiness companion artifact.
+- Require the exact approved plan path from the current workflow context before recording release-readiness via `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` so runtime can render the companion artifact.
 - Derive `Source Plan` and `Source Plan Revision` from that exact approved plan; do not leave placeholders or guess from prose.
 - If the approved plan path or revision is unavailable, stop and return to the current workflow instead of writing a partial artifact.
-- Use the base branch detected in Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
+- Use the runtime-provided base branch from Step 0 exactly as written; do not substitute a different branch name when persisting the artifact.
 - This markdown output is a derived operator handoff companion. Runtime-owned reviewed-closure and late-stage milestone records remain the authoritative gate-truth surface.
 
 ```bash
@@ -273,10 +247,14 @@ HEAD_SHA=$(git rev-parse HEAD)
 mkdir -p "$_FEATUREFORGE_STATE_DIR/projects/$SLUG"
 ```
 
-Write to:
-- `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/{user}-{safe-branch}-release-readiness-{datetime}.md`
+Use this snippet only to inspect runtime-emitted artifact locations after recording; do not use it to hand-write companion artifacts.
 
-Use this structure:
+For workflow-routed release-readiness, the runtime writes the derived companion artifact to:
+- `$_FEATUREFORGE_STATE_DIR/projects/$SLUG/featureforge-{safe-branch}-release-readiness-{datetime}.md`
+
+Do not hand-write or edit this artifact. Provide the release summary to the runtime-owned `advance-late-stage` command and let the runtime render the derived markdown projection.
+
+Derived artifact structure:
 
 ```markdown
 # Release Readiness Result
@@ -286,6 +264,8 @@ Use this structure:
 **Repo:** featureforge
 **Base Branch:** main
 **Head SHA:** abc1234
+**Current Reviewed Branch State ID:** git_tree:abc1234
+**Branch Closure ID:** branch-release-closure
 **Result:** pass
 **Generated By:** featureforge:document-release
 **Generated At:** 2026-03-22T15:20:00Z
@@ -300,19 +280,21 @@ Use this structure:
 
 Allowed `**Result:**` values:
 - `pass`
-- `needs-user-input`
 - `blocked`
+
+Artifact `pass` is the runtime-rendered form of CLI input `--result ready`.
 
 ## Step 7.6: Runtime-Owned Release-Readiness Recording (Workflow-Routed)
 
-For workflow-routed implementation work, the companion artifact above is not the release gate itself.
+For workflow-routed implementation work, the derived companion artifact above is not the release gate itself.
 
 - workflow-routed release-readiness must be recorded through runtime-owned commands, not inferred from the companion markdown artifact alone.
-- For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first and then `featureforge plan execution status --plan <approved-plan-path>`; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`, while status is supporting diagnostic detail.
+- For reviewed-closure late-stage routing, run `featureforge workflow operator --plan <approved-plan-path>` first; workflow/operator remains authoritative for `phase`, `phase_detail`, `next_action`, and `recommended_command`.
 - Run `featureforge workflow operator --plan <approved-plan-path>` to confirm the current `phase_detail` before recording release-readiness.
-- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution record-branch-closure --plan <approved-plan-path>` and rerun workflow/operator before recording release-readiness.
+- If workflow/operator reports `phase_detail=branch_closure_recording_required_for_release_readiness`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path>` and rerun workflow/operator.
 - When workflow/operator reports `phase_detail=release_readiness_recording_ready`, run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the runtime-owned release-readiness milestone.
 - When workflow/operator reports `phase_detail=release_blocker_resolution_required`, resolve the blocker and then run `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result ready|blocked --summary-file <release-summary>` to record the updated runtime-owned release-readiness milestone.
+- The `advance-late-stage --result ready|blocked` command input renders `**Result:** pass|blocked` in the derived companion artifact; do not rewrite the artifact to mirror the command input.
 - If workflow/operator reports any other phase or phase_detail, stop and return to the current workflow flow instead of forcing release-readiness recording from stale assumptions.
 
 Example runtime-owned path:
@@ -320,12 +302,10 @@ Example runtime-owned path:
 ```bash
 OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
 PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
-STATUS_JSON=$("$_FEATUREFORGE_BIN" plan execution status --plan "$APPROVED_PLAN_PATH")
 if [ "$PHASE_DETAIL" = "branch_closure_recording_required_for_release_readiness" ]; then
-  "$_FEATUREFORGE_BIN" plan execution record-branch-closure --plan "$APPROVED_PLAN_PATH"
+  "$_FEATUREFORGE_BIN" plan execution advance-late-stage --plan "$APPROVED_PLAN_PATH"
   OPERATOR_JSON=$("$_FEATUREFORGE_BIN" workflow operator --plan "$APPROVED_PLAN_PATH" --json)
   PHASE_DETAIL=$(printf '%s\n' "$OPERATOR_JSON" | node -e 'const fs = require("fs"); const parsed = JSON.parse(fs.readFileSync(0, "utf8")); process.stdout.write(parsed.phase_detail || "")')
-  STATUS_JSON=$("$_FEATUREFORGE_BIN" plan execution status --plan "$APPROVED_PLAN_PATH")
 fi
 if [ "$PHASE_DETAIL" != "release_readiness_recording_ready" ] && [ "$PHASE_DETAIL" != "release_blocker_resolution_required" ]; then
   echo "Stop and return to workflow: release-readiness recording is not currently routable."

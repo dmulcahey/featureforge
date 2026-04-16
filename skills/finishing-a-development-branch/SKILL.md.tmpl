@@ -56,11 +56,9 @@ For workflow-routed terminal completion, this checkpoint does not replace the re
 Before presenting completion options:
 
 - If the current work was executed from an approved FeatureForge plan, require the exact approved plan path from the current execution workflow context before presenting completion options.
-- Run `featureforge plan execution status --plan <approved-plan-path>` and read the returned `evidence_path` before presenting completion options.
-- If the exact approved plan path is unavailable or helper status fails, stop and return to the current execution flow instead of guessing.
-- Parse `active_task`, `blocking_task`, and `resume_task` from the status JSON.
-- If any of `active_task`, `blocking_task`, or `resume_task` is non-null, stop and return to the current execution flow; branch completion is only valid when all three are `null`.
-- If `evidence_path` is empty or unreadable, stop and return to the current execution flow instead of guessing at execution evidence.
+- Run `featureforge workflow operator --plan <approved-plan-path>` and require a branch-completion-ready route before presenting completion options.
+- If the exact approved plan path is unavailable or workflow/operator fails, stop and return to the current execution flow instead of guessing.
+- Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostics (`active_task`, `blocking_task`, `resume_task`, `evidence_path`, checkpoint fingerprints) to explain a blocker.
 - For workflow-routed terminal completion, do not run the terminal review gate in this step. Run it only after `featureforge:document-release` and before any runtime-routed `featureforge:qa-only` handoff.
 - If the current work is not governed by an approved FeatureForge plan, skip this execution-state gate and continue.
 - rejects branch-completion handoff if the approved plan is execution-dirty or malformed
@@ -72,7 +70,7 @@ Before presenting completion options:
 
 For workflow-routed work, require the `document-release` pass before presenting completion options.
 
-For workflow-routed terminal completion, keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> `featureforge workflow operator --plan <approved-plan-path>` -> any required `featureforge:qa-only` handoff -> `record-qa` only when `phase_detail=qa_recording_required` -> rerun `featureforge workflow operator --plan <approved-plan-path>` -> `gate-review` only when `phase_detail=finish_review_gate_ready` -> rerun `featureforge workflow operator --plan <approved-plan-path>` -> `gate-finish` only when `phase_detail=finish_completion_gate_ready`.
+For workflow-routed terminal completion, keep the order strict: `featureforge:document-release` -> terminal `featureforge:requesting-code-review` -> `featureforge workflow operator --plan <approved-plan-path>` -> any required `featureforge:qa-only` handoff -> `advance-late-stage` only when operator reports `phase_detail=qa_recording_required` -> rerun `featureforge workflow operator --plan <approved-plan-path>` and follow its next finish command.
 
 Any required `featureforge:qa-only` handoff is downstream of that terminal final-review pass. Do not move QA ahead of the post-document-release `featureforge:requesting-code-review` gate.
 
@@ -130,7 +128,7 @@ A project-wide or generic test-plan artifact may help scope ad-hoc QA, but it do
 
 If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge workflow record-pivot --plan <path> --reason <reason>`; do not guess from test-plan prose.
 
-If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or `gate-finish`.
+If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or late-stage completion commands.
 
 If workflow/operator reports `test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
 
@@ -163,23 +161,17 @@ If the current work is governed by an approved FeatureForge plan, after `feature
 
 If the operator reports `qa_pending` with `phase_detail=test_plan_refresh_required`, hand control back to `featureforge:plan-eng-review` before QA or branch completion.
 
-If the operator reports `qa_pending` with `phase_detail=qa_recording_required`, record QA with `featureforge plan execution record-qa --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>`, then rerun `featureforge workflow operator --plan <approved-plan-path>`.
+If the operator reports `qa_pending` with `phase_detail=qa_recording_required`, record QA with `featureforge plan execution advance-late-stage --plan <approved-plan-path> --result pass|fail --summary-file <qa-report>`, then rerun `featureforge workflow operator --plan <approved-plan-path>`.
 
-If the operator reports `ready_for_branch_completion` with `phase_detail=finish_review_gate_ready`, run `featureforge plan execution gate-review --plan <approved-plan-path>`, then rerun `featureforge workflow operator --plan <approved-plan-path>`.
-
-If the operator reports `ready_for_branch_completion` with `phase_detail=finish_completion_gate_ready`, run `featureforge plan execution gate-finish --plan <approved-plan-path>` before presenting completion options.
+If the operator reports `ready_for_branch_completion`, run the exact `recommended_command` when present and rerun `featureforge workflow operator --plan <approved-plan-path>` until branch completion options are actually routable.
 
 If the operator reports any other late-stage phase/detail pair, follow that exact operator result instead of forcing QA or finish-gate commands from memory.
 
-For workflow-routed terminal completion, if no fresh post-document-release dedicated-independent review exists for the current `HEAD`, invoke `featureforge:requesting-code-review` before `gate-finish`.
+For workflow-routed terminal completion, if no fresh post-document-release dedicated-independent review exists for the current `HEAD`, invoke `featureforge:requesting-code-review` before presenting branch completion options.
 
-`gate-review` is the first finish gate and may record or refresh the current branch-closure checkpoint. `record-review-dispatch` remains the dispatch-proof minting boundary for task-boundary and final-review handoffs.
+Low-level compatibility finish commands remain expert/debug-only surfaces; follow workflow/operator for normal routing instead of invoking compatibility commands from memory.
 
-If the current work is governed by an approved FeatureForge plan and the finish gate returns `allowed` `false`, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
-
-If `gate-finish` fails with `qa_requirement_missing_or_invalid`, hand control back to `featureforge workflow record-pivot --plan <path> --reason <reason>` so the approved plan metadata can be corrected before QA or branch completion.
-
-If approved-plan `QA Requirement` is `required` and `gate-finish` fails with `test_plan_artifact_missing`, `test_plan_artifact_malformed`, `test_plan_artifact_stale`, `test_plan_artifact_authoritative_provenance_invalid`, or `test_plan_artifact_generator_mismatch`, hand control back to `featureforge:plan-eng-review` to regenerate the current-branch test-plan artifact before QA or branch completion.
+If the current work is governed by an approved FeatureForge plan and workflow/operator does not route to branch completion, stop and return to the current execution flow; do not present completion options against stale QA or release artifacts.
 
 If the current work is not governed by an approved FeatureForge plan, skip this helper-owned finish gate and continue with the normal completion flow.
 
@@ -209,40 +201,14 @@ featureforge repo-safety check --intent write --stage featureforge:finishing-a-d
 
 If the current work is governed by an approved FeatureForge plan:
 
-- For plan-routed completion, use the exact `Base Branch` from the fresh release-readiness artifact instead of redetecting the target branch.
-- If the fresh release-readiness artifact is missing or its `**Base Branch:**` header is blank, stop and return to `featureforge:document-release`.
+- For plan-routed completion, use the exact `base_branch` from `featureforge workflow operator --plan <approved-plan-path> --json` instead of redetecting the target branch.
+- Treat release-readiness markdown as a derived handoff artifact. Do not read its `**Base Branch:**` header back into routing or branch-selection decisions; use the runtime-owned `base_branch` from workflow/operator instead.
 
-If the current work is not governed by an approved FeatureForge plan, derive `<base-branch>` using the same locally derivable contract as `featureforge:document-release` and `gate-finish`:
+If the current work is not governed by an approved FeatureForge plan, require an explicit `<base-branch>` value and keep it stable for this run:
 
 ```bash
-BASE_BRANCH=""
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  case "$CURRENT_BRANCH" in
-    main|master|develop|dev|trunk)
-      BASE_BRANCH="$CURRENT_BRANCH"
-      ;;
-  esac
-  [ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git config --get "branch.$CURRENT_BRANCH.gh-merge-base" 2>/dev/null || true)
-fi
-[ -n "$BASE_BRANCH" ] || BASE_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's#^refs/remotes/origin/##' || true)
 if [ -z "$BASE_BRANCH" ]; then
-  for candidate in main master develop dev trunk; do
-    if git show-ref --verify --quiet "refs/heads/$candidate"; then
-      BASE_BRANCH="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$BASE_BRANCH" ] && [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "HEAD" ]; then
-  NON_CURRENT_BRANCHES=$(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | grep -vxF "$CURRENT_BRANCH" || true)
-  NON_CURRENT_BRANCH_COUNT=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d' | wc -l | tr -d ' ')
-  if [ "$NON_CURRENT_BRANCH_COUNT" = "1" ]; then
-    BASE_BRANCH=$(printf '%s\n' "$NON_CURRENT_BRANCHES" | sed '/^$/d')
-  fi
-fi
-if [ -z "$BASE_BRANCH" ]; then
-  echo "Could not determine the base branch target. Stop and resolve it before finishing the branch."
+  echo "Missing BASE_BRANCH. For non-workflow completion, set BASE_BRANCH explicitly before finishing the branch."
   exit 1
 fi
 ```

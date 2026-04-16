@@ -141,11 +141,12 @@ fn try_run_workflow_emission_direct(
                 .and_then(|runtime| operator::render_phase_for_runtime(&runtime)),
         ),
         WorkflowCommand::Doctor(args) if args.json => DirectWorkflowEmission::Json(serialize_json(
-            load_read_only_runtime().and_then(|runtime| operator::doctor_for_runtime(&runtime)),
-        )),
-        WorkflowCommand::Doctor(_) => DirectWorkflowEmission::Text(
             load_read_only_runtime()
-                .and_then(|runtime| operator::render_doctor_for_runtime(&runtime)),
+                .and_then(|runtime| operator::doctor_for_runtime_with_args(&runtime, &args)),
+        )),
+        WorkflowCommand::Doctor(args) => DirectWorkflowEmission::Text(
+            load_read_only_runtime()
+                .and_then(|runtime| operator::render_doctor_for_runtime_with_args(&runtime, &args)),
         ),
         WorkflowCommand::Handoff(args) if args.json => {
             DirectWorkflowEmission::Json(serialize_json(

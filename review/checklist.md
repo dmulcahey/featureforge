@@ -1,6 +1,6 @@
 # Pre-Landing Review Checklist
 
-Review the diff against the detected base branch, not just the last commit. Read the full diff before commenting, then read outside the diff when a checklist item requires broader context.
+Review the diff against the provided authoritative base branch, not just the last commit. Read the full diff before commenting, then read outside the diff when a checklist item requires broader context.
 
 Use the FeatureForge severity taxonomy:
 

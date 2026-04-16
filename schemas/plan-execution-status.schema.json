@@ -88,20 +88,18 @@
     "NextActionSchema": {
       "enum": [
         "advance late stage",
+        "finish branch",
         "close current task",
         "continue execution",
-        "dispatch review",
-        "dispatch final review",
+        "request task review",
+        "request final review",
         "execution reentry required",
         "hand off",
         "pivot / return to planning",
-        "record branch closure",
         "refresh test plan",
         "repair review state / reenter execution",
         "resolve release blocker",
         "run QA",
-        "run finish completion gate",
-        "run finish review gate",
         "wait for external review result"
       ],
       "type": "string"
@@ -162,8 +160,7 @@
         },
         {
           "required": [
-            "task_number",
-            "dispatch_id"
+            "task_number"
           ]
         }
       ],
@@ -226,8 +223,8 @@
       "enum": [
         "execution_reentry",
         "repair_review_state",
-        "record_review_dispatch",
-        "record_branch_closure",
+        "request_external_review",
+        "advance_late_stage",
         "resolve_release_blocker",
         "record_handoff",
         "record_pivot"
@@ -312,8 +309,7 @@
         "properties": {
           "recording_context": {
             "required": [
-              "task_number",
-              "dispatch_id"
+              "task_number"
             ]
           }
         },
@@ -376,7 +372,6 @@
         "properties": {
           "recording_context": {
             "required": [
-              "dispatch_id",
               "branch_closure_id"
             ]
           }
@@ -433,7 +428,11 @@
         "properties": {
           "phase_detail": {
             "enum": [
+              "task_review_dispatch_required",
               "task_review_result_pending",
+              "finish_review_gate_ready",
+              "finish_completion_gate_ready",
+              "final_review_dispatch_required",
               "final_review_outcome_pending",
               "test_plan_refresh_required"
             ]
@@ -481,11 +480,23 @@
     "aggregate_evaluation_state": {
       "$ref": "#/$defs/AggregateEvaluationState"
     },
+    "blocking_reason_codes": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "blocking_records": {
       "items": {
         "$ref": "#/$defs/StatusBlockingRecord"
       },
       "type": "array"
+    },
+    "blocking_scope": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "blocking_step": {
       "format": "uint32",
@@ -631,6 +642,12 @@
     },
     "execution_started": {
       "type": "string"
+    },
+    "external_wait_state": {
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "final_review_state": {
       "$ref": "#/$defs/DownstreamFreshnessState"

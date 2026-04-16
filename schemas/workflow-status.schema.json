@@ -1,16 +1,43 @@
 {
+  "$defs": {
+    "WorkflowDiagnostic": {
+      "properties": {
+        "artifact": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "remediation": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "artifact",
+        "message",
+        "remediation"
+      ],
+      "type": "object"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "WorkflowRoute",
-  "type": "object",
   "properties": {
     "contract_state": {
       "type": "string"
     },
     "diagnostics": {
-      "type": "array",
       "items": {
         "$ref": "#/$defs/WorkflowDiagnostic"
-      }
+      },
+      "type": "array"
     },
     "manifest_path": {
       "type": "string"
@@ -22,9 +49,9 @@
       "type": "string"
     },
     "plan_candidate_count": {
-      "type": "integer",
       "format": "uint",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "plan_path": {
       "type": "string"
@@ -33,10 +60,10 @@
       "type": "string"
     },
     "reason_codes": {
-      "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "type": "array"
     },
     "root": {
       "type": "string"
@@ -46,14 +73,14 @@
     },
     "schema_version": {
       "const": 3,
-      "type": "integer",
       "format": "uint32",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "spec_candidate_count": {
-      "type": "integer",
       "format": "uint",
-      "minimum": 0
+      "minimum": 0,
+      "type": "integer"
     },
     "spec_path": {
       "type": "string"
@@ -79,33 +106,6 @@
     "reason",
     "note"
   ],
-  "$defs": {
-    "WorkflowDiagnostic": {
-      "type": "object",
-      "properties": {
-        "artifact": {
-          "type": "string"
-        },
-        "code": {
-          "type": "string"
-        },
-        "message": {
-          "type": "string"
-        },
-        "remediation": {
-          "type": "string"
-        },
-        "severity": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "code",
-        "severity",
-        "artifact",
-        "message",
-        "remediation"
-      ]
-    }
-  }
+  "title": "WorkflowRoute",
+  "type": "object"
 }

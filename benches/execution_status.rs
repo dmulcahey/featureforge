@@ -22,6 +22,7 @@ fn main() {
         runtime
             .status(&StatusArgs {
                 plan: PathBuf::from(common::EXECUTION_PLAN_REL),
+                external_review_result_ready: false,
             })
             .expect("execution-status benchmark should succeed");
     });
