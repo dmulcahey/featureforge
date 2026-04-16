@@ -428,6 +428,18 @@ pub fn doctor_for_runtime(runtime: &ExecutionRuntime) -> Result<WorkflowDoctor, 
     Ok(doctor_from_context(context))
 }
 
+pub fn doctor_for_runtime_with_args(
+    runtime: &ExecutionRuntime,
+    args: &DoctorArgs,
+) -> Result<WorkflowDoctor, JsonFailure> {
+    let context = build_context_with_plan_for_runtime(
+        runtime,
+        args.plan.as_deref(),
+        args.external_review_result_ready,
+    )?;
+    Ok(doctor_from_context(context))
+}
+
 fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
     let doctor_phase = doctor_phase_for_context(&context);
     let contract_state = context
@@ -485,6 +497,14 @@ pub fn render_doctor_with_args(
 
 pub fn render_doctor_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
     let doctor = doctor_for_runtime(runtime)?;
+    Ok(render_doctor_output(&doctor))
+}
+
+pub fn render_doctor_for_runtime_with_args(
+    runtime: &ExecutionRuntime,
+    args: &DoctorArgs,
+) -> Result<String, JsonFailure> {
+    let doctor = doctor_for_runtime_with_args(runtime, args)?;
     Ok(render_doctor_output(&doctor))
 }
 

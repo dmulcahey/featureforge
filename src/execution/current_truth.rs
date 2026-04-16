@@ -964,13 +964,10 @@ const LATE_STAGE_RELEASE_TRUTH_BLOCK_REASON_CODES: &[&str] = &[
 ];
 
 const LATE_STAGE_REVIEW_BLOCK_REASON_CODES: &[&str] = &[
-    "review_artifact_authoritative_provenance_invalid",
     "review_artifact_malformed",
     "final_review_state_missing",
     "final_review_state_stale",
     "final_review_state_not_fresh",
-    "review_receipt_reviewer_fingerprint_invalid",
-    "review_receipt_reviewer_fingerprint_mismatch",
 ];
 
 const LATE_STAGE_QA_BLOCK_REASON_CODES: &[&str] = &[
@@ -1444,10 +1441,7 @@ pub(crate) fn final_review_dispatch_still_current(
     const FINAL_REVIEW_DISPATCH_INVALIDATION_REASON_CODES: &[&str] = &[
         "review_artifact_malformed",
         "review_artifact_plan_mismatch",
-        "review_artifact_authoritative_provenance_invalid",
         "review_artifact_release_binding_mismatch",
-        "review_receipt_reviewer_fingerprint_invalid",
-        "review_receipt_reviewer_fingerprint_mismatch",
     ];
 
     !(gate_has_any_reason(gate_review, FINAL_REVIEW_DISPATCH_INVALIDATION_REASON_CODES)

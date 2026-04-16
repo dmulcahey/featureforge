@@ -11,7 +11,8 @@ use serde::Serialize;
 use crate::cli::workflow::{OperatorArgs, RecordPivotArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::execution::state::{
-    ExecutionRuntime, current_head_sha, load_execution_context_for_exact_plan, status_from_context,
+    ExecutionRuntime, current_head_sha, load_execution_context_for_exact_plan,
+    status_from_context_with_shared_routing,
 };
 use crate::execution::transitions::{
     load_authoritative_transition_state, read_authoritative_transition_state_source,
@@ -196,15 +197,16 @@ pub fn record_pivot_for_runtime(
             )),
         });
     }
-    let status = status_from_context(&context).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            format!(
-                "Could not load execution status for pivot recording: {}",
-                error.message
-            ),
-        )
-    })?;
+    let status =
+        status_from_context_with_shared_routing(runtime, &context, false).map_err(|error| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!(
+                    "Could not load execution status for pivot recording: {}",
+                    error.message
+                ),
+            )
+        })?;
     let follow_up_requires_pivot =
         operator.phase == "pivot_required" && operator.phase_detail == "planning_reentry_required";
     let qa_requirement_missing_or_invalid = !matches!(

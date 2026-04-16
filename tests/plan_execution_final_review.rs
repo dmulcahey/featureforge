@@ -2295,6 +2295,18 @@ fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_fr
     fs::remove_file(&authoritative_review_path)
         .expect("missing authoritative fixture should allow deleting the authoritative final-review projection");
 
+    let gate_before_rebuild = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate-finish should continue to trust authoritative final-review state when derived final-review markdown is missing",
+    );
+    assert_eq!(
+        gate_before_rebuild["allowed"],
+        Value::Bool(true),
+        "json: {gate_before_rebuild}"
+    );
+
     let rebuild = run_plan_execution_json_real_cli(
         repo,
         state,
@@ -2309,6 +2321,18 @@ fn rebuild_evidence_regenerates_missing_authoritative_final_review_projection_fr
     assert!(
         latest_branch_artifact_path(&project_artifacts, &branch, "code-review").is_some(),
         "missing authoritative fixture should restore a readable code-review projection artifact"
+    );
+
+    let gate_after_rebuild = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["gate-finish", "--plan", PLAN_REL],
+        "gate-finish should remain ready after rebuild regenerates derived final-review projections",
+    );
+    assert_eq!(
+        gate_after_rebuild["allowed"],
+        Value::Bool(true),
+        "json: {gate_after_rebuild}"
     );
 
     let harness_after: Value =
@@ -2526,7 +2550,7 @@ fn gate_finish_accepts_fresh_non_browser_review_chain() {
 }
 
 #[test]
-fn gate_finish_rejects_review_when_only_receipt_provenance_text_is_mutated() {
+fn gate_finish_accepts_review_when_only_receipt_provenance_text_is_mutated() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-missing-provenance");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2557,11 +2581,11 @@ fn gate_finish_rejects_review_when_only_receipt_provenance_text_is_mutated() {
         "gate-finish should not rely on receipt provenance text for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_rejects_review_when_receipt_reviewer_source_text_is_mutated() {
+fn gate_finish_accepts_review_when_receipt_reviewer_source_text_is_mutated() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-non-independent-reviewer-source");
     let repo = repo_dir.path();
@@ -2593,11 +2617,11 @@ fn gate_finish_rejects_review_when_receipt_reviewer_source_text_is_mutated() {
         "gate-finish should not rely on receipt reviewer source text for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_rejects_review_when_receipt_reviewer_artifact_path_is_missing() {
+fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_missing() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-missing-reviewer-artifact-path");
     let repo = repo_dir.path();
@@ -2633,11 +2657,11 @@ fn gate_finish_rejects_review_when_receipt_reviewer_artifact_path_is_missing() {
         "gate-finish should not rely on receipt reviewer artifact-path text for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_rejects_review_when_receipt_reviewer_artifact_path_is_unreadable() {
+fn gate_finish_accepts_review_when_receipt_reviewer_artifact_path_is_unreadable() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-unreadable-reviewer-artifact-path");
     let repo = repo_dir.path();
@@ -2662,11 +2686,11 @@ fn gate_finish_rejects_review_when_receipt_reviewer_artifact_path_is_unreadable(
         "gate-finish should not rely on receipt reviewer artifact file readability for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
-fn gate_finish_rejects_review_when_receipt_deviation_verdict_text_is_mutated() {
+fn gate_finish_accepts_review_when_receipt_deviation_verdict_text_is_mutated() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-invalid-deviation-verdict");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2702,7 +2726,7 @@ fn gate_finish_rejects_review_when_receipt_deviation_verdict_text_is_mutated() {
         "gate-finish should not rely on receipt deviation-verdict text for authoritative readiness",
     );
 
-    assert_eq!(gate["allowed"], false, "{}", pretty_json(&gate));
+    assert_eq!(gate["allowed"], true, "{}", pretty_json(&gate));
 }
 
 #[test]
@@ -2819,27 +2843,27 @@ fn fs11_status_routes_release_readiness_before_final_review_when_release_state_s
         &["status", "--plan", PLAN_REL],
         "status should route stale release truth before final review in FS-11 fixture (compiled CLI contract)",
     );
-    assert_ne!(
-        status["phase_detail"],
-        Value::from("final_review_dispatch_required")
-    );
+    assert_eq!(status["phase"], Value::from("document_release_pending"));
+    assert_eq!(status["next_action"], Value::from("advance late stage"));
+    let phase_detail = status["phase_detail"]
+        .as_str()
+        .expect("FS-11 compiled-CLI precedence fixture should expose phase_detail");
     assert!(
-        status["recommended_command"]
-            .as_str()
-            .is_some_and(|command| {
-                command
-                    == format!("featureforge plan execution repair-review-state --plan {PLAN_REL}")
-                    || command
-                        == format!(
-                            "featureforge plan execution advance-late-stage --plan {PLAN_REL}"
-                        )
-                    || command
-                        == format!(
-                            "featureforge plan execution advance-late-stage --plan {PLAN_REL} --result ready|blocked --summary-file <path>"
-                        )
-            }),
-        "FS-11 route should not request final review while release truth is not current: {status}"
+        matches!(
+            phase_detail,
+            "branch_closure_recording_required_for_release_readiness"
+                | "release_readiness_recording_ready"
+        ),
+        "FS-11 compiled-CLI precedence fixture must stay on the document-release lane, got {phase_detail}: {status}"
     );
+    let expected_command = if phase_detail == "release_readiness_recording_ready" {
+        format!(
+            "featureforge plan execution advance-late-stage --plan {PLAN_REL} --result ready|blocked --summary-file <path>"
+        )
+    } else {
+        format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}")
+    };
+    assert_eq!(status["recommended_command"], Value::from(expected_command));
 }
 
 #[test]

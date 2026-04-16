@@ -110,11 +110,7 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 - If any header line is missing or malformed, normalize the spec to this contract before continuing and treat it as `Draft`.
 - `brainstorming` is only valid while the spec remains `Draft`. A `CEO Approved` spec must end with `**Last Reviewed By:** plan-ceo-review`.
 - When review decisions change the written spec, update the spec document before continuing.
-- After each spec edit (including final approval edits), runs `sync --artifact spec` for the spec path:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow sync --artifact spec --path docs/featureforge/specs/YYYY-MM-DD-<topic>-design.md
-```
+- After each spec edit (including final approval edits), keep using the same repo-relative spec path in later workflow/operator and writing-plans handoffs; do not route through compatibility-only `workflow sync`.
 
 **Protected-Branch Repo-Write Gate:**
 

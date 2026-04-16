@@ -700,6 +700,15 @@ fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned() {
     for command in [
         ["workflow", "phase", "--json"].as_slice(),
         ["workflow", "doctor", "--json"].as_slice(),
+        [
+            "workflow",
+            "doctor",
+            "--plan",
+            PLAN_REL,
+            "--external-review-result-ready",
+            "--json",
+        ]
+        .as_slice(),
         ["workflow", "handoff", "--json"].as_slice(),
         ["workflow", "operator", "--plan", PLAN_REL, "--json"].as_slice(),
     ] {
@@ -760,6 +769,15 @@ fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned_for_task
     for command in [
         ["workflow", "phase", "--json"].as_slice(),
         ["workflow", "doctor", "--json"].as_slice(),
+        [
+            "workflow",
+            "doctor",
+            "--plan",
+            PLAN_REL,
+            "--external-review-result-ready",
+            "--json",
+        ]
+        .as_slice(),
         ["workflow", "handoff", "--json"].as_slice(),
         ["workflow", "operator", "--plan", PLAN_REL, "--json"].as_slice(),
         [

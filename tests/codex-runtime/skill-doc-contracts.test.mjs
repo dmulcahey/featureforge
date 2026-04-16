@@ -576,6 +576,14 @@ test('execution workflow skills reference the plan-execution helper contract', (
     assert.match(content, /calls `workflow operator --plan \.\.\.` during preflight/);
     assert.match(
       content,
+      /Run `featureforge workflow operator --plan <approved-plan-path>` before (?:starting execution|dispatching implementation subagents)\./,
+    );
+    assert.doesNotMatch(
+      content,
+      /Run `featureforge workflow preflight --plan <approved-plan-path>` before (?:starting execution|dispatching implementation subagents)\./,
+    );
+    assert.match(
+      content,
       /uses `status --plan \.\.\.` only for additional diagnostics when operator output alone is insufficient/,
     );
     assert.match(content, /Provides the approved plan and the execution preflight handoff/);
@@ -941,8 +949,8 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
     );
     assert.match(
       normalized,
-      /no (?:code|test) edits?[\s\S]*successful preflight[\s\S]*first `begin`/i,
-      `${label} should prohibit code/test edits between successful preflight and first begin`,
+      /no (?:code|test) edits?[\s\S]*(?:successful preflight|execution preflight handoff)[\s\S]*first `begin`/i,
+      `${label} should prohibit code/test edits between the execution preflight handoff and first begin`,
     );
     assert.match(
       normalized,
@@ -1341,7 +1349,9 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   const ceoReview = readUtf8(getSkillPath('plan-ceo-review'));
   assert.match(ceoReview, /\*\*The terminal state is invoking writing-plans\.\*\*/);
   assert.match(ceoReview, /Do not draft a plan or offer implementation options from `plan-ceo-review`\./);
-  assert.match(ceoReview, /runs `sync --artifact spec`/);
+  assert.match(ceoReview, /keep using the same repo-relative spec path in later workflow\/operator and writing-plans handoffs/);
+  assert.doesNotMatch(ceoReview, /runs `sync --artifact spec`/);
+  assert.doesNotMatch(ceoReview, /"\$_FEATUREFORGE_BIN" workflow sync --artifact spec --path/);
 
   const engReview = readUtf8(getSkillPath('plan-eng-review'));
   assert.match(engReview, /\*\*The terminal state is presenting the execution preflight handoff with the approved plan path\.\*\*/);
@@ -1359,18 +1369,21 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.match(engReview, /Do not start implementation inside `plan-eng-review`\./);
 
   const brainstorming = readUtf8(getSkillPath('brainstorming'));
-  assert.match(brainstorming, /record the intended spec path with `expect`/);
-  assert.match(brainstorming, /"\$_FEATUREFORGE_BIN" workflow expect --artifact spec --path/);
-  assert.match(brainstorming, /runs `sync --artifact spec`/);
+  assert.match(brainstorming, /Use that repo-relative spec path consistently in later review and workflow\/operator commands/);
+  assert.match(brainstorming, /After the spec is written or updated, continue using the same repo-relative spec path in downstream review and workflow\/operator commands\./);
+  assert.doesNotMatch(brainstorming, /record the intended spec path with `expect`/);
+  assert.doesNotMatch(brainstorming, /"\$_FEATUREFORGE_BIN" workflow expect --artifact spec --path/);
+  assert.doesNotMatch(brainstorming, /runs `sync --artifact spec`/);
+  assert.doesNotMatch(brainstorming, /"\$_FEATUREFORGE_BIN" workflow sync --artifact spec --path/);
 
   const writingPlans = readUtf8(getSkillPath('writing-plans'));
-  assert.match(writingPlans, /record the intended plan path with `expect`/);
-  assert.match(writingPlans, /"\$_FEATUREFORGE_BIN" workflow expect --artifact plan --path/);
-  assert.match(writingPlans, /runs `sync --artifact plan`/);
+  assert.match(writingPlans, /Use that repo-relative plan path consistently in later review and workflow\/operator commands/);
+  assert.match(writingPlans, /After the plan is written or updated, continue using the same repo-relative plan path in plan-fidelity-review and workflow\/operator handoffs\./);
+  assert.doesNotMatch(writingPlans, /record the intended plan path with `expect`/);
+  assert.doesNotMatch(writingPlans, /"\$_FEATUREFORGE_BIN" workflow expect --artifact plan --path/);
+  assert.doesNotMatch(writingPlans, /runs `sync --artifact plan`/);
+  assert.doesNotMatch(writingPlans, /"\$_FEATUREFORGE_BIN" workflow sync --artifact plan --path/);
   assert.doesNotMatch(writingPlans, /Use the execution skill recommended by `featureforge plan execution recommend --plan <approved-plan-path>`/);
-
-  const ceoReviewWithSyncPath = readUtf8(getSkillPath('plan-ceo-review'));
-  assert.match(ceoReviewWithSyncPath, /"\$_FEATUREFORGE_BIN" workflow sync --artifact spec --path/);
 
   const sdd = readUtf8(getSkillPath('subagent-driven-development'));
   assert.match(sdd, /"Have engineering-approved implementation plan\?" \[shape=diamond\];/);
@@ -1606,6 +1619,15 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
     readme,
     /each task runs a fresh-context independent review loop until `gate-review` is green/,
     'README should stop teaching gate-review as the task-closure green loop',
+  );
+  assert.match(
+    readme,
+    /Compatibility\/debug helpers remain available only for exceptional or contract-boundary cases and are not part of the normal path\./,
+  );
+  assert.doesNotMatch(
+    readme,
+    /the broader public execution surface also includes commands such as `note`, `complete`, `reopen`, `transfer`, and compatibility\/diagnostic helpers when the route or workflow boundary requires them\./,
+    'README should keep compatibility helpers out of the normal public execution surface',
   );
   const completionSection = readme.slice(
     readme.indexOf('Completion then flows through'),
@@ -1900,13 +1922,16 @@ test('runtime-remediation regression inventory fixture stays complete', () => {
     );
   }
   for (const [scenario, anchor] of [
+    ['FS-01', 'tests/workflow_shell_smoke.rs::runtime_remediation_fs01_compiled_cli_repair_and_branch_closure_do_not_disagree'],
     ['FS-05', 'tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation'],
     ['FS-05', 'tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation'],
+    ['FS-04', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift'],
     ['FS-11', 'tests/plan_execution_final_review.rs::fs11_gate_finish_rejects_final_review_release_binding_mismatch'],
     ['FS-12', 'tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered'],
     ['FS-13', 'tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails'],
     ['FS-13', 'tests/plan_execution_final_review.rs::dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass'],
     ['FS-13', 'tests/plan_execution_final_review.rs::dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict'],
+    ['Task-12', 'task_close_internal_dispatch_runtime_management_budget_is_capped'],
   ]) {
     assert.match(
       inventory,

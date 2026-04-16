@@ -9790,6 +9790,7 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             &[
                 "tests/workflow_runtime.rs::runtime_remediation_fs01_shared_route_parity_for_missing_current_closure",
                 "tests/workflow_shell_smoke.rs::compiled_cli_route_parity_probe_for_late_stage_refresh_fixture",
+                "tests/workflow_shell_smoke.rs::runtime_remediation_fs01_compiled_cli_repair_and_branch_closure_do_not_disagree",
             ],
         ),
         (
@@ -9811,6 +9812,7 @@ fn runtime_remediation_inventory_maps_fs_regressions_to_workflow_runtime() {
             &[
                 "tests/workflow_runtime.rs::runtime_remediation_fs04_repair_returns_route_consumed_by_operator",
                 "tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest",
+                "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift",
             ],
         ),
         (

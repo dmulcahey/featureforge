@@ -9453,7 +9453,7 @@ fn gate_finish_requires_fresh_code_review_result_before_qa_or_release() {
 }
 
 #[test]
-fn gate_finish_rejects_code_review_receipt_regressions_when_authoritative_record_is_current() {
+fn gate_finish_accepts_code_review_receipt_regressions_when_authoritative_record_is_current() {
     for (case_name, mutator) in [
         ("review_artifact_malformed", "review_artifact_malformed"),
         ("review_plan_mismatch", "review_plan_mismatch"),
@@ -9568,17 +9568,9 @@ fn gate_finish_rejects_code_review_receipt_regressions_when_authoritative_record
         );
 
         assert_eq!(
-            gate_finish["allowed"], false,
+            gate_finish["allowed"], true,
             "case {}: {}",
             case_name, gate_finish
-        );
-        assert!(
-            gate_finish["reason_codes"]
-                .as_array()
-                .is_some_and(|codes| !codes.is_empty()),
-            "case {}: {}",
-            case_name,
-            gate_finish
         );
     }
 }
@@ -15436,20 +15428,20 @@ fn record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutati
 
 #[test]
 fn runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch() {
-    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs03-plan-execution-real-cli");
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs03-plan-execution-compiled-cli");
     let repo = repo_dir.path();
     let state = state_dir.path();
     write_approved_spec(repo);
     write_plan(repo, "featureforge:executing-plans");
     accept_execution_preflight(repo, state, PLAN_REL);
 
-    let status_before = run_rust_json(
+    let status_before = run_shell_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "FS-03 status before task 1 begin",
+        "FS-03 compiled-cli status before task 1 begin",
     );
-    let begin_task1_step1 = run_rust_json(
+    let begin_task1_step1 = run_shell_json(
         repo,
         state,
         &[
@@ -15467,9 +15459,9 @@ fn runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch
                 .as_str()
                 .expect("status should include execution fingerprint before begin"),
         ],
-        "FS-03 begin task 1 step 1",
+        "FS-03 compiled-cli begin task 1 step 1",
     );
-    let complete_task1_step1 = run_rust_json(
+    let complete_task1_step1 = run_shell_json(
         repo,
         state,
         &[
@@ -15493,9 +15485,9 @@ fn runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch
                 .as_str()
                 .expect("begin should include execution fingerprint for complete"),
         ],
-        "FS-03 complete task 1 step 1",
+        "FS-03 compiled-cli complete task 1 step 1",
     );
-    let begin_task1_step2 = run_rust_json(
+    let begin_task1_step2 = run_shell_json(
         repo,
         state,
         &[
@@ -15513,9 +15505,9 @@ fn runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch
                 .as_str()
                 .expect("complete should include execution fingerprint for follow-up begin"),
         ],
-        "FS-03 begin task 1 step 2",
+        "FS-03 compiled-cli begin task 1 step 2",
     );
-    run_rust_json(
+    run_shell_json(
         repo,
         state,
         &[
@@ -15539,7 +15531,7 @@ fn runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch
                 .as_str()
                 .expect("begin should include execution fingerprint for complete"),
         ],
-        "FS-03 complete task 1 step 2",
+        "FS-03 compiled-cli complete task 1 step 2",
     );
 
     let status_blocked = run_shell_json(
@@ -20167,17 +20159,9 @@ fn rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_proje
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should fail closed before rebuild-evidence restores tampered reviewer projection bindings",
+        "gate-finish should keep trusting authoritative final-review state before rebuild-evidence restores tampered reviewer projections",
     );
-    assert_eq!(gate_finish_before_rebuild["allowed"], false);
-    assert!(
-        gate_finish_before_rebuild["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| codes
-                .iter()
-                .any(|code| { code == "review_receipt_reviewer_fingerprint_mismatch" })),
-        "tampered reviewer projection should surface fingerprint mismatch before rebuild, got {gate_finish_before_rebuild}",
-    );
+    assert_eq!(gate_finish_before_rebuild["allowed"], true);
 
     let rebuild = run_rust_json(
         repo,
@@ -20275,15 +20259,9 @@ fn rebuild_evidence_noop_regenerates_reviewer_projection_when_reviewer_projectio
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should fail closed before rebuild-evidence restores missing reviewer projection bindings",
+        "gate-finish should keep trusting authoritative final-review state before rebuild-evidence restores missing reviewer projections",
     );
-    assert_eq!(gate_finish_before_rebuild["allowed"], false);
-    assert!(
-        gate_finish_before_rebuild["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| codes.iter().any(|code| code == "review_artifact_malformed")),
-        "missing reviewer projection should surface malformed review artifact binding before rebuild, got {gate_finish_before_rebuild}",
-    );
+    assert_eq!(gate_finish_before_rebuild["allowed"], true);
 
     let rebuild = run_rust_json(
         repo,
@@ -20635,7 +20613,8 @@ fn rebuild_evidence_noop_not_required_without_branch_test_plan_skips_missing_tes
 }
 
 #[test]
-fn rebuild_evidence_noop_preserves_late_gate_head_drift_block_without_rebinding() {
+fn rebuild_evidence_noop_preserves_authoritative_late_gate_truth_without_rebinding_after_empty_commit_head_drift()
+ {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-rebuild-evidence-noop-rebase-only-late-gate-repair");
     let repo = repo_dir.path();
@@ -20669,11 +20648,11 @@ fn rebuild_evidence_noop_preserves_late_gate_head_drift_block_without_rebinding(
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish before noop rebase-only late-gate repair",
+        "gate-finish before noop rebase-only late-gate repair should keep trusting authoritative truth when only artifact head headers drift",
     );
     assert_eq!(
         gate_finish_before["allowed"],
-        Value::Bool(false),
+        Value::Bool(true),
         "json: {gate_finish_before}"
     );
 
@@ -20694,11 +20673,11 @@ fn rebuild_evidence_noop_preserves_late_gate_head_drift_block_without_rebinding(
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish after blocked rebase-only late-gate repair",
+        "gate-finish after noop rebase-only late-gate repair should still trust authoritative truth without rebinding artifact headers",
     );
     assert_eq!(
         gate_finish_after["allowed"],
-        Value::Bool(false),
+        Value::Bool(true),
         "json: {gate_finish_after}"
     );
 

@@ -8,7 +8,7 @@ an additional lower-level runtime/shared-truth test.
 | Scenario | Source | Setup Summary | Expected Fixed Behavior | Probe Command Target (informational unless listed under Task 12 gates) |
 |---|---|---|---|---|
 | `FS-01` | session `03e9` | late-stage missing-current-closure with drift classification pressure | one consistent route across `operator`/`status`/`doctor`; no `repair already_current` contradiction | covered by prerelease-refresh stale-follow-up regressions; parity-probe budget `<=3` |
-| `FS-02` | session `03e9` | late-stage doc/evidence writes around branch-closure baseline | deterministic classification: confined refresh vs true execution reentry vs explicit metadata blocker | parity regression and command-budget guard in compiled-CLI entry routing (`<=3`) |
+| `FS-02` | session `03e9` | late-stage doc/evidence writes around branch-closure baseline | deterministic classification: confined refresh vs true execution reentry vs explicit metadata blocker | parity regression and command-budget guard in compiled-CLI entry routing (`<=2`) |
 | `FS-03` | session `a196` | stale prior-task redispatch while later task is active | blocking task target and accepted mutation target match | `<=3` |
 | `FS-04` | session `a196` | repair/rebuild path with stale prior dispatch and resume overlays | repair yields one authoritative next action; no wrong blocker survives | `<=3` |
 | `FS-05` | session `a196` | unsupported field request on mutation commands | fail before mutation; authoritative digest unchanged | `<=1` |
@@ -26,6 +26,7 @@ an additional lower-level runtime/shared-truth test.
 - `FS-01`:
   - `tests/workflow_runtime.rs::runtime_remediation_fs01_shared_route_parity_for_missing_current_closure`
   - `tests/workflow_shell_smoke.rs::plan_execution_record_release_readiness_primitive_uses_shared_routing_when_stale`
+  - `tests/workflow_shell_smoke.rs::runtime_remediation_fs01_compiled_cli_repair_and_branch_closure_do_not_disagree`
 - `FS-02`:
   - `tests/workflow_runtime_final_review.rs::fs02_late_stage_drift_routes_consistently_across_operator_and_status`
   - `tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget`
@@ -38,6 +39,7 @@ an additional lower-level runtime/shared-truth test.
   - `tests/workflow_runtime.rs::runtime_remediation_fs04_repair_returns_route_consumed_by_operator`
   - `tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest`
   - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli`
+  - `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift`
 - `FS-05`:
   - `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
   - `tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
@@ -78,6 +80,7 @@ an additional lower-level runtime/shared-truth test.
   - Shared runtime: `tests/workflow_runtime.rs::runtime_remediation_fs01_shared_route_parity_for_missing_current_closure`
   - Compiled CLI parity: `tests/workflow_shell_smoke.rs::compiled_cli_route_parity_probe_for_late_stage_refresh_fixture`
   - Compiled CLI stale reroute parity guard: `tests/workflow_shell_smoke.rs::plan_execution_record_release_readiness_primitive_uses_shared_routing_when_stale`
+  - Compiled CLI repair/branch-closure consistency: `tests/workflow_shell_smoke.rs::runtime_remediation_fs01_compiled_cli_repair_and_branch_closure_do_not_disagree`
 - `FS-02`
   - Shared runtime: `tests/workflow_runtime_final_review.rs::fs02_late_stage_drift_routes_consistently_across_operator_and_status`
   - Compiled CLI parity: `tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget`
@@ -91,6 +94,7 @@ an additional lower-level runtime/shared-truth test.
   - Compiled CLI repair parity: `tests/workflow_runtime.rs::runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator`
   - Authoritative digest invariant: `tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest`
   - Direct-vs-compiled CLI repair-route parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli`
+  - Direct-vs-compiled CLI external-review-ready flag parity: `tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift`
 - `FS-05`
   - Plan-execution no-mutation invariants: `tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation`
   - Plan-execution no-mutation invariant for final-review scope task-field rejection: `tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation`
@@ -127,8 +131,12 @@ an additional lower-level runtime/shared-truth test.
 
 - Task 12 command-budget gates (compiled CLI):
   - `task_close_happy_path_runtime_management_budget_is_capped` (`tests/workflow_shell_smoke.rs`) `<=3`
+  - `task_close_internal_dispatch_runtime_management_budget_is_capped` (`tests/workflow_shell_smoke.rs`) `<=2`
   - `reentry_recovery_runtime_management_budget_is_capped` (`tests/workflow_shell_smoke.rs`) `<=2`
   - `stale_release_refresh_runtime_management_budget_is_capped_before_new_review_step` (`tests/workflow_shell_smoke.rs`) `<=3`
+- Public workflow-command mapping coverage:
+  - `tests/bootstrap_smoke.rs::workflow_help_surface_hides_compatibility_only_commands`
+  - `tests/workflow_shell_smoke.rs::workflow_help_outside_repo_mentions_the_public_surfaces`
 - runtime-doc/skill-contract integration references:
   - `tests/runtime_instruction_contracts.rs`
   - `tests/using_featureforge_skill.rs`

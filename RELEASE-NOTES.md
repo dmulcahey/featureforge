@@ -7,7 +7,7 @@
 - align runtime routing, schemas, skill docs, shared review-state reference guidance, and regression coverage on the refactored public command mapping
 - keep `plan execution status --json` and `workflow operator --json` on the same runtime-owned routing decision instead of allowing diagnostic/status drift
 - harden `rebuild-evidence` as projection-only regeneration that fails closed with append-only/manual-repair blockers instead of rewriting authoritative proof in place
-- refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts so the shipped CLI help matches the refactored command contract
+- refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for the refactored command contract
 
 ### Breaking Output Contract Changes
 

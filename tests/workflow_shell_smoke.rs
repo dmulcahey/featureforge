@@ -2393,13 +2393,30 @@ fn workflow_help_outside_repo_mentions_the_public_surfaces() {
     assert!(stdout.contains("Usage: featureforge workflow <COMMAND>"));
     assert!(stdout.contains("Commands:"));
     assert!(stdout.contains("status"));
+    assert!(stdout.contains("operator"));
+    assert!(stdout.contains("record-pivot"));
+    assert!(stdout.contains("plan-fidelity"));
     assert!(stdout.contains("help"));
-    assert!(
-        !stdout
-            .lines()
-            .any(|line| line.trim_start().starts_with("gate")),
-        "workflow help should not expose hidden/internal `workflow gate` command"
-    );
+    for hidden in [
+        "resolve",
+        "expect",
+        "sync",
+        "next",
+        "artifacts",
+        "explain",
+        "phase",
+        "doctor",
+        "handoff",
+        "preflight",
+        "gate",
+    ] {
+        assert!(
+            !stdout
+                .lines()
+                .any(|line| line.trim_start().starts_with(hidden)),
+            "workflow help should not expose hidden/internal `{hidden}` command"
+        );
+    }
 }
 
 #[test]
@@ -2430,6 +2447,15 @@ fn plan_execution_help_hides_internal_compatibility_commands() {
         );
     }
     for hidden in [
+        "recommend",
+        "preflight",
+        "rebuild-evidence",
+        "gate-contract",
+        "record-contract",
+        "gate-evaluator",
+        "record-evaluation",
+        "gate-handoff",
+        "record-handoff",
         "record-review-dispatch",
         "record-branch-closure",
         "record-release-readiness",
@@ -2437,6 +2463,8 @@ fn plan_execution_help_hides_internal_compatibility_commands() {
         "record-qa",
         "record-gate-review-pass",
         "record-gate-finish-pass",
+        "internal",
+        "explain-review-state",
         "gate-review",
         "gate-finish",
     ] {
@@ -8507,22 +8535,15 @@ fn plan_execution_advance_late_stage_final_review_rerun_is_idempotent_and_confli
 }
 
 #[test]
-fn final_review_artifact_invalidations_reroute_back_to_final_review_dispatch_when_branch_closure_is_unchanged()
- {
+fn final_review_receipt_tampering_does_not_reroute_when_authoritative_record_is_current() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let branch_closure_id = "branch-release-closure";
-    for (case_name, mutator, expected_reason_code, republish_authoritative) in [
-        ("malformed", "malformed", "review_artifact_malformed", true),
-        (
-            "plan_mismatch",
-            "plan_mismatch",
-            "review_artifact_plan_mismatch",
-            true,
-        ),
+    for (case_name, mutator, republish_authoritative) in [
+        ("malformed", "malformed", true),
+        ("plan_mismatch", "plan_mismatch", true),
         (
             "authoritative_provenance_invalid",
             "authoritative_provenance_invalid",
-            "review_artifact_authoritative_provenance_invalid",
             false,
         ),
     ] {
@@ -8646,18 +8667,12 @@ fn final_review_artifact_invalidations_reroute_back_to_final_review_dispatch_whe
             repo,
             state,
             &["gate-finish", "--plan", plan_rel],
-            &format!("gate-finish should expose {case_name} final-review invalidation"),
+            &format!("gate-finish should ignore {case_name} final-review receipt tamper"),
         );
         assert_eq!(
             gate_finish["allowed"],
-            Value::Bool(false),
+            Value::Bool(true),
             "case {case_name}: {gate_finish}"
-        );
-        assert!(
-            gate_finish["reason_codes"]
-                .as_array()
-                .is_some_and(|codes| codes.iter().any(|code| code == expected_reason_code)),
-            "case {case_name}: expected gate-finish to include {expected_reason_code}, got {gate_finish}"
         );
 
         let operator_json = run_featureforge_with_env_json(
@@ -8666,50 +8681,32 @@ fn final_review_artifact_invalidations_reroute_back_to_final_review_dispatch_whe
             &["workflow", "operator", "--plan", plan_rel, "--json"],
             &[],
             &format!(
-                "workflow operator should reroute to final-review dispatch when {case_name} invalidates authoritative reviewer/final-review truth"
+                "workflow operator should keep branch-completion routing when {case_name} only tampers derived final-review receipts"
             ),
         );
         assert_eq!(
-            operator_json["phase"], "final_review_pending",
+            operator_json["phase"], "ready_for_branch_completion",
             "case {case_name}: {operator_json}"
         );
         assert_eq!(
-            operator_json["phase_detail"], "final_review_dispatch_required",
+            operator_json["phase_detail"], "finish_completion_gate_ready",
             "case {case_name}: {operator_json}"
         );
-        assert_eq!(
-            operator_json["review_state_status"], "clean",
-            "case {case_name}: {operator_json}"
-        );
-        assert_eq!(
-            operator_json["recommended_command"],
-            Value::Null,
-            "case {case_name}: {operator_json}"
-        );
-
         let status_json = run_plan_execution_json(
             repo,
             state,
             &["status", "--plan", plan_rel],
             &format!(
-                "status should require final-review dispatch when {case_name} invalidates authoritative reviewer/final-review truth"
+                "plan execution status should stay aligned when {case_name} only tampers derived final-review receipts"
             ),
         );
         assert_eq!(
-            status_json["review_state_status"], "clean",
+            status_json["phase"], operator_json["phase"],
             "case {case_name}: {status_json}"
         );
         assert_eq!(
-            status_json["phase_detail"], "final_review_dispatch_required",
+            status_json["phase_detail"], operator_json["phase_detail"],
             "case {case_name}: {status_json}"
-        );
-        assert!(
-            status_json["blocking_records"]
-                .as_array()
-                .is_some_and(|records| records
-                    .iter()
-                    .any(|record| record["code"] == "final_review_dispatch_required")),
-            "case {case_name}: status should require final-review redispatch: {status_json}"
         );
 
         let stale_rerun = run_plan_execution_json_real_cli(
@@ -8731,81 +8728,12 @@ fn final_review_artifact_invalidations_reroute_back_to_final_review_dispatch_whe
                 summary_path.to_str().expect("summary path should be utf-8"),
             ],
             &format!(
-                "same-state final-review rerun should requery when {case_name} invalidates authoritative reviewer/final-review truth"
+                "same-state final-review rerun should remain idempotent when {case_name} only tampers derived final-review receipts"
             ),
         );
         assert_eq!(
-            stale_rerun["action"], "blocked",
+            stale_rerun["action"], "already_current",
             "case {case_name}: {stale_rerun}"
-        );
-        assert_eq!(
-            stale_rerun["code"],
-            Value::Null,
-            "case {case_name}: {stale_rerun}"
-        );
-        assert_eq!(
-            stale_rerun["recommended_command"],
-            Value::Null,
-            "case {case_name}: {stale_rerun}"
-        );
-        assert_eq!(
-            stale_rerun["rederive_via_workflow_operator"],
-            Value::Null,
-            "case {case_name}: {stale_rerun}"
-        );
-        assert_eq!(
-            stale_rerun["required_follow_up"],
-            Value::from("request_external_review"),
-            "case {case_name}: {stale_rerun}"
-        );
-
-        let primitive_rerun = run_plan_execution_json_real_cli(
-            repo,
-            state,
-            &[
-                "record-final-review",
-                "--plan",
-                plan_rel,
-                "--branch-closure-id",
-                branch_closure_id,
-                "--dispatch-id",
-                &dispatch_id,
-                "--reviewer-source",
-                "fresh-context-subagent",
-                "--reviewer-id",
-                "reviewer-fixture-001",
-                "--result",
-                "pass",
-                "--summary-file",
-                summary_path.to_str().expect("summary path should be utf-8"),
-            ],
-            &format!(
-                "record-final-review rerun should requery when {case_name} invalidates authoritative reviewer/final-review truth"
-            ),
-        );
-        assert_eq!(
-            primitive_rerun["action"], "blocked",
-            "case {case_name}: {primitive_rerun}"
-        );
-        assert_eq!(
-            primitive_rerun["code"],
-            Value::Null,
-            "case {case_name}: {primitive_rerun}"
-        );
-        assert_eq!(
-            primitive_rerun["required_follow_up"],
-            Value::from("request_external_review"),
-            "case {case_name}: {primitive_rerun}"
-        );
-        assert_eq!(
-            primitive_rerun["recommended_command"],
-            Value::Null,
-            "case {case_name}: {primitive_rerun}"
-        );
-        assert_eq!(
-            primitive_rerun["rederive_via_workflow_operator"],
-            Value::Null,
-            "case {case_name}: {primitive_rerun}"
         );
 
         let authoritative_state_after = authoritative_harness_state(repo, state);
@@ -8826,7 +8754,8 @@ fn final_review_artifact_invalidations_reroute_back_to_final_review_dispatch_whe
 }
 
 #[test]
-fn plan_execution_record_qa_same_state_rerun_requeries_when_final_review_is_invalidated() {
+fn plan_execution_record_qa_same_state_rerun_keeps_standard_requery_after_final_review_receipt_tamper()
+ {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) = init_repo("plan-execution-record-qa-final-review-invalidated");
     let repo = repo_dir.path();
@@ -8880,13 +8809,10 @@ fn plan_execution_record_qa_same_state_rerun_requeries_when_final_review_is_inva
         state,
         &["workflow", "operator", "--plan", plan_rel, "--json"],
         &[],
-        "workflow operator should require final-review redispatch after final-review artifact invalidation",
+        "workflow operator should keep ready-for-completion routing after final-review receipt tamper",
     );
-    assert_eq!(operator_json["phase"], "final_review_pending");
-    assert_eq!(
-        operator_json["phase_detail"],
-        "final_review_dispatch_required"
-    );
+    assert_eq!(operator_json["phase"], "ready_for_branch_completion");
+    assert_eq!(operator_json["phase_detail"], "finish_review_gate_ready");
 
     let rerun = run_plan_execution_json(
         repo,
@@ -8900,7 +8826,7 @@ fn plan_execution_record_qa_same_state_rerun_requeries_when_final_review_is_inva
             "--summary-file",
             summary_path.to_str().expect("summary path should be utf-8"),
         ],
-        "same-state record-qa rerun should requery instead of returning already_current after final-review invalidation",
+        "same-state record-qa rerun should keep the standard out-of-phase requery after final-review receipt tamper",
     );
     assert_eq!(rerun["action"], "blocked", "json: {rerun}");
     assert_ne!(rerun["action"], "already_current", "json: {rerun}");
@@ -8918,7 +8844,7 @@ fn plan_execution_record_qa_same_state_rerun_requeries_when_final_review_is_inva
 }
 
 #[test]
-fn workflow_operator_routes_tampered_reviewer_artifact_back_to_final_review_dispatch() {
+fn workflow_operator_keeps_branch_completion_routing_after_reviewer_artifact_tamper() {
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     let (repo_dir, state_dir) = init_repo("workflow-operator-reviewer-artifact-tamper");
     let repo = repo_dir.path();
@@ -9009,35 +8935,36 @@ fn workflow_operator_routes_tampered_reviewer_artifact_back_to_final_review_disp
         state,
         &["workflow", "operator", "--plan", plan_rel, "--json"],
         &[],
-        "workflow operator should reroute to final-review dispatch after reviewer-artifact tamper",
+        "workflow operator should keep branch-completion routing after reviewer-artifact tamper",
     );
-    assert_eq!(operator_json["phase"], "final_review_pending");
-    assert_eq!(
-        operator_json["phase_detail"],
-        "final_review_dispatch_required"
-    );
+    assert_eq!(operator_json["phase"], "ready_for_branch_completion");
+    assert_eq!(operator_json["phase_detail"], "finish_review_gate_ready");
     assert_eq!(operator_json["review_state_status"], "clean");
     assert_eq!(operator_json["recommended_command"], Value::Null);
-
     let status_json = run_plan_execution_json(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "status should require final-review redispatch after reviewer-artifact tamper",
+        "plan execution status should stay aligned after reviewer-artifact tamper",
     );
-    assert_eq!(status_json["review_state_status"], "clean");
-    assert_eq!(
-        status_json["phase_detail"],
-        "final_review_dispatch_required"
+    assert_eq!(status_json["phase"], operator_json["phase"]);
+    assert_eq!(status_json["phase_detail"], operator_json["phase_detail"]);
+
+    let gate_review = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["gate-review", "--plan", plan_rel],
+        "gate-review should persist the finish checkpoint before gate-finish after reviewer-artifact tamper",
     );
-    assert!(
-        status_json["blocking_records"]
-            .as_array()
-            .is_some_and(|records| records
-                .iter()
-                .any(|record| record["code"] == "final_review_dispatch_required")),
-        "status should require final-review redispatch after reviewer-artifact tamper: {status_json}"
+    assert_eq!(gate_review["allowed"], Value::Bool(true), "{gate_review}");
+
+    let gate_finish = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["gate-finish", "--plan", plan_rel],
+        "gate-finish should ignore reviewer-artifact tamper when authoritative record stays current",
     );
+    assert_eq!(gate_finish["allowed"], Value::Bool(true), "{gate_finish}");
 
     let stale_rerun = run_plan_execution_json(
         repo,
@@ -9057,29 +8984,13 @@ fn workflow_operator_routes_tampered_reviewer_artifact_back_to_final_review_disp
             "--summary-file",
             summary_path.to_str().expect("summary path should be utf-8"),
         ],
-        "same-state final-review rerun should requery after reviewer-artifact tamper",
+        "same-state final-review rerun should remain idempotent after reviewer-artifact tamper",
     );
-    assert_eq!(stale_rerun["action"], "blocked");
+    assert_eq!(stale_rerun["action"], "already_current");
     assert_eq!(stale_rerun["code"], Value::Null);
     assert_eq!(stale_rerun["recommended_command"], Value::Null);
     assert_eq!(stale_rerun["rederive_via_workflow_operator"], Value::Null);
-    assert_eq!(stale_rerun["required_follow_up"], "request_external_review");
-
-    let redispatch = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "record-review-dispatch",
-            "--plan",
-            plan_rel,
-            "--scope",
-            "final-review",
-        ],
-        "record-review-dispatch should mint a new current dispatch after reviewer-artifact tamper",
-    );
-    assert_eq!(redispatch["allowed"], Value::Bool(true));
-    assert_eq!(redispatch["action"], Value::from("recorded"));
-    assert_eq!(redispatch["dispatch_id"], Value::from(dispatch_id.clone()));
+    assert_eq!(stale_rerun["required_follow_up"], Value::Null);
 
     let authoritative_state_after = authoritative_harness_state(repo, state);
     assert_eq!(
@@ -9927,6 +9838,30 @@ fn advance_late_stage_branch_closure_route_rejects_release_arguments_before_muta
         authoritative_harness_state_digest(repo, state),
         digest_before,
         "branch-closure argument mismatch must fail before authoritative mutation"
+    );
+    let blocked_real_cli = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "advance-late-stage",
+            "--plan",
+            plan_rel,
+            "--result",
+            "ready",
+            "--summary-file",
+            summary_arg,
+        ],
+        "real-cli advance-late-stage should emit the same blocked out-of-phase reroute during branch-closure recording",
+    );
+    assert_eq!(blocked_real_cli["action"], Value::from("blocked"));
+    assert_eq!(
+        blocked_real_cli["stage_path"],
+        Value::from("release_readiness")
+    );
+    assert_eq!(
+        authoritative_harness_state_digest(repo, state),
+        digest_before,
+        "real-cli branch-closure argument mismatch must also fail before authoritative mutation"
     );
 
     let operator_json = run_featureforge_with_env_json(
@@ -20286,6 +20221,7 @@ fn task_close_happy_path_runtime_management_budget_is_capped() {
         &verification_summary_path,
         "Task close budget fixture verification passed.\n",
     );
+    runtime_management_commands += 1;
     let preflight = run_plan_execution_json_real_cli(
         repo,
         state,
@@ -20294,7 +20230,6 @@ fn task_close_happy_path_runtime_management_budget_is_capped() {
     );
     assert_eq!(preflight["allowed"], Value::Bool(true));
 
-    runtime_management_commands += 1;
     let close_json = run_plan_execution_json_real_cli(
         repo,
         state,
@@ -20323,6 +20258,85 @@ fn task_close_happy_path_runtime_management_budget_is_capped() {
     );
     assert_eq!(close_json["action"], Value::from("recorded"));
     assert_runtime_management_budget("TASK-CLOSE-BUDGET", runtime_management_commands, 3);
+}
+
+#[test]
+fn task_close_internal_dispatch_runtime_management_budget_is_capped() {
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let (repo_dir, state_dir) =
+        init_repo("runtime-remediation-task-close-internal-dispatch-budget");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state, plan_rel, "main");
+    let review_summary_path = repo.join("task-close-internal-dispatch-review-summary.md");
+    let verification_summary_path =
+        repo.join("task-close-internal-dispatch-verification-summary.md");
+    write_file(
+        &review_summary_path,
+        "Task close internal-dispatch budget fixture independent review passed.\n",
+    );
+    write_file(
+        &verification_summary_path,
+        "Task close internal-dispatch budget fixture verification passed.\n",
+    );
+
+    let mut runtime_management_commands = 0usize;
+    runtime_management_commands += 1;
+    let preflight = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["preflight", "--plan", plan_rel],
+        "task-close internal-dispatch budget fixture preflight refresh before close-current-task",
+    );
+    assert_eq!(preflight["allowed"], Value::Bool(true));
+
+    runtime_management_commands += 1;
+    let close_json = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("task-close internal-dispatch review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("task-close internal-dispatch verification summary path should be utf-8"),
+        ],
+        "task-close internal-dispatch budget fixture close-current-task should succeed without a public dispatch id",
+    );
+    assert_eq!(close_json["action"], Value::from("recorded"));
+    assert_eq!(
+        close_json["dispatch_validation_action"],
+        Value::from("validated")
+    );
+    let state_path = harness_state_path(state, &repo_slug(repo, state), &current_branch_name(repo));
+    let authoritative_state: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path)
+            .expect("task-close internal-dispatch authoritative state should be readable"),
+    )
+    .expect("task-close internal-dispatch authoritative state should remain valid json");
+    assert!(
+        authoritative_state["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"]
+            .as_str()
+            .is_some(),
+        "close-current-task internal-dispatch path should still record authoritative dispatch lineage"
+    );
+    assert_runtime_management_budget(
+        "TASK-CLOSE-INTERNAL-DISPATCH-BUDGET",
+        runtime_management_commands,
+        2,
+    );
 }
 
 #[test]

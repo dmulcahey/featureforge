@@ -201,17 +201,17 @@ Before dispatching any implementation subagent:
    - if the working tree is dirty, stop unless the helper-selected topology and workspace-prepared context explicitly support isolated worktree-backed execution for this run
 6. Do not auto-clean the workspace. If the helper-selected topology or protected-branch gate requires isolated execution, provision or route through a worktree-backed workspace before dispatching repo-writing subagents.
 7. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
-8. Run `featureforge workflow preflight --plan <approved-plan-path>` before dispatching implementation subagents.
-9. If the preflight helper returns `allowed` `false`, stop and resolve the reported `failure_class`, `reason_codes`, and `diagnostics` before dispatching work.
+8. Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching implementation subagents.
+9. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution through compatibility helpers.
 10. Treat execution start as a hard gate, not a reminder:
-   - no code edits and no test edits are allowed after successful preflight and before the first `begin` for the active step
+   - no code edits and no test edits are allowed after workflow/operator confirms the current execution preflight handoff and before the first `begin` for the active step
    - do not dispatch implementation subagents for repo-writing work until that first `begin` is recorded
-   - if the workspace becomes dirty before the first `begin`, expect later preflight retries to fail closed (for example `tracked_worktree_dirty`) until the workspace is reconciled or isolated
+   - if the workspace becomes dirty before the first `begin`, expect later execution-start checks to fail closed (for example `tracked_worktree_dirty`) until the workspace is reconciled or isolated
    - retroactive execution tracking is recovery-only and must never be treated as the normal execution path
    - five-step recovery runbook for dirty-before-begin failures:
      1. reconcile or isolate the workspace
-     2. rerun preflight and confirm fresh acceptance for the current approved plan revision
-     3. read helper-backed `workflow operator --plan ...` before any recovery mutation
+     2. rerun `workflow operator --plan <approved-plan-path>` and confirm the current route is still `executing` for the current approved plan revision
+     3. use that helper-backed route before any recovery mutation
      4. backfill only factual-only completed steps using authoritative helper mutations; never infer completion from dirty diffs
      5. resume from the task-boundary review and verification gate before any next-task `begin`
 
@@ -219,7 +219,7 @@ Before dispatching any implementation subagent:
 
 - calls `workflow operator --plan ...` during preflight
 - uses `status --plan ...` only for additional diagnostics when operator output alone is insufficient
-- calls `workflow preflight --plan ...` before dispatching implementation subagents
+- uses the workflow/operator execution-start handoff instead of separate compatibility-helper choreography before dispatching implementation subagents
 - calls `begin` before starting work on a plan step
 - calls `complete` after each completed step
 - calls `note` when work is interrupted or blocked

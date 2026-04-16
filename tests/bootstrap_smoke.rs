@@ -86,8 +86,12 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
         let stdout =
             String::from_utf8(output.stdout).expect("plan execution help stdout should be utf-8");
         for command in [
+            "status",
             "begin",
+            "note",
             "complete",
+            "reopen",
+            "transfer",
             "close-current-task",
             "repair-review-state",
             "advance-late-stage",
@@ -95,6 +99,23 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
             assert!(
                 stdout.contains(command),
                 "plan execution --help should include `{command}` for binary {}, got:\n{stdout}",
+                binary.display()
+            );
+        }
+        for description in [
+            "Diagnostic routing status query.",
+            "Intent-level review-state repair command.",
+            "Intent-level task-closure command.",
+            "Intent-level late-stage progression command.",
+            "Execution step start recorder.",
+            "Execution interruption/block note recorder.",
+            "Execution step completion recorder.",
+            "Execution task reopen recorder.",
+            "Execution handoff transfer recorder.",
+        ] {
+            assert!(
+                stdout.contains(description),
+                "plan execution --help should include description `{description}` for binary {}, got:\n{stdout}",
                 binary.display()
             );
         }
@@ -151,6 +172,110 @@ fn normal_path_command_help_hides_dispatch_id_plumbing() {
                 binary.display()
             );
         }
+    }
+}
+
+#[test]
+fn workflow_help_surface_hides_compatibility_only_commands() {
+    for binary in featureforge_help_binaries() {
+        let output = std::process::Command::new(&binary)
+            .args(["workflow", "--help"])
+            .output()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "workflow --help should run for binary {}: {error}",
+                    binary.display()
+                )
+            });
+        assert!(
+            output.status.success(),
+            "expected workflow --help to succeed for binary {}, got {:?}",
+            binary.display(),
+            output.status
+        );
+        let stdout =
+            String::from_utf8(output.stdout).expect("workflow help stdout should be utf-8");
+        for command in ["status", "operator", "record-pivot", "plan-fidelity"] {
+            assert!(
+                stdout
+                    .lines()
+                    .any(|line| line.trim_start().starts_with(command)),
+                "workflow --help should expose `{command}` for binary {}, got:\n{stdout}",
+                binary.display()
+            );
+        }
+        for compatibility_only in [
+            "resolve",
+            "expect",
+            "sync",
+            "next",
+            "artifacts",
+            "explain",
+            "phase",
+            "doctor",
+            "handoff",
+            "preflight",
+            "gate",
+        ] {
+            assert!(
+                !stdout
+                    .lines()
+                    .any(|line| line.trim_start().starts_with(compatibility_only)),
+                "workflow --help should not expose compatibility-only `{compatibility_only}` for binary {}, got:\n{stdout}",
+                binary.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn workflow_direct_help_labels_non_normal_commands() {
+    for binary in featureforge_help_binaries() {
+        let record_pivot = std::process::Command::new(&binary)
+            .args(["workflow", "record-pivot", "--help"])
+            .output()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "workflow record-pivot --help should run for binary {}: {error}",
+                    binary.display()
+                )
+            });
+        assert!(
+            record_pivot.status.success(),
+            "expected workflow record-pivot --help to succeed for binary {}, got {:?}",
+            binary.display(),
+            record_pivot.status
+        );
+        let record_pivot_stdout = String::from_utf8(record_pivot.stdout)
+            .expect("workflow record-pivot help stdout should be utf-8");
+        assert!(
+            record_pivot_stdout.contains("Expert-only workflow pivot record emitter."),
+            "workflow record-pivot --help should label the command as expert-only for binary {}, got:\n{record_pivot_stdout}",
+            binary.display()
+        );
+
+        let preflight = std::process::Command::new(&binary)
+            .args(["workflow", "preflight", "--help"])
+            .output()
+            .unwrap_or_else(|error| {
+                panic!(
+                    "workflow preflight --help should run for binary {}: {error}",
+                    binary.display()
+                )
+            });
+        assert!(
+            preflight.status.success(),
+            "expected workflow preflight --help to succeed for binary {}, got {:?}",
+            binary.display(),
+            preflight.status
+        );
+        let preflight_stdout = String::from_utf8(preflight.stdout)
+            .expect("workflow preflight help stdout should be utf-8");
+        assert!(
+            preflight_stdout.contains("Compatibility-only execution preflight helper."),
+            "workflow preflight --help should label the command as compatibility-only for binary {}, got:\n{preflight_stdout}",
+            binary.display()
+        );
     }
 }
 

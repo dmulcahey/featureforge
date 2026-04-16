@@ -22,6 +22,7 @@ pub struct PlanExecutionCli {
 
 #[derive(Debug, Subcommand)]
 pub enum PlanExecutionCommand {
+    #[command(about = "Diagnostic routing status query.")]
     Status(StatusArgs),
     #[command(
         hide = true,
@@ -89,7 +90,10 @@ pub enum PlanExecutionCommand {
         about = "Compatibility/debug review-dispatch primitive (normal flow uses close-current-task/advance-late-stage)."
     )]
     RecordReviewDispatch(RecordReviewDispatchArgs),
-    #[command(name = "repair-review-state")]
+    #[command(
+        name = "repair-review-state",
+        about = "Intent-level review-state repair command."
+    )]
     RepairReviewState(StatusArgs),
     #[command(
         name = "explain-review-state",
@@ -103,7 +107,10 @@ pub enum PlanExecutionCommand {
         about = "Compatibility/debug finish-completion gate (internal workflow boundary)."
     )]
     GateFinish(StatusArgs),
-    #[command(name = "close-current-task")]
+    #[command(
+        name = "close-current-task",
+        about = "Intent-level task-closure command."
+    )]
     CloseCurrentTask(CloseCurrentTaskArgs),
     #[command(
         name = "record-branch-closure",
@@ -117,7 +124,10 @@ pub enum PlanExecutionCommand {
         about = "Compatibility/debug release-readiness primitive (normal flow uses advance-late-stage)."
     )]
     RecordReleaseReadiness(RecordReleaseReadinessArgs),
-    #[command(name = "advance-late-stage")]
+    #[command(
+        name = "advance-late-stage",
+        about = "Intent-level late-stage progression command."
+    )]
     AdvanceLateStage(AdvanceLateStageArgs),
     #[command(
         name = "record-final-review",
@@ -131,10 +141,15 @@ pub enum PlanExecutionCommand {
         about = "Compatibility/debug QA primitive (normal flow uses advance-late-stage)."
     )]
     RecordQa(RecordQaArgs),
+    #[command(about = "Execution step start recorder.")]
     Begin(BeginArgs),
+    #[command(about = "Execution interruption/block note recorder.")]
     Note(NoteArgs),
+    #[command(about = "Execution step completion recorder.")]
     Complete(CompleteArgs),
+    #[command(about = "Execution task reopen recorder.")]
     Reopen(ReopenArgs),
+    #[command(about = "Execution handoff transfer recorder.")]
     Transfer(TransferArgs),
 }
 

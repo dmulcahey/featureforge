@@ -18,11 +18,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Save plans to:** `docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
-- Before writing the plan, record the intended plan path with `expect`:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow expect --artifact plan --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md
-```
+- Use that repo-relative plan path consistently in later review and workflow/operator commands; do not route through compatibility-only `workflow expect` or `workflow sync` helpers.
 
 ## Protected-Branch Repo-Write Gate
 
@@ -278,11 +274,7 @@ After saving the full plan:
   --plan docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md
 ```
 
-1. After the plan is written or updated, runs `sync --artifact plan`:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow sync --artifact plan --path docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md
-```
+1. After the plan is written or updated, continue using the same repo-relative plan path in plan-fidelity-review and workflow/operator handoffs.
 
 2. Invoke `featureforge:plan-fidelity-review`.
 3. Do NOT invoke `featureforge:plan-eng-review` directly from `writing-plans`; `plan-fidelity-review` owns dedicated independent review plus runtime-owned receipt recording.

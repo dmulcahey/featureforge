@@ -1462,7 +1462,19 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/brainstorming/SKILL.md"),
+        "Use that repo-relative spec path consistently in later review and workflow/operator commands; do not route through compatibility-only `workflow expect` or `workflow sync` helpers.",
+    );
+    assert_file_contains(
+        root.join("skills/brainstorming/SKILL.md"),
+        "After the spec is written or updated, continue using the same repo-relative spec path in downstream review and workflow/operator commands.",
+    );
+    assert_file_not_contains(
+        root.join("skills/brainstorming/SKILL.md"),
         "\"$_FEATUREFORGE_BIN\" workflow expect --artifact spec --path",
+    );
+    assert_file_not_contains(
+        root.join("skills/brainstorming/SKILL.md"),
+        "\"$_FEATUREFORGE_BIN\" workflow sync --artifact spec --path",
     );
     assert_file_contains(
         root.join("skills/brainstorming/SKILL.md"),
@@ -1556,7 +1568,19 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
 
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
+        "Use that repo-relative plan path consistently in later review and workflow/operator commands; do not route through compatibility-only `workflow expect` or `workflow sync` helpers.",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "After the plan is written or updated, continue using the same repo-relative plan path in plan-fidelity-review and workflow/operator handoffs.",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
         "\"$_FEATUREFORGE_BIN\" workflow expect --artifact plan --path",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "\"$_FEATUREFORGE_BIN\" workflow sync --artifact plan --path",
     );
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
@@ -1589,6 +1613,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "For non-terminal checkpoint/task-boundary review, keep command-boundary semantics explicit: low-level compatibility/debug dispatch commands are not normal intent-level progression.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "Run `featureforge workflow operator --plan <approved-plan-path>` before starting execution.",
+    );
+    assert_file_not_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "Run `featureforge workflow preflight --plan <approved-plan-path>` before starting execution.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1665,6 +1697,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_not_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
         "After each task in subagent-driven development",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "Run `featureforge workflow operator --plan <approved-plan-path>` before dispatching implementation subagents.",
+    );
+    assert_file_not_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "Run `featureforge workflow preflight --plan <approved-plan-path>` before dispatching implementation subagents.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1947,6 +1987,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/plan-ceo-review/SKILL.md"),
+        "After each spec edit (including final approval edits), keep using the same repo-relative spec path in later workflow/operator and writing-plans handoffs; do not route through compatibility-only `workflow sync`.",
+    );
+    assert_file_contains(
+        root.join("skills/plan-ceo-review/SKILL.md"),
         "note `UI_SCOPE` for Section 11",
     );
     assert_file_contains(
@@ -1960,6 +2004,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_not_contains(
         root.join("skills/plan-ceo-review/SKILL.md"),
         "gh pr view --json baseRefName",
+    );
+    assert_file_not_contains(
+        root.join("skills/plan-ceo-review/SKILL.md"),
+        "\"$_FEATUREFORGE_BIN\" workflow sync --artifact spec --path",
     );
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
@@ -2253,6 +2301,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("README.md"),
+        "Compatibility/debug helpers remain available only for exceptional or contract-boundary cases and are not part of the normal path.",
+    );
+    assert_file_contains(
+        root.join("README.md"),
         "Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):",
     );
     assert_file_contains(
@@ -2262,6 +2314,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_not_contains(
         root.join("README.md"),
         "`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state.",
+    );
+    assert_file_not_contains(
+        root.join("README.md"),
+        "the broader public execution surface also includes commands such as `note`, `complete`, `reopen`, `transfer`, and compatibility/diagnostic helpers when the route or workflow boundary requires them.",
     );
     assert_file_contains(
         root.join("docs/README.codex.md"),
@@ -2818,13 +2874,16 @@ fn runtime_remediation_inventory_is_visible_to_instruction_contract_tests() {
         );
     }
     for anchor in [
+        "tests/workflow_shell_smoke.rs::runtime_remediation_fs01_compiled_cli_repair_and_branch_closure_do_not_disagree",
         "tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation",
         "tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation",
+        "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift",
         "tests/plan_execution_final_review.rs::fs11_gate_finish_rejects_final_review_release_binding_mismatch",
         "tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered",
         "tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails",
         "tests/plan_execution_final_review.rs::dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass",
         "tests/plan_execution_final_review.rs::dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict",
+        "task_close_internal_dispatch_runtime_management_budget_is_capped",
     ] {
         assert_contains(
             &inventory,

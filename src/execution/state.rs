@@ -71,9 +71,8 @@ use crate::execution::current_truth::{
     tracked_paths_changed_between,
 };
 use crate::execution::final_review::{
-    FinalReviewReceiptExpectations, FinalReviewReceiptIssue,
     authoritative_strategy_checkpoint_fingerprint_checked, parse_artifact_document,
-    parse_final_review_receipt, resolve_release_base_branch, validate_final_review_receipt,
+    resolve_release_base_branch,
 };
 use crate::execution::harness::{
     AggregateEvaluationState, ChunkId, ChunkingStrategy, DownstreamFreshnessState,
@@ -10086,21 +10085,15 @@ fn require_current_final_review_pass_for_finish(
         );
         return false;
     }
-    if !validate_current_final_review_authoritative_provenance(
-        context,
-        &record,
-        current_base_branch,
-        gate,
-    ) {
+    if !validate_current_final_review_authoritative_bindings(context, &record, gate) {
         return false;
     }
     true
 }
 
-fn validate_current_final_review_authoritative_provenance(
+fn validate_current_final_review_authoritative_bindings(
     context: &ExecutionContext,
     record: &crate::execution::transitions::CurrentFinalReviewRecord,
-    current_base_branch: &str,
     gate: &mut GateState,
 ) -> bool {
     let Some(final_review_fingerprint) = record
@@ -10159,105 +10152,11 @@ fn validate_current_final_review_authoritative_provenance(
         );
         return false;
     };
-    let final_review_path = harness_authoritative_artifact_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-        &format!("final-review-{final_review_fingerprint}.md"),
-    );
-    let final_review_source = match fs::read_to_string(&final_review_path) {
-        Ok(source) => source,
-        Err(error) => {
-            gate.fail(
-                FailureClass::ReviewArtifactNotFresh,
-                "review_artifact_authoritative_provenance_invalid",
-                format!(
-                    "The current final-review authoritative artifact is unreadable: {}",
-                    error
-                ),
-                "Run requesting-code-review and return with a fresh final-review result.",
-            );
-            return false;
-        }
-    };
-    let expected_head_sha = match context.current_head_sha() {
-        Ok(head) => head,
-        Err(error) => {
-            gate.fail(
-                FailureClass::ReviewArtifactNotFresh,
-                "review_artifact_authoritative_provenance_invalid",
-                format!(
-                    "The current final-review authoritative artifact could not verify the current HEAD: {}",
-                    error.message
-                ),
-                "Run requesting-code-review and return with a fresh final-review result.",
-            );
-            return false;
-        }
-    };
-    let receipt = parse_final_review_receipt(&final_review_path);
-    let expectations = FinalReviewReceiptExpectations {
-        expected_plan_path: &context.plan_rel,
-        expected_plan_revision: context.plan_document.plan_revision,
-        expected_strategy_checkpoint_fingerprint: Some(
-            expected_strategy_checkpoint_fingerprint.as_str(),
-        ),
-        expected_branch: &context.runtime.branch_name,
-        expected_repo: &context.runtime.repo_slug,
-        expected_head_sha: &expected_head_sha,
-        expected_base_branch: current_base_branch,
-        expected_result: "pass",
-        deviations_required: record.deviations_required.unwrap_or(false),
-    };
-    if let Err(issue) = validate_final_review_receipt(&receipt, &final_review_path, &expectations) {
-        return fail_current_final_review_receipt_issue(gate, issue);
-    }
-    if sha256_hex(final_review_source.as_bytes()) != final_review_fingerprint {
-        gate.fail(
-            FailureClass::ReviewArtifactNotFresh,
-            "review_artifact_authoritative_provenance_invalid",
-            "The current final-review authoritative artifact fingerprint no longer matches the authoritative final-review record.",
-            "Run requesting-code-review and return with a fresh final-review result.",
-        );
-        return false;
-    }
     true
 }
 
 fn is_canonical_sha256_fingerprint(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
-}
-
-fn fail_current_final_review_receipt_issue(
-    gate: &mut GateState,
-    issue: FinalReviewReceiptIssue,
-) -> bool {
-    let (failure_class, reason_code) = match issue {
-        FinalReviewReceiptIssue::SourcePlanMismatch
-        | FinalReviewReceiptIssue::SourcePlanRevisionMismatch => (
-            FailureClass::ReviewArtifactNotFresh,
-            "review_artifact_plan_mismatch",
-        ),
-        FinalReviewReceiptIssue::ReviewerArtifactFingerprintInvalid => (
-            FailureClass::ReviewArtifactNotFresh,
-            "review_receipt_reviewer_fingerprint_invalid",
-        ),
-        FinalReviewReceiptIssue::ReviewerArtifactFingerprintMismatch => (
-            FailureClass::ReviewArtifactNotFresh,
-            "review_receipt_reviewer_fingerprint_mismatch",
-        ),
-        _ => (
-            FailureClass::MalformedExecutionState,
-            "review_artifact_malformed",
-        ),
-    };
-    gate.fail(
-        failure_class,
-        reason_code,
-        issue.message(),
-        "Run requesting-code-review and return with a fresh final-review result.",
-    );
-    false
 }
 
 fn require_current_browser_qa_pass_for_finish(

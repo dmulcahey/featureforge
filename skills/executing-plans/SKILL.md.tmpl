@@ -36,19 +36,19 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
    - if the working tree is dirty, stop unless the helper-selected topology and workspace-prepared context explicitly support isolated worktree-backed execution for this run
 7. Do not bulk-clean the workspace ad hoc. If the helper-selected topology or protected-branch gate requires isolated execution, provision or route through a worktree-backed workspace before mutating repo state, and let the runtime-owned barrier flow reconcile reviewed work back onto the active branch and clean temporary worktrees at safe intervals.
 8. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
-9. Run `featureforge workflow preflight --plan <approved-plan-path>` before starting execution.
-10. If the preflight helper returns `allowed` `false`, stop and resolve the reported `failure_class`, `reason_codes`, and `diagnostics` before starting work.
-11. If preflight passes, review the plan critically for execution concerns and use the approved plan checklist as the execution progress record.
+9. Run `featureforge workflow operator --plan <approved-plan-path>` before starting execution.
+10. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution through compatibility helpers.
+11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and use the approved plan checklist as the execution progress record.
 12. Treat execution start as a hard gate, not a reminder:
-   - no code edits and no test edits are allowed after successful preflight and before the first `begin` for the active step
+   - no code edits and no test edits are allowed after workflow/operator confirms the current execution preflight handoff and before the first `begin` for the active step
    - no repo mutation is allowed until that first `begin` is recorded
    - the first `begin` is the mandatory execution-tracking boundary; preflight acceptance alone is not permission to start implementation
-   - if the workspace becomes dirty before the first `begin`, expect later preflight retries to fail closed (for example `tracked_worktree_dirty`) until the workspace is reconciled or isolated
+   - if the workspace becomes dirty before the first `begin`, expect later execution-start checks to fail closed (for example `tracked_worktree_dirty`) until the workspace is reconciled or isolated
    - retroactive execution tracking is recovery-only and must never be treated as the normal execution path
    - five-step recovery runbook for dirty-before-begin failures:
      1. reconcile or isolate the workspace
-     2. rerun preflight and confirm fresh acceptance for the current approved plan revision
-     3. read helper-backed `workflow operator --plan ...` before any recovery mutation
+     2. rerun `workflow operator --plan <approved-plan-path>` and confirm the current route is still `executing` for the current approved plan revision
+     3. use that helper-backed route before any recovery mutation
      4. backfill only factual-only completed steps using authoritative helper mutations; never infer completion from dirty diffs
      5. resume from the task-boundary review and verification gate before any next-task `begin`
 
@@ -56,7 +56,7 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 
 - calls `workflow operator --plan ...` during preflight
 - uses `status --plan ...` only for additional diagnostics when operator output alone is insufficient
-- calls `workflow preflight --plan ...` before execution starts
+- uses the workflow/operator execution-start handoff instead of separate compatibility-helper choreography before execution starts
 - calls `begin` before starting work on a plan step
 - calls `complete` after each completed step
 - calls `note` when work is interrupted or blocked
