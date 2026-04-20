@@ -246,6 +246,9 @@ pub struct PlanExecutionStatus {
     pub workspace_state_id: String,
     pub current_branch_reviewed_state_id: Option<String>,
     pub current_branch_closure_id: Option<String>,
+    #[serde(skip_serializing)]
+    #[schemars(skip)]
+    pub current_branch_meaningful_drift: bool,
     pub current_task_closures: Vec<PublicReviewStateTaskClosure>,
     pub superseded_closures_summary: Vec<String>,
     pub stale_unreviewed_closures: Vec<String>,
@@ -3519,6 +3522,7 @@ fn status_from_context_with_overlay(
         workspace_state_id: status_workspace_state_id(context)?,
         current_branch_reviewed_state_id: None,
         current_branch_closure_id: None,
+        current_branch_meaningful_drift: false,
         current_task_closures: Vec::new(),
         superseded_closures_summary: Vec::new(),
         stale_unreviewed_closures: Vec::new(),
@@ -4232,12 +4236,9 @@ fn push_task_closure_recording_status_reasons(
         .ok()
         .flatten()
         .is_some();
-    let stale_bridge_ready = stale_unreviewed_allows_task_closure_baseline_bridge(
-        context,
-        status,
-        task,
-    )
-    .unwrap_or(false);
+    let stale_bridge_ready =
+        stale_unreviewed_allows_task_closure_baseline_bridge(context, status, task)
+            .unwrap_or(false);
     if current_dispatch_ready || baseline_candidate_present {
         push_status_reason_code_once(status, "task_closure_baseline_repair_candidate");
     }
@@ -4477,20 +4478,14 @@ fn suppress_preempted_resume_status_fields(
     };
     let stale_preempts_resume = earliest_unresolved_stale_task_from_closure_graph(context, status)
         .is_some_and(|earliest_task| earliest_task < resume_task);
-    let bridge_preempts_resume = status
-        .blocking_task
-        .is_some_and(|blocking_task| {
-            task_closure_baseline_repair_candidate(context, status, blocking_task)
-                .ok()
-                .flatten()
-                .is_some()
-                && stale_unreviewed_allows_task_closure_baseline_bridge(
-                    context,
-                    status,
-                    blocking_task,
-                )
+    let bridge_preempts_resume = status.blocking_task.is_some_and(|blocking_task| {
+        task_closure_baseline_repair_candidate(context, status, blocking_task)
+            .ok()
+            .flatten()
+            .is_some()
+            && stale_unreviewed_allows_task_closure_baseline_bridge(context, status, blocking_task)
                 .unwrap_or(false)
-        });
+    });
     let execution_reentry_preempts_resume = status.phase_detail == "execution_reentry_required"
         && status.blocking_task.is_some_and(|blocking_task| {
             blocking_task != resume_task && blocking_task < resume_task
@@ -4595,6 +4590,9 @@ fn populate_public_status_contract_fields(
     status.current_final_review_result = late_stage_bindings.current_final_review_result.clone();
     status.current_qa_branch_closure_id = late_stage_bindings.current_qa_branch_closure_id.clone();
     status.current_qa_result = late_stage_bindings.current_qa_result.clone();
+    status.current_branch_meaningful_drift =
+        shared_current_branch_closure_has_tracked_drift(context, authoritative_state)
+            .unwrap_or(false);
     let current_task_closures = still_current_task_closure_records(context)?
         .into_iter()
         .map(|record| PublicReviewStateTaskClosure {
@@ -4670,19 +4668,12 @@ fn populate_public_status_contract_fields(
     )
     .unwrap_or_else(|_| {
         shared_public_late_stage_stale_unreviewed(status, Some(&gate_review), Some(&gate_finish))
-            || shared_current_branch_closure_has_tracked_drift(context, authoritative_state)
-                .unwrap_or(false)
+            || status.current_branch_meaningful_drift
     });
-    let current_branch_binding_drift = status.current_branch_closure_id.is_some()
-        && status
-            .current_branch_reviewed_state_id
-            .as_deref()
-            .is_some_and(|reviewed_state_id| reviewed_state_id != status.workspace_state_id);
+    let current_branch_binding_drift = status.current_branch_meaningful_drift;
     let branch_scope_stale_unreviewed = late_stage_stale_unreviewed
         || current_branch_binding_drift
-        || branch_drift_escapes_late_stage_surface
-        || shared_current_branch_closure_has_tracked_drift(context, authoritative_state)
-            .unwrap_or(false);
+        || branch_drift_escapes_late_stage_surface;
     let raw_late_stage_review_state_status =
         live_review_state_status_for_reroute_from_status(status, branch_scope_stale_unreviewed);
     let task_scope_repair_precedence_active = shared_live_task_scope_repair_precedence_active(
@@ -4970,10 +4961,7 @@ pub(crate) fn prerelease_branch_closure_refresh_required(status: &PlanExecutionS
     status.harness_phase == HarnessPhase::DocumentReleasePending
         && status.current_release_readiness_state.is_none()
         && status.current_branch_closure_id.is_some()
-        && status
-            .current_branch_reviewed_state_id
-            .as_deref()
-            .is_some_and(|reviewed_state_id| reviewed_state_id != status.workspace_state_id)
+        && status.current_branch_meaningful_drift
 }
 
 pub(crate) fn live_review_state_status_for_reroute_from_status(
@@ -5803,6 +5791,47 @@ mod exact_execution_command_tests {
         status.harness_phase = HarnessPhase::FinalReviewPending;
         status.current_branch_closure_id = Some(String::from("branch-closure-1"));
         status
+    }
+
+    #[test]
+    fn branch_closure_refresh_missing_current_closure_uses_meaningful_drift_not_raw_id_mismatch() {
+        let mut status = late_stage_status_for_review_state_tests();
+        status.current_branch_reviewed_state_id = Some(String::from("git_tree:baseline"));
+        status.workspace_state_id = String::from("git_tree:current");
+        status.current_release_readiness_state = None;
+
+        status.current_branch_meaningful_drift = false;
+        assert!(
+            !shared_branch_closure_refresh_missing_current_closure(&status),
+            "raw reviewed/workspace state-id mismatch without meaningful filtered drift must not trigger branch-closure refresh"
+        );
+
+        status.current_branch_meaningful_drift = true;
+        assert!(
+            shared_branch_closure_refresh_missing_current_closure(&status),
+            "branch-closure refresh should trigger when meaningful filtered drift is present"
+        );
+    }
+
+    #[test]
+    fn prerelease_branch_closure_refresh_requires_meaningful_drift_signal() {
+        let mut status = late_stage_status_for_review_state_tests();
+        status.harness_phase = HarnessPhase::DocumentReleasePending;
+        status.current_branch_reviewed_state_id = Some(String::from("git_tree:baseline"));
+        status.workspace_state_id = String::from("git_tree:current");
+        status.current_release_readiness_state = None;
+
+        status.current_branch_meaningful_drift = false;
+        assert!(
+            !prerelease_branch_closure_refresh_required(&status),
+            "DocumentReleasePending must not require branch closure refresh when only raw reviewed/workspace mismatch is present"
+        );
+
+        status.current_branch_meaningful_drift = true;
+        assert!(
+            prerelease_branch_closure_refresh_required(&status),
+            "DocumentReleasePending should require branch closure refresh when meaningful filtered drift is present"
+        );
     }
 
     fn gate_result_with_reason(reason_code: &str) -> GateResult {
@@ -13617,7 +13646,9 @@ fn task_cycle_break_reason_targets_repaired_task(
             overlay.strategy_cycle_break_task,
             overlay.strategy_cycle_break_step,
             normalize_optional_overlay_value(
-                overlay.strategy_cycle_break_checkpoint_fingerprint.as_deref(),
+                overlay
+                    .strategy_cycle_break_checkpoint_fingerprint
+                    .as_deref(),
             )
             .map(str::to_owned),
         )
@@ -13890,7 +13921,10 @@ pub(crate) fn task_closure_baseline_repair_candidate(
     {
         return Ok(None);
     }
-    if status.reason_codes.iter().any(|reason_code| reason_code == "task_cycle_break_active")
+    if status
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "task_cycle_break_active")
         && !task_cycle_break_reason_targets_repaired_task(context, status, task)?
     {
         return Ok(None);

@@ -13,9 +13,8 @@ use crate::execution::state::{
     execution_reentry_requires_review_state_repair, gate_finish_from_context,
     prerelease_branch_closure_refresh_required, qa_pending_requires_test_plan_refresh,
     reopen_exact_execution_command_for_task, resolve_exact_execution_command,
-    stale_unreviewed_allows_task_closure_baseline_bridge,
-    task_closure_baseline_repair_candidate, task_closures_are_non_branch_contributing,
-    task_scope_structural_review_state_reason,
+    stale_unreviewed_allows_task_closure_baseline_bridge, task_closure_baseline_repair_candidate,
+    task_closures_are_non_branch_contributing, task_scope_structural_review_state_reason,
 };
 use crate::execution::transitions::load_authoritative_transition_state;
 

@@ -128,9 +128,7 @@ pub(crate) fn task_closure_contributes_to_branch_surface(
         .effective_reviewed_surface_paths
         .iter()
         .filter(|surface_path| surface_path.as_str() != NO_REPO_FILES_MARKER)
-        .any(|surface_path| {
-            !is_runtime_owned_execution_control_plane_path(context, surface_path)
-        })
+        .any(|surface_path| !is_runtime_owned_execution_control_plane_path(context, surface_path))
 }
 
 pub(crate) fn branch_source_task_closure_ids(
@@ -998,12 +996,14 @@ pub(crate) fn task_review_dispatch_task(status: &PlanExecutionStatus) -> Option<
         return None;
     }
     let blocking_task = status.blocking_task?;
-    let closure_baseline_bridge_candidate = status.reason_codes.iter().any(|reason_code| {
-        reason_code == "task_closure_baseline_repair_candidate"
-    }) && status
+    let closure_baseline_bridge_candidate = status
         .reason_codes
         .iter()
-        .any(|reason_code| reason_code == "prior_task_current_closure_missing");
+        .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
+        && status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == "prior_task_current_closure_missing");
     let dispatch_missing_or_stale = status.reason_codes.iter().any(|reason_code| {
         matches!(
             reason_code.as_str(),
@@ -1141,12 +1141,14 @@ pub(crate) fn current_branch_closure_has_tracked_drift(
     if current_tree_sha == baseline_tree_sha {
         return Ok(false);
     }
-    Ok(!tracked_paths_changed_between_excluding_runtime_control_plane(
-        context,
-        &baseline_tree_sha,
-        &current_tree_sha,
-    )?
-    .is_empty())
+    Ok(
+        !tracked_paths_changed_between_excluding_runtime_control_plane(
+            context,
+            &baseline_tree_sha,
+            &current_tree_sha,
+        )?
+        .is_empty(),
+    )
 }
 
 pub(crate) fn public_review_state_stale_unreviewed_for_reroute(
@@ -1165,10 +1167,7 @@ pub(crate) fn public_review_state_stale_unreviewed_for_reroute(
 pub(crate) fn branch_closure_refresh_missing_current_closure(status: &PlanExecutionStatus) -> bool {
     status.current_release_readiness_state.is_none()
         && status.current_branch_closure_id.is_some()
-        && status
-            .current_branch_reviewed_state_id
-            .as_deref()
-            .is_some_and(|reviewed_state_id| reviewed_state_id != status.workspace_state_id)
+        && status.current_branch_meaningful_drift
 }
 
 pub(crate) fn late_stage_stale_unreviewed(

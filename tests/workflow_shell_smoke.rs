@@ -21294,8 +21294,8 @@ fn fs14_recovery_to_close_current_task_uses_only_public_intent_commands() {
 }
 
 #[test]
-fn fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure_when_only_plan_and_evidence_change(
-) {
+fn fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure_when_only_plan_and_evidence_change()
+ {
     let plan_rel = WORKFLOW_FIXTURE_PLAN_REL;
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs20-shell-smoke-task-boundary");
     let repo = repo_dir.path();
@@ -21461,8 +21461,7 @@ fn fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure
 #[test]
 fn fs20_late_stage_chain_is_not_unwound_by_runtime_owned_plan_and_execution_evidence_churn() {
     let plan_rel = WORKFLOW_FIXTURE_PLAN_REL;
-    let (repo_dir, state_dir) =
-        init_repo("runtime-remediation-fs20-shell-smoke-late-stage-chain");
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs20-shell-smoke-late-stage-chain");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let base_branch = expected_release_base_branch(repo);
@@ -21497,9 +21496,7 @@ fn fs20_late_stage_chain_is_not_unwound_by_runtime_owned_plan_and_execution_evid
         fs::read_to_string(&evidence_path).expect("FS-20 late-stage evidence should read");
     write_file(
         &evidence_path,
-        &format!(
-            "{evidence_source}\n<!-- fs20 late-stage runtime-owned evidence mutation -->\n"
-        ),
+        &format!("{evidence_source}\n<!-- fs20 late-stage runtime-owned evidence mutation -->\n"),
     );
 
     let status_after_churn = run_plan_execution_json_real_cli(
@@ -21514,18 +21511,15 @@ fn fs20_late_stage_chain_is_not_unwound_by_runtime_owned_plan_and_execution_evid
         "FS-20 late-stage chain should keep current_branch_closure_id when only runtime-owned plan/evidence paths changed"
     );
     assert_eq!(
-        status_after_churn["current_release_readiness_state"],
-        baseline_release_state,
+        status_after_churn["current_release_readiness_state"], baseline_release_state,
         "FS-20 late-stage chain should keep release-readiness state through runtime-owned churn"
     );
     assert_eq!(
-        status_after_churn["current_final_review_state"],
-        baseline_final_state,
+        status_after_churn["current_final_review_state"], baseline_final_state,
         "FS-20 late-stage chain should keep final-review state through runtime-owned churn"
     );
     assert_eq!(
-        status_after_churn["current_qa_state"],
-        baseline_qa_state,
+        status_after_churn["current_qa_state"], baseline_qa_state,
         "FS-20 late-stage chain should keep QA state through runtime-owned churn"
     );
 }

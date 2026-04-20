@@ -8041,9 +8041,8 @@ fn task_boundary_begin_reports_task_cycle_break_active() {
     harness_state_json["strategy_checkpoint_kind"] = Value::from("cycle_break");
     harness_state_json["strategy_cycle_break_task"] = Value::from(1_u64);
     harness_state_json["strategy_cycle_break_step"] = Value::from(2_u64);
-    harness_state_json["strategy_cycle_break_checkpoint_fingerprint"] = Value::from(
-        "task-boundary-cycle-break-fixture-fingerprint",
-    );
+    harness_state_json["strategy_cycle_break_checkpoint_fingerprint"] =
+        Value::from("task-boundary-cycle-break-fixture-fingerprint");
     fs::write(
         &harness_state_path,
         serde_json::to_string_pretty(&harness_state_json)
@@ -16501,7 +16500,12 @@ fn fs17_close_current_task_converges_after_truthful_replay_without_second_reopen
     let repair_json = run_rust_json(
         repo,
         state,
-        &["repair-review-state", "--plan", PLAN_REL, "--external-review-result-ready"],
+        &[
+            "repair-review-state",
+            "--plan",
+            PLAN_REL,
+            "--external-review-result-ready",
+        ],
         "FS-17 repair-review-state should route truthful replay to closure recording",
     );
     assert_eq!(
@@ -16527,7 +16531,10 @@ fn fs17_close_current_task_converges_after_truthful_replay_without_second_reopen
         "FS-17 run repair-review-state recommended close-current-task command",
     );
     assert!(
-        matches!(close_json["action"].as_str(), Some("recorded" | "already_current")),
+        matches!(
+            close_json["action"].as_str(),
+            Some("recorded" | "already_current")
+        ),
         "FS-17 close-current-task should converge the replay lane without a second reopen, got {close_json:?}"
     );
     assert!(
@@ -16566,13 +16573,22 @@ fn fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed() {
     let root = harness_state
         .as_object_mut()
         .expect("FS-18 harness state should remain an object");
-    root.insert(String::from("strategy_state"), Value::from("cycle_breaking"));
+    root.insert(
+        String::from("strategy_state"),
+        Value::from("cycle_breaking"),
+    );
     root.insert(
         String::from("strategy_checkpoint_kind"),
         Value::from("cycle_break"),
     );
-    root.insert(String::from("strategy_cycle_break_task"), Value::from(1_u64));
-    root.insert(String::from("strategy_cycle_break_step"), Value::from(2_u64));
+    root.insert(
+        String::from("strategy_cycle_break_task"),
+        Value::from(1_u64),
+    );
+    root.insert(
+        String::from("strategy_cycle_break_step"),
+        Value::from(2_u64),
+    );
     root.insert(
         String::from("strategy_cycle_break_checkpoint_fingerprint"),
         Value::from("fs18-cycle-break-task-1"),
@@ -16586,7 +16602,12 @@ fn fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed() {
     let repair_json = run_rust_json(
         repo,
         state,
-        &["repair-review-state", "--plan", PLAN_REL, "--external-review-result-ready"],
+        &[
+            "repair-review-state",
+            "--plan",
+            PLAN_REL,
+            "--external-review-result-ready",
+        ],
         "FS-18 repair-review-state should route cycle-break fixture to close-current-task",
     );
     let mut close_command = repair_json["recommended_command"]
@@ -16649,7 +16670,12 @@ fn fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed() {
         let post_replay_repair = run_rust_json(
             repo,
             state,
-            &["repair-review-state", "--plan", PLAN_REL, "--external-review-result-ready"],
+            &[
+                "repair-review-state",
+                "--plan",
+                PLAN_REL,
+                "--external-review-result-ready",
+            ],
             "FS-18 repair-review-state after truthful replay completion",
         );
         close_command = post_replay_repair["recommended_command"]
@@ -16668,7 +16694,10 @@ fn fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed() {
         "FS-18 run close-current-task after cycle-break task replay",
     );
     assert!(
-        matches!(close_json["action"].as_str(), Some("recorded" | "already_current")),
+        matches!(
+            close_json["action"].as_str(),
+            Some("recorded" | "already_current")
+        ),
         "FS-18 Task 1 reclose should succeed before Task 2 begin unblock, got {close_json:?}"
     );
 
@@ -16728,9 +16757,8 @@ fn fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed() {
 
 #[test]
 fn fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists()
- {
-    let (repo_dir, state_dir) =
-        init_repo("runtime-remediation-fs22-repair-nondestructive-lineage");
+{
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs22-repair-nondestructive-lineage");
     let repo = repo_dir.path();
     let state = state_dir.path();
     prepare_fs17_fs18_fs22_task_closure_bridge_fixture(repo, state);
@@ -16741,11 +16769,11 @@ fn fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_t
             .expect("FS-22 harness state should be readable before repair"),
     )
     .expect("FS-22 harness state should remain valid json before repair");
-    let dispatch_before = state_before_repair["strategy_review_dispatch_lineage"]["task-1"]
-        ["dispatch_id"]
-        .as_str()
-        .expect("FS-22 fixture should include task-1 dispatch lineage before repair")
-        .to_owned();
+    let dispatch_before =
+        state_before_repair["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"]
+            .as_str()
+            .expect("FS-22 fixture should include task-1 dispatch lineage before repair")
+            .to_owned();
 
     let repair_json = run_rust_json(
         repo,
@@ -16777,13 +16805,11 @@ fn fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_t
         .expect("FS-22 repair should expose actions_performed");
     assert!(
         actions.iter().all(|action| {
-            action
-                .as_str()
-                .is_some_and(|action| {
-                    !action.starts_with("cleared_task_review_dispatch_lineage")
-                        && !action.starts_with("cleared_current_task_closure_scope_")
-                        && !action.starts_with("cleared_current_task_closure_task_")
-                })
+            action.as_str().is_some_and(|action| {
+                !action.starts_with("cleared_task_review_dispatch_lineage")
+                    && !action.starts_with("cleared_current_task_closure_scope_")
+                    && !action.starts_with("cleared_current_task_closure_task_")
+            })
         }),
         "FS-22 bridge-first repair must not clear dispatch lineage or task-scope state destructively, got {repair_json:?}"
     );

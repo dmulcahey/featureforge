@@ -11765,14 +11765,14 @@ fn fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_read
         "FS-17 fixture must stay in stale_unreviewed while stale task-closure history is unresolved: {status_json:?}"
     );
     assert!(
-        status_json["reason_codes"]
-            .as_array()
-            .is_some_and(|codes| {
-                codes.iter().any(|code| code == &Value::from("prior_task_current_closure_missing"))
-                    && codes.iter().any(|code| {
-                        code == &Value::from("task_closure_baseline_repair_candidate")
-                    })
-            }),
+        status_json["reason_codes"].as_array().is_some_and(|codes| {
+            codes
+                .iter()
+                .any(|code| code == &Value::from("prior_task_current_closure_missing"))
+                && codes
+                    .iter()
+                    .any(|code| code == &Value::from("task_closure_baseline_repair_candidate"))
+        }),
         "FS-17 fixture should expose missing-current-closure baseline bridge reason codes: {status_json:?}"
     );
     assert_eq!(
@@ -11988,10 +11988,7 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
         &review_summary_path,
         "FS-20 current closure should remain fresh when only runtime-owned paths changed.\n",
     );
-    write_file(
-        &verification_summary_path,
-        "FS-20 verification summary.\n",
-    );
+    write_file(&verification_summary_path, "FS-20 verification summary.\n");
     let close_task1 = run_plan_execution_json(
         repo,
         state,
@@ -12124,8 +12121,8 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_br
 }
 
 #[test]
-fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_execution_evidence_paths_changed(
-) {
+fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_execution_evidence_paths_changed()
+ {
     let (repo_dir, state_dir) =
         init_repo("runtime-remediation-fs20-branch-closure-remains-current");
     let repo = repo_dir.path();
@@ -12148,6 +12145,9 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
         .as_str()
         .expect("FS-20 baseline status should expose branch closure id")
         .to_owned();
+    let baseline_release_state = baseline_status["current_release_readiness_state"].clone();
+    let baseline_final_state = baseline_status["current_final_review_state"].clone();
+    let baseline_qa_state = baseline_status["current_qa_state"].clone();
     let evidence_path = repo.join(
         baseline_status["evidence_path"]
             .as_str()
@@ -12163,7 +12163,9 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
         fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
     write_file(
         &evidence_path,
-        &format!("{evidence_source}\n<!-- fs20 branch-current runtime-owned evidence mutation -->\n"),
+        &format!(
+            "{evidence_source}\n<!-- fs20 branch-current runtime-owned evidence mutation -->\n"
+        ),
     );
 
     let status_after_churn = run_plan_execution_json(
@@ -12176,6 +12178,18 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
         status_after_churn["current_branch_closure_id"],
         Value::from(baseline_branch_closure_id),
         "FS-20 branch closure should remain current when only runtime-owned plan/evidence paths changed"
+    );
+    assert_eq!(
+        status_after_churn["current_release_readiness_state"], baseline_release_state,
+        "FS-20 runtime-owned plan/evidence churn must not alter release-readiness state"
+    );
+    assert_eq!(
+        status_after_churn["current_final_review_state"], baseline_final_state,
+        "FS-20 runtime-owned plan/evidence churn must not alter final-review state"
+    );
+    assert_eq!(
+        status_after_churn["current_qa_state"], baseline_qa_state,
+        "FS-20 runtime-owned plan/evidence churn must not alter QA state"
     );
     assert_ne!(
         status_after_churn["review_state_status"],
@@ -12279,13 +12293,11 @@ fn fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_
         .expect("FS-22 repair should expose actions_performed array");
     assert!(
         actions.iter().all(|action| {
-            action
-                .as_str()
-                .is_some_and(|action| {
-                    !action.starts_with("cleared_task_review_dispatch_lineage")
-                        && !action.starts_with("cleared_current_task_closure_scope")
-                        && !action.starts_with("cleared_current_task_closure_task")
-                })
+            action.as_str().is_some_and(|action| {
+                !action.starts_with("cleared_task_review_dispatch_lineage")
+                    && !action.starts_with("cleared_current_task_closure_scope")
+                    && !action.starts_with("cleared_current_task_closure_task")
+            })
         }),
         "FS-22 bridge-first repair must not run destructive task-scope/dispatch-lineage cleanup actions: {repair_json:?}"
     );
@@ -13225,10 +13237,10 @@ fn runtime_remediation_fs13_hidden_gates_materialize_legacy_open_step_state_when
         ),
         "FS-13 operator should ignore legacy markdown open-step note when authoritative state is absent",
     );
-    let recommended_without_authority = operator_without_authoritative_open_step
-        ["recommended_command"]
-        .as_str()
-        .unwrap_or("");
+    let recommended_without_authority =
+        operator_without_authoritative_open_step["recommended_command"]
+            .as_str()
+            .unwrap_or("");
     assert!(
         !recommended_without_authority.contains("--task 1 --step 1"),
         "FS-13 operator must not surface Task 1 Step 1 solely from raw markdown when authoritative current_open_step_state is absent: {operator_without_authoritative_open_step:?}",

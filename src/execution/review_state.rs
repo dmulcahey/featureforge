@@ -38,9 +38,8 @@ use crate::execution::state::{
     ExecutionRuntime, PlanExecutionStatus, current_branch_closure_structural_review_state_reason,
     current_final_review_dispatch_authority_for_context,
     current_task_review_dispatch_id_for_status, earliest_unresolved_stale_task_from_closure_graph,
-    execution_reentry_current_task_closure_targets,
-    load_execution_context_for_exact_plan, load_execution_read_scope,
-    stale_unreviewed_allows_task_closure_baseline_bridge,
+    execution_reentry_current_task_closure_targets, load_execution_context_for_exact_plan,
+    load_execution_read_scope, stale_unreviewed_allows_task_closure_baseline_bridge,
     task_closure_baseline_repair_candidate, task_scope_structural_review_state_reason,
     unprojected_status_from_read_scope,
 };
