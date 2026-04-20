@@ -80,7 +80,7 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 8. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
 9. Run `featureforge workflow operator --plan <approved-plan-path>` before starting execution.
 10. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution through compatibility helpers.
-11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and use the approved plan checklist as the execution progress record.
+11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and use the approved plan checklist as the human-visible execution progress projection while runtime-owned execution state remains authoritative for routing and gates.
 12. Treat execution start as a hard gate, not a reminder:
    - no code edits and no test edits are allowed after workflow/operator confirms the current execution preflight handoff and before the first `begin` for the active step
    - no repo mutation is allowed until that first `begin` is recorded
@@ -166,7 +166,7 @@ For each task:
 ```
 
 2. treat it as the exact task contract for that execution segment. Coordinator-added logistics may clarify branch, cwd, or base commit, but they may not reinterpret approved requirements.
-3. Use the approved plan checklist as the visible progress record for the task's steps.
+3. Use the approved plan checklist as the human-visible step-progress projection for the task's steps; runtime-owned execution state remains authoritative for routing and gates.
 4. Follow each step exactly (plan has bite-sized steps).
 5. Run verifications as specified.
 6. After the implementation steps for a task are complete, enforce the mandatory task-boundary closure loop before beginning the next task:
