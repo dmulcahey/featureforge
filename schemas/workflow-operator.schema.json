@@ -55,6 +55,7 @@
         "repair review state / reenter execution",
         "resolve release blocker",
         "run QA",
+        "run verification",
         "wait for external review result"
       ],
       "type": "string"

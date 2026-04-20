@@ -62,12 +62,16 @@ Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-re
 - the generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; use `featureforge workflow status --refresh` only to discover the approved plan path, then route with workflow/operator
 - `featureforge plan contract` compiles approved markdown into exact execution and review inputs
 - workflow/operator and approved-plan execution metadata select the execution owner skill before work starts; do not route from status-only compatibility fields
-- task closure is task-boundary gated: once dedicated-independent fresh-context review loops and task verification are complete, route through `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `featureforge plan execution close-current-task --plan <approved-plan-path> ...` as the authoritative closure command before next-task advancement; keep normal progression on operator-led intent-level commands and do not require low-level review-dispatch primitives in the normal path
+- task closure is task-boundary gated: Task `N+1` may begin only after Task `N` has a current positive task-closure record; dedicated-independent fresh-context review loops and task verification are inputs to `featureforge plan execution close-current-task --plan <approved-plan-path> ...`; keep normal progression on operator-led intent-level commands and do not require low-level review-dispatch primitives in the normal path
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is pre-authorized and does not require per-dispatch user-consent prompts
 - `featureforge workflow operator --plan <approved-plan-path>` is the normal routing surface after handoff; use `featureforge plan execution status --plan <approved-plan-path>` only for deeper diagnostics
+- do not manually edit `**Execution Note:**` lines to recover runtime state; those markdown notes are projection-only
+- after `featureforge plan execution repair-review-state --plan <approved-plan-path>`, run the returned `recommended_command` directly as the one exact next command before issuing any additional command
 - `featureforge plan execution status --plan <approved-plan-path>` surfaces runtime strategy checkpoint state (`strategy_state`, `strategy_checkpoint_kind`, `last_strategy_checkpoint_fingerprint`, `strategy_reset_required`)
 - for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`
 - compatibility/debug command boundaries (low-level `record-*` and related compatibility commands) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`
+- hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` remain out-of-normal-path diagnostics/helpers only
+- `featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.
 
 Runtime strategy checkpointing is execution-owned, not planning-owned. The runtime records:
 

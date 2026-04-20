@@ -424,19 +424,29 @@ fn preflight_fails_closed_when_write_authority_lock_is_unreadable() {
     write_file(&lock_path, "pid=12345\n");
     let _guard = DirectoryModeGuard::new(&harness_dir, 0o000);
 
-    let gate = run_plan_execution_json(
+    let output = run_plan_execution_output(
         repo,
         state,
         &["preflight", "--plan", PLAN_REL],
         "plan execution preflight with unreadable write-authority lock",
     );
-
-    assert_eq!(gate["allowed"], false);
     assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .any(|code| code == "write_authority_unavailable")),
-        "unreadable write-authority lock should fail closed instead of clearing the preflight"
+        !output.status.success(),
+        "preflight must fail closed when authoritative state cannot be inspected during hidden-gate migration"
+    );
+    let failure_payload = if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    let failure: serde_json::Value =
+        serde_json::from_slice(failure_payload).expect("preflight failure payload should be json");
+    assert_eq!(failure["error_class"], "MalformedExecutionState");
+    assert!(
+        failure["message"].as_str().is_some_and(
+            |message| message.contains("Could not inspect authoritative harness state")
+        ),
+        "preflight should surface authoritative-state inspection failure when hidden-gate migration cannot inspect state: {failure:?}"
     );
 }
 
@@ -557,19 +567,29 @@ fn preflight_fails_closed_when_authoritative_state_is_dangling_symlink() {
     symlink("missing-state-target.json", &state_path)
         .expect("dangling authoritative state symlink should be creatable");
 
-    let gate = run_plan_execution_json(
+    let output = run_plan_execution_output(
         repo,
         state,
         &["preflight", "--plan", PLAN_REL],
         "plan execution preflight with dangling authoritative state symlink",
     );
-
-    assert_eq!(gate["allowed"], false);
     assert!(
-        gate["reason_codes"].as_array().is_some_and(|codes| codes
-            .iter()
-            .any(|code| code == "authoritative_state_unavailable")),
-        "dangling authoritative state symlink should fail closed instead of clearing preflight"
+        !output.status.success(),
+        "preflight must fail closed when authoritative harness state path is a symlink"
+    );
+    let failure_payload = if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    let failure: serde_json::Value =
+        serde_json::from_slice(failure_payload).expect("preflight failure payload should be json");
+    assert_eq!(failure["error_class"], "MalformedExecutionState");
+    assert!(
+        failure["message"].as_str().is_some_and(|message| {
+            message.contains("Authoritative harness state path must not be a symlink")
+        }),
+        "preflight should surface authoritative-state symlink failure when hidden-gate migration cannot load state: {failure:?}"
     );
 }
 

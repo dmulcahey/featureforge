@@ -16,6 +16,7 @@ pub mod handoff;
 pub mod harness;
 pub mod leases;
 pub mod mutate;
+pub mod next_action;
 pub mod observability;
 pub mod projection_renderer;
 pub mod query;

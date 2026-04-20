@@ -100,7 +100,8 @@
         "repair review state / reenter execution",
         "resolve release blocker",
         "run QA",
-        "wait for external review result"
+        "wait for external review result",
+        "run verification"
       ],
       "type": "string"
     },
@@ -224,6 +225,7 @@
         "execution_reentry",
         "repair_review_state",
         "request_external_review",
+        "run_verification",
         "advance_late_stage",
         "resolve_release_blocker",
         "record_handoff",

@@ -943,6 +943,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "repair review state / reenter execution",
             "resolve release blocker",
             "run QA",
+            "run verification",
             "wait for external review result"
         ]
     );
@@ -958,6 +959,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "execution_reentry",
             "repair_review_state",
             "request_external_review",
+            "run_verification",
             "advance_late_stage",
             "resolve_release_blocker",
             "record_handoff",
@@ -1315,6 +1317,28 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
         );
     }
     let mut issues = Vec::new();
+    assert_schema_pointer_enum(
+        &generated_operator_json,
+        "/$defs/WorkflowOperatorNextActionSchema",
+        &[
+            "advance late stage",
+            "finish branch",
+            "close current task",
+            "continue execution",
+            "request task review",
+            "request final review",
+            "execution reentry required",
+            "hand off",
+            "pivot / return to planning",
+            "refresh test plan",
+            "repair review state / reenter execution",
+            "resolve release blocker",
+            "run QA",
+            "run verification",
+            "wait for external review result",
+        ],
+        &mut issues,
+    );
     assert_schema_pointer_required(
         &generated_operator_json,
         "/$defs/WorkflowOperatorExecutionCommandContext",

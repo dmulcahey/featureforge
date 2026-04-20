@@ -1199,6 +1199,7 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
                 "schema_version": 1,
                 "harness_phase": "unknown_phase"
             }),
+            "MalformedExecutionState",
         ),
         (
             "malformed active_contract_path value",
@@ -1207,6 +1208,7 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
                 "active_contract_path": "nested/contract-deadbeef.md",
                 "active_contract_fingerprint": "deadbeef"
             }),
+            "NonAuthoritativeArtifact",
         ),
         (
             "unknown required evaluator kind",
@@ -1214,6 +1216,7 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
                 "schema_version": 1,
                 "required_evaluator_kinds": ["spec_compliance", "invented_evaluator"]
             }),
+            "MalformedExecutionState",
         ),
         (
             "unknown last_evaluation_evaluator_kind value",
@@ -1221,6 +1224,7 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
                 "schema_version": 1,
                 "last_evaluation_evaluator_kind": "invented_evaluator"
             }),
+            "MalformedExecutionState",
         ),
         (
             "unknown last_evaluation_verdict value",
@@ -1228,10 +1232,11 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
                 "schema_version": 1,
                 "last_evaluation_verdict": "invented_verdict"
             }),
+            "MalformedExecutionState",
         ),
     ];
 
-    for (case_name, payload) in malformed_cases {
+    for (case_name, payload, expected_error_class) in malformed_cases {
         write_file(
             &harness_state,
             &serde_json::to_string_pretty(&payload)
@@ -1249,8 +1254,8 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
         );
         assert_eq!(
             json["error_class"],
-            Value::String(String::from("MalformedExecutionState")),
-            "status should classify {case_name} as malformed authoritative state, got {json}"
+            Value::String(expected_error_class.to_string()),
+            "status should classify {case_name} as {expected_error_class}, got {json}"
         );
     }
 }
@@ -1319,7 +1324,7 @@ fn complete_writes_contract_evaluation_and_repo_state_provenance_into_step_evide
             "current_chunk_retry_count": 1,
             "current_chunk_retry_budget": 2,
             "current_chunk_pivot_threshold": 3,
-            "handoff_required": true,
+            "handoff_required": false,
             "open_failed_criteria": [failing_criterion_id],
             "repo_state_baseline_head_sha": head_sha,
             "repo_state_baseline_worktree_fingerprint": worktree_fingerprint

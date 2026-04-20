@@ -148,7 +148,7 @@ pub fn run() -> std::process::ExitCode {
                             emit_json(runtime.record_review_dispatch(&args))
                         }
                         cli::plan_execution::PlanExecutionCommand::RepairReviewState(args) => {
-                            emit_json(execution::review_state::repair_review_state(
+                            emit_json(execution::review_state::repair_review_state_command(
                                 &runtime, &args,
                             ))
                         }

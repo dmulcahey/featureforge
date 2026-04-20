@@ -17,17 +17,11 @@ use crate::paths::{harness_authoritative_artifacts_dir, harness_branch_root, har
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct StrategyReviewDispatchLineageRecord {
     #[serde(default)]
-    pub(crate) execution_run_id: Option<String>,
-    #[serde(default)]
     pub(crate) dispatch_id: Option<String>,
     #[serde(default)]
     pub(crate) reviewed_state_id: Option<String>,
     #[serde(default)]
     pub(crate) source_task: Option<u32>,
-    #[serde(default)]
-    pub(crate) source_step: Option<u32>,
-    #[serde(default)]
-    pub(crate) strategy_checkpoint_fingerprint: Option<String>,
     #[serde(default)]
     pub(crate) task_completion_lineage_fingerprint: Option<String>,
 }

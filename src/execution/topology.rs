@@ -15,7 +15,8 @@ use crate::execution::harness::{
     TopologySelectionContext,
 };
 use crate::execution::state::{ExecutionContext, ExecutionRuntime, current_head_sha};
-use crate::git::sha256_hex;
+use crate::execution::transitions::load_authoritative_transition_state;
+use crate::git::{canonicalize_repo_root_string, sha256_hex, stored_repo_root_matches_current};
 use crate::paths::RepoPath;
 use crate::paths::write_atomic as write_atomic_file;
 
@@ -265,6 +266,10 @@ pub(crate) struct PreflightAcceptanceState {
     pub(crate) plan_path: String,
     pub(crate) plan_revision: u32,
     #[serde(default)]
+    pub(crate) repo_root: Option<String>,
+    #[serde(default)]
+    pub(crate) git_dir: Option<String>,
+    #[serde(default)]
     pub(crate) repo_state_baseline_head_sha: Option<String>,
     pub(crate) execution_run_id: crate::execution::harness::ExecutionRunId,
     pub(crate) chunk_id: crate::execution::harness::ChunkId,
@@ -289,6 +294,24 @@ impl PreflightAcceptanceState {
     pub(crate) fn matches_context(&self, context: &ExecutionContext) -> bool {
         let (chunking_strategy, evaluator_policy, reset_policy, review_stack) =
             proposed_preflight_policy_tuple(context);
+        if let Some(stored_repo_root) = self
+            .repo_root
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            && !stored_repo_root_matches_current(stored_repo_root, &context.runtime.repo_root)
+        {
+            return false;
+        }
+        if let Some(stored_git_dir) = self
+            .git_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            && !stored_repo_root_matches_current(stored_git_dir, &context.runtime.git_dir)
+        {
+            return false;
+        }
         let Some(saved_baseline_head_sha) = self
             .repo_state_baseline_head_sha
             .as_deref()
@@ -359,27 +382,48 @@ pub(crate) fn pending_chunk_id(context: &ExecutionContext) -> crate::execution::
 pub(crate) fn require_preflight_acceptance(
     context: &ExecutionContext,
 ) -> Result<(), crate::diagnostics::JsonFailure> {
-    if preflight_acceptance_for_plan_revision(context)?.is_none() {
-        return Err(crate::diagnostics::JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "begin requires a successful execution_preflight acceptance for this approved plan revision.",
-        ));
+    if authoritative_run_identity_present(context)? {
+        return Ok(());
     }
-    Ok(())
+    if preflight_acceptance_for_plan_revision(context)?.is_some() {
+        return Ok(());
+    }
+    Err(crate::diagnostics::JsonFailure::new(
+        FailureClass::ExecutionStateNotReady,
+        "begin requires a successful execution_preflight acceptance for this approved plan revision.",
+    ))
 }
 
 pub(crate) fn preflight_acceptance_for_context(
     context: &ExecutionContext,
 ) -> Result<Option<PreflightAcceptanceState>, crate::diagnostics::JsonFailure> {
-    Ok(load_preflight_acceptance(&context.runtime)?
-        .filter(|acceptance| acceptance.matches_context(context)))
+    match load_preflight_acceptance(&context.runtime) {
+        Ok(acceptance) => Ok(acceptance.filter(|acceptance| acceptance.matches_context(context))),
+        Err(error) => {
+            if authoritative_run_identity_present(context)? {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 pub(crate) fn preflight_acceptance_for_plan_revision(
     context: &ExecutionContext,
 ) -> Result<Option<PreflightAcceptanceState>, crate::diagnostics::JsonFailure> {
-    Ok(load_preflight_acceptance(&context.runtime)?
-        .filter(|acceptance| acceptance.matches_plan_revision(context)))
+    match load_preflight_acceptance(&context.runtime) {
+        Ok(acceptance) => {
+            Ok(acceptance.filter(|acceptance| acceptance.matches_plan_revision(context)))
+        }
+        Err(error) => {
+            if authoritative_run_identity_present(context)? {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 pub(crate) fn load_preflight_acceptance(
@@ -437,7 +481,11 @@ pub(crate) fn persist_preflight_acceptance(
         return Ok(existing);
     }
 
-    let acceptance = new_preflight_acceptance(context)?;
+    let acceptance = if let Some(seed) = authoritative_preflight_acceptance_seed(context)? {
+        seed
+    } else {
+        new_preflight_acceptance(context)?
+    };
     let payload = serde_json::to_string_pretty(&acceptance).map_err(|error| {
         crate::diagnostics::JsonFailure::new(
             FailureClass::EvidenceWriteFailed,
@@ -455,6 +503,46 @@ pub(crate) fn persist_preflight_acceptance(
         )
     })?;
     Ok(acceptance)
+}
+
+fn authoritative_preflight_acceptance_seed(
+    context: &ExecutionContext,
+) -> Result<Option<PreflightAcceptanceState>, crate::diagnostics::JsonFailure> {
+    let Some(authoritative_state) = load_authoritative_transition_state(context)? else {
+        return Ok(None);
+    };
+    let Some(harness_phase) = authoritative_state.harness_phase_opt() else {
+        return Ok(None);
+    };
+    if matches!(
+        harness_phase.as_str(),
+        "implementation_handoff" | "execution_preflight"
+    ) {
+        return Ok(None);
+    }
+    let Some(execution_run_id) = authoritative_state.execution_run_id_opt() else {
+        return Ok(None);
+    };
+    let Some(chunk_id) = authoritative_state.chunk_id_opt() else {
+        return Ok(None);
+    };
+    let baseline_head_sha = current_head_sha(&context.runtime.repo_root)?;
+    let (chunking_strategy, evaluator_policy, reset_policy, review_stack) =
+        proposed_preflight_policy_tuple(context);
+    Ok(Some(PreflightAcceptanceState {
+        schema_version: PreflightAcceptanceState::SCHEMA_VERSION,
+        plan_path: context.plan_rel.clone(),
+        plan_revision: context.plan_document.plan_revision,
+        repo_root: Some(canonicalize_repo_root_string(&context.runtime.repo_root)),
+        git_dir: Some(canonicalize_repo_root_string(&context.runtime.git_dir)),
+        repo_state_baseline_head_sha: Some(baseline_head_sha),
+        execution_run_id: crate::execution::harness::ExecutionRunId::new(execution_run_id),
+        chunk_id: crate::execution::harness::ChunkId::new(chunk_id),
+        chunking_strategy,
+        evaluator_policy,
+        reset_policy,
+        review_stack,
+    }))
 }
 
 pub(crate) fn new_preflight_acceptance(
@@ -479,6 +567,8 @@ pub(crate) fn new_preflight_acceptance(
         schema_version: PreflightAcceptanceState::SCHEMA_VERSION,
         plan_path: context.plan_rel.clone(),
         plan_revision: context.plan_document.plan_revision,
+        repo_root: Some(canonicalize_repo_root_string(&context.runtime.repo_root)),
+        git_dir: Some(canonicalize_repo_root_string(&context.runtime.git_dir)),
         repo_state_baseline_head_sha: Some(baseline_head_sha),
         execution_run_id: crate::execution::harness::ExecutionRunId::new(format!(
             "run-{}",
@@ -501,6 +591,15 @@ pub(crate) fn preflight_acceptance_path(runtime: &ExecutionRuntime) -> PathBuf {
         .join(&runtime.safe_branch)
         .join(PREFLIGHT_ACCEPTANCE_DIR)
         .join(PREFLIGHT_ACCEPTANCE_FILE)
+}
+
+fn authoritative_run_identity_present(
+    context: &ExecutionContext,
+) -> Result<bool, crate::diagnostics::JsonFailure> {
+    Ok(load_authoritative_transition_state(context)?
+        .as_ref()
+        .and_then(|state| state.execution_run_id_opt())
+        .is_some())
 }
 
 pub(crate) fn parse_plan_fidelity_review_artifact(

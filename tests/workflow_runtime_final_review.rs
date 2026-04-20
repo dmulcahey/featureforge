@@ -1580,7 +1580,7 @@ fn workflow_phase_keeps_branch_completion_for_non_authoritative_reviewer_failure
 }
 
 #[test]
-fn fs11_document_release_precedes_final_review_after_release_truth_stales() {
+fn document_release_precedes_final_review_after_release_truth_stales() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-fs11-release-before-final-review");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -1611,27 +1611,27 @@ fn fs11_document_release_precedes_final_review_after_release_truth_stales() {
         state,
         &["workflow", "phase", "--json"],
         &[],
-        "workflow phase for FS-11 release-before-final-review regression",
+        "workflow phase for release-before-final-review regression",
     );
     let operator_json = run_featureforge_with_env(
         repo,
         state,
         &["workflow", "operator", "--plan", PLAN_REL, "--json"],
         &[],
-        "workflow operator for FS-11 release-before-final-review regression",
+        "workflow operator for release-before-final-review regression",
     );
     let doctor_json = run_featureforge_with_env(
         repo,
         state,
         &["workflow", "doctor", "--json"],
         &[],
-        "workflow doctor for FS-11 release-before-final-review regression",
+        "workflow doctor for release-before-final-review regression",
     );
     let status_json = run_plan_execution(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "plan execution status for FS-11 release-before-final-review regression",
+        "plan execution status for release-before-final-review regression",
     );
 
     assert_eq!(phase_json["phase"], "document_release_pending");
@@ -1645,26 +1645,21 @@ fn fs11_document_release_precedes_final_review_after_release_truth_stales() {
     assert_eq!(doctor_json["phase_detail"], operator_json["phase_detail"]);
     let phase_detail = status_json["phase_detail"]
         .as_str()
-        .expect("FS-11 release-precedence regression should include phase_detail");
+        .expect("release-precedence regression should include phase_detail");
     assert!(
         matches!(
             phase_detail,
             "branch_closure_recording_required_for_release_readiness"
                 | "release_readiness_recording_ready"
         ),
-        "FS-11 release-precedence regression must stay on the document-release lane, got {phase_detail}: {status_json}"
+        "release-precedence regression must stay on the document-release lane, got {phase_detail}: {status_json}"
     );
     assert_eq!(
         status_json["next_action"],
         Value::from("advance late stage")
     );
-    let expected_command = if phase_detail == "release_readiness_recording_ready" {
-        format!(
-            "featureforge plan execution advance-late-stage --plan {PLAN_REL} --result ready|blocked --summary-file <path>"
-        )
-    } else {
-        format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}")
-    };
+    let expected_command =
+        format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}");
     assert_eq!(
         status_json["recommended_command"],
         Value::from(expected_command.clone())
@@ -1729,37 +1724,13 @@ fn fs02_late_stage_drift_routes_consistently_across_operator_and_status() {
     let phase_detail = status_json["phase_detail"]
         .as_str()
         .expect("FS-02 late-stage drift regression should include phase_detail");
-    assert!(
-        matches!(
-            phase_detail,
-            "branch_closure_recording_required_for_release_readiness"
-                | "execution_reentry_required"
-                | "release_readiness_recording_ready"
-                | "planning_reentry_required"
-        ),
-        "FS-02 late-stage drift regression must classify to an explicit deterministic route, got {phase_detail}: {status_json}"
+    assert_eq!(
+        phase_detail, "execution_reentry_required",
+        "FS-02 late-stage drift regression should deterministically classify this fixture as execution reentry, got {status_json}"
     );
-    if phase_detail == "branch_closure_recording_required_for_release_readiness"
-        || phase_detail == "release_readiness_recording_ready"
-    {
-        assert_eq!(
-            status_json["next_action"],
-            Value::from("advance late stage"),
-            "FS-02 late-stage-contained classification should remain on late-stage progression"
-        );
-    }
-    if phase_detail == "execution_reentry_required" {
-        assert_eq!(
-            status_json["next_action"],
-            Value::from("repair review state / reenter execution"),
-            "FS-02 execution-reentry classification should require repair/reentry"
-        );
-    }
-    if phase_detail == "planning_reentry_required" {
-        assert_eq!(
-            status_json["next_action"],
-            Value::from("pivot / return to planning"),
-            "FS-02 explicit metadata/route blocker classification should surface planning reentry"
-        );
-    }
+    assert_eq!(
+        status_json["next_action"],
+        Value::from("repair review state / reenter execution"),
+        "FS-02 execution-reentry classification should require repair/reentry"
+    );
 }

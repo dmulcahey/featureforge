@@ -179,6 +179,7 @@ If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known,
 - If workflow/operator returns a non-empty `recommended_command`, follow that exact command template.
 - If workflow/operator omits `recommended_command` (for example, while waiting for an external review result or refreshing the test plan), follow `next_action` and rerun workflow/operator after the prerequisite is satisfied.
 - Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.
+- Keep hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` out of the normal path; do not route to them for normal workflow progression.
 - Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.
 - If workflow/operator reports `phase` `executing`, route directly to the runtime-selected execution owner (`featureforge:executing-plans` or `featureforge:subagent-driven-development`) and keep routing anchored to workflow/operator `phase`, `phase_detail`, `next_action`, and `recommended_command`.
 - In that helper-backed execution flow, treat `execution_started` as an executor-resume signal only when workflow/operator reports `phase` `executing`.

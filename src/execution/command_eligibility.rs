@@ -1,12 +1,19 @@
 use crate::execution::query::{
     ExecutionRoutingState,
+    normalize_public_follow_up_alias as shared_normalize_public_follow_up_alias,
     required_follow_up_from_routing as shared_required_follow_up_from_routing,
 };
 
-fn normalize_public_follow_up(follow_up: &str) -> String {
-    match follow_up {
-        "record_branch_closure" => String::from("advance_late_stage"),
-        _ => follow_up.to_owned(),
+fn normalize_public_follow_up(follow_up: &str) -> Option<String> {
+    shared_normalize_public_follow_up_alias(Some(follow_up)).map(str::to_owned)
+}
+
+fn override_follow_up_for_operator(operator: &ExecutionRoutingState) -> Option<String> {
+    match operator.follow_up_override.as_str() {
+        "record_handoff" | "record_pivot" => {
+            normalize_public_follow_up(operator.follow_up_override.as_str())
+        }
+        _ => None,
     }
 }
 
@@ -17,24 +24,13 @@ pub(crate) fn operator_requires_review_state_repair(operator: &ExecutionRoutingS
 pub(crate) fn blocked_follow_up_for_operator(operator: &ExecutionRoutingState) -> Option<String> {
     shared_required_follow_up_from_routing(operator)
         .as_deref()
-        .map(normalize_public_follow_up)
+        .and_then(normalize_public_follow_up)
 }
 
 pub(crate) fn close_current_task_required_follow_up(
     operator: &ExecutionRoutingState,
 ) -> Option<String> {
-    match shared_required_follow_up_from_routing(operator).as_deref() {
-        Some("request_external_review")
-            if operator.phase_detail == "task_review_dispatch_required" =>
-        {
-            Some(String::from("request_external_review"))
-        }
-        Some("repair_review_state") => Some(String::from("repair_review_state")),
-        Some("execution_reentry") => Some(String::from("execution_reentry")),
-        Some("record_handoff") => Some(String::from("record_handoff")),
-        Some("record_pivot") => Some(String::from("record_pivot")),
-        _ => None,
-    }
+    override_follow_up_for_operator(operator).or_else(|| blocked_follow_up_for_operator(operator))
 }
 
 pub(crate) fn late_stage_required_follow_up(
@@ -74,9 +70,7 @@ pub(crate) fn release_readiness_required_follow_up(
 }
 
 pub(crate) fn negative_result_follow_up(operator: &ExecutionRoutingState) -> Option<String> {
-    match operator.follow_up_override.as_str() {
-        "record_handoff" => Some(String::from("record_handoff")),
-        "record_pivot" => Some(String::from("record_pivot")),
-        _ => Some(String::from("execution_reentry")),
-    }
+    override_follow_up_for_operator(operator)
+        .or_else(|| blocked_follow_up_for_operator(operator))
+        .or_else(|| Some(String::from("execution_reentry")))
 }

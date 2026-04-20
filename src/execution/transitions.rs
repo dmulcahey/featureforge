@@ -8,6 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -349,6 +350,7 @@ pub(crate) struct TaskClosureResultRecord<'a> {
     pub(crate) task: u32,
     pub(crate) dispatch_id: &'a str,
     pub(crate) closure_record_id: &'a str,
+    pub(crate) execution_run_id: Option<&'a str>,
     pub(crate) reviewed_state_id: &'a str,
     pub(crate) contract_identity: &'a str,
     pub(crate) effective_reviewed_surface_paths: &'a [String],
@@ -426,6 +428,17 @@ pub(crate) struct TaskClosureNegativeResult {
     pub(crate) verification_summary_hash: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct OpenStepStateRecord {
+    pub(crate) task: u32,
+    pub(crate) step: u32,
+    pub(crate) note_state: String,
+    pub(crate) note_summary: String,
+    pub(crate) source_plan_path: String,
+    pub(crate) source_plan_revision: u32,
+    pub(crate) authoritative_sequence: u64,
+}
+
 pub(crate) struct CurrentReleaseReadinessRecord {
     pub(crate) record_status: String,
     pub(crate) branch_closure_id: String,
@@ -499,6 +512,7 @@ pub(crate) struct ClosureHistorySnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PersistedReviewStateFieldClass {
     AuthoritativeAppendOnlyHistory,
+    AuthoritativeMutableControlState,
     DerivedCache,
     ProjectionSummary,
     Obsolete,
@@ -512,6 +526,9 @@ pub(crate) fn classify_review_state_field(field: &str) -> Option<PersistedReview
         | "final_review_record_history"
         | "browser_qa_record_history" => {
             PersistedReviewStateFieldClass::AuthoritativeAppendOnlyHistory
+        }
+        "current_open_step_state" => {
+            PersistedReviewStateFieldClass::AuthoritativeMutableControlState
         }
         "current_task_closure_records"
         | "task_closure_negative_result_records"
@@ -842,8 +859,9 @@ impl AuthoritativeTransitionState {
             self.last_strategy_checkpoint_fingerprint()
         };
 
-        if let Some(strategy_checkpoint_fingerprint) = checkpoint_fingerprint {
-            let execution_run_id = self.current_execution_run_id();
+        if let Some(strategy_checkpoint_fingerprint) = checkpoint_fingerprint
+            && let Some(execution_run_id) = self.execution_run_id_opt()
+        {
             if let Some((task, step)) = cycle_target {
                 if let Some(task_completion_lineage) =
                     task_completion_lineage_fingerprint(context, task)
@@ -888,7 +906,8 @@ impl AuthoritativeTransitionState {
         rationale: &str,
         cycle_breaking: bool,
     ) -> Result<String, JsonFailure> {
-        let execution_run_id = self.current_execution_run_id();
+        let execution_run_id = self.execution_run_id_opt();
+        let execution_run_label = execution_run_id.as_deref().unwrap_or("<none>");
         let selected_topology = selected_topology_from_execution_mode(execution_mode);
         let lane_decomposition = context
             .plan_document
@@ -926,7 +945,7 @@ impl AuthoritativeTransitionState {
         };
         let fingerprint = sha256_hex(
             format!(
-                "plan={}\nplan_revision={}\nrun={execution_run_id}\ncheckpoint_kind={checkpoint_kind}\nselected_topology={selected_topology}\ntriggers={trigger_text}\nlane_decomposition={}\nlane_owner_map={}\nworktree_plan={worktree_plan}\nsubagent_dispatch_plan={subagent_dispatch_plan}\nacceptance={}\nreview={}\nrationale={}\n",
+                "plan={}\nplan_revision={}\nrun={execution_run_label}\ncheckpoint_kind={checkpoint_kind}\nselected_topology={selected_topology}\ntriggers={trigger_text}\nlane_decomposition={}\nlane_owner_map={}\nworktree_plan={worktree_plan}\nsubagent_dispatch_plan={subagent_dispatch_plan}\nacceptance={}\nreview={}\nrationale={}\n",
                 context.plan_rel,
                 context.plan_document.plan_revision,
                 lane_decomposition.join(","),
@@ -1497,7 +1516,9 @@ impl AuthoritativeTransitionState {
             return Ok(());
         };
         let reviewed_state_id = format!("git_tree:{}", context.current_tracked_tree_sha()?);
-        let execution_run_id = self.current_execution_run_id();
+        let Some(execution_run_id) = self.execution_run_id_opt() else {
+            return Ok(());
+        };
         self.upsert_task_dispatch_lineage(
             task,
             &execution_run_id,
@@ -2756,11 +2777,16 @@ impl AuthoritativeTransitionState {
             .state_payload
             .get("run_identity")
             .and_then(|run_identity| json_u32(run_identity, "source_plan_revision"));
-        let execution_run_id = self
-            .state_payload
-            .get("run_identity")
-            .and_then(|run_identity| json_string(run_identity, "execution_run_id"))
-            .unwrap_or_else(|| self.current_execution_run_id());
+        let execution_run_id = record
+            .execution_run_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                self.state_payload
+                    .get("run_identity")
+                    .and_then(|run_identity| json_string(run_identity, "execution_run_id"))
+            });
         let payload = serde_json::json!({
             "task": record.task,
             "record_id": record.closure_record_id,
@@ -3240,6 +3266,20 @@ impl AuthoritativeTransitionState {
         records
     }
 
+    pub(crate) fn task_closure_history_contains_task(&self, task: u32) -> bool {
+        self.state_payload
+            .get("task_closure_record_history")
+            .and_then(Value::as_object)
+            .is_some_and(|history| {
+                history
+                    .values()
+                    .filter_map(Value::as_object)
+                    .any(|payload| {
+                        payload.get("task").and_then(Value::as_u64) == Some(u64::from(task))
+                    })
+            })
+    }
+
     pub(crate) fn current_task_closure_overlay_needs_restore(&self) -> bool {
         let recoverable = self.current_task_closure_results_from_history();
         if recoverable.is_empty() {
@@ -3255,7 +3295,24 @@ impl AuthoritativeTransitionState {
         if recoverable.is_empty() || !self.current_task_closure_overlay_needs_restore() {
             return Ok(false);
         }
-        let mut restored = serde_json::Map::new();
+        let mut restored = self
+            .state_payload
+            .get("current_task_closure_records")
+            .and_then(Value::as_object)
+            .map(|records| {
+                records
+                    .iter()
+                    .filter_map(|(scope_key, payload)| {
+                        let parsed_task = scope_key
+                            .strip_prefix("task-")
+                            .and_then(|task| task.parse::<u32>().ok());
+                        parsed_task
+                            .is_none()
+                            .then(|| (scope_key.clone(), payload.clone()))
+                    })
+                    .collect::<serde_json::Map<_, _>>()
+            })
+            .unwrap_or_default();
         for record in recoverable.into_values() {
             let closure_status = record
                 .closure_status
@@ -3667,7 +3724,84 @@ impl AuthoritativeTransitionState {
             .cloned()
     }
 
-    fn current_execution_run_id(&self) -> String {
+    pub(crate) fn current_open_step_state(&self) -> Option<OpenStepStateRecord> {
+        self.current_open_step_state_checked().ok().flatten()
+    }
+
+    pub(crate) fn current_open_step_state_checked(
+        &self,
+    ) -> Result<Option<OpenStepStateRecord>, JsonFailure> {
+        let Some(payload) = self.state_payload.get("current_open_step_state") else {
+            return Ok(None);
+        };
+        if payload.is_null() {
+            return Ok(None);
+        }
+        let record: OpenStepStateRecord =
+            serde_json::from_value(payload.clone()).map_err(|error| {
+                JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    format!(
+                        "Authoritative harness current_open_step_state is malformed in {}: {error}",
+                        self.state_path.display()
+                    ),
+                )
+            })?;
+        Ok(Some(normalize_open_step_state_record(
+            record,
+            &self.state_path,
+        )?))
+    }
+
+    pub(crate) fn record_open_step_state(
+        &mut self,
+        record: OpenStepStateRecord,
+    ) -> Result<(), JsonFailure> {
+        let record = normalize_open_step_state_record(record, &self.state_path)?;
+        let state_path = self.state_path.display().to_string();
+        let serialized_record = serde_json::to_value(record).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::PartialAuthoritativeMutation,
+                format!(
+                    "Could not serialize authoritative current_open_step_state for {}: {error}",
+                    state_path
+                ),
+            )
+        })?;
+        let root = self.root_object_mut()?;
+        root.insert(String::from("current_open_step_state"), serialized_record);
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn clear_open_step_state(&mut self) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        if root.get("current_open_step_state").is_some() {
+            root.insert(String::from("current_open_step_state"), Value::Null);
+            self.dirty = true;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn harness_phase_opt(&self) -> Option<String> {
+        self.state_payload
+            .get("harness_phase")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    }
+
+    pub(crate) fn chunk_id_opt(&self) -> Option<String> {
+        self.state_payload
+            .get("chunk_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    }
+
+    pub(crate) fn execution_run_id_opt(&self) -> Option<String> {
         self.state_payload
             .get("run_identity")
             .and_then(Value::as_object)
@@ -3675,8 +3809,7 @@ impl AuthoritativeTransitionState {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or("unknown-run")
-            .to_owned()
+            .map(str::to_owned)
     }
 
     fn last_strategy_checkpoint_fingerprint(&self) -> Option<String> {
@@ -4014,10 +4147,111 @@ pub(crate) fn load_authoritative_transition_state(
     load_authoritative_transition_state_internal(context, true)
 }
 
+pub(crate) fn load_or_initialize_authoritative_transition_state(
+    context: &ExecutionContext,
+) -> Result<AuthoritativeTransitionState, JsonFailure> {
+    if let Some(state) = load_authoritative_transition_state(context)? {
+        return Ok(state);
+    }
+    Ok(AuthoritativeTransitionState {
+        state_path: harness_state_path(
+            &context.runtime.state_dir,
+            &context.runtime.repo_slug,
+            &context.runtime.branch_name,
+        ),
+        state_payload: Value::Object(serde_json::Map::new()),
+        phase: None,
+        active_contract: None,
+        dirty: false,
+    })
+}
+
 pub(crate) fn load_authoritative_transition_state_relaxed(
     context: &ExecutionContext,
 ) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
     load_authoritative_transition_state_internal(context, false)
+}
+
+pub(crate) fn materialize_legacy_open_step_state_if_needed(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+) -> Result<bool, JsonFailure> {
+    let mut authoritative_state = load_authoritative_transition_state_relaxed(context)?;
+    if let Some(authoritative_state) = authoritative_state.as_mut() {
+        if authoritative_state.current_open_step_state().is_some() {
+            return Ok(false);
+        }
+        if authoritative_state
+            .current_open_step_state_checked()?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        let Some(candidate) = single_legacy_open_step_state_candidate(context)? else {
+            return Ok(false);
+        };
+        authoritative_state.record_open_step_state(candidate)?;
+        authoritative_state.persist_if_dirty_with_failpoint(None)?;
+        return Ok(true);
+    }
+
+    let Some(candidate) = single_legacy_open_step_state_candidate(context)? else {
+        return Ok(false);
+    };
+    let state_path =
+        harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
+    let mut authoritative_state = AuthoritativeTransitionState {
+        state_path,
+        state_payload: Value::Object(serde_json::Map::new()),
+        phase: None,
+        active_contract: None,
+        dirty: false,
+    };
+    authoritative_state.record_open_step_state(candidate)?;
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(true)
+}
+
+fn single_legacy_open_step_state_candidate(
+    context: &ExecutionContext,
+) -> Result<Option<OpenStepStateRecord>, JsonFailure> {
+    let candidate = match context.legacy_open_step_state_candidates.as_slice() {
+        [] => return Ok(None),
+        [candidate] => candidate,
+        _ => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Execution plan markdown contains multiple open-step execution notes for {}; persist a single authoritative open step before running mutating commands.",
+                    context.plan_rel
+                ),
+            ));
+        }
+    };
+
+    let Some(step) = context
+        .steps
+        .iter()
+        .find(|step| step.task_number == candidate.task && step.step_number == candidate.step)
+    else {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Legacy open-step execution note in {} points to missing Task {} Step {}.",
+                context.plan_rel, candidate.task, candidate.step
+            ),
+        ));
+    };
+    if step.checked {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Legacy open-step execution note in {} points to completed Task {} Step {}.",
+                context.plan_rel, candidate.task, candidate.step
+            ),
+        ));
+    }
+    Ok(Some(candidate.clone()))
 }
 
 pub(crate) fn enforce_authoritative_phase(
@@ -4198,6 +4432,70 @@ fn json_u32(payload: &Value, key: &str) -> Option<u32> {
 
 fn json_bool(payload: &Value, key: &str) -> bool {
     payload.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn normalize_open_step_state_record(
+    mut record: OpenStepStateRecord,
+    state_path: &Path,
+) -> Result<OpenStepStateRecord, JsonFailure> {
+    if record.task == 0 || record.step == 0 {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness current_open_step_state is malformed in {}: task and step must be positive integers.",
+                state_path.display()
+            ),
+        ));
+    }
+
+    record.note_state = match record.note_state.trim() {
+        "Active" => String::from("Active"),
+        "Blocked" => String::from("Blocked"),
+        "Interrupted" => String::from("Interrupted"),
+        _ => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Authoritative harness current_open_step_state is malformed in {}: note_state must be Active, Blocked, or Interrupted.",
+                    state_path.display()
+                ),
+            ));
+        }
+    };
+
+    record.note_summary = record
+        .note_summary
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if record.note_summary.is_empty() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness current_open_step_state is malformed in {}: note_summary may not be blank.",
+                state_path.display()
+            ),
+        ));
+    }
+    if record.note_summary.chars().count() > 120 {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness current_open_step_state is malformed in {}: note_summary may not exceed 120 characters.",
+                state_path.display()
+            ),
+        ));
+    }
+    if record.source_plan_path.trim().is_empty() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Authoritative harness current_open_step_state is malformed in {}: source_plan_path may not be blank.",
+                state_path.display()
+            ),
+        ));
+    }
+    Ok(record)
 }
 
 fn json_string_array(payload: &Value, key: &str) -> Vec<String> {
@@ -5683,6 +5981,7 @@ mod tests {
                 task: 1,
                 dispatch_id: "dispatch-1",
                 closure_record_id: "task-closure-new",
+                execution_run_id: None,
                 reviewed_state_id: "git_tree:new",
                 contract_identity: "task-contract-1",
                 effective_reviewed_surface_paths: &["README.md".to_owned()],
@@ -5709,6 +6008,10 @@ mod tests {
         assert_eq!(
             classify_review_state_field("task_closure_record_history"),
             Some(PersistedReviewStateFieldClass::AuthoritativeAppendOnlyHistory)
+        );
+        assert_eq!(
+            classify_review_state_field("current_open_step_state"),
+            Some(PersistedReviewStateFieldClass::AuthoritativeMutableControlState)
         );
         assert_eq!(
             classify_review_state_field("current_task_closure_records"),

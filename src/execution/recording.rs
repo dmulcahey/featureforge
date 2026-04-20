@@ -20,6 +20,7 @@ pub(crate) struct CurrentTaskClosureWrite<'a> {
     pub(crate) task: u32,
     pub(crate) dispatch_id: &'a str,
     pub(crate) closure_record_id: &'a str,
+    pub(crate) execution_run_id: Option<&'a str>,
     pub(crate) reviewed_state_id: &'a str,
     pub(crate) contract_identity: &'a str,
     pub(crate) effective_reviewed_surface_paths: &'a [String],
@@ -125,6 +126,7 @@ pub(crate) fn record_current_task_closure(
         task: input.task,
         dispatch_id: input.dispatch_id,
         closure_record_id: input.closure_record_id,
+        execution_run_id: input.execution_run_id,
         reviewed_state_id: input.reviewed_state_id,
         contract_identity: input.contract_identity,
         effective_reviewed_surface_paths: input.effective_reviewed_surface_paths,
@@ -526,6 +528,26 @@ pub(crate) fn clear_current_task_closure_results_for_structural_repair_scope_key
     )?;
     authoritative_state.persist_if_dirty_with_failpoint(None)?;
     Ok(cleared_scope_keys)
+}
+
+pub(crate) fn clear_open_step_state(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+) -> Result<bool, JsonFailure> {
+    let _write_authority = claim_step_write_authority(runtime)?;
+    let mut authoritative_state = load_authoritative_transition_state(context)?;
+    let Some(authoritative_state) = authoritative_state.as_mut() else {
+        return Ok(false);
+    };
+    if authoritative_state
+        .current_open_step_state_checked()?
+        .is_none()
+    {
+        return Ok(false);
+    }
+    authoritative_state.clear_open_step_state()?;
+    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    Ok(true)
 }
 
 pub(crate) fn persist_review_state_repair_follow_up(

@@ -2,12 +2,22 @@
 
 ## Unreleased
 
+## v1.9.1 - 2026-04-20
+
+Patch release focused on closing the remaining open authority/documentation gaps from the task-boundary hardening work without changing the broader public workflow model.
+
 - internalize normal-path task/final-review dispatch-lineage binding so operator-led `close-current-task` and `advance-late-stage` no longer require public `--dispatch-id`
 - remove public normal-path `record-review-dispatch` choreography from active review/execution guidance while keeping the compatibility/debug primitive available off the main path
 - align runtime routing, schemas, skill docs, shared review-state reference guidance, and regression coverage on the refactored public command mapping
 - keep `plan execution status --json` and `workflow operator --json` on the same runtime-owned routing decision instead of allowing diagnostic/status drift
 - harden `rebuild-evidence` as projection-only regeneration that fails closed with append-only/manual-repair blockers instead of rewriting authoritative proof in place
-- refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for the refactored command contract
+- stop treating raw markdown `**Execution Note:** ...` lines as live read-surface authority when authoritative `current_open_step_state` is absent, while preserving hidden-gate compatibility materialization for legacy notes at mutation entry
+- align `status`, `workflow operator`, compiled-CLI parity coverage, and targeted boundary regressions on the fail-closed rule that markdown open-step notes are projection and migration input only, not runtime truth
+- make the `executing-plans` doc contract converge on the runtime-owned projection wording and remove the older checklist-as-authoritative-record sentence from the checked-in doc/test contract surface
+- add the exact command-form `rebuild-evidence` README/install-doc contract sentence while keeping the broader statement that the helper is compatibility/debug-only and not part of normal public routing
+- refresh the checked-in repo runtime binary and darwin/windows prebuilt artifacts for `1.9.1`
+
+Historical note: older sections below may mention hidden compatibility/debug commands as part of the contract at that release date. Those references are historical and are not current normal-path guidance.
 
 ### Breaking Output Contract Changes
 
@@ -34,7 +44,7 @@ Late-stage routing hardening release focused on reviewed-closure authority, exac
 - fail closed when branch-closure truth exists only in overlays, and require authoritative current branch-closure records before release-readiness, final-review, or QA reruns can reuse prior late-stage state
 - reroute malformed, plan-mismatched, or authoritative-provenance-invalid final-review artifacts back through fresh final-review dispatch instead of treating those reruns as idempotent success
 - preserve negative follow-up overrides for failing final-review and QA reruns while still invalidating stale dispatch lineage for authoritative artifact integrity defects
-- align `workflow operator`, `plan execution status`, `document-release`, and branch-finishing guidance on the April late-stage order: document release first, terminal final review second, QA only when operator still requires it, then `gate-review` and `gate-finish`
+- align `workflow operator`, `plan execution status`, `document-release`, and branch-finishing guidance on the April late-stage order for the v1.8 contract snapshot (historical): document release first, terminal final review second, QA only when operator still requires it, then `gate-review` and `gate-finish`
 - harden active runtime/docs contracts for QA `test_plan_refresh_required`, release-blocker recording, supporting `status --plan` diagnostics, and reviewed-closure repair/requery semantics
 - expand runtime, shell-smoke, execution-query, and contract coverage for final-review invalidation routing, release/readiness authority, close-current-task follow-up overrides, and stale exact-command fail-closed behavior
 - trim remaining shared test binary lookup overhead on the Rust side while keeping the same CLI surface and assertions
@@ -44,8 +54,8 @@ Late-stage routing hardening release focused on reviewed-closure authority, exac
 
 First-class plan-fidelity stage release focused on making `featureforge:plan-fidelity-review` a canonical workflow stage with explicit draft-plan routing ownership, independent-review guidance, and cross-surface contract parity.
 
-- add `featureforge plan execution rebuild-evidence` operator notes covering replayed evidence targets, refreshed helper-owned closure receipts, and the contract-bound versus plain task-boundary unit-review receipt behavior
-- split public `featureforge plan execution gate-review` into a read-only gate check and an explicit dispatch-only mutation path for workflow/runtime review-cycle bookkeeping
+- add `featureforge plan execution rebuild-evidence` operator notes covering replayed evidence targets, refreshed helper-owned closure receipts, and the contract-bound versus plain task-boundary unit-review receipt behavior (historical v1.7 contract)
+- split public `featureforge plan execution gate-review` into a read-only gate check and an explicit dispatch-only mutation path for workflow/runtime review-cycle bookkeeping (historical v1.7 contract)
 - let `rebuild-evidence` restore authoritative final-review, test-plan, QA, and release-readiness truth after successful replay, including safe no-op rebinding after rebases when execution evidence is already current
 - teach finish readiness to ignore tracked execution-evidence-only writeback so rebuilt evidence does not by itself stale downstream finish gates
 - add a first-class `featureforge:plan-fidelity-review` skill surface and reviewer prompt with explicit fresh-context independence and runtime receipt-recording guidance
@@ -68,9 +78,9 @@ Independent-review dispatch hard-gate release focused on explicit task-boundary 
 - `workflow handoff --json`: remove top-level `session_entry`; remove `phase` values `needs_user_choice` and `bypassed`; remove `next_action` values `session_entry_gate` and `continue_outside_featureforge`; new `schema_version` is `2`
 - `workflow status --refresh` JSON: remove strict-gate `status` outcomes `needs_user_choice` and `bypassed`; remove strict-gate `reason_codes` `session_entry_unresolved` and `session_entry_bypassed`; retained route `schema_version` is `3`
 
-- enforce explicit `featureforge plan execution record-review-dispatch --plan <approved-plan-path>` dispatch proof at task boundaries before next-task begin can proceed
+- enforce explicit `featureforge plan execution record-review-dispatch --plan <approved-plan-path>` dispatch proof at task boundaries before next-task begin can proceed (historical v1.6 contract)
 - keep task-boundary fail-closed behavior for stale or missing dispatch lineage, non-independent review receipts, and missing task verification receipts
-- align workflow operator surfaces and execution skill docs on the exact runnable `record-review-dispatch` command text for blocked task-boundary remediation
+- align workflow operator surfaces and execution skill docs on the exact runnable `record-review-dispatch` command text for blocked task-boundary remediation (historical v1.6 contract)
 - harden execution guidance so repo-writing work records runtime begin before mutation and treats backfill as recovery-only workflow repair
 - expand runtime, workflow, final-review, and instruction-contract coverage for dispatch hard-gate semantics and preserved final-review behavior
 - refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for `1.6.0`

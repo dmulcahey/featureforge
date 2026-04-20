@@ -2812,7 +2812,7 @@ fn gate_finish_ignores_reason_code_deviation_without_matching_downgrade_record()
 }
 
 #[test]
-fn fs11_status_routes_release_readiness_before_final_review_when_release_state_stales() {
+fn status_routes_release_readiness_before_final_review_when_release_state_stales() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-fs11-release-precedence");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2841,33 +2841,28 @@ fn fs11_status_routes_release_readiness_before_final_review_when_release_state_s
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status should route stale release truth before final review in FS-11 fixture (compiled CLI contract)",
+        "status should route stale release truth before final review in the release-precedence fixture (compiled CLI contract)",
     );
     assert_eq!(status["phase"], Value::from("document_release_pending"));
     assert_eq!(status["next_action"], Value::from("advance late stage"));
     let phase_detail = status["phase_detail"]
         .as_str()
-        .expect("FS-11 compiled-CLI precedence fixture should expose phase_detail");
+        .expect("compiled-CLI release-precedence fixture should expose phase_detail");
     assert!(
         matches!(
             phase_detail,
             "branch_closure_recording_required_for_release_readiness"
                 | "release_readiness_recording_ready"
         ),
-        "FS-11 compiled-CLI precedence fixture must stay on the document-release lane, got {phase_detail}: {status}"
+        "compiled-CLI release-precedence fixture must stay on the document-release lane, got {phase_detail}: {status}"
     );
-    let expected_command = if phase_detail == "release_readiness_recording_ready" {
-        format!(
-            "featureforge plan execution advance-late-stage --plan {PLAN_REL} --result ready|blocked --summary-file <path>"
-        )
-    } else {
-        format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}")
-    };
+    let expected_command =
+        format!("featureforge plan execution advance-late-stage --plan {PLAN_REL}");
     assert_eq!(status["recommended_command"], Value::from(expected_command));
 }
 
 #[test]
-fn fs11_gate_finish_rejects_final_review_release_binding_mismatch() {
+fn gate_finish_rejects_final_review_release_binding_mismatch() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-final-review-fs11-release-binding-mismatch");
     let repo = repo_dir.path();
@@ -2908,7 +2903,7 @@ fn fs11_gate_finish_rejects_final_review_release_binding_mismatch() {
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "FS-11 gate-finish should fail closed when final-review release binding mismatches the current release identity",
+        "gate-finish should fail closed when final-review release binding mismatches the current release identity",
     );
     assert_eq!(gate_finish["allowed"], false, "json: {gate_finish}");
     assert!(
@@ -2917,12 +2912,12 @@ fn fs11_gate_finish_rejects_final_review_release_binding_mismatch() {
             .is_some_and(|codes| codes
                 .iter()
                 .any(|code| code == "review_artifact_release_binding_mismatch")),
-        "FS-11 gate-finish should surface explicit final-review->release identity mismatch, got {gate_finish}"
+        "gate-finish should surface explicit final-review->release identity mismatch, got {gate_finish}"
     );
 }
 
 #[test]
-fn fs12_missing_final_review_projection_regenerates_without_truth_mutation() {
+fn missing_final_review_projection_regenerates_without_truth_mutation() {
     let (repo_dir, state_dir) = init_repo("plan-execution-final-review-fs12-projection-regen");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -2940,7 +2935,7 @@ fn fs12_missing_final_review_projection_regenerates_without_truth_mutation() {
         repo,
         state,
         &["preflight", "--plan", PLAN_REL],
-        "preflight for FS-12 projection-regeneration fixture",
+        "preflight for projection-regeneration fixture",
     );
     let harness_state_path = harness_state_path(state, &repo_slug(repo), &branch_name(repo));
     let harness_before: Value = serde_json::from_str(
@@ -2952,20 +2947,25 @@ fn fs12_missing_final_review_projection_regenerates_without_truth_mutation() {
     );
     let final_review_record_id = harness_before["current_final_review_record_id"]
         .as_str()
-        .expect("FS-12 fixture should expose current final-review record id")
+        .expect("projection-regeneration fixture should expose current final-review record id")
         .to_owned();
     let project_artifacts = project_artifact_dir(repo, state);
-    let deleted_projection_path =
-        latest_branch_artifact_path(&project_artifacts, &branch_name(repo), "code-review")
-            .expect("FS-12 fixture should expose a readable project code-review projection");
+    let deleted_projection_path = latest_branch_artifact_path(
+        &project_artifacts,
+        &branch_name(repo),
+        "code-review",
+    )
+    .expect(
+        "projection-regeneration fixture should expose a readable project code-review projection",
+    );
     fs::remove_file(&deleted_projection_path)
-        .expect("FS-12 fixture should allow deleting the derived project projection artifact");
+        .expect("projection-regeneration fixture should allow deleting the derived project projection artifact");
 
     let rebuild = run_plan_execution_json_real_cli(
         repo,
         state,
         &["rebuild-evidence", "--plan", PLAN_REL, "--json"],
-        "rebuild-evidence should regenerate missing late-stage projections in FS-12 fixture",
+        "rebuild-evidence should regenerate missing late-stage projections in the projection-regeneration fixture",
     );
     assert_eq!(
         rebuild["counts"]["rebuilt"],
@@ -2975,7 +2975,7 @@ fn fs12_missing_final_review_projection_regenerates_without_truth_mutation() {
     assert!(
         latest_branch_artifact_path(&project_artifacts, &branch_name(repo), "code-review")
             .is_some(),
-        "FS-12 projection regeneration should restore a readable code-review projection artifact"
+        "projection regeneration should restore a readable code-review projection artifact"
     );
 
     let harness_after: Value = serde_json::from_str(
@@ -2992,14 +2992,14 @@ fn fs12_missing_final_review_projection_regenerates_without_truth_mutation() {
     );
     assert_eq!(
         state_digest_after, state_digest_before,
-        "FS-12 projection regeneration must not mutate authoritative truth"
+        "projection regeneration must not mutate authoritative truth"
     );
 
     let gate = run_plan_execution_json_real_cli(
         repo,
         state,
         &["gate-finish", "--plan", PLAN_REL],
-        "gate-finish should stay passable after FS-12 projection regeneration",
+        "gate-finish should stay passable after projection regeneration",
     );
     assert_eq!(gate["allowed"], Value::Bool(true), "json: {gate}");
 }

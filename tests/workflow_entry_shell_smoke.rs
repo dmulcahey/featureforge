@@ -426,39 +426,15 @@ fn fs02_entry_route_surfaces_share_parity_and_budget() {
     let phase_detail = operator_json["phase_detail"]
         .as_str()
         .expect("FS-02 operator route should include phase_detail");
-    assert!(
-        matches!(
-            phase_detail,
-            "branch_closure_recording_required_for_release_readiness"
-                | "execution_reentry_required"
-                | "release_readiness_recording_ready"
-                | "planning_reentry_required"
-        ),
-        "FS-02 fixture should classify late-stage drift into an explicit deterministic lane, got {phase_detail}: {operator_json}"
+    assert_eq!(
+        phase_detail, "planning_reentry_required",
+        "FS-02 fixture should deterministically classify this entry-path drift to planning reentry, got {operator_json}"
     );
-    if phase_detail == "branch_closure_recording_required_for_release_readiness"
-        || phase_detail == "release_readiness_recording_ready"
-    {
-        assert_eq!(
-            operator_json["next_action"],
-            Value::from("advance late stage"),
-            "FS-02 late-stage-contained classification should stay on late-stage progression"
-        );
-    }
-    if phase_detail == "execution_reentry_required" {
-        assert_eq!(
-            operator_json["next_action"],
-            Value::from("repair review state / reenter execution"),
-            "FS-02 execution-reentry classification should require repair/reentry"
-        );
-    }
-    if phase_detail == "planning_reentry_required" {
-        assert_eq!(
-            operator_json["next_action"],
-            Value::from("pivot / return to planning"),
-            "FS-02 explicit metadata/route blocker classification should surface planning reentry"
-        );
-    }
+    assert_eq!(
+        operator_json["next_action"],
+        Value::from("pivot / return to planning"),
+        "FS-02 entry-path classification should surface planning reentry"
+    );
     assert_parity_probe_budget("FS-02", runtime_management_commands, 2);
 }
 
@@ -484,40 +460,46 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
         repo,
         state,
         &["repair-review-state", "--plan", plan_rel],
-        "FS-09 repair-review-state should expose the post-repair prior-task dispatch blocker",
+        "FS-09 repair-review-state should expose the post-repair task-closure recording blocker",
     );
     assert_eq!(repair["action"], Value::from("blocked"), "json: {repair}");
-    assert_eq!(
-        repair["required_follow_up"],
-        Value::from("request_external_review"),
-        "json: {repair}"
-    );
-    assert_ne!(
-        repair["required_follow_up"],
-        Value::from("execution_reentry"),
-        "repair should not keep surfacing stale execution reentry after stale reroute is cleared: {repair}",
+    assert_eq!(repair["required_follow_up"], Value::Null, "json: {repair}");
+    assert!(
+        repair["recommended_command"]
+            .as_str()
+            .is_some_and(|command| {
+                command.contains("featureforge plan execution close-current-task --plan")
+            }),
+        "repair should expose an executable close-current-task command after clearing stale reroute state: {repair}",
     );
 
     let operator = run_featureforge_json(
         repo,
         state,
         &["workflow", "operator", "--plan", plan_rel, "--json"],
-        "FS-09 workflow operator should expose prior-task dispatch as the next blocker after repair",
+        "FS-09 workflow operator should expose task-closure recording as the next blocker after repair",
     );
     let status = run_plan_execution_json(
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "FS-09 plan execution status should expose prior-task dispatch as the next blocker after repair",
+        "FS-09 plan execution status should expose task-closure recording as the next blocker after repair",
     );
     assert_public_route_parity(&operator, &status, None);
     assert_eq!(operator["phase"], Value::from("task_closure_pending"));
     assert_eq!(
         operator["phase_detail"],
-        Value::from("task_review_dispatch_required")
+        Value::from("task_closure_recording_ready")
     );
-    assert_eq!(operator["next_action"], Value::from("request task review"));
-    assert_eq!(operator["recommended_command"], Value::Null);
+    assert_eq!(operator["next_action"], Value::from("close current task"));
+    assert!(
+        operator["recommended_command"]
+            .as_str()
+            .is_some_and(|command| {
+                command.contains("featureforge plan execution close-current-task --plan")
+            }),
+        "workflow operator should expose the executable close-current-task command after repair: {operator}"
+    );
 
     let next_output = run_featureforge(
         repo,
@@ -534,7 +516,7 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
     );
     let next_text = String::from_utf8_lossy(&next_output.stdout);
     assert!(
-        next_text.contains("request task review"),
-        "workflow next should surface the post-repair prior-task dispatch blocker, got:\n{next_text}",
+        next_text.contains("close current task"),
+        "workflow next should surface the post-repair task-closure recording blocker, got:\n{next_text}",
     );
 }

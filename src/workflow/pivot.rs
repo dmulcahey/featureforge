@@ -213,6 +213,22 @@ pub fn record_pivot_for_runtime(
         context.plan_document.qa_requirement.as_deref(),
         Some("required") | Some("not-required")
     );
+    let pivot_reason_supported = qa_requirement_missing_or_invalid
+        || status.reason_codes.iter().any(|reason_code| {
+            reason_code == "blocked_on_plan_revision"
+                || reason_code == "qa_requirement_missing_or_invalid"
+        });
+    if !pivot_reason_supported {
+        return Ok(WorkflowPivotRecordOutput {
+            action: String::from("blocked"),
+            plan_path,
+            reason: normalize_reason(&args.reason),
+            record_path: None,
+            remediation: Some(String::from(
+                "workflow record-pivot is only valid when workflow/operator routes to pivot_required.",
+            )),
+        });
+    }
     let decision_reason_codes = pivot_decision_reason_codes(
         &status.reason_codes,
         follow_up_requires_pivot,
