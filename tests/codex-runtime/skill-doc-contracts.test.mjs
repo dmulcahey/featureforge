@@ -609,6 +609,18 @@ test('execution workflow skills reference the plan-execution helper contract', (
     subagentDrivenDevelopment,
     /The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker\./,
   );
+  assert.doesNotMatch(
+    executingPlans,
+    /use the approved plan checklist as the execution progress record\./i,
+  );
+  assert.doesNotMatch(
+    executingPlans,
+    /use the approved plan checklist as the visible progress record for the task's steps\./i,
+  );
+  assert.doesNotMatch(
+    subagentDrivenDevelopment,
+    /\[use the approved plan as the execution-progress record\]/i,
+  );
   assert.doesNotMatch(executingPlans, /track the work in your platform's task checklist/);
   assert.doesNotMatch(subagentDrivenDevelopment, /task-tracker checklist/);
   assert.doesNotMatch(subagentDrivenDevelopment, /Mark task complete in task tracker/);

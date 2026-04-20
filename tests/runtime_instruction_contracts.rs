@@ -969,6 +969,21 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_st
         "The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker.",
         "skills/executing-plans/SKILL.md",
     );
+    assert_not_contains(
+        &executing_plans_skill,
+        "use the approved plan checklist as the execution progress record.",
+        "skills/executing-plans/SKILL.md",
+    );
+    assert_not_contains(
+        &executing_plans_skill,
+        "Use the approved plan checklist as the visible progress record for the task's steps.",
+        "skills/executing-plans/SKILL.md",
+    );
+    assert_not_contains(
+        &subagent_skill,
+        "[Use the approved plan as the execution-progress record]",
+        "skills/subagent-driven-development/SKILL.md",
+    );
     assert_contains(
         &docs_testing_content,
         "If the repo's normal verification flow also expects these and they are available locally, then run:",
