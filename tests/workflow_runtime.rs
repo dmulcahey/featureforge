@@ -12576,16 +12576,46 @@ fn runtime_remediation_fs13_hidden_gates_materialize_legacy_open_step_state_when
         repo,
         state,
         &["status", "--plan", plan_rel],
-        "FS-13 status should retain markdown legacy projection when authoritative open-step state is absent",
+        "FS-13 status should ignore legacy markdown open-step note when authoritative current_open_step_state is absent",
+    );
+    assert_eq!(
+        status_without_authoritative_open_step["active_task"],
+        Value::Null,
+        "FS-13 status must not derive an active task from raw markdown when authoritative current_open_step_state is absent",
+    );
+    assert_eq!(
+        status_without_authoritative_open_step["active_step"],
+        Value::Null,
+        "FS-13 status must not derive an active step from raw markdown when authoritative current_open_step_state is absent",
     );
     assert_eq!(
         status_without_authoritative_open_step["resume_task"],
-        Value::from(1_u64),
-        "FS-13 read surfaces should preserve a single legacy markdown open-step projection until hidden gates materialize authoritative state",
+        Value::Null,
+        "FS-13 status must not derive a resume task from raw markdown when authoritative current_open_step_state is absent",
     );
     assert_eq!(
         status_without_authoritative_open_step["resume_step"],
-        Value::from(1_u64)
+        Value::Null,
+        "FS-13 status must not derive a resume step from raw markdown when authoritative current_open_step_state is absent",
+    );
+
+    let operator_without_authoritative_open_step = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "FS-13 operator should ignore legacy markdown open-step note when authoritative state is absent",
+        ),
+        "FS-13 operator should ignore legacy markdown open-step note when authoritative state is absent",
+    );
+    let recommended_without_authority = operator_without_authoritative_open_step
+        ["recommended_command"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        !recommended_without_authority.contains("--task 1 --step 1"),
+        "FS-13 operator must not surface Task 1 Step 1 solely from raw markdown when authoritative current_open_step_state is absent: {operator_without_authoritative_open_step:?}",
     );
 
     let preflight = run_plan_execution_json(

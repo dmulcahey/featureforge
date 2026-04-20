@@ -590,11 +590,28 @@ test('execution workflow skills reference the plan-execution helper contract', (
     assert.match(content, /calls `begin` before starting work on a plan step/);
     assert.match(content, /calls `complete` after each completed step/);
     assert.match(content, /calls `note` when work is interrupted or blocked/);
-    assert.match(content, /The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker\./);
   }
-  assert.doesNotMatch(readUtf8(getSkillPath('executing-plans')), /track the work in your platform's task checklist/);
-  assert.doesNotMatch(readUtf8(getSkillPath('subagent-driven-development')), /task-tracker checklist/);
-  assert.doesNotMatch(readUtf8(getSkillPath('subagent-driven-development')), /Mark task complete in task tracker/);
+  const executingPlans = readUtf8(getSkillPath('executing-plans'));
+  assert.match(
+    executingPlans,
+    /The approved plan checklist is the human-visible execution progress projection\. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces\./,
+  );
+  assert.doesNotMatch(
+    executingPlans,
+    /The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker\./,
+  );
+  const subagentDrivenDevelopment = readUtf8(getSkillPath('subagent-driven-development'));
+  assert.match(
+    subagentDrivenDevelopment,
+    /The approved plan checklist is the human-visible execution progress projection\. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces\./,
+  );
+  assert.doesNotMatch(
+    subagentDrivenDevelopment,
+    /The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker\./,
+  );
+  assert.doesNotMatch(executingPlans, /track the work in your platform's task checklist/);
+  assert.doesNotMatch(subagentDrivenDevelopment, /task-tracker checklist/);
+  assert.doesNotMatch(subagentDrivenDevelopment, /Mark task complete in task tracker/);
 
   const reviewSkill = readUtf8(getSkillPath('requesting-code-review'));
   assert.match(reviewSkill, /rejects final review if the plan has invalid execution state or required unfinished work not truthfully represented/);

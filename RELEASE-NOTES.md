@@ -2,12 +2,20 @@
 
 ## Unreleased
 
+## v1.9.1 - 2026-04-20
+
+Patch release focused on closing the remaining open authority/documentation gaps from the task-boundary hardening work without changing the broader public workflow model.
+
 - internalize normal-path task/final-review dispatch-lineage binding so operator-led `close-current-task` and `advance-late-stage` no longer require public `--dispatch-id`
 - remove public normal-path `record-review-dispatch` choreography from active review/execution guidance while keeping the compatibility/debug primitive available off the main path
 - align runtime routing, schemas, skill docs, shared review-state reference guidance, and regression coverage on the refactored public command mapping
 - keep `plan execution status --json` and `workflow operator --json` on the same runtime-owned routing decision instead of allowing diagnostic/status drift
 - harden `rebuild-evidence` as projection-only regeneration that fails closed with append-only/manual-repair blockers instead of rewriting authoritative proof in place
-- refresh checked-in repo runtime binaries and darwin/windows prebuilt artifacts for the refactored command contract
+- stop treating raw markdown `**Execution Note:** ...` lines as live read-surface authority when authoritative `current_open_step_state` is absent, while preserving hidden-gate compatibility materialization for legacy notes at mutation entry
+- align `status`, `workflow operator`, compiled-CLI parity coverage, and targeted boundary regressions on the fail-closed rule that markdown open-step notes are projection and migration input only, not runtime truth
+- make the `executing-plans` doc contract converge on the runtime-owned projection wording and remove the older checklist-as-authoritative-record sentence from the checked-in doc/test contract surface
+- add the exact command-form `rebuild-evidence` README/install-doc contract sentence while keeping the broader statement that the helper is compatibility/debug-only and not part of normal public routing
+- refresh the checked-in repo runtime binary and darwin/windows prebuilt artifacts for `1.9.1`
 
 Historical note: older sections below may mention hidden compatibility/debug commands as part of the contract at that release date. Those references are historical and are not current normal-path guidance.
 

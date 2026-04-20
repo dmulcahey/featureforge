@@ -76,6 +76,8 @@ Execution starts from an engineering-approved plan and the exact approved plan p
 Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command for the current phase. The normal public execution surface is `begin`, `note`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Compatibility/debug helpers remain available only for exceptional or contract-boundary cases and are not part of the normal path.
 Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.
 
+`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.
+
 `rebuild-evidence` remains a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth and is not part of normal public routing.
 
 When workflow/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.

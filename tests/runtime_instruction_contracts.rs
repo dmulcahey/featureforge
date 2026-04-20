@@ -936,6 +936,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_st
     let root = repo_root();
     let readme_content = read_utf8(root.join("README.md"));
     let subagent_skill = read_utf8(root.join("skills/subagent-driven-development/SKILL.md"));
+    let executing_plans_skill = read_utf8(root.join("skills/executing-plans/SKILL.md"));
     let docs_testing_content = read_utf8(root.join("docs/testing.md"));
 
     assert_contains(
@@ -957,6 +958,16 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_st
         &subagent_skill,
         "The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker.",
         "skills/subagent-driven-development/SKILL.md",
+    );
+    assert_contains(
+        &executing_plans_skill,
+        "The approved plan checklist is the human-visible execution progress projection. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.",
+        "skills/executing-plans/SKILL.md",
+    );
+    assert_not_contains(
+        &executing_plans_skill,
+        "The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker.",
+        "skills/executing-plans/SKILL.md",
     );
     assert_contains(
         &docs_testing_content,
@@ -2404,6 +2415,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("README.md"),
         "Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):",
+    );
+    assert_file_contains(
+        root.join("README.md"),
+        "`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.",
     );
     assert_file_contains(
         root.join("README.md"),

@@ -5255,7 +5255,7 @@ fn begin_blocks_interrupted_same_step_resume_without_prior_task_closure() {
 }
 
 #[test]
-fn status_surfaces_legacy_open_step_projection_when_authoritative_state_is_missing() {
+fn status_ignores_legacy_open_step_projection_when_authoritative_state_is_missing() {
     let (repo_dir, state_dir) =
         init_repo("plan-execution-status-legacy-open-step-projection-visibility");
     let repo = repo_dir.path();
@@ -5277,10 +5277,12 @@ fn status_surfaces_legacy_open_step_projection_when_authoritative_state_is_missi
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status should preserve legacy open-step projection before authoritative materialization",
+        "status should ignore legacy open-step projection before authoritative materialization",
     );
-    assert_eq!(status["resume_task"], Value::from(1_u64));
-    assert_eq!(status["resume_step"], Value::from(1_u64));
+    assert_eq!(status["active_task"], Value::Null);
+    assert_eq!(status["active_step"], Value::Null);
+    assert_eq!(status["resume_task"], Value::Null);
+    assert_eq!(status["resume_step"], Value::Null);
 }
 
 #[test]

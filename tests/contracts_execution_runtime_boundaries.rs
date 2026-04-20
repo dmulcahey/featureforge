@@ -2209,4 +2209,71 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
         status_direct_after_tamper["resume_task"],
         status_real_after_tamper["resume_task"]
     );
+
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[("current_open_step_state", Value::Null)],
+    );
+
+    let status_real_without_authority = run_featureforge_json(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        true,
+        "FS-13 compiled-cli status should ignore legacy markdown note when authoritative open-step state is absent",
+    );
+    let status_direct_without_authority = run_featureforge_json(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        false,
+        "FS-13 direct status should ignore legacy markdown note when authoritative open-step state is absent",
+    );
+
+    for payload in [&status_real_without_authority, &status_direct_without_authority] {
+        assert_eq!(
+            payload["active_task"],
+            Value::Null,
+            "FS-13 status must not derive active_task from markdown-only open-step notes when authoritative state is absent: {payload:?}",
+        );
+        assert_eq!(
+            payload["active_step"],
+            Value::Null,
+            "FS-13 status must not derive active_step from markdown-only open-step notes when authoritative state is absent: {payload:?}",
+        );
+        assert_eq!(
+            payload["resume_task"],
+            Value::Null,
+            "FS-13 status must not derive resume_task from markdown-only open-step notes when authoritative state is absent: {payload:?}",
+        );
+        assert_eq!(
+            payload["resume_step"],
+            Value::Null,
+            "FS-13 status must not derive resume_step from markdown-only open-step notes when authoritative state is absent: {payload:?}",
+        );
+    }
+
+    let operator_real_without_authority = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        true,
+        "FS-13 compiled-cli operator should ignore legacy markdown note when authoritative open-step state is absent",
+    );
+    let operator_direct_without_authority = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        false,
+        "FS-13 direct operator should ignore legacy markdown note when authoritative open-step state is absent",
+    );
+
+    for payload in [&operator_real_without_authority, &operator_direct_without_authority] {
+        let recommended = payload["recommended_command"].as_str().unwrap_or("");
+        assert!(
+            !recommended.contains("--task 1 --step 1"),
+            "FS-13 operator must not route to Task 1 Step 1 from markdown-only note text when authoritative open-step state is absent: {payload:?}",
+        );
+    }
 }

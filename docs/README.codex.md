@@ -71,6 +71,7 @@ Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-re
 - for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`
 - compatibility/debug command boundaries (low-level `record-*` and related compatibility commands) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`
 - hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` remain out-of-normal-path diagnostics/helpers only
+- `featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.
 
 Runtime strategy checkpointing is execution-owned, not planning-owned. The runtime records:
 

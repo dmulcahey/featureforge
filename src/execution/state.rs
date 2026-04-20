@@ -1648,6 +1648,10 @@ fn apply_specific_gate_follow_up_contract(
         };
 }
 
+// Compatibility bridge only.
+// Hidden gate commands may materialize a single legacy markdown open-step note
+// into authoritative state at command entry, but plain read surfaces must never
+// rely on raw markdown notes as authority.
 fn materialize_legacy_open_step_state_if_needed_for_hidden_gate(
     runtime: &ExecutionRuntime,
     context: &ExecutionContext,
@@ -3320,14 +3324,18 @@ fn load_execution_context_with_policies(
             ),
         )
     })?;
-    let parsed_steps = parse_step_state(&plan_source, &plan_document)?;
+    let mut parsed_steps = parse_step_state(&plan_source, &plan_document)?;
     let markdown_has_checked_steps = parsed_steps.iter().any(|step| step.checked);
-    let markdown_has_open_step_notes = parsed_steps.iter().any(|step| step.note_state.is_some());
     let legacy_open_step_state_candidates = legacy_open_step_state_candidates_from_steps(
         &parsed_steps,
         &plan_rel,
         plan_document.plan_revision,
     );
+    let markdown_has_open_step_notes = !legacy_open_step_state_candidates.is_empty();
+
+    // Legacy markdown execution notes are migration candidates only.
+    // They must not remain live read-surface authority once captured.
+    clear_open_step_projections_for_steps(&mut parsed_steps);
 
     let source_spec_path = runtime.repo_root.join(&plan_document.source_spec_path);
     let source_spec_source = fs::read_to_string(&source_spec_path).map_err(|_| {
@@ -3385,7 +3393,6 @@ fn load_execution_context_with_policies(
         compute_execution_fingerprint(&plan_source, evidence.source.as_deref());
     let local_execution_progress_markers_present = plan_document.execution_mode != "none"
         || markdown_has_checked_steps
-        || markdown_has_open_step_notes
         || !evidence.attempts.is_empty();
     let tasks_by_number = plan_document
         .tasks
@@ -12280,6 +12287,9 @@ fn parse_note_line(line: &str) -> Option<(NoteState, String)> {
     Some((note_state, normalize_whitespace(summary)))
 }
 
+// Legacy markdown execution notes are read only to seed authoritative
+// current_open_step_state on mutation entry or hidden-gate compatibility paths.
+// Plain read surfaces must not treat raw markdown note text as live runtime state.
 fn legacy_open_step_state_candidates_from_steps(
     steps: &[PlanStepState],
     plan_rel: &str,
