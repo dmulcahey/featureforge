@@ -3484,6 +3484,70 @@ fn prepare_missing_task_closure_baseline_close_fixture(
     );
 }
 
+fn prepare_fs21_resume_preempted_by_task_closure_bridge_fixture(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    base_branch: &str,
+) {
+    prepare_missing_task_closure_baseline_close_fixture(repo, state_dir, plan_rel, base_branch);
+    let status_before_overlay = run_plan_execution_json_real_cli(
+        repo,
+        state_dir,
+        &["status", "--plan", plan_rel],
+        "FS-21 bridge-preempts-resume status before injecting stale history and interrupted resume state",
+    );
+    let execution_run_id = status_before_overlay["execution_run_id"]
+        .as_str()
+        .expect("FS-21 fixture should expose execution_run_id before overlay injection")
+        .to_owned();
+    update_authoritative_harness_state(
+        repo,
+        state_dir,
+        &[
+            (
+                "task_closure_record_history",
+                serde_json::json!({
+                    "task-1-stale-history": {
+                        "dispatch_id": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "closure_record_id": "task-1-stale-history",
+                        "task": 1,
+                        "source_plan_path": plan_rel,
+                        "source_plan_revision": 1,
+                        "execution_run_id": execution_run_id,
+                        "reviewed_state_id": current_tracked_tree_id(repo),
+                        "contract_identity": task_contract_identity(plan_rel, 1),
+                        "effective_reviewed_surface_paths": ["tests/workflow_shell_smoke.rs"],
+                        "review_result": "pass",
+                        "review_summary_hash": sha256_hex(b"FS-21 stale history review"),
+                        "verification_result": "pass",
+                        "verification_summary_hash": sha256_hex(b"FS-21 stale history verification"),
+                        "closure_status": "stale_unreviewed",
+                        "record_status": "stale_unreviewed",
+                        "record_sequence": 2
+                    }
+                }),
+            ),
+            (
+                "current_open_step_state",
+                serde_json::json!({
+                    "task": 2,
+                    "step": 1,
+                    "note_state": "Interrupted",
+                    "note_summary": "FS-21 interrupted Task 2 step should be preempted by Task 1 closure bridge",
+                    "source_plan_path": plan_rel,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 33
+                }),
+            ),
+            ("active_task", Value::Null),
+            ("active_step", Value::Null),
+            ("resume_task", Value::from(2_u64)),
+            ("resume_step", Value::from(1_u64)),
+        ],
+    );
+}
+
 fn setup_task_boundary_blocked_case_slow(
     repo: &Path,
     state_dir: &Path,
@@ -21226,6 +21290,290 @@ fn fs14_recovery_to_close_current_task_uses_only_public_intent_commands() {
         "FS14-CLOSE-CURRENT-TASK-BUDGET",
         runtime_management_commands,
         2,
+    );
+}
+
+#[test]
+fn fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure_when_only_plan_and_evidence_change(
+) {
+    let plan_rel = WORKFLOW_FIXTURE_PLAN_REL;
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs20-shell-smoke-task-boundary");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_task_boundary_blocked_case(repo, state, plan_rel, &base_branch);
+    seed_current_task_closure_state(repo, state, plan_rel);
+
+    let status_before_begin = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 shell-smoke status before downstream reopen churn",
+    );
+    let begin_task2_step1 = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("FS-20 status should expose execution fingerprint before begin"),
+        ],
+        "FS-20 begin downstream task before reopen churn",
+    );
+    let complete_task2_step1 = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "complete",
+            "--plan",
+            plan_rel,
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--claim",
+            "FS-20 completed downstream step before reopen churn.",
+            "--manual-verify-summary",
+            "FS-20 downstream step completion before reopen churn.",
+            "--file",
+            "tests/workflow_shell_smoke.rs",
+            "--expect-execution-fingerprint",
+            begin_task2_step1["execution_fingerprint"]
+                .as_str()
+                .expect("FS-20 begin should expose execution fingerprint before complete"),
+        ],
+        "FS-20 complete downstream task before reopen churn",
+    );
+    run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &[
+            "reopen",
+            "--plan",
+            plan_rel,
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--reason",
+            "FS-20 reopen downstream stale task for runtime-owned churn coverage",
+            "--expect-execution-fingerprint",
+            complete_task2_step1["execution_fingerprint"]
+                .as_str()
+                .expect("FS-20 complete should expose execution fingerprint before reopen"),
+        ],
+        "FS-20 reopen downstream stale task before runtime-owned plan/evidence-only churn",
+    );
+
+    let status_after_reopen = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 status after downstream reopen before runtime-owned churn mutation",
+    );
+    let plan_path = repo.join(plan_rel);
+    let evidence_path = repo.join(
+        status_after_reopen["evidence_path"]
+            .as_str()
+            .expect("FS-20 status after reopen should expose evidence_path"),
+    );
+    let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
+    write_file(
+        &plan_path,
+        &format!("{plan_source}\n<!-- fs20 downstream reopen runtime-owned plan mutation -->\n"),
+    );
+    let evidence_source =
+        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
+    write_file(
+        &evidence_path,
+        &format!(
+            "{evidence_source}\n<!-- fs20 downstream reopen runtime-owned evidence mutation -->\n"
+        ),
+    );
+
+    let mut task1_closure_refresh_routes = 0usize;
+    for (probe_label, probe_json) in [
+        (
+            "status",
+            run_plan_execution_json_real_cli(
+                repo,
+                state,
+                &["status", "--plan", plan_rel],
+                "FS-20 status after runtime-owned plan/evidence-only churn",
+            ),
+        ),
+        (
+            "operator",
+            run_featureforge_json_real_cli(
+                repo,
+                state,
+                &["workflow", "operator", "--plan", plan_rel, "--json"],
+                "FS-20 operator after runtime-owned plan/evidence-only churn",
+            ),
+        ),
+    ] {
+        let probe_reason_codes = probe_json["reason_codes"]
+            .as_array()
+            .or_else(|| probe_json["blocking_reason_codes"].as_array())
+            .unwrap_or_else(|| {
+                panic!("FS-20 {probe_label} probe should expose reason codes array: {probe_json:?}")
+            });
+        assert!(
+            !probe_reason_codes
+                .iter()
+                .any(|code| code == &Value::from("prior_task_current_closure_stale")),
+            "FS-20 {probe_label} should not stale upstream Task 1 closure when only plan/evidence control-plane paths changed: {probe_json:?}"
+        );
+        assert_ne!(
+            probe_json["blocking_task"],
+            Value::from(1_u64),
+            "FS-20 {probe_label} should not route back to Task 1 closure refresh from runtime-owned churn only"
+        );
+        if probe_json["recommended_command"]
+            .as_str()
+            .is_some_and(|command| {
+                command.contains("close-current-task") && command.contains("--task 1")
+            })
+        {
+            task1_closure_refresh_routes += 1;
+        }
+    }
+    assert!(
+        task1_closure_refresh_routes <= 1,
+        "FS-20 runtime-owned churn budget exceeded: upstream Task 1 closure refresh should be required at most once after downstream reopen, saw {task1_closure_refresh_routes} closure-refresh routes"
+    );
+}
+
+#[test]
+fn fs20_late_stage_chain_is_not_unwound_by_runtime_owned_plan_and_execution_evidence_churn() {
+    let plan_rel = WORKFLOW_FIXTURE_PLAN_REL;
+    let (repo_dir, state_dir) =
+        init_repo("runtime-remediation-fs20-shell-smoke-late-stage-chain");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    setup_ready_for_finish_case(repo, state, plan_rel, &base_branch);
+
+    let baseline_status = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 late-stage baseline status before runtime-owned churn",
+    );
+    let baseline_branch_closure_id = baseline_status["current_branch_closure_id"]
+        .as_str()
+        .expect("FS-20 late-stage baseline should expose current_branch_closure_id")
+        .to_owned();
+    let baseline_release_state = baseline_status["current_release_readiness_state"].clone();
+    let baseline_final_state = baseline_status["current_final_review_state"].clone();
+    let baseline_qa_state = baseline_status["current_qa_state"].clone();
+
+    let plan_path = repo.join(plan_rel);
+    let evidence_path = repo.join(
+        baseline_status["evidence_path"]
+            .as_str()
+            .expect("FS-20 late-stage baseline should expose evidence_path"),
+    );
+    let plan_source = fs::read_to_string(&plan_path).expect("FS-20 late-stage plan should read");
+    write_file(
+        &plan_path,
+        &format!("{plan_source}\n<!-- fs20 late-stage runtime-owned plan mutation -->\n"),
+    );
+    let evidence_source =
+        fs::read_to_string(&evidence_path).expect("FS-20 late-stage evidence should read");
+    write_file(
+        &evidence_path,
+        &format!(
+            "{evidence_source}\n<!-- fs20 late-stage runtime-owned evidence mutation -->\n"
+        ),
+    );
+
+    let status_after_churn = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 late-stage status after runtime-owned churn",
+    );
+    assert_eq!(
+        status_after_churn["current_branch_closure_id"],
+        Value::from(baseline_branch_closure_id),
+        "FS-20 late-stage chain should keep current_branch_closure_id when only runtime-owned plan/evidence paths changed"
+    );
+    assert_eq!(
+        status_after_churn["current_release_readiness_state"],
+        baseline_release_state,
+        "FS-20 late-stage chain should keep release-readiness state through runtime-owned churn"
+    );
+    assert_eq!(
+        status_after_churn["current_final_review_state"],
+        baseline_final_state,
+        "FS-20 late-stage chain should keep final-review state through runtime-owned churn"
+    );
+    assert_eq!(
+        status_after_churn["current_qa_state"],
+        baseline_qa_state,
+        "FS-20 late-stage chain should keep QA state through runtime-owned churn"
+    );
+}
+
+#[test]
+fn fs21_resume_task_is_suppressed_when_earlier_closure_bridge_preempts_it() {
+    let plan_rel = WORKFLOW_FIXTURE_PLAN_REL;
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs21-shell-smoke-resume-preempt");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = expected_release_base_branch(repo);
+    prepare_fs21_resume_preempted_by_task_closure_bridge_fixture(
+        repo,
+        state,
+        plan_rel,
+        &base_branch,
+    );
+
+    let status_json = run_plan_execution_json_real_cli(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-21 status should suppress resume_task/resume_step when earlier closure bridge preempts resume",
+    );
+    let operator_json = run_featureforge_json_real_cli(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", plan_rel, "--json"],
+        "FS-21 operator should agree with suppressed resume bridge routing",
+    );
+    assert_eq!(
+        status_json["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-21 status should route to task_closure_recording_ready when earlier closure bridge preempts resume: {status_json:?}"
+    );
+    assert!(status_json["resume_task"].is_null());
+    assert!(status_json["resume_step"].is_null());
+    let status_command = status_json["recommended_command"]
+        .as_str()
+        .expect("FS-21 status should expose recommended command");
+    assert!(
+        status_command.contains("close-current-task") && status_command.contains("--task 1"),
+        "FS-21 status should recommend close-current-task --task 1, got {status_command}"
+    );
+    assert_eq!(
+        operator_json["recommended_command"],
+        Value::from(status_command.to_owned()),
+        "FS-21 operator and status should agree on the same close-current-task command when resume is preempted"
     );
 }
 

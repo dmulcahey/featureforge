@@ -827,6 +827,14 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   ]);
   assert.match(subagentSkill, /does not require per-dispatch user-consent prompts/);
   assert.match(subagentSkill, /Non-execution ad-hoc delegation still follows normal user-consent policy/);
+  assert.match(
+    subagentSkill,
+    /Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow\/operator `recommended_command`, follow `recommended_command`\./,
+  );
+  assert.match(
+    subagentSkill,
+    /When `phase_detail=task_closure_recording_ready`, replay is already complete enough for closure refresh; run `close-current-task` and do not reopen the same step again\./,
+  );
   assert.doesNotMatch(subagentSkill, /controller provides full text/);
   assert.doesNotMatch(subagentSkill, /provide full text instead/);
   assert.doesNotMatch(subagentSkill, /Skip scene-setting context/);
@@ -850,6 +858,16 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
       normalized,
       /featureforge plan execution status --plan <approved-plan-path>[\s\S]*optional diagnostic detail/i,
       `${label} should describe status as optional diagnostic detail`,
+    );
+    assert.match(
+      content,
+      /Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow\/operator `recommended_command`, follow `recommended_command`\./,
+      `${label} should treat resume_task/resume_step as advisory-only when they conflict with recommended_command`,
+    );
+    assert.match(
+      content,
+      /When `phase_detail=task_closure_recording_ready`, replay is already complete enough for closure refresh; run `close-current-task` and do not reopen the same step again\./,
+      `${label} should require close-current-task and no reopen when task_closure_recording_ready is surfaced`,
     );
     assert.match(
       content,
@@ -1336,6 +1354,14 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   assert.match(
     usingFeatureForge,
     /Treat workflow\/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` as the authoritative public routing contract\./,
+  );
+  assert.match(
+    usingFeatureForge,
+    /Treat `resume_task` and `resume_step` from `featureforge plan execution status --plan <approved-plan-path>` as advisory diagnostics only; if they disagree with workflow\/operator `recommended_command`, follow `recommended_command`\./,
+  );
+  assert.match(
+    usingFeatureForge,
+    /When workflow\/operator reports `phase_detail=task_closure_recording_ready`, the replay lane is complete enough to refresh closure truth; run the routed `close-current-task` command and do not reopen the same step again\./,
   );
   assert.match(
     usingFeatureForge,

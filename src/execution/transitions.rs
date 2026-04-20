@@ -46,6 +46,27 @@ impl StepCommand {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum StrategyCheckpointCycleState {
+    Ready,
+    CycleBreak(Option<(u32, Option<u32>)>),
+}
+
+impl StrategyCheckpointCycleState {
+    fn is_cycle_break(self) -> bool {
+        matches!(self, Self::CycleBreak(_))
+    }
+
+    fn cycle_break_binding(self) -> (Option<u32>, Option<u32>) {
+        match self {
+            Self::Ready => (None, None),
+            Self::CycleBreak(binding) => {
+                binding.map_or((None, None), |(task, step)| (Some(task), step))
+            }
+        }
+    }
+}
+
 pub(crate) struct StepWriteAuthorityGuard {
     lock_path: PathBuf,
 }
@@ -711,7 +732,7 @@ impl AuthoritativeTransitionState {
             execution_mode,
             &[],
             "Runtime recorded the initial dispatch strategy checkpoint before repo-writing execution.",
-            false,
+            StrategyCheckpointCycleState::Ready,
         )?;
         Ok(())
     }
@@ -748,7 +769,7 @@ impl AuthoritativeTransitionState {
                     execution_mode,
                     &trigger,
                     "Runtime preserved cycle-break strategy while reopening remediation after a bound review dispatch.",
-                    true,
+                    StrategyCheckpointCycleState::CycleBreak(Some((task, Some(step)))),
                 )?;
                 self.set_task_cycle_count(task, 0)?;
             } else {
@@ -758,7 +779,7 @@ impl AuthoritativeTransitionState {
                     execution_mode,
                     &trigger,
                     reason,
-                    false,
+                    StrategyCheckpointCycleState::Ready,
                 )?;
             }
             return Ok(());
@@ -781,7 +802,7 @@ impl AuthoritativeTransitionState {
                 execution_mode,
                 &trigger,
                 "Runtime detected churn after three reviewable dispatch/remediation cycles for the same task and auto-entered cycle-break strategy.",
-                true,
+                StrategyCheckpointCycleState::CycleBreak(Some((task, Some(step)))),
             )?;
             self.set_task_cycle_count(task, 0)?;
         } else {
@@ -791,7 +812,7 @@ impl AuthoritativeTransitionState {
                 execution_mode,
                 &trigger,
                 reason,
-                false,
+                StrategyCheckpointCycleState::Ready,
             )?;
         }
         Ok(())
@@ -841,7 +862,9 @@ impl AuthoritativeTransitionState {
                 execution_mode,
                 &trigger,
                 "Runtime detected churn after three reviewable dispatch/remediation cycles for the same task and auto-entered cycle-break strategy.",
-                true,
+                StrategyCheckpointCycleState::CycleBreak(
+                    cycle_target.map(|(task, step)| (task, Some(step))),
+                ),
             )?;
             if let Some(task) = task_binding {
                 self.set_task_cycle_count(task, 0)?;
@@ -854,7 +877,7 @@ impl AuthoritativeTransitionState {
                 execution_mode,
                 &trigger,
                 &rationale,
-                false,
+                StrategyCheckpointCycleState::Ready,
             )?;
             self.last_strategy_checkpoint_fingerprint()
         };
@@ -904,8 +927,9 @@ impl AuthoritativeTransitionState {
         execution_mode: &str,
         trigger_fingerprints: &[String],
         rationale: &str,
-        cycle_breaking: bool,
+        cycle_state: StrategyCheckpointCycleState,
     ) -> Result<String, JsonFailure> {
+        let cycle_breaking = cycle_state.is_cycle_break();
         let execution_run_id = self.execution_run_id_opt();
         let execution_run_label = execution_run_id.as_deref().unwrap_or("<none>");
         let selected_topology = selected_topology_from_execution_mode(execution_mode);
@@ -1003,6 +1027,32 @@ impl AuthoritativeTransitionState {
             Value::String(fingerprint.clone()),
         );
         root.insert(String::from("strategy_reset_required"), Value::Bool(false));
+        if cycle_breaking {
+            let (cycle_break_task, cycle_break_step) = cycle_state.cycle_break_binding();
+            root.insert(
+                String::from("strategy_cycle_break_task"),
+                cycle_break_task
+                    .map(|task| Value::Number(u64::from(task).into()))
+                    .unwrap_or(Value::Null),
+            );
+            root.insert(
+                String::from("strategy_cycle_break_step"),
+                cycle_break_step
+                    .map(|step| Value::Number(u64::from(step).into()))
+                    .unwrap_or(Value::Null),
+            );
+            root.insert(
+                String::from("strategy_cycle_break_checkpoint_fingerprint"),
+                Value::String(fingerprint.clone()),
+            );
+        } else {
+            root.insert(String::from("strategy_cycle_break_task"), Value::Null);
+            root.insert(String::from("strategy_cycle_break_step"), Value::Null);
+            root.insert(
+                String::from("strategy_cycle_break_checkpoint_fingerprint"),
+                Value::Null,
+            );
+        }
         self.dirty = true;
         Ok(fingerprint)
     }
@@ -1057,6 +1107,10 @@ impl AuthoritativeTransitionState {
         cycle_counts.insert(format!("task-{task}"), Value::Number(value.into()));
         self.dirty = true;
         Ok(())
+    }
+
+    pub(crate) fn clear_task_cycle_count(&mut self, task: u32) -> Result<(), JsonFailure> {
+        self.set_task_cycle_count(task, 0)
     }
 
     fn dispatch_credit_counts_mut(
@@ -3266,6 +3320,24 @@ impl AuthoritativeTransitionState {
         records
     }
 
+    pub(crate) fn task_closure_history_records(&self) -> Vec<CurrentTaskClosureRecord> {
+        self.state_payload
+            .get("task_closure_record_history")
+            .and_then(Value::as_object)
+            .map(|history| {
+                history
+                    .values()
+                    .filter_map(Value::as_object)
+                    .filter_map(|payload| {
+                        let payload_value = Value::Object(payload.clone());
+                        let task = json_u32(&payload_value, "task")?;
+                        current_task_closure_record_from_payload(task, payload)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
     pub(crate) fn task_closure_history_contains_task(&self, task: u32) -> bool {
         self.state_payload
             .get("task_closure_record_history")
@@ -3819,6 +3891,63 @@ impl AuthoritativeTransitionState {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
+    }
+
+    pub(crate) fn strategy_state(&self) -> Option<&str> {
+        self.state_payload
+            .get("strategy_state")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub(crate) fn strategy_checkpoint_kind(&self) -> Option<&str> {
+        self.state_payload
+            .get("strategy_checkpoint_kind")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    pub(crate) fn strategy_cycle_break_task(&self) -> Option<u32> {
+        json_u32(&self.state_payload, "strategy_cycle_break_task")
+    }
+
+    pub(crate) fn clear_cycle_break_binding_and_strategy(&mut self) -> Result<bool, JsonFailure> {
+        let has_cycle_break_state = self
+            .strategy_state()
+            .is_some_and(|value| value == "cycle_breaking")
+            || self
+                .strategy_checkpoint_kind()
+                .is_some_and(|value| value == "cycle_break")
+            || self.strategy_state().is_some()
+            || self.strategy_checkpoint_kind().is_some()
+            || self.strategy_cycle_break_task().is_some()
+            || self
+                .state_payload
+                .get("strategy_cycle_break_step")
+                .and_then(Value::as_u64)
+                .is_some()
+            || self
+                .state_payload
+                .get("strategy_cycle_break_checkpoint_fingerprint")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
+        if !has_cycle_break_state {
+            return Ok(false);
+        }
+        let root = self.root_object_mut()?;
+        root.insert(String::from("strategy_state"), Value::Null);
+        root.insert(String::from("strategy_checkpoint_kind"), Value::Null);
+        root.insert(String::from("strategy_cycle_break_task"), Value::Null);
+        root.insert(String::from("strategy_cycle_break_step"), Value::Null);
+        root.insert(
+            String::from("strategy_cycle_break_checkpoint_fingerprint"),
+            Value::Null,
+        );
+        self.dirty = true;
+        Ok(true)
     }
 
     fn increment_task_dispatch_credit(&mut self, task: u32) -> Result<u64, JsonFailure> {

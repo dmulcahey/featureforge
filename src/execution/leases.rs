@@ -111,6 +111,12 @@ pub(crate) struct StatusAuthoritativeOverlay {
     #[serde(default)]
     pub(crate) strategy_checkpoint_kind: Option<String>,
     #[serde(default)]
+    pub(crate) strategy_cycle_break_task: Option<u32>,
+    #[serde(default)]
+    pub(crate) strategy_cycle_break_step: Option<u32>,
+    #[serde(default)]
+    pub(crate) strategy_cycle_break_checkpoint_fingerprint: Option<String>,
+    #[serde(default)]
     pub(crate) strategy_reset_required: Option<bool>,
     #[serde(default)]
     pub(crate) strategy_review_dispatch_lineage:

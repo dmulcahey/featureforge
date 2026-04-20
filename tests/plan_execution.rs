@@ -3059,6 +3059,64 @@ fn setup_task_boundary_prior_task_fixture(
     )
 }
 
+fn prepare_fs17_fs18_fs22_task_closure_bridge_fixture(repo: &Path, state: &Path) {
+    let (execution_run_id, _execution_fingerprint, _step1_receipt, _step2_receipt) =
+        setup_task_boundary_prior_task_fixture(repo, state);
+    let harness_state_path = harness_state_file_path(repo, state);
+    let mut harness_state: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("FS-17/FS-18/FS-22 harness state should be readable before bridge fixture"),
+    )
+    .expect("FS-17/FS-18/FS-22 harness state should remain valid json");
+    let dispatch_id = harness_state
+        .get("strategy_review_dispatch_lineage")
+        .and_then(Value::as_object)
+        .and_then(|lineage| lineage.get("task-1"))
+        .and_then(Value::as_object)
+        .and_then(|entry| entry.get("dispatch_id"))
+        .and_then(Value::as_str)
+        .expect("FS-17/FS-18/FS-22 fixture should keep task-1 dispatch lineage")
+        .to_owned();
+    let current_tree_id = format!("git_tree:{}", current_head_tree_sha(repo));
+    let root = harness_state
+        .as_object_mut()
+        .expect("FS-17/FS-18/FS-22 harness state should remain an object");
+    root.insert(String::from("current_task_closure_records"), json!({}));
+    root.insert(
+        String::from("task_closure_record_history"),
+        json!({
+            "task-1-stale-history": {
+                "dispatch_id": dispatch_id,
+                "closure_record_id": "task-1-stale-history",
+                "task": 1,
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1,
+                "execution_run_id": execution_run_id,
+                "reviewed_state_id": current_tree_id,
+                "contract_identity": deterministic_record_id(
+                    "task-contract",
+                    &[PLAN_REL, "1", "1"]
+                ),
+                "effective_reviewed_surface_paths": ["README.md"],
+                "review_result": "pass",
+                "review_summary_hash": sha256_hex(b"FS-17/FS-18/FS-22 stale history review summary"),
+                "verification_result": "pass",
+                "verification_summary_hash": sha256_hex(
+                    b"FS-17/FS-18/FS-22 stale history verification summary"
+                ),
+                "closure_status": "stale_unreviewed",
+                "record_status": "stale_unreviewed",
+                "record_sequence": 3
+            }
+        }),
+    );
+    write_file(
+        &harness_state_path,
+        &serde_json::to_string_pretty(&harness_state)
+            .expect("FS-17/FS-18/FS-22 harness state should serialize after fixture setup"),
+    );
+}
+
 fn reviewed_checkpoint_from_unit_review_receipt(source: &str) -> Option<String> {
     source.lines().find_map(|line| {
         line.trim()
@@ -7981,6 +8039,11 @@ fn task_boundary_begin_reports_task_cycle_break_active() {
     .expect("harness state should remain valid json before cycle-break mutation");
     harness_state_json["strategy_state"] = Value::from("cycle_breaking");
     harness_state_json["strategy_checkpoint_kind"] = Value::from("cycle_break");
+    harness_state_json["strategy_cycle_break_task"] = Value::from(1_u64);
+    harness_state_json["strategy_cycle_break_step"] = Value::from(2_u64);
+    harness_state_json["strategy_cycle_break_checkpoint_fingerprint"] = Value::from(
+        "task-boundary-cycle-break-fixture-fingerprint",
+    );
     fs::write(
         &harness_state_path,
         serde_json::to_string_pretty(&harness_state_json)
@@ -16424,6 +16487,317 @@ fn runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipt
     );
     assert_eq!(begin_task2["active_task"], Value::from(2_u64));
     assert_eq!(begin_task2["active_step"], Value::from(1_u64));
+}
+
+#[test]
+fn fs17_close_current_task_converges_after_truthful_replay_without_second_reopen() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs17-close-current-task-budget");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    prepare_fs17_fs18_fs22_task_closure_bridge_fixture(repo, state);
+
+    let mut runtime_management_commands = 0usize;
+    runtime_management_commands += 1;
+    let repair_json = run_rust_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", PLAN_REL, "--external-review-result-ready"],
+        "FS-17 repair-review-state should route truthful replay to closure recording",
+    );
+    assert_eq!(
+        repair_json["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-17 truthful replay convergence should route through task_closure_recording_ready: {repair_json:?}"
+    );
+    let repair_recommended_command = repair_json["recommended_command"]
+        .as_str()
+        .expect("FS-17 repair should expose a recommended close-current-task command")
+        .to_owned();
+    assert!(
+        repair_recommended_command.contains("close-current-task")
+            && repair_recommended_command.contains("--task 1"),
+        "FS-17 repair should route to close-current-task --task 1, got {repair_recommended_command}"
+    );
+
+    runtime_management_commands += 1;
+    let close_json = run_recommended_command_json(
+        repo,
+        state,
+        &repair_recommended_command,
+        "FS-17 run repair-review-state recommended close-current-task command",
+    );
+    assert!(
+        matches!(close_json["action"].as_str(), Some("recorded" | "already_current")),
+        "FS-17 close-current-task should converge the replay lane without a second reopen, got {close_json:?}"
+    );
+    assert!(
+        runtime_management_commands <= 2,
+        "FS-17 truthful replay convergence budget exceeded: expected at most repair + close-current-task, got {runtime_management_commands} commands"
+    );
+
+    let operator_after_close = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        "FS-17 operator after close-current-task convergence check",
+    );
+    if let Some(recommended_command) = operator_after_close["recommended_command"].as_str() {
+        assert!(
+            !recommended_command.contains("reopen --task 1 --step 2")
+                && !recommended_command.contains("--task 1 --step 2"),
+            "FS-17 convergence must not require a second reopen of Task 1 Step 2 after close-current-task, got {recommended_command}"
+        );
+    }
+}
+
+#[test]
+fn fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs18-cycle-break-unblocks-begin");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    prepare_fs17_fs18_fs22_task_closure_bridge_fixture(repo, state);
+
+    let harness_state_path = harness_state_file_path(repo, state);
+    let mut harness_state: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("FS-18 harness state should be readable before cycle-break injection"),
+    )
+    .expect("FS-18 harness state should remain valid json");
+    let root = harness_state
+        .as_object_mut()
+        .expect("FS-18 harness state should remain an object");
+    root.insert(String::from("strategy_state"), Value::from("cycle_breaking"));
+    root.insert(
+        String::from("strategy_checkpoint_kind"),
+        Value::from("cycle_break"),
+    );
+    root.insert(String::from("strategy_cycle_break_task"), Value::from(1_u64));
+    root.insert(String::from("strategy_cycle_break_step"), Value::from(2_u64));
+    root.insert(
+        String::from("strategy_cycle_break_checkpoint_fingerprint"),
+        Value::from("fs18-cycle-break-task-1"),
+    );
+    write_file(
+        &harness_state_path,
+        &serde_json::to_string_pretty(&harness_state)
+            .expect("FS-18 harness state should serialize after cycle-break injection"),
+    );
+
+    let repair_json = run_rust_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", PLAN_REL, "--external-review-result-ready"],
+        "FS-18 repair-review-state should route cycle-break fixture to close-current-task",
+    );
+    let mut close_command = repair_json["recommended_command"]
+        .as_str()
+        .expect("FS-18 repair should expose recommended command")
+        .to_owned();
+    if close_command.contains("reopen") && close_command.contains("--task 1 --step 2") {
+        let reopened = run_recommended_command_json(
+            repo,
+            state,
+            &close_command,
+            "FS-18 run repair-recommended reopen before truthful replay reclose",
+        );
+        let resumed = run_rust_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                reopened["execution_fingerprint"]
+                    .as_str()
+                    .expect("FS-18 reopen should expose execution fingerprint before begin"),
+            ],
+            "FS-18 begin reopened Task 1 Step 2 for truthful replay completion",
+        );
+        run_rust_json(
+            repo,
+            state,
+            &[
+                "complete",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--source",
+                "featureforge:executing-plans",
+                "--claim",
+                "FS-18 truthful replay completion for cycle-break bound task.",
+                "--file",
+                "README.md",
+                "--manual-verify-summary",
+                "FS-18 truthful replay completion for cycle-break bound task.",
+                "--expect-execution-fingerprint",
+                resumed["execution_fingerprint"]
+                    .as_str()
+                    .expect("FS-18 resumed begin should expose execution fingerprint"),
+            ],
+            "FS-18 complete reopened Task 1 Step 2 before cycle-break closure refresh",
+        );
+        let post_replay_repair = run_rust_json(
+            repo,
+            state,
+            &["repair-review-state", "--plan", PLAN_REL, "--external-review-result-ready"],
+            "FS-18 repair-review-state after truthful replay completion",
+        );
+        close_command = post_replay_repair["recommended_command"]
+            .as_str()
+            .expect("FS-18 repair after truthful replay should expose close-current-task command")
+            .to_owned();
+    }
+    assert!(
+        close_command.contains("close-current-task") && close_command.contains("--task 1"),
+        "FS-18 repair should route Task 1 reclosure through close-current-task, got {close_command}"
+    );
+    let close_json = run_recommended_command_json(
+        repo,
+        state,
+        &close_command,
+        "FS-18 run close-current-task after cycle-break task replay",
+    );
+    assert!(
+        matches!(close_json["action"].as_str(), Some("recorded" | "already_current")),
+        "FS-18 Task 1 reclose should succeed before Task 2 begin unblock, got {close_json:?}"
+    );
+
+    let authoritative_state: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("FS-18 harness state should be readable after Task 1 reclose"),
+    )
+    .expect("FS-18 harness state should remain valid json after Task 1 reclose");
+    assert!(
+        authoritative_state["strategy_state"].is_null(),
+        "FS-18 cycle-break strategy_state should clear after bound Task 1 reclose, got {authoritative_state:?}"
+    );
+    assert!(
+        authoritative_state["strategy_checkpoint_kind"].is_null(),
+        "FS-18 cycle-break strategy_checkpoint_kind should clear after bound Task 1 reclose, got {authoritative_state:?}"
+    );
+    assert!(
+        authoritative_state["strategy_cycle_break_task"].is_null(),
+        "FS-18 cycle-break task binding should clear after bound Task 1 reclose, got {authoritative_state:?}"
+    );
+
+    let mut post_task1_reclose_routing_steps = 0usize;
+    post_task1_reclose_routing_steps += 1;
+    let status_after_close = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "FS-18 status after bound cycle-break task reclose",
+    );
+    let begin_task2 = run_rust_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_after_close["execution_fingerprint"]
+                .as_str()
+                .expect("FS-18 status should expose execution fingerprint before Task 2 begin"),
+        ],
+        "FS-18 begin should unblock Task 2 after Task 1 cycle-break reclose",
+    );
+    assert_eq!(begin_task2["active_task"], Value::from(2_u64));
+    assert_eq!(begin_task2["active_step"], Value::from(1_u64));
+    assert!(
+        post_task1_reclose_routing_steps <= 1,
+        "FS-18 upstream-refresh to downstream-replay budget exceeded: expected at most one routing step after Task 1 reclose before surfacing Task 2 replay, saw {post_task1_reclose_routing_steps}"
+    );
+}
+
+#[test]
+fn fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists()
+ {
+    let (repo_dir, state_dir) =
+        init_repo("runtime-remediation-fs22-repair-nondestructive-lineage");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    prepare_fs17_fs18_fs22_task_closure_bridge_fixture(repo, state);
+
+    let harness_state_path = harness_state_file_path(repo, state);
+    let state_before_repair: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("FS-22 harness state should be readable before repair"),
+    )
+    .expect("FS-22 harness state should remain valid json before repair");
+    let dispatch_before = state_before_repair["strategy_review_dispatch_lineage"]["task-1"]
+        ["dispatch_id"]
+        .as_str()
+        .expect("FS-22 fixture should include task-1 dispatch lineage before repair")
+        .to_owned();
+
+    let repair_json = run_rust_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", PLAN_REL],
+        "FS-22 repair-review-state bridge fixture should remain non-destructive",
+    );
+    assert_eq!(repair_json["action"], Value::from("blocked"));
+    assert_eq!(
+        repair_json["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-22 repair should expose closure bridge readiness instead of generic execution reentry: {repair_json:?}"
+    );
+    assert_eq!(
+        repair_json["required_follow_up"],
+        Value::Null,
+        "FS-22 bridge-first repair should not carry execution_reentry follow-up"
+    );
+    let recommended_command = repair_json["recommended_command"]
+        .as_str()
+        .expect("FS-22 repair should expose a concrete close-current-task command");
+    assert!(
+        recommended_command.contains("close-current-task")
+            && recommended_command.contains("--task 1"),
+        "FS-22 repair should route directly to close-current-task --task 1, got {recommended_command}"
+    );
+    let actions = repair_json["actions_performed"]
+        .as_array()
+        .expect("FS-22 repair should expose actions_performed");
+    assert!(
+        actions.iter().all(|action| {
+            action
+                .as_str()
+                .is_some_and(|action| {
+                    !action.starts_with("cleared_task_review_dispatch_lineage")
+                        && !action.starts_with("cleared_current_task_closure_scope_")
+                        && !action.starts_with("cleared_current_task_closure_task_")
+                })
+        }),
+        "FS-22 bridge-first repair must not clear dispatch lineage or task-scope state destructively, got {repair_json:?}"
+    );
+
+    let state_after_repair: Value = serde_json::from_str(
+        &fs::read_to_string(&harness_state_path)
+            .expect("FS-22 harness state should be readable after repair"),
+    )
+    .expect("FS-22 harness state should remain valid json after repair");
+    assert_eq!(
+        state_after_repair["strategy_review_dispatch_lineage"]["task-1"]["dispatch_id"],
+        Value::from(dispatch_before),
+        "FS-22 bridge-first repair must preserve task-1 dispatch lineage when close-current-task bridge exists"
+    );
 }
 
 #[test]

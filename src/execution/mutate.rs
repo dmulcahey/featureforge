@@ -27,7 +27,8 @@ use crate::execution::current_truth::{
     branch_source_task_closure_ids as shared_branch_source_task_closure_ids,
     final_review_dispatch_still_current as shared_final_review_dispatch_still_current,
     finish_requires_test_plan_refresh as shared_finish_requires_test_plan_refresh,
-    handoff_decision_scope as shared_handoff_decision_scope, normalize_summary_content,
+    handoff_decision_scope as shared_handoff_decision_scope,
+    is_runtime_owned_execution_control_plane_path, normalize_summary_content,
     render_late_stage_surface_only_branch_surface as late_stage_surface_only_branch_surface,
     reviewer_source_is_valid as shared_reviewer_source_is_valid, summary_hash,
     task_closure_contributes_to_branch_surface as shared_task_closure_contributes_to_branch_surface,
@@ -1660,6 +1661,7 @@ pub fn close_current_task(
                 ));
             }
             let superseded_task_closure_records = superseded_task_closure_records(
+                &context,
                 authoritative_state,
                 args.task,
                 &closure_record_id,
@@ -1940,6 +1942,7 @@ pub fn record_branch_closure(
         reviewed_state.provenance_basis =
             String::from("task_closure_lineage_plus_late_stage_surface_exemption");
         reviewed_state.source_task_closure_ids = shared_branch_source_task_closure_ids(
+            &context,
             &current_branch_task_closure_records(&context)?,
             Some(late_stage_surface),
         );
@@ -4355,9 +4358,10 @@ fn blocked_branch_closure_output_for_invalid_current_task_closure(
 }
 
 pub(crate) fn task_closure_contributes_to_branch_surface(
+    context: &ExecutionContext,
     current_record: &CurrentTaskClosureRecord,
 ) -> bool {
-    shared_task_closure_contributes_to_branch_surface(current_record)
+    shared_task_closure_contributes_to_branch_surface(context, current_record)
 }
 
 #[cfg(test)]
@@ -4469,6 +4473,7 @@ fn current_branch_source_task_closure_ids(
     context: &ExecutionContext,
 ) -> Result<Vec<String>, JsonFailure> {
     Ok(shared_branch_source_task_closure_ids(
+        context,
         &current_branch_task_closure_records(context)?,
         None,
     ))
@@ -4485,7 +4490,7 @@ fn current_branch_task_closure_records(
     }
     Ok(still_current_task_closure_records(context)?
         .into_iter()
-        .filter(task_closure_contributes_to_branch_surface)
+        .filter(|record| task_closure_contributes_to_branch_surface(context, record))
         .collect())
 }
 
@@ -4548,7 +4553,10 @@ fn current_task_effective_reviewed_surface_paths(
             task.files
                 .iter()
                 .map(|entry| entry.path.clone())
-                .filter(|path| path != NO_REPO_FILES_MARKER)
+                .filter(|path| {
+                    path != NO_REPO_FILES_MARKER
+                        && !is_runtime_owned_execution_control_plane_path(context, path)
+                })
                 .collect::<BTreeSet<_>>()
         })
         .unwrap_or_default();
@@ -4582,7 +4590,9 @@ fn current_task_effective_reviewed_surface_paths(
             .iter()
             .chain(attempt.file_proofs.iter().map(|proof| &proof.path))
         {
-            if path != NO_REPO_FILES_MARKER {
+            if path != NO_REPO_FILES_MARKER
+                && !is_runtime_owned_execution_control_plane_path(context, path)
+            {
                 surface_paths.insert(path.clone());
             }
         }
@@ -4594,22 +4604,56 @@ fn current_task_effective_reviewed_surface_paths(
 }
 
 fn task_surface_paths_overlap(left: &[String], right: &[String]) -> bool {
-    let right_paths = right.iter().collect::<BTreeSet<_>>();
-    left.iter()
+    let left_paths = normalized_effective_task_surface_paths(left);
+    let right_paths = normalized_effective_task_surface_paths(right);
+    !left_paths.is_disjoint(&right_paths)
+}
+
+fn normalized_effective_task_surface_paths(paths: &[String]) -> BTreeSet<String> {
+    paths
+        .iter()
         .filter(|path| path.as_str() != NO_REPO_FILES_MARKER)
-        .any(|path| right_paths.contains(path))
+        .filter_map(|path| normalize_repo_relative_path(path).ok())
+        .collect::<BTreeSet<_>>()
+}
+
+fn task_closure_record_matches_active_plan_and_runtime_scope(
+    context: &ExecutionContext,
+    authoritative_state: &AuthoritativeTransitionState,
+    record: &CurrentTaskClosureRecord,
+) -> bool {
+    let plan_matches = record.source_plan_path.as_deref() == Some(context.plan_rel.as_str())
+        && record.source_plan_revision == Some(context.plan_document.plan_revision);
+    if !plan_matches {
+        return false;
+    }
+    match authoritative_state.execution_run_id_opt() {
+        Some(active_run_id) => record.execution_run_id.as_deref() == Some(active_run_id.as_str()),
+        None => record
+            .execution_run_id
+            .as_deref()
+            .is_none_or(|run_id| run_id.trim().is_empty()),
+    }
 }
 
 fn superseded_task_closure_records(
+    context: &ExecutionContext,
     authoritative_state: &AuthoritativeTransitionState,
     task_number: u32,
     closure_record_id: &str,
     effective_reviewed_surface_paths: &[String],
 ) -> Vec<SupersededTaskClosureRecord> {
     authoritative_state
-        .current_task_closure_results()
-        .into_values()
+        .task_closure_history_records()
+        .into_iter()
         .filter(|record| record.closure_record_id != closure_record_id)
+        .filter(|record| {
+            task_closure_record_matches_active_plan_and_runtime_scope(
+                context,
+                authoritative_state,
+                record,
+            )
+        })
         .filter(|record| {
             record.task == task_number
                 || task_surface_paths_overlap(
@@ -5691,6 +5735,54 @@ mod unit_tests {
 
     #[test]
     fn task_closure_contributes_to_branch_surface_excludes_no_repo_marker_only_records() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut runtime =
+            ExecutionRuntime::discover(&repo_root).expect("repo runtime should be discoverable");
+        let tempdir = TempDir::new().expect("tempdir should exist");
+        runtime.state_dir = tempdir.path().join("state");
+        fs::create_dir_all(&runtime.state_dir).expect("state dir should be creatable");
+        let plan_rel =
+            "docs/archive/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
+        let plan_abs = repo_root.join(plan_rel);
+        let plan_document = parse_plan_file(&plan_abs).expect("plan document should parse");
+        let plan_source = fs::read_to_string(&plan_abs).expect("plan source should read");
+        let context = ExecutionContext {
+            runtime,
+            plan_rel: String::from(plan_rel),
+            plan_abs: plan_abs.clone(),
+            plan_document,
+            plan_source,
+            steps: Vec::new(),
+            local_execution_progress_markers_present: false,
+            legacy_open_step_state_candidates: Vec::new(),
+            tasks_by_number: Default::default(),
+            evidence_rel: String::from(
+                "docs/archive/featureforge/execution-evidence/placeholder.md",
+            ),
+            evidence_abs: repo_root
+                .join("docs/archive/featureforge/execution-evidence/placeholder.md"),
+            evidence: ExecutionEvidence {
+                format: EvidenceFormat::Empty,
+                plan_path: String::from(plan_rel),
+                plan_revision: 0,
+                plan_fingerprint: None,
+                source_spec_path: String::from(
+                    "docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md",
+                ),
+                source_spec_revision: 0,
+                source_spec_fingerprint: None,
+                attempts: Vec::new(),
+                source: None,
+            },
+            source_spec_source: String::new(),
+            source_spec_path: repo_root
+                .join("docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md"),
+            execution_fingerprint: String::from("unit-test-execution-fingerprint"),
+            tracked_tree_sha_cache: OnceLock::new(),
+            reviewed_tree_sha_cache: std::cell::RefCell::new(BTreeMap::new()),
+            head_sha_cache: OnceLock::new(),
+            release_base_branch_cache: OnceLock::new(),
+        };
         let no_repo_only = CurrentTaskClosureRecord {
             task: 1,
             source_plan_path: Some(String::from("docs/featureforge/plans/example.md")),
@@ -5716,11 +5808,11 @@ mod unit_tests {
         };
 
         assert!(
-            !task_closure_contributes_to_branch_surface(&no_repo_only),
+            !task_closure_contributes_to_branch_surface(&context, &no_repo_only),
             "no-repo-only task closures must not influence branch-surface baseline derivation"
         );
         assert!(
-            task_closure_contributes_to_branch_surface(&mixed_surface),
+            task_closure_contributes_to_branch_surface(&context, &mixed_surface),
             "task closures that still cover repo-visible paths must contribute to branch-surface baseline derivation"
         );
     }

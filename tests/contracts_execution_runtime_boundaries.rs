@@ -2094,29 +2094,42 @@ fn runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task() {
         "FS-15 direct and compiled-cli operator outputs must stay semantically aligned",
     );
     assert_eq!(
-        operator_real["execution_command_context"]["command_kind"],
-        Value::from("reopen")
-    );
-    assert_eq!(
-        operator_real["execution_command_context"]["task_number"],
+        operator_real["blocking_task"],
         Value::from(2_u64),
-        "FS-15 should always target the earliest unresolved stale boundary (Task 2)",
-    );
-    assert_eq!(
-        operator_real["execution_command_context"]["step_id"],
-        Value::from(1_u64)
+        "FS-15 should always target the earliest unresolved stale boundary (Task 2)"
     );
     let recommended_command = operator_real["recommended_command"]
         .as_str()
-        .expect("FS-15 compiled-cli operator should expose a reopen command");
+        .expect("FS-15 compiled-cli operator should expose a routed command");
     assert!(
-        recommended_command.contains("--task 2 --step 1"),
-        "FS-15 compiled-cli operator should route reopen to Task 2 Step 1, got {recommended_command}",
+        recommended_command.contains("--task 2"),
+        "FS-15 compiled-cli operator should route to Task 2 while it is the earliest stale boundary, got {recommended_command}",
     );
     assert!(
         !recommended_command.contains("--task 6"),
         "FS-15 compiled-cli operator must not route to Task 6 while Task 2 is stale, got {recommended_command}",
     );
+    if operator_real["execution_command_context"]["command_kind"].as_str() == Some("reopen") {
+        assert_eq!(
+            operator_real["execution_command_context"]["task_number"],
+            Value::from(2_u64),
+            "FS-15 reopen command context should target Task 2"
+        );
+        assert_eq!(
+            operator_real["execution_command_context"]["step_id"],
+            Value::from(1_u64),
+            "FS-15 reopen command context should target Step 1"
+        );
+        assert!(
+            recommended_command.contains("--step 1"),
+            "FS-15 reopen routing should keep Step 1 targeted, got {recommended_command}"
+        );
+    } else {
+        assert!(
+            recommended_command.contains("close-current-task"),
+            "FS-15 non-reopen route should stay in closure-recording lane for Task 2, got {recommended_command}"
+        );
+    }
     let operator_follow_up = run_recommended_plan_execution_command(
         repo,
         state,
@@ -2128,6 +2141,172 @@ fn runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task() {
         &operator_real,
         &operator_follow_up,
         "FS-15 command-follow parity",
+    );
+}
+
+#[test]
+fn fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs19");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
+    fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_FS15_PLAN_SOURCE)
+        .expect("FS-19 stale-history fixture plan should be writable");
+    prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs19");
+
+    let preflight = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "FS-19 preflight before stale-history fixture",
+    );
+    assert_eq!(
+        preflight["allowed"],
+        Value::Bool(true),
+        "FS-19 preflight should allow fixture execution",
+    );
+    let status_before_begin = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "FS-19 status before bootstrap begin",
+    );
+    let begin = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before_begin["execution_fingerprint"]
+                .as_str()
+                .expect("FS-19 status should expose execution fingerprint before begin"),
+        ],
+        "FS-19 bootstrap task 1 begin",
+    );
+    run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "complete",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--claim",
+            "FS-19 bootstrap complete",
+            "--manual-verify-summary",
+            "FS-19 bootstrap complete summary",
+            "--file",
+            "tests/contracts_execution_runtime_boundaries.rs",
+            "--expect-execution-fingerprint",
+            begin["execution_fingerprint"]
+                .as_str()
+                .expect("FS-19 begin should expose execution fingerprint before complete"),
+        ],
+        "FS-19 bootstrap task 1 complete",
+    );
+
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            (
+                "task_closure_record_history",
+                serde_json::json!({
+                    "task-1-stale": {
+                        "closure_record_id": "task-1-stale",
+                        "task": 1,
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 8,
+                        "record_status": "stale_unreviewed",
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    },
+                    "task-1-current": {
+                        "closure_record_id": "task-1-current",
+                        "task": 1,
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 24,
+                        "record_status": "current",
+                        "closure_status": "current",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    },
+                    "task-2-stale": {
+                        "closure_record_id": "task-2-stale",
+                        "task": 2,
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 10,
+                        "record_status": "stale_unreviewed",
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    },
+                    "task-6-stale": {
+                        "closure_record_id": "task-6-stale",
+                        "task": 6,
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 20,
+                        "record_status": "stale_unreviewed",
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    }
+                }),
+            ),
+            ("superseded_task_closure_ids", serde_json::json!(["task-1-stale"])),
+            (
+                "current_open_step_state",
+                serde_json::json!({
+                    "task": 6,
+                    "step": 1,
+                    "note_state": "Interrupted",
+                    "note_summary": "FS-19 stale task 1 history should be ignored once superseded",
+                    "source_plan_path": PLAN_REL,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 30
+                }),
+            ),
+            ("resume_task", Value::from(6_u64)),
+            ("resume_step", Value::from(1_u64)),
+        ],
+    );
+
+    let operator_real = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        true,
+        "FS-19 compiled-cli stale-history routing",
+    );
+    assert_eq!(
+        operator_real["execution_command_context"]["task_number"],
+        Value::from(2_u64),
+        "FS-19 compiled-cli should target Task 2 after superseding stale task 1 history",
+    );
+    let recommended_command = operator_real["recommended_command"]
+        .as_str()
+        .expect("FS-19 compiled-cli operator should expose recommended command");
+    assert!(
+        recommended_command.contains("--task 2"),
+        "FS-19 compiled-cli operator should route to Task 2, got {recommended_command}",
+    );
+    assert!(
+        !recommended_command.contains("--task 1"),
+        "FS-19 compiled-cli operator must not route to superseded stale task 1 history, got {recommended_command}",
     );
 }
 

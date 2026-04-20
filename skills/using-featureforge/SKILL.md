@@ -178,6 +178,8 @@ If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known,
 - Treat workflow/operator `phase`, `phase_detail`, `review_state_status`, `next_action`, and `recommended_command` as the authoritative public routing contract.
 - If workflow/operator returns a non-empty `recommended_command`, follow that exact command template.
 - If workflow/operator omits `recommended_command` (for example, while waiting for an external review result or refreshing the test plan), follow `next_action` and rerun workflow/operator after the prerequisite is satisfied.
+- Treat `resume_task` and `resume_step` from `featureforge plan execution status --plan <approved-plan-path>` as advisory diagnostics only; if they disagree with workflow/operator `recommended_command`, follow `recommended_command`.
+- When workflow/operator reports `phase_detail=task_closure_recording_ready`, the replay lane is complete enough to refresh closure truth; run the routed `close-current-task` command and do not reopen the same step again.
 - Treat human-readable receipts and companion markdown artifacts as derived output, not routing authority.
 - Keep hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` out of the normal path; do not route to them for normal workflow progression.
 - Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.

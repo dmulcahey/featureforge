@@ -112,6 +112,43 @@ pub(crate) struct BrowserQaWrite<'a> {
     pub(crate) generated_by_identity: &'a str,
 }
 
+fn resolve_cycle_break_after_current_task_closure(
+    authoritative_state: &mut AuthoritativeTransitionState,
+    task_number: u32,
+    closure_record_id: &str,
+    reviewed_state_id: &str,
+) -> Result<(), JsonFailure> {
+    let cycle_break_binding_matches_task =
+        authoritative_state.strategy_cycle_break_task() == Some(task_number);
+    if !cycle_break_binding_matches_task {
+        return Ok(());
+    }
+    let Some(current_closure) = authoritative_state.current_task_closure_result(task_number) else {
+        return Ok(());
+    };
+    let current_positive_closure_on_current_reviewed_state = current_closure.closure_record_id
+        == closure_record_id
+        && current_closure.reviewed_state_id == reviewed_state_id
+        && current_closure.review_result == "pass"
+        && current_closure.verification_result != "fail"
+        && current_closure
+            .closure_status
+            .as_deref()
+            .is_none_or(|status| status == "current");
+    if !current_positive_closure_on_current_reviewed_state {
+        return Ok(());
+    }
+    let _ = authoritative_state.clear_cycle_break_binding_and_strategy()?;
+    authoritative_state.clear_task_cycle_count(task_number)?;
+    if authoritative_state
+        .review_state_repair_follow_up()
+        .is_some_and(|follow_up| matches!(follow_up, "execution_reentry" | "repair_review_state"))
+    {
+        authoritative_state.set_review_state_repair_follow_up(None)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn record_current_task_closure(
     authoritative_state: &mut AuthoritativeTransitionState,
     input: CurrentTaskClosureWrite<'_>,
@@ -135,6 +172,12 @@ pub(crate) fn record_current_task_closure(
         verification_result: input.verification_result,
         verification_summary_hash: input.verification_summary_hash,
     })?;
+    resolve_cycle_break_after_current_task_closure(
+        authoritative_state,
+        input.task,
+        input.closure_record_id,
+        input.reviewed_state_id,
+    )?;
     authoritative_state.persist_if_dirty_with_failpoint(None)
 }
 

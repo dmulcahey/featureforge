@@ -13,6 +13,7 @@ use crate::execution::state::{
     execution_reentry_requires_review_state_repair, gate_finish_from_context,
     prerelease_branch_closure_refresh_required, qa_pending_requires_test_plan_refresh,
     reopen_exact_execution_command_for_task, resolve_exact_execution_command,
+    stale_unreviewed_allows_task_closure_baseline_bridge,
     task_closure_baseline_repair_candidate, task_closures_are_non_branch_contributing,
     task_scope_structural_review_state_reason,
 };
@@ -182,10 +183,12 @@ pub(crate) fn compute_next_action_decision_with_inputs(
                 .reason_codes
                 .iter()
                 .any(|reason_code| reason_code == "prior_task_current_closure_missing")
-                && task_closure_baseline_repair_candidate(context, status, task_number)
-                    .ok()
-                    .flatten()
-                    .is_some()
+                && stale_unreviewed_bridge_ready_for_task(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                    task_number,
+                )
         });
 
     // Step 4.1 (ordered pass #2): authoritative open-step state, unless an earlier stale boundary wins.
@@ -200,7 +203,7 @@ pub(crate) fn compute_next_action_decision_with_inputs(
             && review_state_status == "stale_unreviewed"
             && status.blocking_task.is_none()
             && task_scope_structural_review_state_reason(status).is_none();
-        if execution_reentry_requires_review_state_repair(status)
+        if execution_reentry_requires_review_state_repair(Some(context), status)
             && !stale_boundary_open_step_resume_allowed
             && !status.reason_codes.is_empty()
         {
@@ -221,22 +224,23 @@ pub(crate) fn compute_next_action_decision_with_inputs(
 
     // Step 4.1 (ordered pass #3): earliest unresolved stale task-closure boundary.
     if let Some(stale_task) = earliest_stale_boundary {
-        let stale_boundary_closure_recording_ready = status.blocking_task == Some(stale_task)
-            && review_state_status == "clean"
-            && task_scope_structural_review_state_reason(status).is_none()
-            && missing_current_closure_allows_task_closure_baseline_route(
-                context,
-                status,
-                review_state_status.as_str(),
-            )
-            && status
-                .reason_codes
-                .iter()
-                .any(|reason_code| reason_code == "prior_task_current_closure_missing")
-            && task_closure_baseline_repair_candidate(context, status, stale_task)
+        let stale_boundary_closure_recording_ready =
+            task_closure_baseline_repair_candidate(context, status, stale_task)
                 .ok()
                 .flatten()
-                .is_some();
+                .is_some()
+                && task_scope_structural_review_state_reason(status).is_none()
+                && missing_current_closure_allows_task_closure_baseline_route(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                )
+                && stale_unreviewed_bridge_ready_for_task(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                    stale_task,
+                );
         if stale_boundary_closure_recording_ready {
             return Some(task_closure_recording_ready_decision(
                 status, plan_path, stale_task,
@@ -254,7 +258,7 @@ pub(crate) fn compute_next_action_decision_with_inputs(
 
     // Step 4.1 (ordered pass #4): current-task closure recording prerequisites.
     if review_state_status != "stale_unreviewed"
-        && execution_reentry_requires_review_state_repair(status)
+        && execution_reentry_requires_review_state_repair(Some(context), status)
     {
         return Some(execution_repair_decision(
             context,
@@ -381,7 +385,15 @@ pub(crate) fn compute_next_action_decision_with_inputs(
                 review_state_status.as_str(),
             )
         })
-        .filter(|_| review_state_status != "stale_unreviewed")
+        .filter(|task_number| {
+            review_state_status != "stale_unreviewed"
+                || stale_unreviewed_bridge_ready_for_task(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                    *task_number,
+                )
+        })
         && let Ok(Some(_candidate)) =
             task_closure_baseline_repair_candidate(context, status, task_number)
     {
@@ -410,7 +422,15 @@ pub(crate) fn compute_next_action_decision_with_inputs(
                 review_state_status.as_str(),
             )
         })
-        .filter(|_| review_state_status != "stale_unreviewed")
+        .filter(|task_number| {
+            review_state_status != "stale_unreviewed"
+                || stale_unreviewed_bridge_ready_for_task(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                    *task_number,
+                )
+        })
         .filter(|_| task_review_dispatch_task(status).is_none())
         .filter(|task_number| {
             task_closure_baseline_repair_candidate(context, status, *task_number)
@@ -1219,7 +1239,18 @@ fn execution_reentry_blocking_task(
     ) {
         return None;
     }
-    task_boundary_blocking_task(status).or_else(|| {
+    let boundary_blocking_task = task_boundary_blocking_task(status);
+    if let Some(task_number) = boundary_blocking_task
+        && stale_unreviewed_bridge_ready_for_task(
+            context,
+            status,
+            review_state_status.as_str(),
+            task_number,
+        )
+    {
+        return None;
+    }
+    boundary_blocking_task.or_else(|| {
         (status.phase_detail == "execution_reentry_required"
             && status.harness_phase == HarnessPhase::Executing
             && status.blocking_step.is_none()
@@ -1292,7 +1323,7 @@ fn execution_reentry_decision_for_task(
             .current_task_closures
             .iter()
             .all(|closure| closure.task != task_number);
-    if execution_reentry_requires_review_state_repair(status)
+    if execution_reentry_requires_review_state_repair(Some(context), status)
         && !stale_boundary_route
         && !status
             .reason_codes
@@ -1374,13 +1405,13 @@ fn decision_from_exact_execution_command(
             if status.resume_task == Some(exact_command.task_number)
                 && status.resume_step == exact_command.step_id
                 && status.harness_phase == HarnessPhase::Executing
-                && execution_reentry_requires_review_state_repair(status) =>
+                && execution_reentry_requires_review_state_repair(None, status) =>
         {
             String::from("execution_in_progress")
         }
         "begin"
             if status.blocking_step.is_some()
-                && !execution_reentry_requires_review_state_repair(status) =>
+                && !execution_reentry_requires_review_state_repair(None, status) =>
         {
             String::from("execution_in_progress")
         }
@@ -1522,6 +1553,50 @@ fn projection_refresh_candidate_requires_newer_task_closure_baseline(
         .map(|closure| closure.task)
         .max()
         .is_some_and(|current_task| candidate_task > current_task)
+}
+
+fn stale_unreviewed_bridge_ready_for_task(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    review_state_status: &str,
+    task_number: u32,
+) -> bool {
+    let Some(candidate) = task_closure_baseline_repair_candidate(context, status, task_number)
+        .ok()
+        .flatten()
+    else {
+        return false;
+    };
+    if review_state_status == "stale_unreviewed" {
+        return stale_unreviewed_allows_task_closure_baseline_bridge(context, status, task_number)
+            .unwrap_or(false);
+    }
+    let unresolved_stale_task_matches =
+        earliest_unresolved_stale_task_from_closure_graph(context, status) == Some(task_number);
+    let dispatch_bound_bridge_candidate = candidate
+        .dispatch_id
+        .as_deref()
+        .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty());
+    let has_closure_bridge_reason_signals =
+        closure_baseline_routing_reason_codes_compatible(status)
+            && status.reason_codes.iter().any(|reason_code| {
+                matches!(
+                    reason_code.as_str(),
+                    "prior_task_current_closure_missing" | "task_closure_baseline_repair_candidate"
+                )
+            });
+    if review_state_status == "clean" {
+        return matches!(
+            status.harness_phase,
+            HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
+        ) && (has_closure_bridge_reason_signals
+            || (unresolved_stale_task_matches && dispatch_bound_bridge_candidate));
+    }
+    if review_state_status == "missing_current_closure" {
+        return has_closure_bridge_reason_signals
+            || (unresolved_stale_task_matches && dispatch_bound_bridge_candidate);
+    }
+    false
 }
 
 fn task_review_pending_allows_closure_baseline_route(status: &PlanExecutionStatus) -> bool {
