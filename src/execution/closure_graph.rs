@@ -88,7 +88,7 @@ impl ClosureGraphSignals {
             })
             .unwrap_or_default();
         let current_branch_closure_id = authoritative_state
-            .and_then(|state| state.bound_current_branch_closure_identity())
+            .and_then(AuthoritativeTransitionState::bound_current_branch_closure_identity)
             .map(|identity| identity.branch_closure_id);
         let finish_review_gate_pass_branch_closure_id = authoritative_state
             .and_then(AuthoritativeTransitionState::finish_review_gate_pass_branch_closure_id);
@@ -155,12 +155,18 @@ impl AuthoritativeClosureGraph {
         graph.ingest_release_readiness_history(&snapshot.release_readiness_record_history);
         graph.ingest_final_review_history(&snapshot.final_review_record_history);
         graph.ingest_browser_qa_history(&snapshot.browser_qa_record_history);
-        graph.bound_current_branch_record_id = snapshot.current_branch_closure_id.clone();
-        graph.bound_current_release_readiness_record_id =
-            snapshot.current_release_readiness_record_id.clone();
-        graph.bound_current_final_review_record_id =
-            snapshot.current_final_review_record_id.clone();
-        graph.bound_current_browser_qa_record_id = snapshot.current_qa_record_id.clone();
+        graph
+            .bound_current_branch_record_id
+            .clone_from(&snapshot.current_branch_closure_id);
+        graph
+            .bound_current_release_readiness_record_id
+            .clone_from(&snapshot.current_release_readiness_record_id);
+        graph
+            .bound_current_final_review_record_id
+            .clone_from(&snapshot.current_final_review_record_id);
+        graph
+            .bound_current_browser_qa_record_id
+            .clone_from(&snapshot.current_qa_record_id);
         graph.apply_superseded_task_ids(&snapshot.superseded_task_closure_ids);
         graph.apply_late_stage_stale_projection(signals);
         graph.refresh_current_indexes(signals);
@@ -802,6 +808,7 @@ fn append_unique(values: &mut Vec<String>, value: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expect_ext::ExpectValueExt;
     use serde_json::json;
 
     fn task_status(record_id: &str, task: u32, status: &str, sequence: u64) -> Value {
@@ -837,7 +844,7 @@ mod tests {
             AuthoritativeClosureGraph::from_snapshot(&snapshot, &ClosureGraphSignals::default());
         let current = graph
             .current_task_closure(1)
-            .expect("task closure should exist");
+            .expect_or_abort("task closure should exist");
         assert_eq!(current.identity.record_id, "task-1-current");
         assert_eq!(current.freshness, ClosureFreshness::Current);
         assert_eq!(
@@ -872,7 +879,7 @@ mod tests {
         let graph = AuthoritativeClosureGraph::from_snapshot(&snapshot, &signals);
         let branch = graph
             .evaluation("branch-current")
-            .expect("branch closure should exist");
+            .expect_or_abort("branch closure should exist");
         assert_eq!(branch.freshness, ClosureFreshness::StaleUnreviewed);
         assert!(
             branch
@@ -933,11 +940,11 @@ mod tests {
             AuthoritativeClosureGraph::from_snapshot(&snapshot, &ClosureGraphSignals::default());
         let release = graph
             .current_release_readiness()
-            .expect("release readiness should exist");
+            .expect_or_abort("release readiness should exist");
         assert_eq!(release.identity.record_id, "release-current");
         let final_review = graph
             .current_final_review()
-            .expect("final review should exist");
+            .expect_or_abort("final review should exist");
         assert!(
             final_review
                 .dependency_binding
@@ -945,7 +952,9 @@ mod tests {
                 .iter()
                 .any(|record_id| record_id == "release-current")
         );
-        let qa = graph.current_browser_qa().expect("qa should exist");
+        let qa = graph
+            .current_browser_qa()
+            .expect_or_abort("qa should exist");
         assert!(
             qa.dependency_binding
                 .depends_on_record_ids
@@ -986,7 +995,7 @@ mod tests {
         let graph = AuthoritativeClosureGraph::from_snapshot(&snapshot, &signals);
         let current = graph
             .current_branch_closure()
-            .expect("current branch closure should exist");
+            .expect_or_abort("current branch closure should exist");
         assert_eq!(current.identity.record_id, "branch-current");
     }
 
@@ -1038,7 +1047,7 @@ mod tests {
         assert_eq!(
             graph
                 .current_branch_closure()
-                .expect("bound branch should remain current")
+                .expect_or_abort("bound branch should remain current")
                 .identity
                 .record_id,
             "branch-bound",
@@ -1170,124 +1179,126 @@ mod tests {
 
     #[test]
     fn milestone_current_selection_is_scoped_to_current_branch_closure() {
-        let snapshot = ClosureHistorySnapshot {
-            branch_closure_records: BTreeMap::from([
-                (
-                    String::from("branch-a"),
-                    json!({
-                        "branch_closure_id": "branch-a",
-                        "record_status": "current",
-                        "record_sequence": 1,
-                    }),
-                ),
-                (
-                    String::from("branch-b"),
-                    json!({
-                        "branch_closure_id": "branch-b",
-                        "record_status": "historical",
-                        "record_sequence": 2,
-                    }),
-                ),
-            ]),
-            release_readiness_record_history: BTreeMap::from([
-                (
-                    String::from("release-a"),
-                    json!({
-                        "record_id": "release-a",
-                        "record_status": "current",
-                        "record_sequence": 1,
-                        "branch_closure_id": "branch-a",
-                    }),
-                ),
-                (
-                    String::from("release-b"),
-                    json!({
-                        "record_id": "release-b",
-                        "record_status": "current",
-                        "record_sequence": 2,
-                        "branch_closure_id": "branch-b",
-                    }),
-                ),
-            ]),
-            final_review_record_history: BTreeMap::from([
-                (
-                    String::from("final-a"),
-                    json!({
-                        "record_id": "final-a",
-                        "record_status": "current",
-                        "record_sequence": 1,
-                        "branch_closure_id": "branch-a",
-                        "release_readiness_record_id": "release-a",
-                    }),
-                ),
-                (
-                    String::from("final-b"),
-                    json!({
-                        "record_id": "final-b",
-                        "record_status": "current",
-                        "record_sequence": 2,
-                        "branch_closure_id": "branch-b",
-                        "release_readiness_record_id": "release-b",
-                    }),
-                ),
-            ]),
-            browser_qa_record_history: BTreeMap::from([
-                (
-                    String::from("qa-a"),
-                    json!({
-                        "record_id": "qa-a",
-                        "record_status": "current",
-                        "record_sequence": 1,
-                        "branch_closure_id": "branch-a",
-                        "final_review_record_id": "final-a",
-                    }),
-                ),
-                (
-                    String::from("qa-b"),
-                    json!({
-                        "record_id": "qa-b",
-                        "record_status": "current",
-                        "record_sequence": 2,
-                        "branch_closure_id": "branch-b",
-                        "final_review_record_id": "final-b",
-                    }),
-                ),
-            ]),
-            current_branch_closure_id: Some(String::from("branch-a")),
-            current_release_readiness_record_id: Some(String::from("release-a")),
-            current_final_review_record_id: Some(String::from("final-a")),
-            current_qa_record_id: Some(String::from("qa-a")),
-            ..ClosureHistorySnapshot::default()
-        };
-        let signals = ClosureGraphSignals {
-            current_branch_closure_id: Some(String::from("branch-a")),
-            ..ClosureGraphSignals::default()
-        };
-        let graph = AuthoritativeClosureGraph::from_snapshot(&snapshot, &signals);
-        assert_eq!(
-            graph
-                .current_release_readiness()
-                .expect("release should exist")
-                .identity
-                .record_id,
-            "release-a"
-        );
-        assert_eq!(
-            graph
-                .current_final_review()
-                .expect("final review should exist")
-                .identity
-                .record_id,
-            "final-a"
-        );
-        assert_eq!(
-            graph
-                .current_browser_qa()
-                .expect("qa should exist")
-                .identity
-                .record_id,
-            "qa-a"
-        );
+        {
+            let snapshot = ClosureHistorySnapshot {
+                branch_closure_records: BTreeMap::from([
+                    (
+                        String::from("branch-a"),
+                        json!({
+                            "branch_closure_id": "branch-a",
+                            "record_status": "current",
+                            "record_sequence": 1,
+                        }),
+                    ),
+                    (
+                        String::from("branch-b"),
+                        json!({
+                            "branch_closure_id": "branch-b",
+                            "record_status": "historical",
+                            "record_sequence": 2,
+                        }),
+                    ),
+                ]),
+                release_readiness_record_history: BTreeMap::from([
+                    (
+                        String::from("release-a"),
+                        json!({
+                            "record_id": "release-a",
+                            "record_status": "current",
+                            "record_sequence": 1,
+                            "branch_closure_id": "branch-a",
+                        }),
+                    ),
+                    (
+                        String::from("release-b"),
+                        json!({
+                            "record_id": "release-b",
+                            "record_status": "current",
+                            "record_sequence": 2,
+                            "branch_closure_id": "branch-b",
+                        }),
+                    ),
+                ]),
+                final_review_record_history: BTreeMap::from([
+                    (
+                        String::from("final-a"),
+                        json!({
+                            "record_id": "final-a",
+                            "record_status": "current",
+                            "record_sequence": 1,
+                            "branch_closure_id": "branch-a",
+                            "release_readiness_record_id": "release-a",
+                        }),
+                    ),
+                    (
+                        String::from("final-b"),
+                        json!({
+                            "record_id": "final-b",
+                            "record_status": "current",
+                            "record_sequence": 2,
+                            "branch_closure_id": "branch-b",
+                            "release_readiness_record_id": "release-b",
+                        }),
+                    ),
+                ]),
+                browser_qa_record_history: BTreeMap::from([
+                    (
+                        String::from("qa-a"),
+                        json!({
+                            "record_id": "qa-a",
+                            "record_status": "current",
+                            "record_sequence": 1,
+                            "branch_closure_id": "branch-a",
+                            "final_review_record_id": "final-a",
+                        }),
+                    ),
+                    (
+                        String::from("qa-b"),
+                        json!({
+                            "record_id": "qa-b",
+                            "record_status": "current",
+                            "record_sequence": 2,
+                            "branch_closure_id": "branch-b",
+                            "final_review_record_id": "final-b",
+                        }),
+                    ),
+                ]),
+                current_branch_closure_id: Some(String::from("branch-a")),
+                current_release_readiness_record_id: Some(String::from("release-a")),
+                current_final_review_record_id: Some(String::from("final-a")),
+                current_qa_record_id: Some(String::from("qa-a")),
+                ..ClosureHistorySnapshot::default()
+            };
+            let signals = ClosureGraphSignals {
+                current_branch_closure_id: Some(String::from("branch-a")),
+                ..ClosureGraphSignals::default()
+            };
+            let graph = AuthoritativeClosureGraph::from_snapshot(&snapshot, &signals);
+            assert_eq!(
+                graph
+                    .current_release_readiness()
+                    .expect_or_abort("release should exist")
+                    .identity
+                    .record_id,
+                "release-a"
+            );
+            assert_eq!(
+                graph
+                    .current_final_review()
+                    .expect_or_abort("final review should exist")
+                    .identity
+                    .record_id,
+                "final-a"
+            );
+            assert_eq!(
+                graph
+                    .current_browser_qa()
+                    .expect_or_abort("qa should exist")
+                    .identity
+                    .record_id,
+                "qa-a"
+            );
+        }
     }
 
     #[test]

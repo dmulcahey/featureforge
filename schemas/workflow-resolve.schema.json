@@ -1,20 +1,26 @@
 {
   "$defs": {
     "WorkflowDiagnostic": {
+      "description": "Runtime struct.",
       "properties": {
         "artifact": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "code": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "message": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "remediation": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "severity": {
+          "description": "Runtime field.",
           "type": "string"
         }
       },
@@ -29,63 +35,79 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Runtime struct.",
   "properties": {
     "contract_state": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "diagnostics": {
+      "description": "Runtime field.",
       "items": {
         "$ref": "#/$defs/WorkflowDiagnostic"
       },
       "type": "array"
     },
     "manifest_path": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "next_skill": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "note": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "plan_candidate_count": {
+      "description": "Runtime field.",
       "format": "uint",
       "minimum": 0,
       "type": "integer"
     },
     "plan_path": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "reason": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "reason_codes": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "root": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "scan_truncated": {
+      "description": "Runtime field.",
       "type": "boolean"
     },
     "schema_version": {
       "const": 3,
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "spec_candidate_count": {
+      "description": "Runtime field.",
       "format": "uint",
       "minimum": 0,
       "type": "integer"
     },
     "spec_path": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "status": {
+      "description": "Runtime field.",
       "type": "string"
     }
   },

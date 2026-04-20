@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn markdown_files_under(root: &Path) -> Vec<PathBuf> {
+#[must_use]
+/// Runtime function.
+pub fn markdown_files_under(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     visit_markdown_files(root, &mut files);
     files

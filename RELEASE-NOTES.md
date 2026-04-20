@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v1.9.2 - 2026-04-20
+
+Patch release focused on comprehensive Rust-quality remediation and release artifact refresh hardening.
+
+- complete a full rust-skills audit/remediation pass across runtime and test surfaces, including include-debt elimination and strict-lint/doc cleanup
+- remove extended-clippy `multiple_crate_versions` suppression from active gates and enforce duplicate-free cargo-graph checks
+- harden rust-quality drift controls with canonical audit automation, updated lint/config surfaces, and synchronized command contracts
+- refresh checked-in repo runtime binary and darwin/windows prebuilt artifacts for `1.9.2`
+
 ## v1.9.1 - 2026-04-20
 
 Patch release focused on closing the remaining open authority/documentation gaps from the task-boundary hardening work without changing the broader public workflow model.

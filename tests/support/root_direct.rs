@@ -1,3 +1,4 @@
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::path::Path;
 use std::process::{ExitStatus, Output};
 
@@ -19,18 +20,15 @@ pub fn try_run_root_output_direct(
     state_dir: Option<&Path>,
     args: &[&str],
     _context: &str,
-) -> Result<Option<Output>, String> {
-    let argv = std::iter::once("featureforge").chain(args.iter().copied());
-    let cli = match Cli::try_parse_from(argv) {
-        Ok(cli) => cli,
-        Err(_) => return Ok(None),
+) -> Option<Output> {
+    let cli_args = std::iter::once("featureforge").chain(args.iter().copied());
+    let Ok(cli) = Cli::try_parse_from(cli_args) else {
+        return None;
     };
 
     let emission = match cli.command {
         Some(RootCommand::Config(config_cli)) => {
-            let Some(state_dir) = state_dir else {
-                return Ok(None);
-            };
+            let state_dir = state_dir?;
             match config_cli.command {
                 ConfigCommand::Get(args) => DirectRootEmission::Text(
                     featureforge::config::get_for_state_dir(state_dir, &args)
@@ -46,9 +44,7 @@ pub fn try_run_root_output_direct(
             }
         }
         Some(RootCommand::Repo(repo_cli)) => {
-            let Some(repo) = repo else {
-                return Ok(None);
-            };
+            let repo = repo?;
             match repo_cli.command {
                 RepoCommand::Slug(_) => {
                     let identity = discover_slug_identity(repo);
@@ -58,12 +54,12 @@ pub fn try_run_root_output_direct(
                         shell_quote(&identity.safe_branch)
                     )))
                 }
-                RepoCommand::RuntimeRoot(_) => return Ok(None),
+                RepoCommand::RuntimeRoot(_) => return None,
             }
         }
         Some(RootCommand::RepoSafety(repo_safety_cli)) => {
             let (Some(repo), Some(state_dir)) = (repo, state_dir) else {
-                return Ok(None);
+                return None;
             };
             let runtime = featureforge::repo_safety::RepoSafetyRuntime::discover_for_state_dir(
                 repo, state_dir,
@@ -78,20 +74,20 @@ pub fn try_run_root_output_direct(
                 )),
             }
         }
-        Some(RootCommand::Workflow(_))
-        | Some(RootCommand::Plan(_))
-        | Some(RootCommand::UpdateCheck(_))
-        | None => return Ok(None),
+        Some(RootCommand::Workflow(_) | RootCommand::Plan(_) | RootCommand::UpdateCheck(_))
+        | None => return None,
     };
 
-    Ok(Some(match emission {
+    Some(match emission {
         DirectRootEmission::Json(result) => json_output_result(result),
         DirectRootEmission::Text(result) => text_output_result(result),
-    }))
+    })
 }
 
 fn serialize_json<T: Serialize>(value: Result<T, JsonFailure>) -> Result<Vec<u8>, JsonFailure> {
-    value.map(|value| json_line(&value).expect("direct root output should serialize to JSON"))
+    value.map(|value| {
+        json_line(&value).expect_or_abort("direct root output should serialize to JSON")
+    })
 }
 
 fn json_output_result(result: Result<Vec<u8>, JsonFailure>) -> Output {
@@ -100,7 +96,7 @@ fn json_output_result(result: Result<Vec<u8>, JsonFailure>) -> Output {
         Err(failure) => output_with_code(
             1,
             Vec::new(),
-            json_line(&failure).expect("direct root json failure should serialize"),
+            json_line(&failure).expect_or_abort("direct root json failure should serialize"),
         ),
     }
 }

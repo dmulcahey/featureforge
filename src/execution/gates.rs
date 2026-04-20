@@ -62,6 +62,8 @@ pub(crate) struct ActiveContractState {
     pub(crate) contract: ExecutionContract,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_contract(
     runtime: &ExecutionRuntime,
     args: &GateContractArgs,
@@ -70,6 +72,8 @@ pub fn gate_contract(
     gate_contract_from_context(&context, &args.contract)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_contract_from_context(
     context: &ExecutionContext,
     artifact_path: &Path,
@@ -129,6 +133,8 @@ pub fn gate_contract_from_context(
     Ok(gate.finish())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_evaluator(
     runtime: &ExecutionRuntime,
     args: &GateEvaluatorArgs,
@@ -137,6 +143,8 @@ pub fn gate_evaluator(
     gate_evaluator_from_context(&context, &args.evaluation)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_evaluator_from_context(
     context: &ExecutionContext,
     artifact_path: &Path,
@@ -217,6 +225,8 @@ pub fn gate_evaluator_from_context(
     Ok(gate.finish())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_handoff(
     runtime: &ExecutionRuntime,
     args: &GateHandoffArgs,
@@ -225,6 +235,8 @@ pub fn gate_handoff(
     gate_handoff_from_context(&context, &args.handoff)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_handoff_from_context(
     context: &ExecutionContext,
     artifact_path: &Path,
@@ -365,124 +377,126 @@ fn validate_contract_scope_against_approved_plan(
     expected_spec_fingerprint: &str,
     gate: &mut GateState,
 ) {
-    let approved_steps: BTreeSet<(u32, u32)> = context
-        .steps
-        .iter()
-        .map(|step| (step.task_number, step.step_number))
-        .collect();
-    let mut contract_scope: BTreeSet<(u32, u32)> = BTreeSet::new();
+    {
+        let approved_steps: BTreeSet<(u32, u32)> = context
+            .steps
+            .iter()
+            .map(|step| (step.task_number, step.step_number))
+            .collect();
+        let mut contract_scope: BTreeSet<(u32, u32)> = BTreeSet::new();
 
-    for step in &contract.covered_steps {
-        let Some(step_ref) = parse_task_step_scope(step) else {
-            gate.fail(
-                FailureClass::ContractMismatch,
-                "contract_covered_step_malformed",
-                "Execution contract covered_steps entries must use `Task <n> Step <m>` scope format.",
-                "Regenerate the contract with canonical covered_steps scope labels.",
-            );
-            continue;
-        };
-        if !approved_steps.contains(&step_ref) {
-            gate.fail(
-                FailureClass::ContractMismatch,
-                "contract_covered_step_out_of_scope",
-                "Execution contract covered_steps includes steps outside the approved plan slice.",
-                "Regenerate the contract with covered_steps that map only to approved plan task/step pairs.",
-            );
-            continue;
-        }
-        contract_scope.insert(step_ref);
-    }
-
-    for criterion in &contract.criteria {
-        for step in &criterion.covered_steps {
+        for step in &contract.covered_steps {
             let Some(step_ref) = parse_task_step_scope(step) else {
                 gate.fail(
                     FailureClass::ContractMismatch,
-                    "contract_criterion_covered_step_malformed",
-                    format!(
-                        "Execution contract criterion `{}` uses a malformed covered_steps entry.",
-                        criterion.criterion_id
-                    ),
-                    "Regenerate criteria covered_steps using `Task <n> Step <m>` labels.",
+                    "contract_covered_step_malformed",
+                    "Execution contract covered_steps entries must use `Task <n> Step <m>` scope format.",
+                    "Regenerate the contract with canonical covered_steps scope labels.",
                 );
                 continue;
             };
-            if !approved_steps.contains(&step_ref) || !contract_scope.contains(&step_ref) {
+            if !approved_steps.contains(&step_ref) {
                 gate.fail(
                     FailureClass::ContractMismatch,
-                    "contract_criterion_covered_step_out_of_scope",
-                    format!(
-                        "Execution contract criterion `{}` covered_steps is outside the approved plan slice.",
-                        criterion.criterion_id
-                    ),
-                    "Regenerate criteria covered_steps so every criterion scope maps to approved contract scope in the active plan slice.",
-                );
-            }
-        }
-    }
-
-    for requirement in &contract.evidence_requirements {
-        for step in &requirement.covered_steps {
-            let Some(step_ref) = parse_task_step_scope(step) else {
-                gate.fail(
-                    FailureClass::ContractMismatch,
-                    "contract_evidence_covered_step_malformed",
-                    format!(
-                        "Execution contract evidence requirement `{}` uses a malformed covered_steps entry.",
-                        requirement.evidence_requirement_id
-                    ),
-                    "Regenerate evidence requirement covered_steps using `Task <n> Step <m>` labels.",
+                    "contract_covered_step_out_of_scope",
+                    "Execution contract covered_steps includes steps outside the approved plan slice.",
+                    "Regenerate the contract with covered_steps that map only to approved plan task/step pairs.",
                 );
                 continue;
-            };
-            if !approved_steps.contains(&step_ref) || !contract_scope.contains(&step_ref) {
-                gate.fail(
-                    FailureClass::ContractMismatch,
-                    "contract_evidence_covered_step_out_of_scope",
-                    format!(
-                        "Execution contract evidence requirement `{}` covered_steps is outside the approved plan slice.",
-                        requirement.evidence_requirement_id
-                    ),
-                    "Regenerate evidence requirement covered_steps so every requirement scope maps to approved contract scope in the active plan slice.",
-                );
+            }
+            contract_scope.insert(step_ref);
+        }
+
+        for criterion in &contract.criteria {
+            for step in &criterion.covered_steps {
+                let Some(step_ref) = parse_task_step_scope(step) else {
+                    gate.fail(
+                        FailureClass::ContractMismatch,
+                        "contract_criterion_covered_step_malformed",
+                        format!(
+                            "Execution contract criterion `{}` uses a malformed covered_steps entry.",
+                            criterion.criterion_id
+                        ),
+                        "Regenerate criteria covered_steps using `Task <n> Step <m>` labels.",
+                    );
+                    continue;
+                };
+                if !approved_steps.contains(&step_ref) || !contract_scope.contains(&step_ref) {
+                    gate.fail(
+                        FailureClass::ContractMismatch,
+                        "contract_criterion_covered_step_out_of_scope",
+                        format!(
+                            "Execution contract criterion `{}` covered_steps is outside the approved plan slice.",
+                            criterion.criterion_id
+                        ),
+                        "Regenerate criteria covered_steps so every criterion scope maps to approved contract scope in the active plan slice.",
+                    );
+                }
             }
         }
-    }
 
-    if contract_scope.is_empty() {
-        return;
-    }
+        for requirement in &contract.evidence_requirements {
+            for step in &requirement.covered_steps {
+                let Some(step_ref) = parse_task_step_scope(step) else {
+                    gate.fail(
+                        FailureClass::ContractMismatch,
+                        "contract_evidence_covered_step_malformed",
+                        format!(
+                            "Execution contract evidence requirement `{}` uses a malformed covered_steps entry.",
+                            requirement.evidence_requirement_id
+                        ),
+                        "Regenerate evidence requirement covered_steps using `Task <n> Step <m>` labels.",
+                    );
+                    continue;
+                };
+                if !approved_steps.contains(&step_ref) || !contract_scope.contains(&step_ref) {
+                    gate.fail(
+                        FailureClass::ContractMismatch,
+                        "contract_evidence_covered_step_out_of_scope",
+                        format!(
+                            "Execution contract evidence requirement `{}` covered_steps is outside the approved plan slice.",
+                            requirement.evidence_requirement_id
+                        ),
+                        "Regenerate evidence requirement covered_steps so every requirement scope maps to approved contract scope in the active plan slice.",
+                    );
+                }
+            }
+        }
 
-    let expected_packet_fingerprints: BTreeSet<String> = contract_scope
-        .iter()
-        .map(|(task, step)| {
-            compute_packet_fingerprint(PacketFingerprintInput {
-                plan_path: &context.plan_rel,
-                plan_revision: context.plan_document.plan_revision,
-                plan_fingerprint: expected_plan_fingerprint,
-                source_spec_path: &context.plan_document.source_spec_path,
-                source_spec_revision: context.plan_document.source_spec_revision,
-                source_spec_fingerprint: expected_spec_fingerprint,
-                task: *task,
-                step: *step,
+        if contract_scope.is_empty() {
+            return;
+        }
+
+        let expected_packet_fingerprints: BTreeSet<String> = contract_scope
+            .iter()
+            .map(|(task, step)| {
+                compute_packet_fingerprint(PacketFingerprintInput {
+                    plan_path: &context.plan_rel,
+                    plan_revision: context.plan_document.plan_revision,
+                    plan_fingerprint: expected_plan_fingerprint,
+                    source_spec_path: &context.plan_document.source_spec_path,
+                    source_spec_revision: context.plan_document.source_spec_revision,
+                    source_spec_fingerprint: expected_spec_fingerprint,
+                    task: *task,
+                    step: *step,
+                })
             })
-        })
-        .collect();
-    let declared_packet_fingerprints: BTreeSet<String> = contract
-        .source_task_packet_fingerprints
-        .iter()
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect();
-    if declared_packet_fingerprints != expected_packet_fingerprints {
-        gate.fail(
-            FailureClass::StaleProvenance,
-            "contract_task_packet_scope_mismatch",
-            "Execution contract source task packet fingerprints do not match the approved plan slice coverage scope.",
-            "Regenerate the contract so source task packet fingerprints resolve from the approved plan/slice task coverage.",
-        );
+            .collect();
+        let declared_packet_fingerprints: BTreeSet<String> = contract
+            .source_task_packet_fingerprints
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if declared_packet_fingerprints != expected_packet_fingerprints {
+            gate.fail(
+                FailureClass::StaleProvenance,
+                "contract_task_packet_scope_mismatch",
+                "Execution contract source task packet fingerprints do not match the approved plan slice coverage scope.",
+                "Regenerate the contract so source task packet fingerprints resolve from the approved plan/slice task coverage.",
+            );
+        }
     }
 }
 
@@ -742,140 +756,142 @@ pub(crate) fn require_active_contract_state(
     state: &GateAuthorityState,
     gate: &mut GateState,
 ) -> Option<ActiveContractState> {
-    let contract_path = state
-        .active_contract_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let contract_fingerprint = state
-        .active_contract_fingerprint
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+    {
+        let contract_path = state
+            .active_contract_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let contract_fingerprint = state
+            .active_contract_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
 
-    let Some(contract_path) = contract_path else {
-        gate.fail(
-            FailureClass::NonAuthoritativeArtifact,
-            "active_contract_missing",
-            "Authoritative harness state is missing active_contract_path.",
-            "Publish authoritative state with a valid active_contract_path before evaluator or handoff gates.",
-        );
-        return None;
-    };
-    let Some(contract_fingerprint) = contract_fingerprint else {
-        gate.fail(
-            FailureClass::NonAuthoritativeArtifact,
-            "active_contract_missing",
-            "Authoritative harness state is missing active_contract_fingerprint.",
-            "Publish authoritative state with a valid active_contract_fingerprint before evaluator or handoff gates.",
-        );
-        return None;
-    };
+        let Some(contract_path) = contract_path else {
+            gate.fail(
+                FailureClass::NonAuthoritativeArtifact,
+                "active_contract_missing",
+                "Authoritative harness state is missing active_contract_path.",
+                "Publish authoritative state with a valid active_contract_path before evaluator or handoff gates.",
+            );
+            return None;
+        };
+        let Some(contract_fingerprint) = contract_fingerprint else {
+            gate.fail(
+                FailureClass::NonAuthoritativeArtifact,
+                "active_contract_missing",
+                "Authoritative harness state is missing active_contract_fingerprint.",
+                "Publish authoritative state with a valid active_contract_fingerprint before evaluator or handoff gates.",
+            );
+            return None;
+        };
 
-    if contract_path.contains('/') || contract_path.contains('\\') {
-        gate.fail(
-            FailureClass::NonAuthoritativeArtifact,
-            "active_contract_missing",
-            "Authoritative harness state active_contract_path must reference an authoritative artifact file name.",
-            "Repair active_contract_path to point at the authoritative artifact file name and retry the gate command.",
-        );
-        return None;
-    }
+        if contract_path.contains('/') || contract_path.contains('\\') {
+            gate.fail(
+                FailureClass::NonAuthoritativeArtifact,
+                "active_contract_missing",
+                "Authoritative harness state active_contract_path must reference an authoritative artifact file name.",
+                "Repair active_contract_path to point at the authoritative artifact file name and retry the gate command.",
+            );
+            return None;
+        }
 
-    let expected_file_name = format!("contract-{contract_fingerprint}.md");
-    if contract_path != expected_file_name {
-        gate.fail(
-            FailureClass::NonAuthoritativeArtifact,
-            "active_contract_fingerprint_mismatch",
-            "Authoritative harness state active_contract_path does not match the active contract fingerprint-derived authoritative artifact path.",
-            "Republish authoritative harness state so active_contract_path and active_contract_fingerprint refer to the same authoritative artifact.",
-        );
-        return None;
-    }
+        let expected_file_name = format!("contract-{contract_fingerprint}.md");
+        if contract_path != expected_file_name {
+            gate.fail(
+                FailureClass::NonAuthoritativeArtifact,
+                "active_contract_fingerprint_mismatch",
+                "Authoritative harness state active_contract_path does not match the active contract fingerprint-derived authoritative artifact path.",
+                "Republish authoritative harness state so active_contract_path and active_contract_fingerprint refer to the same authoritative artifact.",
+            );
+            return None;
+        }
 
-    let active_contract_abs = harness_authoritative_artifact_path(
-        &context.runtime.state_dir,
-        &context.runtime.repo_slug,
-        &context.runtime.branch_name,
-        contract_path,
-    );
-    if !active_contract_abs.is_file() {
-        gate.fail(
-            FailureClass::NonAuthoritativeArtifact,
-            "active_contract_missing",
-            format!(
-                "Active authoritative contract path does not exist: {}",
-                active_contract_abs.display()
-            ),
-            "Restore the active authoritative contract artifact before evaluator or handoff gates.",
+        let active_contract_abs = harness_authoritative_artifact_path(
+            &context.runtime.state_dir,
+            &context.runtime.repo_slug,
+            &context.runtime.branch_name,
+            contract_path,
         );
-        return None;
-    }
-
-    let contract_source = match fs::read_to_string(&active_contract_abs) {
-        Ok(source) => source,
-        Err(error) => {
+        if !active_contract_abs.is_file() {
             gate.fail(
                 FailureClass::NonAuthoritativeArtifact,
                 "active_contract_missing",
                 format!(
-                    "Could not read active authoritative contract {}: {error}",
+                    "Active authoritative contract path does not exist: {}",
                     active_contract_abs.display()
                 ),
-                "Restore the active authoritative contract artifact readability before evaluator or handoff gates.",
+                "Restore the active authoritative contract artifact before evaluator or handoff gates.",
             );
             return None;
         }
-    };
 
-    let contract = match read_execution_contract(&active_contract_abs) {
-        Ok(contract) => contract,
-        Err(error) => {
+        let contract_source = match fs::read_to_string(&active_contract_abs) {
+            Ok(source) => source,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::NonAuthoritativeArtifact,
+                    "active_contract_missing",
+                    format!(
+                        "Could not read active authoritative contract {}: {error}",
+                        active_contract_abs.display()
+                    ),
+                    "Restore the active authoritative contract artifact readability before evaluator or handoff gates.",
+                );
+                return None;
+            }
+        };
+
+        let contract = match read_execution_contract(&active_contract_abs) {
+            Ok(contract) => contract,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::NonAuthoritativeArtifact,
+                    "active_contract_missing",
+                    format!(
+                        "Active authoritative contract {} is malformed: {error}",
+                        active_contract_abs.display()
+                    ),
+                    "Repair the active authoritative contract artifact and retry evaluator or handoff gates.",
+                );
+                return None;
+            }
+        };
+
+        let canonical_contract_fingerprint = verify_declared_fingerprint(
+            &contract_source,
+            "Contract Fingerprint",
+            &contract.contract_fingerprint,
+            "active_contract_fingerprint_mismatch",
+            "active_contract_fingerprint_mismatch",
+            "active contract",
+            gate,
+        )?;
+
+        if contract_fingerprint != canonical_contract_fingerprint {
             gate.fail(
                 FailureClass::NonAuthoritativeArtifact,
-                "active_contract_missing",
-                format!(
-                    "Active authoritative contract {} is malformed: {error}",
-                    active_contract_abs.display()
-                ),
-                "Repair the active authoritative contract artifact and retry evaluator or handoff gates.",
+                "active_contract_fingerprint_mismatch",
+                "Authoritative harness state active_contract_fingerprint does not match active contract content at active_contract_path.",
+                "Republish authoritative harness state so active_contract_fingerprint matches the active contract artifact content.",
             );
             return None;
         }
-    };
 
-    let canonical_contract_fingerprint = verify_declared_fingerprint(
-        &contract_source,
-        "Contract Fingerprint",
-        &contract.contract_fingerprint,
-        "active_contract_fingerprint_mismatch",
-        "active_contract_fingerprint_mismatch",
-        "active contract",
-        gate,
-    )?;
-
-    if contract_fingerprint != canonical_contract_fingerprint {
-        gate.fail(
-            FailureClass::NonAuthoritativeArtifact,
-            "active_contract_fingerprint_mismatch",
-            "Authoritative harness state active_contract_fingerprint does not match active contract content at active_contract_path.",
-            "Republish authoritative harness state so active_contract_fingerprint matches the active contract artifact content.",
+        validate_contract_provenance(context, &contract, gate);
+        validate_harness_provenance(
+            &contract.generated_by,
+            FailureClass::NonHarnessProvenance,
+            "active_contract_non_harness_provenance",
+            gate,
         );
-        return None;
+
+        Some(ActiveContractState {
+            fingerprint: canonical_contract_fingerprint,
+            contract,
+        })
     }
-
-    validate_contract_provenance(context, &contract, gate);
-    validate_harness_provenance(
-        &contract.generated_by,
-        FailureClass::NonHarnessProvenance,
-        "active_contract_non_harness_provenance",
-        gate,
-    );
-
-    Some(ActiveContractState {
-        fingerprint: canonical_contract_fingerprint,
-        contract,
-    })
 }
 
 fn validate_authoritative_ordering(
@@ -902,294 +918,301 @@ pub(crate) fn validate_evaluator_semantics(
     contract: &ExecutionContract,
     gate: &mut GateState,
 ) {
-    let contract_criteria: BTreeMap<&str, &crate::contracts::harness::ContractCriterion> = contract
-        .criteria
-        .iter()
-        .map(|criterion| (criterion.criterion_id.as_str(), criterion))
-        .collect();
-    let required_criterion_ids: BTreeSet<&str> = contract
-        .criteria
-        .iter()
-        .filter(|criterion| {
-            criterion
+    {
+        let contract_criteria: BTreeMap<&str, &crate::contracts::harness::ContractCriterion> =
+            contract
+                .criteria
+                .iter()
+                .map(|criterion| (criterion.criterion_id.as_str(), criterion))
+                .collect();
+        let required_criterion_ids: BTreeSet<&str> = contract
+            .criteria
+            .iter()
+            .filter(|criterion| {
+                criterion
+                    .verifier_types
+                    .iter()
+                    .any(|kind| kind == &report.evaluator_kind)
+            })
+            .map(|criterion| criterion.criterion_id.as_str())
+            .collect();
+        let mut reported_criterion_ids: BTreeSet<&str> = BTreeSet::new();
+        let evidence_ref_ids: BTreeSet<&str> = report
+            .evidence_refs
+            .iter()
+            .map(|evidence| evidence.evidence_ref_id.as_str())
+            .collect();
+        let affected_steps: BTreeSet<&str> =
+            report.affected_steps.iter().map(String::as_str).collect();
+        let authoritative_artifact_fingerprints =
+            load_authoritative_artifact_fingerprints(context, gate);
+
+        for result in &report.criterion_results {
+            reported_criterion_ids.insert(result.criterion_id.as_str());
+            if !matches!(result.status.as_str(), "pass" | "fail" | "blocked") {
+                gate.fail(
+                    FailureClass::EvaluationMismatch,
+                    "evaluation_criterion_status_illegal",
+                    "Evaluation criterion status must be pass, fail, or blocked.",
+                    "Regenerate criterion_results with legal criterion statuses.",
+                );
+            }
+            let Some(contract_criterion) = contract_criteria.get(result.criterion_id.as_str())
+            else {
+                gate.fail(
+                    FailureClass::EvaluationMismatch,
+                    "evaluation_unknown_criterion_id",
+                    "Evaluation report includes a criterion_id that is not declared in the active contract criteria.",
+                    "Regenerate the report so criterion_results reference only active contract criteria.",
+                );
+                continue;
+            };
+
+            if !contract_criterion
                 .verifier_types
                 .iter()
                 .any(|kind| kind == &report.evaluator_kind)
-        })
-        .map(|criterion| criterion.criterion_id.as_str())
-        .collect();
-    let mut reported_criterion_ids: BTreeSet<&str> = BTreeSet::new();
-    let evidence_ref_ids: BTreeSet<&str> = report
-        .evidence_refs
-        .iter()
-        .map(|evidence| evidence.evidence_ref_id.as_str())
-        .collect();
-    let affected_steps: BTreeSet<&str> = report.affected_steps.iter().map(String::as_str).collect();
-    let authoritative_artifact_fingerprints =
-        load_authoritative_artifact_fingerprints(context, gate);
+            {
+                gate.fail(
+                    FailureClass::EvaluationMismatch,
+                    "evaluation_criterion_evaluator_mismatch",
+                    "Evaluation report includes criterion results that are not owned by this evaluator kind in the active contract.",
+                    "Regenerate criterion_results so each criterion belongs to the current evaluator kind.",
+                );
+            }
 
-    for result in &report.criterion_results {
-        reported_criterion_ids.insert(result.criterion_id.as_str());
-        if !matches!(result.status.as_str(), "pass" | "fail" | "blocked") {
-            gate.fail(
-                FailureClass::EvaluationMismatch,
-                "evaluation_criterion_status_illegal",
-                "Evaluation criterion status must be pass, fail, or blocked.",
-                "Regenerate criterion_results with legal criterion statuses.",
-            );
-        }
-        let Some(contract_criterion) = contract_criteria.get(result.criterion_id.as_str()) else {
-            gate.fail(
-                FailureClass::EvaluationMismatch,
-                "evaluation_unknown_criterion_id",
-                "Evaluation report includes a criterion_id that is not declared in the active contract criteria.",
-                "Regenerate the report so criterion_results reference only active contract criteria.",
-            );
-            continue;
-        };
-
-        if !contract_criterion
-            .verifier_types
-            .iter()
-            .any(|kind| kind == &report.evaluator_kind)
-        {
-            gate.fail(
-                FailureClass::EvaluationMismatch,
-                "evaluation_criterion_evaluator_mismatch",
-                "Evaluation report includes criterion results that are not owned by this evaluator kind in the active contract.",
-                "Regenerate criterion_results so each criterion belongs to the current evaluator kind.",
-            );
-        }
-
-        if !result
-            .requirement_ids
-            .iter()
-            .all(|requirement| contract_criterion.requirement_ids.contains(requirement))
-        {
-            gate.fail(
-                FailureClass::EvaluationMismatch,
-                "evaluation_requirement_mapping_invalid",
-                "Criterion result requirement_ids are not a subset of the active contract criterion requirement mappings.",
-                "Regenerate criterion_results with requirement_ids mapped to the active contract criterion.",
-            );
-        }
-        if !result
-            .covered_steps
-            .iter()
-            .all(|step| contract_criterion.covered_steps.contains(step))
-        {
-            gate.fail(
-                FailureClass::EvaluationMismatch,
-                "evaluation_covered_step_mapping_invalid",
-                "Criterion result covered_steps are not a subset of the active contract criterion covered steps.",
-                "Regenerate criterion_results with covered_steps mapped to the active contract criterion.",
-            );
-        }
-        if matches!(result.status.as_str(), "fail" | "blocked")
-            && (result.requirement_ids.is_empty() || result.covered_steps.is_empty())
-        {
-            gate.fail(
-                FailureClass::EvaluationMismatch,
-                "evaluation_non_passing_scope_incomplete",
-                "Failing or blocked criterion results must include requirement_ids and covered_steps.",
-                "Regenerate failing criterion_results with explicit requirement and covered-step mappings.",
-            );
-        }
-        if matches!(result.status.as_str(), "fail" | "blocked")
-            && result
+            if !result
+                .requirement_ids
+                .iter()
+                .all(|requirement| contract_criterion.requirement_ids.contains(requirement))
+            {
+                gate.fail(
+                    FailureClass::EvaluationMismatch,
+                    "evaluation_requirement_mapping_invalid",
+                    "Criterion result requirement_ids are not a subset of the active contract criterion requirement mappings.",
+                    "Regenerate criterion_results with requirement_ids mapped to the active contract criterion.",
+                );
+            }
+            if !result
                 .covered_steps
                 .iter()
-                .any(|step| !affected_steps.contains(step.as_str()))
+                .all(|step| contract_criterion.covered_steps.contains(step))
+            {
+                gate.fail(
+                    FailureClass::EvaluationMismatch,
+                    "evaluation_covered_step_mapping_invalid",
+                    "Criterion result covered_steps are not a subset of the active contract criterion covered steps.",
+                    "Regenerate criterion_results with covered_steps mapped to the active contract criterion.",
+                );
+            }
+            if matches!(result.status.as_str(), "fail" | "blocked")
+                && (result.requirement_ids.is_empty() || result.covered_steps.is_empty())
+            {
+                gate.fail(
+                    FailureClass::EvaluationMismatch,
+                    "evaluation_non_passing_scope_incomplete",
+                    "Failing or blocked criterion results must include requirement_ids and covered_steps.",
+                    "Regenerate failing criterion_results with explicit requirement and covered-step mappings.",
+                );
+            }
+            if matches!(result.status.as_str(), "fail" | "blocked")
+                && result
+                    .covered_steps
+                    .iter()
+                    .any(|step| !affected_steps.contains(step.as_str()))
+            {
+                gate.fail(
+                    FailureClass::EvaluationMismatch,
+                    "evaluation_non_passing_affected_steps_missing",
+                    "Failing or blocked criterion_results covered_steps must be represented in affected_steps.",
+                    "Regenerate affected_steps to include every covered step from fail/blocked criterion_results.",
+                );
+            }
+
+            for evidence_ref in &result.evidence_refs {
+                if !evidence_ref_ids.contains(evidence_ref.as_str()) {
+                    gate.fail(
+                        FailureClass::EvaluationMismatch,
+                        "evaluation_criterion_evidence_ref_missing",
+                        "Criterion result references an evidence ref id that is not present in evidence_refs[].",
+                        "Regenerate criterion_results so all referenced evidence refs are declared in evidence_refs[].",
+                    );
+                }
+            }
+        }
+
+        for required in required_criterion_ids {
+            if !reported_criterion_ids.contains(required) {
+                gate.fail(
+                    FailureClass::EvaluationMismatch,
+                    "evaluation_missing_criterion_result",
+                    "Evaluation report is missing a criterion result required by the active contract and evaluator kind.",
+                    "Regenerate the report with criterion_results for every contract criterion assigned to this evaluator.",
+                );
+            }
+        }
+
+        if report
+            .affected_steps
+            .iter()
+            .any(|step| !contract.covered_steps.contains(step))
         {
             gate.fail(
                 FailureClass::EvaluationMismatch,
-                "evaluation_non_passing_affected_steps_missing",
-                "Failing or blocked criterion_results covered_steps must be represented in affected_steps.",
-                "Regenerate affected_steps to include every covered step from fail/blocked criterion_results.",
+                "evaluation_affected_step_out_of_scope",
+                "Evaluation report affected_steps contains steps outside the active contract coverage scope.",
+                "Regenerate affected_steps using only active contract covered_steps.",
             );
         }
 
-        for evidence_ref in &result.evidence_refs {
-            if !evidence_ref_ids.contains(evidence_ref.as_str()) {
-                gate.fail(
-                    FailureClass::EvaluationMismatch,
-                    "evaluation_criterion_evidence_ref_missing",
-                    "Criterion result references an evidence ref id that is not present in evidence_refs[].",
-                    "Regenerate criterion_results so all referenced evidence refs are declared in evidence_refs[].",
-                );
-            }
-        }
-    }
-
-    for required in required_criterion_ids {
-        if !reported_criterion_ids.contains(required) {
+        if report.verdict == "pass"
+            && report
+                .criterion_results
+                .iter()
+                .any(|result| result.status != "pass")
+        {
             gate.fail(
                 FailureClass::EvaluationMismatch,
-                "evaluation_missing_criterion_result",
-                "Evaluation report is missing a criterion result required by the active contract and evaluator kind.",
-                "Regenerate the report with criterion_results for every contract criterion assigned to this evaluator.",
+                "evaluation_pass_contains_non_passing_criteria",
+                "Evaluation verdict is pass but criterion_results still include fail or blocked statuses.",
+                "Regenerate the report so a pass verdict has only passing criterion_results.",
             );
         }
-    }
-
-    if report
-        .affected_steps
-        .iter()
-        .any(|step| !contract.covered_steps.contains(step))
-    {
-        gate.fail(
-            FailureClass::EvaluationMismatch,
-            "evaluation_affected_step_out_of_scope",
-            "Evaluation report affected_steps contains steps outside the active contract coverage scope.",
-            "Regenerate affected_steps using only active contract covered_steps.",
-        );
-    }
-
-    if report.verdict == "pass"
-        && report
-            .criterion_results
-            .iter()
-            .any(|result| result.status != "pass")
-    {
-        gate.fail(
-            FailureClass::EvaluationMismatch,
-            "evaluation_pass_contains_non_passing_criteria",
-            "Evaluation verdict is pass but criterion_results still include fail or blocked statuses.",
-            "Regenerate the report so a pass verdict has only passing criterion_results.",
-        );
-    }
-    if matches!(report.verdict.as_str(), "fail" | "blocked")
-        && report
-            .criterion_results
-            .iter()
-            .all(|result| result.status == "pass")
-    {
-        gate.fail(
-            FailureClass::EvaluationMismatch,
-            "evaluation_non_pass_verdict_all_pass_criteria",
-            "Evaluation verdict is fail or blocked but every criterion_result status is pass.",
-            "Regenerate the report so fail/blocked verdicts include at least one non-passing criterion_result.",
-        );
-    }
-
-    let contract_evidence_requirements: BTreeMap<
-        &str,
-        &crate::contracts::harness::EvidenceRequirement,
-    > = contract
-        .evidence_requirements
-        .iter()
-        .map(|requirement| (requirement.evidence_requirement_id.as_str(), requirement))
-        .collect();
-
-    for reference in &report.evidence_refs {
-        validate_evidence_ref(
-            reference,
-            authoritative_artifact_fingerprints.as_ref(),
-            gate,
-        );
-        for requirement_id in &reference.evidence_requirement_ids {
-            if !contract_evidence_requirements.contains_key(requirement_id.as_str()) {
-                gate.fail(
-                    FailureClass::EvaluationMismatch,
-                    "evaluation_unknown_evidence_requirement",
-                    "Evaluation evidence ref references an unknown contract evidence requirement id.",
-                    "Regenerate evidence_refs so evidence_requirement_ids map to active contract evidence requirements.",
-                );
-            }
+        if matches!(report.verdict.as_str(), "fail" | "blocked")
+            && report
+                .criterion_results
+                .iter()
+                .all(|result| result.status == "pass")
+        {
+            gate.fail(
+                FailureClass::EvaluationMismatch,
+                "evaluation_non_pass_verdict_all_pass_criteria",
+                "Evaluation verdict is fail or blocked but every criterion_result status is pass.",
+                "Regenerate the report so fail/blocked verdicts include at least one non-passing criterion_result.",
+            );
         }
-    }
 
-    for requirement in &contract.evidence_requirements {
-        let matching_refs: Vec<_> = report
-            .evidence_refs
+        let contract_evidence_requirements: BTreeMap<
+            &str,
+            &crate::contracts::harness::EvidenceRequirement,
+        > = contract
+            .evidence_requirements
             .iter()
-            .filter(|reference| {
-                reference.kind.as_str() == requirement.kind.as_str()
-                    && reference
-                        .evidence_requirement_ids
-                        .iter()
-                        .any(|requirement_id| {
-                            requirement_id == &requirement.evidence_requirement_id
-                        })
-            })
+            .map(|requirement| (requirement.evidence_requirement_id.as_str(), requirement))
             .collect();
 
-        let satisfies = match requirement.satisfaction_rule.as_str() {
-            "all_of" => {
-                let requirement_ids_satisfied =
-                    requirement.requirement_ids.iter().all(|required| {
-                        matching_refs.iter().any(|reference| {
-                            reference
+        for reference in &report.evidence_refs {
+            validate_evidence_ref(
+                reference,
+                authoritative_artifact_fingerprints.as_ref(),
+                gate,
+            );
+            for requirement_id in &reference.evidence_requirement_ids {
+                if !contract_evidence_requirements.contains_key(requirement_id.as_str()) {
+                    gate.fail(
+                        FailureClass::EvaluationMismatch,
+                        "evaluation_unknown_evidence_requirement",
+                        "Evaluation evidence ref references an unknown contract evidence requirement id.",
+                        "Regenerate evidence_refs so evidence_requirement_ids map to active contract evidence requirements.",
+                    );
+                }
+            }
+        }
+
+        for requirement in &contract.evidence_requirements {
+            let matching_refs: Vec<_> = report
+                .evidence_refs
+                .iter()
+                .filter(|reference| {
+                    reference.kind.as_str() == requirement.kind.as_str()
+                        && reference
+                            .evidence_requirement_ids
+                            .iter()
+                            .any(|requirement_id| {
+                                requirement_id == &requirement.evidence_requirement_id
+                            })
+                })
+                .collect();
+
+            let satisfies = match requirement.satisfaction_rule.as_str() {
+                "all_of" => {
+                    let requirement_ids_satisfied =
+                        requirement.requirement_ids.iter().all(|required| {
+                            matching_refs.iter().any(|reference| {
+                                reference
+                                    .requirement_ids
+                                    .iter()
+                                    .any(|value| value == required)
+                            })
+                        });
+                    let covered_steps_satisfied =
+                        requirement.covered_steps.iter().all(|covered_step| {
+                            matching_refs.iter().any(|reference| {
+                                reference
+                                    .covered_steps
+                                    .iter()
+                                    .any(|value| value == covered_step)
+                            })
+                        });
+                    if requirement.requirement_ids.is_empty()
+                        && requirement.covered_steps.is_empty()
+                    {
+                        !matching_refs.is_empty()
+                    } else {
+                        requirement_ids_satisfied && covered_steps_satisfied
+                    }
+                }
+                "any_of" => {
+                    matching_refs.iter().any(|reference| {
+                        requirement.requirement_ids.is_empty()
+                            || reference
                                 .requirement_ids
                                 .iter()
-                                .any(|value| value == required)
-                        })
-                    });
-                let covered_steps_satisfied =
-                    requirement.covered_steps.iter().all(|covered_step| {
-                        matching_refs.iter().any(|reference| {
-                            reference
+                                .any(|id| requirement.requirement_ids.contains(id))
+                    }) && matching_refs.iter().any(|reference| {
+                        requirement.covered_steps.is_empty()
+                            || reference
                                 .covered_steps
                                 .iter()
-                                .any(|value| value == covered_step)
-                        })
-                    });
-                if requirement.requirement_ids.is_empty() && requirement.covered_steps.is_empty() {
-                    !matching_refs.is_empty()
-                } else {
-                    requirement_ids_satisfied && covered_steps_satisfied
-                }
-            }
-            "any_of" => {
-                matching_refs.iter().any(|reference| {
-                    requirement.requirement_ids.is_empty()
-                        || reference
-                            .requirement_ids
-                            .iter()
-                            .any(|id| requirement.requirement_ids.contains(id))
-                }) && matching_refs.iter().any(|reference| {
-                    requirement.covered_steps.is_empty()
-                        || reference
-                            .covered_steps
-                            .iter()
-                            .any(|step| requirement.covered_steps.contains(step))
-                })
-            }
-            "per_step" => {
-                if requirement.covered_steps.is_empty() {
-                    !matching_refs.is_empty()
-                } else {
-                    requirement.covered_steps.iter().all(|covered_step| {
-                        matching_refs.iter().any(|reference| {
-                            reference
-                                .covered_steps
-                                .iter()
-                                .any(|value| value == covered_step)
-                        })
+                                .any(|step| requirement.covered_steps.contains(step))
                     })
                 }
-            }
-            _ => {
+                "per_step" => {
+                    if requirement.covered_steps.is_empty() {
+                        !matching_refs.is_empty()
+                    } else {
+                        requirement.covered_steps.iter().all(|covered_step| {
+                            matching_refs.iter().any(|reference| {
+                                reference
+                                    .covered_steps
+                                    .iter()
+                                    .any(|value| value == covered_step)
+                            })
+                        })
+                    }
+                }
+                _ => {
+                    gate.fail(
+                        FailureClass::EvaluationMismatch,
+                        "invalid_evidence_satisfaction_rule",
+                        "Active contract uses an unsupported evidence satisfaction_rule.",
+                        "Repair the active contract evidence requirement satisfaction_rule to one of all_of, any_of, or per_step.",
+                    );
+                    false
+                }
+            };
+
+            if !satisfies {
                 gate.fail(
                     FailureClass::EvaluationMismatch,
-                    "invalid_evidence_satisfaction_rule",
-                    "Active contract uses an unsupported evidence satisfaction_rule.",
-                    "Repair the active contract evidence requirement satisfaction_rule to one of all_of, any_of, or per_step.",
+                    "missing_required_evidence",
+                    format!(
+                        "Required evidence requirement `{}` is unsatisfied by evaluation evidence refs.",
+                        requirement.evidence_requirement_id
+                    ),
+                    "Provide evidence refs that satisfy every required contract evidence requirement.",
                 );
-                false
             }
-        };
-
-        if !satisfies {
-            gate.fail(
-                FailureClass::EvaluationMismatch,
-                "missing_required_evidence",
-                format!(
-                    "Required evidence requirement `{}` is unsatisfied by evaluation evidence refs.",
-                    requirement.evidence_requirement_id
-                ),
-                "Provide evidence refs that satisfy every required contract evidence requirement.",
-            );
         }
     }
 }
@@ -1439,7 +1462,7 @@ fn validate_artifact_source(
 }
 
 fn is_lower_hex_fingerprint(value: &str) -> bool {
-    value.len() == 64 && value.as_bytes().iter().all(|byte| byte.is_ascii_hexdigit())
+    value.len() == 64 && value.as_bytes().iter().all(u8::is_ascii_hexdigit)
 }
 
 struct AuthoritativeArtifactFingerprints {
@@ -1447,6 +1470,7 @@ struct AuthoritativeArtifactFingerprints {
     evidence_artifact_fingerprints_by_kind: BTreeMap<String, BTreeSet<String>>,
 }
 
+#[derive(Clone, Copy)]
 enum EvidenceLocatorResolutionScope {
     AnyAuthoritativeArtifact,
     EvidenceArtifactsWithKind(&'static str),
@@ -1461,7 +1485,7 @@ enum AuthoritativePublicArtifactKind {
 }
 
 impl AuthoritativePublicArtifactKind {
-    fn fingerprint_header_label(&self) -> &'static str {
+    const fn fingerprint_header_label(self) -> &'static str {
         match self {
             Self::Contract => "Contract Fingerprint",
             Self::Evaluation => "Report Fingerprint",
@@ -1707,10 +1731,9 @@ fn canonical_fingerprint_without_header_value(source: &str, header_label: &str) 
     let mut replaced = false;
 
     for segment in source.split_inclusive('\n') {
-        let (line, newline) = match segment.strip_suffix('\n') {
-            Some(line) => (line, "\n"),
-            None => (segment, ""),
-        };
+        let (line, newline) = segment
+            .strip_suffix('\n')
+            .map_or((segment, ""), |line| (line, "\n"));
 
         if !replaced && let Some(marker_index) = line.find(&marker) {
             let after_marker = &line[marker_index + marker.len()..];

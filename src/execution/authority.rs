@@ -41,6 +41,8 @@ use crate::paths::{
     harness_telemetry_counters_path, normalize_identifier_token, write_atomic as write_atomic_file,
 };
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_contract(
     runtime: &ExecutionRuntime,
     args: &RecordContractArgs,
@@ -98,9 +100,16 @@ pub fn record_contract(
         return Ok(gate.finish());
     }
 
-    record_authoritative_contract(runtime, contract, source, contract_fingerprint)
+    Ok(record_authoritative_contract(
+        runtime,
+        contract,
+        &source,
+        contract_fingerprint,
+    ))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_evaluation(
     runtime: &ExecutionRuntime,
     args: &RecordEvaluationArgs,
@@ -177,9 +186,17 @@ pub fn record_evaluation(
         return Ok(gate.finish());
     }
 
-    record_authoritative_evaluation(runtime, context, report, source, report_fingerprint)
+    Ok(record_authoritative_evaluation(
+        runtime,
+        context,
+        report,
+        &source,
+        report_fingerprint,
+    ))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_handoff(
     runtime: &ExecutionRuntime,
     args: &RecordHandoffArgs,
@@ -245,7 +262,13 @@ pub fn record_handoff(
         return Ok(gate.finish());
     }
 
-    record_authoritative_handoff(runtime, context, handoff, source, handoff_fingerprint)
+    Ok(record_authoritative_handoff(
+        runtime,
+        context,
+        handoff,
+        &source,
+        &handoff_fingerprint,
+    ))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -314,10 +337,12 @@ struct MutableHarnessState {
     extra: BTreeMap<String, Value>,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn ensure_preflight_authoritative_bootstrap(
     runtime: &ExecutionRuntime,
     run_identity: RunIdentitySnapshot,
-    chunk_id: ChunkId,
+    chunk_id: &ChunkId,
 ) -> Result<(), JsonFailure> {
     validate_safe_identifier_token(run_identity.execution_run_id.as_str(), "execution_run_id")?;
     validate_safe_identifier_token(chunk_id.as_str(), "chunk_id")?;
@@ -343,8 +368,9 @@ pub fn ensure_preflight_authoritative_bootstrap(
     let mut state = match load_mutable_harness_state(&state_path) {
         Ok(state) => state,
         Err(MutableStateLoadError::MissingState) => MutableHarnessState::default(),
-        Err(MutableStateLoadError::Unreadable(message))
-        | Err(MutableStateLoadError::Malformed(message)) => {
+        Err(
+            MutableStateLoadError::Unreadable(message) | MutableStateLoadError::Malformed(message),
+        ) => {
             return Err(JsonFailure::new(
                 FailureClass::MalformedExecutionState,
                 message,
@@ -415,7 +441,7 @@ impl MutableHarnessState {
             .unwrap_or(INITIAL_AUTHORITATIVE_SEQUENCE)
     }
 
-    fn set_latest_sequence(&mut self, value: u64) {
+    const fn set_latest_sequence(&mut self, value: u64) {
         self.latest_authoritative_sequence = Some(value);
         self.authoritative_sequence = Some(value);
     }
@@ -445,9 +471,9 @@ impl MutableHarnessState {
 fn record_authoritative_contract(
     runtime: &ExecutionRuntime,
     contract: ExecutionContract,
-    source: String,
+    source: &str,
     contract_fingerprint: String,
-) -> Result<GateResult, JsonFailure> {
+) -> GateResult {
     let contract_sequence = contract.authoritative_sequence;
     let contract_verifiers = contract.verifiers;
     let retry_budget = contract.retry_budget;
@@ -460,7 +486,7 @@ fn record_authoritative_contract(
         source,
         &artifact_file_name,
         contract_sequence,
-        ObservabilityRecordContext {
+        &ObservabilityRecordContext {
             command_name: "record-contract",
             active_contract_fingerprint: Some(contract_fingerprint),
         },
@@ -469,9 +495,13 @@ fn record_authoritative_contract(
             state.harness_phase = Some(String::from("contract_approved"));
             state.active_contract_path = Some(artifact_file_name_for_state.clone());
             state.active_contract_fingerprint = Some(contract_fingerprint_for_state.clone());
-            state.required_evaluator_kinds = contract_verifiers.clone();
+            state
+                .required_evaluator_kinds
+                .clone_from(&contract_verifiers);
             state.completed_evaluator_kinds.clear();
-            state.pending_evaluator_kinds = state.required_evaluator_kinds.clone();
+            state
+                .pending_evaluator_kinds
+                .clone_from(&state.required_evaluator_kinds);
             state.non_passing_evaluator_kinds.clear();
             state.failed_evaluator_kinds.clear();
             state.blocked_evaluator_kinds.clear();
@@ -493,9 +523,9 @@ fn record_authoritative_evaluation(
     runtime: &ExecutionRuntime,
     context: ExecutionContext,
     report: EvaluationReport,
-    source: String,
+    source: &str,
     report_fingerprint: String,
-) -> Result<GateResult, JsonFailure> {
+) -> GateResult {
     let artifact_file_name = format!("evaluation-{report_fingerprint}.md");
     let evaluator_kind = report.evaluator_kind.clone();
     let verdict = report.verdict.clone();
@@ -512,9 +542,9 @@ fn record_authoritative_evaluation(
         .map(|result| result.criterion_id.clone())
         .collect::<Vec<_>>();
     let artifact_file_name_for_state = artifact_file_name.clone();
-    let report_fingerprint_for_state = report_fingerprint.clone();
-    let evaluator_kind_for_state = evaluator_kind.clone();
-    let verdict_for_state = verdict.clone();
+    let report_fingerprint_for_state = report_fingerprint;
+    let evaluator_kind_for_state = evaluator_kind;
+    let verdict_for_state = verdict;
     let report_for_revalidation = report;
     let context_for_revalidation = context;
     record_authoritative_mutation(
@@ -522,7 +552,7 @@ fn record_authoritative_evaluation(
         source,
         &artifact_file_name,
         report_sequence,
-        ObservabilityRecordContext {
+        &ObservabilityRecordContext {
             command_name: "record-evaluation",
             active_contract_fingerprint: None,
         },
@@ -532,7 +562,7 @@ fn record_authoritative_evaluation(
                 state,
                 &report_for_revalidation,
                 gate,
-            )
+            );
         },
         move |state| {
             bootstrap_verdict_buckets_from_legacy_state(runtime, state);
@@ -595,9 +625,9 @@ fn record_authoritative_handoff(
     runtime: &ExecutionRuntime,
     context: ExecutionContext,
     handoff: ExecutionHandoff,
-    source: String,
-    handoff_fingerprint: String,
-) -> Result<GateResult, JsonFailure> {
+    source: &str,
+    handoff_fingerprint: &str,
+) -> GateResult {
     let artifact_file_name = format!("handoff-{handoff_fingerprint}.md");
     let open_criteria = handoff.open_criteria.clone();
     let handoff_for_revalidation = handoff;
@@ -607,7 +637,7 @@ fn record_authoritative_handoff(
         source,
         &artifact_file_name,
         handoff_for_revalidation.authoritative_sequence,
-        ObservabilityRecordContext {
+        &ObservabilityRecordContext {
             command_name: "record-handoff",
             active_contract_fingerprint: None,
         },
@@ -617,12 +647,12 @@ fn record_authoritative_handoff(
                 state,
                 &handoff_for_revalidation,
                 gate,
-            )
+            );
         },
         move |state| {
             state.harness_phase = Some(String::from("executing"));
             state.handoff_required = false;
-            state.open_failed_criteria = open_criteria.clone();
+            state.open_failed_criteria.clone_from(&open_criteria);
         },
     )
 }
@@ -752,132 +782,170 @@ fn gate_authority_state_from_locked(state: &MutableHarnessState) -> GateAuthorit
 
 fn record_authoritative_mutation<FRevalidate, FApply>(
     runtime: &ExecutionRuntime,
-    source: String,
+    source: &str,
     artifact_file_name: &str,
     authoritative_sequence: u64,
-    observability: ObservabilityRecordContext,
+    observability: &ObservabilityRecordContext,
     revalidate_locked_state: FRevalidate,
     apply_transition: FApply,
-) -> Result<GateResult, JsonFailure>
+) -> GateResult
 where
     FRevalidate: Fn(&MutableHarnessState, &mut GateState),
     FApply: Fn(&mut MutableHarnessState),
 {
-    let mut gate = GateState::default();
-    let _lock = match WriteAuthorityLock::acquire(runtime) {
-        Ok(lock) => lock,
-        Err(AuthorityLockAcquireError::Conflict) => {
-            gate.fail(
-                FailureClass::ConcurrentWriterConflict,
-                "concurrent_writer_conflict",
-                "Another runtime writer currently holds authoritative mutation authority.",
-                "Retry once the active writer releases authority.",
-            );
-            return Ok(gate.finish());
-        }
-        Err(AuthorityLockAcquireError::Io(message)) => {
-            gate.fail(
-                FailureClass::PartialAuthoritativeMutation,
-                "write_authority_unavailable",
-                message,
-                "Restore write-authority lock access and retry the authoritative record command.",
-            );
-            return Ok(gate.finish());
-        }
-    };
+    {
+        let mut gate = GateState::default();
+        let _lock = match WriteAuthorityLock::acquire(runtime) {
+            Ok(lock) => lock,
+            Err(AuthorityLockAcquireError::Conflict) => {
+                gate.fail(
+                    FailureClass::ConcurrentWriterConflict,
+                    "concurrent_writer_conflict",
+                    "Another runtime writer currently holds authoritative mutation authority.",
+                    "Retry once the active writer releases authority.",
+                );
+                return gate.finish();
+            }
+            Err(AuthorityLockAcquireError::Io(message)) => {
+                gate.fail(
+                    FailureClass::PartialAuthoritativeMutation,
+                    "write_authority_unavailable",
+                    message,
+                    "Restore write-authority lock access and retry the authoritative record command.",
+                );
+                return gate.finish();
+            }
+        };
 
-    let state_path =
-        harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
-    let mut state = match load_mutable_harness_state(&state_path) {
-        Ok(state) => state,
-        Err(MutableStateLoadError::MissingState) => {
+        let state_path =
+            harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
+        let mut state = match load_mutable_harness_state(&state_path) {
+            Ok(state) => state,
+            Err(MutableStateLoadError::MissingState) => {
+                gate.fail(
+                    FailureClass::NonAuthoritativeArtifact,
+                    "active_contract_missing",
+                    format!(
+                        "No authoritative harness state was found at {}.",
+                        state_path.display()
+                    ),
+                    "Publish authoritative harness state before contract, evaluator, or handoff gate commands.",
+                );
+                return gate.finish();
+            }
+            Err(MutableStateLoadError::Unreadable(message)) => {
+                gate.fail(
+                    FailureClass::NonAuthoritativeArtifact,
+                    "active_contract_missing",
+                    message,
+                    "Restore authoritative harness state readability and retry the gate command.",
+                );
+                return gate.finish();
+            }
+            Err(MutableStateLoadError::Malformed(message)) => {
+                gate.fail(
+                    FailureClass::NonAuthoritativeArtifact,
+                    "active_contract_missing",
+                    message,
+                    "Repair the authoritative harness state and republish valid authoritative execution state before gating artifacts.",
+                );
+                return gate.finish();
+            }
+        };
+        state.normalize_defaults();
+        revalidate_locked_state(&state, &mut gate);
+        if !gate.allowed {
+            return gate.finish();
+        }
+
+        let latest_sequence = state.latest_sequence();
+        if authoritative_sequence < latest_sequence {
             gate.fail(
-                FailureClass::NonAuthoritativeArtifact,
-                "active_contract_missing",
+                FailureClass::AuthoritativeOrderingMismatch,
+                "authoritative_sequence_stale",
                 format!(
-                    "No authoritative harness state was found at {}.",
-                    state_path.display()
+                    "Candidate authoritative sequence {authoritative_sequence} is older than latest authoritative sequence {latest_sequence}."
                 ),
-                "Publish authoritative harness state before contract, evaluator, or handoff gate commands.",
+                "Regenerate the artifact with a fresh authoritative sequence before recording.",
             );
-            return Ok(gate.finish());
+            return gate.finish();
         }
-        Err(MutableStateLoadError::Unreadable(message)) => {
-            gate.fail(
-                FailureClass::NonAuthoritativeArtifact,
-                "active_contract_missing",
-                message,
-                "Restore authoritative harness state readability and retry the gate command.",
-            );
-            return Ok(gate.finish());
-        }
-        Err(MutableStateLoadError::Malformed(message)) => {
-            gate.fail(
-                FailureClass::NonAuthoritativeArtifact,
-                "active_contract_missing",
-                message,
-                "Repair the authoritative harness state and republish valid authoritative execution state before gating artifacts.",
-            );
-            return Ok(gate.finish());
-        }
-    };
-    state.normalize_defaults();
-    revalidate_locked_state(&state, &mut gate);
-    if !gate.allowed {
-        return Ok(gate.finish());
-    }
 
-    let latest_sequence = state.latest_sequence();
-    if authoritative_sequence < latest_sequence {
-        gate.fail(
-            FailureClass::AuthoritativeOrderingMismatch,
-            "authoritative_sequence_stale",
-            format!(
-                "Candidate authoritative sequence {authoritative_sequence} is older than latest authoritative sequence {latest_sequence}."
-            ),
-            "Regenerate the artifact with a fresh authoritative sequence before recording.",
+        let target_path = harness_authoritative_artifact_path(
+            &runtime.state_dir,
+            &runtime.repo_slug,
+            &runtime.branch_name,
+            artifact_file_name,
         );
-        return Ok(gate.finish());
-    }
+        let mut artifact_written_this_call = false;
+        let target_exists = match fs::read_to_string(&target_path) {
+            Ok(existing) if existing == source => true,
+            Ok(_) => {
+                gate.fail(
+                    FailureClass::IdempotencyConflict,
+                    "idempotency_conflict",
+                    "Authoritative artifact replay conflicts with an existing recorded artifact.",
+                    "Regenerate the artifact or record a new authoritative sequence.",
+                );
+                return gate.finish();
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => false,
+            Err(error) => {
+                gate.fail(
+                    FailureClass::PartialAuthoritativeMutation,
+                    "authoritative_target_unreadable",
+                    format!(
+                        "Could not read prior authoritative artifact {}: {error}",
+                        target_path.display()
+                    ),
+                    "Restore authoritative artifact directory readability and retry.",
+                );
+                return gate.finish();
+            }
+        };
 
-    let target_path = harness_authoritative_artifact_path(
-        &runtime.state_dir,
-        &runtime.repo_slug,
-        &runtime.branch_name,
-        artifact_file_name,
-    );
-    let mut artifact_written_this_call = false;
-    let target_exists = match fs::read_to_string(&target_path) {
-        Ok(existing) if existing == source => true,
-        Ok(_) => {
+        if authoritative_sequence == latest_sequence {
+            let mut expected_replay_state = state.clone();
+            apply_transition(&mut expected_replay_state);
+            if state == expected_replay_state {
+                if !target_exists && let Err(error) = write_atomic_file(&target_path, source) {
+                    gate.fail(
+                        FailureClass::PartialAuthoritativeMutation,
+                        "authoritative_publish_failed",
+                        format!(
+                            "Could not publish authoritative artifact {}: {error}",
+                            target_path.display()
+                        ),
+                        "Restore authoritative artifact write access and retry.",
+                    );
+                }
+                if gate.allowed
+                    && let Err(error) = persist_dependency_index_after_authoritative_record(
+                        runtime,
+                        artifact_file_name,
+                        authoritative_sequence,
+                    )
+                {
+                    gate.fail(
+                        FailureClass::PartialAuthoritativeMutation,
+                        "dependency_index_publish_failed",
+                        error,
+                        "Restore dependency-index write access and retry.",
+                    );
+                }
+                return gate.finish();
+            }
             gate.fail(
-                FailureClass::IdempotencyConflict,
-                "idempotency_conflict",
-                "Authoritative artifact replay conflicts with an existing recorded artifact.",
-                "Regenerate the artifact or record a new authoritative sequence.",
+                FailureClass::AuthoritativeOrderingMismatch,
+                "authoritative_sequence_replay_mismatch",
+                "Authoritative replay sequence matches the latest sequence but the authoritative state transition does not match the replay artifact.",
+                "Regenerate a new higher authoritative sequence for this artifact mutation.",
             );
-            return Ok(gate.finish());
+            return gate.finish();
         }
-        Err(error) if error.kind() == ErrorKind::NotFound => false,
-        Err(error) => {
-            gate.fail(
-                FailureClass::PartialAuthoritativeMutation,
-                "authoritative_target_unreadable",
-                format!(
-                    "Could not read prior authoritative artifact {}: {error}",
-                    target_path.display()
-                ),
-                "Restore authoritative artifact directory readability and retry.",
-            );
-            return Ok(gate.finish());
-        }
-    };
 
-    if authoritative_sequence == latest_sequence {
-        let mut expected_replay_state = state.clone();
-        apply_transition(&mut expected_replay_state);
-        if state == expected_replay_state {
-            if !target_exists && let Err(error) = write_atomic_file(&target_path, &source) {
+        if !target_exists {
+            if let Err(error) = write_atomic_file(&target_path, source) {
                 gate.fail(
                     FailureClass::PartialAuthoritativeMutation,
                     "authoritative_publish_failed",
@@ -887,114 +955,80 @@ where
                     ),
                     "Restore authoritative artifact write access and retry.",
                 );
+                return gate.finish();
             }
-            if gate.allowed
-                && let Err(error) = persist_dependency_index_after_authoritative_record(
-                    runtime,
-                    artifact_file_name,
-                    authoritative_sequence,
-                )
-            {
+            artifact_written_this_call = true;
+        }
+
+        apply_transition(&mut state);
+        state.set_latest_sequence(authoritative_sequence);
+        set_dependency_index_state_healthy(&mut state);
+        if let Err(error) = persist_dependency_index_after_authoritative_record(
+            runtime,
+            artifact_file_name,
+            authoritative_sequence,
+        ) {
+            if artifact_written_this_call {
+                let _ = fs::remove_file(&target_path);
+            }
+            gate.fail(
+                FailureClass::PartialAuthoritativeMutation,
+                "dependency_index_publish_failed",
+                error,
+                "Restore dependency-index write access and retry.",
+            );
+            return gate.finish();
+        }
+        if let Err(error) = persist_observability_after_authoritative_record(
+            runtime,
+            &state,
+            authoritative_sequence,
+            observability,
+        ) {
+            if artifact_written_this_call {
+                let _ = fs::remove_file(&target_path);
+            }
+            gate.fail(
+                FailureClass::PartialAuthoritativeMutation,
+                "observability_publish_failed",
+                error,
+                "Restore observability sink write access and retry.",
+            );
+            return gate.finish();
+        }
+
+        let serialized = match serde_json::to_string_pretty(&state) {
+            Ok(serialized) => serialized,
+            Err(error) => {
                 gate.fail(
                     FailureClass::PartialAuthoritativeMutation,
-                    "dependency_index_publish_failed",
-                    error,
-                    "Restore dependency-index write access and retry.",
+                    "authoritative_state_serialize_failed",
+                    format!("Could not serialize authoritative harness state mutation: {error}"),
+                    "Repair authoritative harness state serialization and retry the record command.",
                 );
+                return gate.finish();
             }
-            return Ok(gate.finish());
-        }
-        gate.fail(
-            FailureClass::AuthoritativeOrderingMismatch,
-            "authoritative_sequence_replay_mismatch",
-            "Authoritative replay sequence matches the latest sequence but the authoritative state transition does not match the replay artifact.",
-            "Regenerate a new higher authoritative sequence for this artifact mutation.",
-        );
-        return Ok(gate.finish());
-    }
-
-    if !target_exists {
-        if let Err(error) = write_atomic_file(&target_path, &source) {
+        };
+        if let Err(error) = write_atomic_file(&state_path, serialized) {
+            if artifact_written_this_call {
+                let _ = fs::remove_file(&target_path);
+            }
             gate.fail(
                 FailureClass::PartialAuthoritativeMutation,
-                "authoritative_publish_failed",
+                "authoritative_state_publish_failed",
                 format!(
-                    "Could not publish authoritative artifact {}: {error}",
-                    target_path.display()
+                    "Could not publish authoritative harness state {}: {error}",
+                    state_path.display()
                 ),
-                "Restore authoritative artifact write access and retry.",
+                "Restore authoritative state write access and retry.",
             );
-            return Ok(gate.finish());
         }
-        artifact_written_this_call = true;
+        gate.finish()
     }
-
-    apply_transition(&mut state);
-    state.set_latest_sequence(authoritative_sequence);
-    set_dependency_index_state_healthy(&mut state);
-    if let Err(error) = persist_dependency_index_after_authoritative_record(
-        runtime,
-        artifact_file_name,
-        authoritative_sequence,
-    ) {
-        if artifact_written_this_call {
-            let _ = fs::remove_file(&target_path);
-        }
-        gate.fail(
-            FailureClass::PartialAuthoritativeMutation,
-            "dependency_index_publish_failed",
-            error,
-            "Restore dependency-index write access and retry.",
-        );
-        return Ok(gate.finish());
-    }
-    if let Err(error) = persist_observability_after_authoritative_record(
-        runtime,
-        &state,
-        authoritative_sequence,
-        &observability,
-    ) {
-        if artifact_written_this_call {
-            let _ = fs::remove_file(&target_path);
-        }
-        gate.fail(
-            FailureClass::PartialAuthoritativeMutation,
-            "observability_publish_failed",
-            error,
-            "Restore observability sink write access and retry.",
-        );
-        return Ok(gate.finish());
-    }
-
-    let serialized = match serde_json::to_string_pretty(&state) {
-        Ok(serialized) => serialized,
-        Err(error) => {
-            gate.fail(
-                FailureClass::PartialAuthoritativeMutation,
-                "authoritative_state_serialize_failed",
-                format!("Could not serialize authoritative harness state mutation: {error}"),
-                "Repair authoritative harness state serialization and retry the record command.",
-            );
-            return Ok(gate.finish());
-        }
-    };
-    if let Err(error) = write_atomic_file(&state_path, serialized) {
-        if artifact_written_this_call {
-            let _ = fs::remove_file(&target_path);
-        }
-        gate.fail(
-            FailureClass::PartialAuthoritativeMutation,
-            "authoritative_state_publish_failed",
-            format!(
-                "Could not publish authoritative harness state {}: {error}",
-                state_path.display()
-            ),
-            "Restore authoritative state write access and retry.",
-        );
-    }
-    Ok(gate.finish())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn write_authoritative_worktree_lease_artifact(
     runtime: &ExecutionRuntime,
     lease: &WorktreeLease,
@@ -1063,6 +1097,8 @@ pub fn write_authoritative_worktree_lease_artifact(
     Ok(artifact_path)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn write_authoritative_unit_review_receipt_artifact(
     runtime: &ExecutionRuntime,
     execution_run_id: &str,
@@ -1094,12 +1130,7 @@ pub fn write_authoritative_unit_review_receipt_artifact(
         execution_unit_id,
         expected_strategy_checkpoint_fingerprint,
     )?;
-    let Some(canonical_fingerprint) = canonical_unit_review_receipt_fingerprint(source) else {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            "Could not derive canonical authoritative unit-review receipt fingerprint.",
-        ));
-    };
+    let canonical_fingerprint = canonical_unit_review_receipt_fingerprint(source);
     if unit_review_receipt_declared_fingerprint(source).as_deref() != Some(&canonical_fingerprint) {
         return Err(JsonFailure::new(
             FailureClass::ArtifactIntegrityMismatch,
@@ -1130,10 +1161,12 @@ pub fn write_authoritative_unit_review_receipt_artifact(
     Ok(artifact_path)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn persist_active_worktree_lease_index(
     runtime: &ExecutionRuntime,
     run_identity: RunIdentitySnapshot,
-    chunk_id: ChunkId,
+    chunk_id: &ChunkId,
     active_worktree_lease_fingerprints: Vec<String>,
     active_worktree_lease_bindings: Vec<WorktreeLeaseBindingSnapshot>,
 ) -> Result<(), JsonFailure> {
@@ -1215,8 +1248,9 @@ fn load_mutable_harness_state_for_authoritative_write(
                 ),
             ));
         }
-        Err(MutableStateLoadError::Unreadable(message))
-        | Err(MutableStateLoadError::Malformed(message)) => {
+        Err(
+            MutableStateLoadError::Unreadable(message) | MutableStateLoadError::Malformed(message),
+        ) => {
             return Err(JsonFailure::new(
                 FailureClass::MalformedExecutionState,
                 message,
@@ -1656,6 +1690,7 @@ fn is_lower_hex_ascii(byte: u8) -> bool {
     byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
 }
 
+#[derive(Debug)]
 enum MutableStateLoadError {
     MissingState,
     Unreadable(String),
@@ -1713,13 +1748,13 @@ fn canonical_worktree_lease_fingerprint(source: &str) -> Option<String> {
         .map(|bytes| sha256_hex(&bytes))
 }
 
-fn canonical_unit_review_receipt_fingerprint(source: &str) -> Option<String> {
+fn canonical_unit_review_receipt_fingerprint(source: &str) -> String {
     let filtered = source
         .lines()
         .filter(|line| !line.trim().starts_with("**Receipt Fingerprint:**"))
         .collect::<Vec<_>>()
         .join("\n");
-    Some(sha256_hex(filtered.as_bytes()))
+    sha256_hex(filtered.as_bytes())
 }
 
 fn unit_review_receipt_declared_fingerprint(source: &str) -> Option<String> {
@@ -2011,10 +2046,9 @@ fn canonical_fingerprint_without_header_value(source: &str, header_label: &str) 
     let mut replaced = false;
 
     for segment in source.split_inclusive('\n') {
-        let (line, newline) = match segment.strip_suffix('\n') {
-            Some(line) => (line, "\n"),
-            None => (segment, ""),
-        };
+        let (line, newline) = segment
+            .strip_suffix('\n')
+            .map_or((segment, ""), |line| (line, "\n"));
 
         if !replaced && let Some(marker_index) = line.find(&marker) {
             let after_marker = &line[marker_index + marker.len()..];
@@ -2109,8 +2143,8 @@ impl WriteAuthorityLock {
                         return Err(AuthorityLockAcquireError::Conflict);
                     }
                     match fs::remove_file(&lock_path) {
-                        Ok(()) => continue,
-                        Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => continue,
+                        Ok(()) => {}
+                        Err(remove_error) if remove_error.kind() == ErrorKind::NotFound => {}
                         Err(remove_error) => {
                             return Err(AuthorityLockAcquireError::Io(format!(
                                 "Could not reclaim stale write-authority lock {}: {remove_error}",
@@ -2151,6 +2185,7 @@ mod tests {
         AuthorityLockAcquireError, MutableStateLoadError, WriteAuthorityLock,
         load_mutable_harness_state,
     };
+    use crate::expect_ext::{ExpectErrExt, ExpectValueExt};
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
@@ -2158,6 +2193,11 @@ mod tests {
 
     use crate::execution::state::ExecutionRuntime;
     use crate::paths::harness_branch_root;
+
+    fn abort_test(message: &str) -> ! {
+        eprintln!("{message}");
+        std::process::abort();
+    }
 
     fn test_runtime(state_dir: &Path) -> ExecutionRuntime {
         ExecutionRuntime {
@@ -2173,7 +2213,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn write_authority_lock_acquire_fails_closed_when_lock_path_is_symlink() {
-        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let tempdir = tempfile::tempdir().expect_or_abort("tempdir should be creatable");
         let runtime = test_runtime(tempdir.path());
         let lock_path =
             harness_branch_root(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name)
@@ -2181,21 +2221,23 @@ mod tests {
         fs::create_dir_all(
             lock_path
                 .parent()
-                .expect("lock path should have a parent directory"),
+                .expect_or_abort("lock path should have a parent directory"),
         )
-        .expect("lock parent should be creatable");
+        .expect_or_abort("lock parent should be creatable");
         let lock_target_path = tempdir.path().join("lock-target.pid");
         fs::write(&lock_target_path, format!("pid={}\n", std::process::id()))
-            .expect("lock target should be writable");
+            .expect_or_abort("lock target should be writable");
         symlink(&lock_target_path, &lock_path)
-            .expect("symlink lock path fixture should be creatable");
+            .expect_or_abort("symlink lock path fixture should be creatable");
 
-        let error = match WriteAuthorityLock::acquire(&runtime) {
-            Ok(_lock) => panic!("symlink write-authority lock path must fail closed"),
-            Err(error) => error,
+        let Err(error) = WriteAuthorityLock::acquire(&runtime) else {
+            abort_test("symlink write-authority lock path must fail closed");
         };
-        let AuthorityLockAcquireError::Io(message) = error else {
-            panic!("symlink write-authority lock path must surface an IO trust-boundary error");
+        let message = match error {
+            AuthorityLockAcquireError::Io(message) => message,
+            AuthorityLockAcquireError::Conflict => abort_test(
+                "symlink write-authority lock path must surface an IO trust-boundary error",
+            ),
         };
         assert!(
             message.contains("must not be a symlink"),
@@ -2206,18 +2248,23 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn mutable_harness_state_load_fails_closed_when_state_path_is_symlink() {
-        let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
+        let tempdir = tempfile::tempdir().expect_or_abort("tempdir should be creatable");
         let state_path = tempdir.path().join("state.json");
         let state_target_path = tempdir.path().join("state-target.json");
         fs::write(&state_target_path, r#"{"schema_version":1}"#)
-            .expect("state target should be writable");
+            .expect_or_abort("state target should be writable");
         symlink(&state_target_path, &state_path)
-            .expect("symlink authoritative state fixture should be creatable");
+            .expect_or_abort("symlink authoritative state fixture should be creatable");
 
         let error = load_mutable_harness_state(&state_path)
-            .expect_err("mutable authoritative state loading must reject symlink paths");
-        let MutableStateLoadError::Unreadable(message) = error else {
-            panic!("symlink authoritative state should fail as unreadable trust-boundary input");
+            .expect_err_or_abort("mutable authoritative state loading must reject symlink paths");
+        let message = match error {
+            MutableStateLoadError::Unreadable(message) => message,
+            MutableStateLoadError::MissingState | MutableStateLoadError::Malformed(_) => {
+                abort_test(
+                    "symlink authoritative state should fail as unreadable trust-boundary input",
+                )
+            }
         };
         assert!(
             message.contains("must not be a symlink"),

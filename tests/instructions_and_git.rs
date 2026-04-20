@@ -1,3 +1,5 @@
+//! Instructions and git integration/benchmark crate.
+use featureforge::expect_ext::{ExpectErrExt as _, ExpectValueExt as _};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -9,19 +11,19 @@ use featureforge::instructions::{collect_active_instruction_files, parse_protect
 fn unique_temp_dir(label: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
+        .expect_or_abort("system clock should be after unix epoch")
         .as_nanos();
     let dir = std::env::temp_dir().join(format!("featureforge-{label}-{nanos}"));
-    fs::create_dir_all(&dir).expect("temp dir should be created");
+    fs::create_dir_all(&dir).expect_or_abort("temp dir should be created");
     dir
 }
 
 fn write_file(path: impl AsRef<Path>, contents: &str) {
     let path = path.as_ref();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("parent directories should exist");
+        fs::create_dir_all(parent).expect_or_abort("parent directories should exist");
     }
-    fs::write(path, contents).expect("file should be written");
+    fs::write(path, contents).expect_or_abort("file should be written");
 }
 
 fn run_git(repo_dir: &Path, args: &[&str]) {
@@ -29,7 +31,7 @@ fn run_git(repo_dir: &Path, args: &[&str]) {
         .args(args)
         .current_dir(repo_dir)
         .output()
-        .expect("git should launch for test setup");
+        .expect_or_abort("git should launch for test setup");
     assert!(
         output.status.success(),
         "git {:?} should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -44,7 +46,7 @@ fn run_git(repo_dir: &Path, args: &[&str]) {
 fn instruction_chain_respects_root_then_nested_order() {
     let repo_root = unique_temp_dir("instruction-order");
     let start_dir = repo_root.join("apps/cli");
-    fs::create_dir_all(&start_dir).expect("nested start dir should exist");
+    fs::create_dir_all(&start_dir).expect_or_abort("nested start dir should exist");
 
     write_file(repo_root.join("AGENTS.md"), "# root agents\n");
     write_file(repo_root.join("AGENTS.override.md"), "# root override\n");
@@ -66,15 +68,16 @@ fn instruction_chain_respects_root_then_nested_order() {
         "# nested override\n",
     );
 
-    let canonical_repo_root = fs::canonicalize(&repo_root).expect("repo root should canonicalize");
+    let canonical_repo_root =
+        fs::canonicalize(&repo_root).expect_or_abort("repo root should canonicalize");
     let files =
         collect_active_instruction_files(canonical_repo_root.as_path(), start_dir.as_path())
-            .unwrap();
+            .unwrap_or_abort();
     let rel_files: Vec<_> = files
         .iter()
         .map(|path: &std::path::PathBuf| {
             path.strip_prefix(&canonical_repo_root)
-                .expect("instruction file should stay under repo root")
+                .expect_or_abort("instruction file should stay under repo root")
                 .to_string_lossy()
                 .replace('\\', "/")
         })
@@ -102,8 +105,9 @@ fn invalid_protected_branch_instruction_fails_closed() {
         "FeatureForge protected branches: release/*\n",
     );
 
-    let files = collect_active_instruction_files(repo_root.as_path(), repo_root.as_path()).unwrap();
-    let err = parse_protected_branches(&files).unwrap_err();
+    let files = collect_active_instruction_files(repo_root.as_path(), repo_root.as_path())
+        .unwrap_or_abort();
+    let err = parse_protected_branches(&files).unwrap_err_or_abort();
     assert_eq!(err.failure_class(), "InstructionParseFailed");
 }
 
@@ -122,7 +126,7 @@ fn detached_head_uses_current_branch_name() {
     run_git(&repo_root, &["commit", "-m", "init"]);
     run_git(&repo_root, &["checkout", "--detach", "HEAD"]);
 
-    let identity = discover_repo_identity(repo_root.as_path()).unwrap();
+    let identity = discover_repo_identity(repo_root.as_path()).unwrap_or_abort();
     assert_eq!(identity.branch_name, "current");
 }
 
@@ -131,7 +135,7 @@ fn source_files_reject_git_cli_and_shell_eval_shortcuts() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     for relative in ["src/git/mod.rs", "src/instructions/mod.rs", "src/lib.rs"] {
         let contents = fs::read_to_string(manifest_dir.join(relative))
-            .expect("foundation source file should exist");
+            .expect_or_abort("foundation source file should exist");
         for forbidden in [
             "Command::new(\"git\")",
             "git rev-parse",

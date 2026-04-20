@@ -1,3 +1,4 @@
+//! Execution query integration/benchmark crate.
 #[path = "support/featureforge.rs"]
 mod featureforge_support;
 #[path = "support/process.rs"]
@@ -7,6 +8,7 @@ mod runtime_support;
 #[path = "support/workflow.rs"]
 mod workflow_support;
 
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -22,7 +24,7 @@ use serde_json::Value;
 use workflow_support::{init_repo, install_full_contract_ready_artifacts};
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
-const TASK_BOUNDARY_BLOCKED_PLAN_SOURCE: &str = r#"# Runtime Integration Hardening Implementation Plan
+const TASK_BOUNDARY_BLOCKED_PLAN_SOURCE: &str = r"# Runtime Integration Hardening Implementation Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
@@ -74,7 +76,7 @@ Task 1 -> Task 2
 - Modify: `tests/execution_query.rs`
 
 - [ ] **Step 1: Start the follow-on task**
-"#;
+";
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     let mut command_args = vec!["plan", "execution"];
@@ -95,7 +97,7 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+        .unwrap_or_else(|error| featureforge::abort!("{context} should emit valid json: {error}"))
 }
 
 fn run_workflow_operator_json(
@@ -126,7 +128,7 @@ fn run_workflow_operator_json(
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+        .unwrap_or_else(|error| featureforge::abort!("{context} should emit valid json: {error}"))
 }
 
 fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
@@ -138,126 +140,139 @@ fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
 }
 
 fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, operator: &Value) {
-    assert_eq!(
-        operator["phase"],
-        Value::from(routing.phase.clone()),
-        "routing phase should match workflow/operator"
-    );
-    assert_eq!(
-        operator["phase_detail"],
-        Value::from(routing.phase_detail.clone()),
-        "routing phase detail should match workflow/operator",
-    );
-    assert_eq!(
-        operator["review_state_status"],
-        Value::from(routing.review_state_status.clone()),
-        "routing review-state status should match workflow/operator",
-    );
-    assert_eq!(
-        operator.get("qa_requirement").and_then(Value::as_str),
-        routing.qa_requirement.as_deref(),
-        "routing QA requirement should match workflow/operator",
-    );
-    assert_eq!(
-        operator["follow_up_override"],
-        Value::from(routing.follow_up_override.clone()),
-        "routing follow-up override should match workflow/operator",
-    );
-    assert_eq!(
-        operator
-            .get("finish_review_gate_pass_branch_closure_id")
-            .and_then(Value::as_str),
-        routing.finish_review_gate_pass_branch_closure_id.as_deref(),
-        "routing finish-review gate pass identity should match workflow/operator",
-    );
-    assert_eq!(
-        operator["next_action"],
-        Value::from(routing.next_action.clone()),
-        "routing next action should match workflow/operator",
-    );
-    assert_eq!(
-        operator.get("recommended_command").and_then(Value::as_str),
-        routing.recommended_command.as_deref(),
-        "routing recommended command should match workflow/operator",
-    );
-    assert_eq!(
-        operator.get("blocking_scope").and_then(Value::as_str),
-        routing.blocking_scope.as_deref(),
-        "routing blocking scope should match workflow/operator",
-    );
-    assert_eq!(
-        operator
-            .get("blocking_task")
-            .and_then(Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok()),
-        routing.blocking_task,
-        "routing blocking task should match workflow/operator",
-    );
-    assert_eq!(
-        operator.get("external_wait_state").and_then(Value::as_str),
-        routing.external_wait_state.as_deref(),
-        "routing external wait state should match workflow/operator",
-    );
-    let operator_blocking_reason_codes = operator
-        .get("blocking_reason_codes")
-        .and_then(Value::as_array)
-        .map(|values| {
-            values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    assert_eq!(
-        operator_blocking_reason_codes, routing.blocking_reason_codes,
-        "routing compact blocking reason codes should match workflow/operator",
-    );
-    assert_eq!(
-        routing.recording_context.as_ref().map(|context| (
-            context.task_number,
-            context.dispatch_id.as_deref(),
-            context.branch_closure_id.as_deref(),
-        )),
-        operator.get("recording_context").map(|context| (
-            context
-                .get("task_number")
+    {
+        assert_eq!(
+            operator["phase"],
+            Value::from(routing.phase.clone()),
+            "routing phase should match workflow/operator"
+        );
+        assert_eq!(
+            operator["phase_detail"],
+            Value::from(routing.phase_detail.clone()),
+            "routing phase detail should match workflow/operator",
+        );
+        assert_eq!(
+            operator["review_state_status"],
+            Value::from(routing.review_state_status.clone()),
+            "routing review-state status should match workflow/operator",
+        );
+        assert_eq!(
+            operator.get("qa_requirement").and_then(Value::as_str),
+            routing.qa_requirement.as_deref(),
+            "routing QA requirement should match workflow/operator",
+        );
+        assert_eq!(
+            operator["follow_up_override"],
+            Value::from(routing.follow_up_override.clone()),
+            "routing follow-up override should match workflow/operator",
+        );
+        assert_eq!(
+            operator
+                .get("finish_review_gate_pass_branch_closure_id")
+                .and_then(Value::as_str),
+            routing.finish_review_gate_pass_branch_closure_id.as_deref(),
+            "routing finish-review gate pass identity should match workflow/operator",
+        );
+        assert_eq!(
+            operator["next_action"],
+            Value::from(routing.next_action.clone()),
+            "routing next action should match workflow/operator",
+        );
+        assert_eq!(
+            operator.get("recommended_command").and_then(Value::as_str),
+            routing.recommended_command.as_deref(),
+            "routing recommended command should match workflow/operator",
+        );
+        assert_eq!(
+            operator.get("blocking_scope").and_then(Value::as_str),
+            routing.blocking_scope.as_deref(),
+            "routing blocking scope should match workflow/operator",
+        );
+        assert_eq!(
+            operator
+                .get("blocking_task")
                 .and_then(Value::as_u64)
-                .map(|value| value as u32),
-            context.get("dispatch_id").and_then(Value::as_str),
-            context.get("branch_closure_id").and_then(Value::as_str),
-        )),
-        "routing recording context payload should match workflow/operator",
-    );
-    assert_eq!(
-        routing.execution_command_context.as_ref().map(|context| (
-            context.command_kind.as_str(),
-            context.task_number,
-            context.step_id,
-        )),
-        operator.get("execution_command_context").map(|context| (
-            context
-                .get("command_kind")
-                .and_then(Value::as_str)
-                .expect("operator execution command context should expose command_kind"),
-            context
-                .get("task_number")
-                .and_then(Value::as_u64)
-                .map(|value| value as u32),
-            context
-                .get("step_id")
-                .and_then(Value::as_u64)
-                .map(|value| value as u32),
-        )),
-        "routing execution command context payload should match workflow/operator",
-    );
+                .and_then(|value| u32::try_from(value).ok()),
+            routing.blocking_task,
+            "routing blocking task should match workflow/operator",
+        );
+        assert_eq!(
+            operator.get("external_wait_state").and_then(Value::as_str),
+            routing.external_wait_state.as_deref(),
+            "routing external wait state should match workflow/operator",
+        );
+        let operator_blocking_reason_codes = operator
+            .get("blocking_reason_codes")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            operator_blocking_reason_codes, routing.blocking_reason_codes,
+            "routing compact blocking reason codes should match workflow/operator",
+        );
+        assert_eq!(
+            routing.recording_context.as_ref().map(|context| (
+                context.task_number,
+                context.dispatch_id.as_deref(),
+                context.branch_closure_id.as_deref(),
+            )),
+            operator.get("recording_context").map(|context| (
+                context
+                    .get("task_number")
+                    .and_then(Value::as_u64)
+                    .map(|value| {
+                        u32::try_from(value).expect_or_abort(
+                            "operator recording_context task_number should fit into u32",
+                        )
+                    }),
+                context.get("dispatch_id").and_then(Value::as_str),
+                context.get("branch_closure_id").and_then(Value::as_str),
+            )),
+            "routing recording context payload should match workflow/operator",
+        );
+        assert_eq!(
+            routing.execution_command_context.as_ref().map(|context| (
+                context.command_kind.as_str(),
+                context.task_number,
+                context.step_id,
+            )),
+            operator.get("execution_command_context").map(|context| (
+                context
+                    .get("command_kind")
+                    .and_then(Value::as_str)
+                    .expect_or_abort(
+                        "operator execution command context should expose command_kind"
+                    ),
+                context
+                    .get("task_number")
+                    .and_then(Value::as_u64)
+                    .map(|value| {
+                        u32::try_from(value).expect_or_abort(
+                            "operator execution_command_context task_number should fit into u32",
+                        )
+                    }),
+                context.get("step_id").and_then(Value::as_u64).map(|value| {
+                    u32::try_from(value).expect_or_abort(
+                        "operator execution_command_context step_id should fit into u32",
+                    )
+                }),
+            )),
+            "routing execution command context payload should match workflow/operator",
+        );
+    }
 }
 
 fn setup_execution_in_progress(repo: &Path, state: &Path) {
     install_full_contract_ready_artifacts(repo);
     prepare_preflight_acceptance_workspace(repo, "execution-query-active-context");
     fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
-        .expect("execution-query active-context plan should be writable");
+        .expect_or_abort("execution-query active-context plan should be writable");
     let status_before_begin = run_plan_execution_json(
         repo,
         state,
@@ -291,128 +306,130 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
             "--expect-execution-fingerprint",
             status_before_begin["execution_fingerprint"]
                 .as_str()
-                .expect("status should expose execution_fingerprint"),
+                .expect_or_abort("status should expose execution_fingerprint"),
         ],
         "begin for active-context fixture",
     );
 }
 
 fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
-    install_full_contract_ready_artifacts(repo);
-    fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
-        .expect("task-boundary blocked plan fixture should write");
-    prepare_preflight_acceptance_workspace(repo, "execution-query-task-boundary");
+    {
+        install_full_contract_ready_artifacts(repo);
+        fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_BLOCKED_PLAN_SOURCE)
+            .expect_or_abort("task-boundary blocked plan fixture should write");
+        prepare_preflight_acceptance_workspace(repo, "execution-query-task-boundary");
 
-    let status_before_begin = run_plan_execution_json(
-        repo,
-        state,
-        &["status", "--plan", PLAN_REL],
-        "status before task-boundary fixture execution",
-    );
-    let preflight = run_plan_execution_json(
-        repo,
-        state,
-        &["preflight", "--plan", PLAN_REL],
-        "preflight for task-boundary fixture execution",
-    );
-    assert_eq!(
-        preflight["allowed"],
-        Value::Bool(true),
-        "preflight should allow task-boundary fixture"
-    );
+        let status_before_begin = run_plan_execution_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "status before task-boundary fixture execution",
+        );
+        let preflight = run_plan_execution_json(
+            repo,
+            state,
+            &["preflight", "--plan", PLAN_REL],
+            "preflight for task-boundary fixture execution",
+        );
+        assert_eq!(
+            preflight["allowed"],
+            Value::Bool(true),
+            "preflight should allow task-boundary fixture"
+        );
 
-    let begin_task1_step1 = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "begin",
-            "--plan",
-            PLAN_REL,
-            "--task",
-            "1",
-            "--step",
-            "1",
-            "--execution-mode",
-            "featureforge:executing-plans",
-            "--expect-execution-fingerprint",
-            status_before_begin["execution_fingerprint"]
-                .as_str()
-                .expect("status should expose execution fingerprint before begin"),
-        ],
-        "begin task 1 step 1 for task-boundary fixture",
-    );
-    let complete_task1_step1 = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "complete",
-            "--plan",
-            PLAN_REL,
-            "--task",
-            "1",
-            "--step",
-            "1",
-            "--source",
-            "featureforge:executing-plans",
-            "--claim",
-            "Completed task 1 step 1 for execution-query task-boundary fixture.",
-            "--manual-verify-summary",
-            "Verified by execution-query task-boundary fixture setup.",
-            "--file",
-            "tests/execution_query.rs",
-            "--expect-execution-fingerprint",
-            begin_task1_step1["execution_fingerprint"]
-                .as_str()
-                .expect("begin should expose execution fingerprint for complete"),
-        ],
-        "complete task 1 step 1 for task-boundary fixture",
-    );
-    let begin_task1_step2 = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "begin",
-            "--plan",
-            PLAN_REL,
-            "--task",
-            "1",
-            "--step",
-            "2",
-            "--execution-mode",
-            "featureforge:executing-plans",
-            "--expect-execution-fingerprint",
-            complete_task1_step1["execution_fingerprint"]
-                .as_str()
-                .expect("complete should expose execution fingerprint for next begin"),
-        ],
-        "begin task 1 step 2 for task-boundary fixture",
-    );
-    run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "complete",
-            "--plan",
-            PLAN_REL,
-            "--task",
-            "1",
-            "--step",
-            "2",
-            "--source",
-            "featureforge:executing-plans",
-            "--claim",
-            "Completed task 1 step 2 for execution-query task-boundary fixture.",
-            "--manual-verify-summary",
-            "Verified by execution-query task-boundary fixture setup.",
-            "--file",
-            "tests/execution_query.rs",
-            "--expect-execution-fingerprint",
-            begin_task1_step2["execution_fingerprint"]
-                .as_str()
-                .expect("begin should expose execution fingerprint for complete"),
-        ],
-        "complete task 1 step 2 for task-boundary fixture",
-    );
+        let begin_task1_step1 = run_plan_execution_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status_before_begin["execution_fingerprint"]
+                    .as_str()
+                    .expect_or_abort("status should expose execution fingerprint before begin"),
+            ],
+            "begin task 1 step 1 for task-boundary fixture",
+        );
+        let complete_task1_step1 = run_plan_execution_json(
+            repo,
+            state,
+            &[
+                "complete",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--source",
+                "featureforge:executing-plans",
+                "--claim",
+                "Completed task 1 step 1 for execution-query task-boundary fixture.",
+                "--manual-verify-summary",
+                "Verified by execution-query task-boundary fixture setup.",
+                "--file",
+                "tests/execution_query.rs",
+                "--expect-execution-fingerprint",
+                begin_task1_step1["execution_fingerprint"]
+                    .as_str()
+                    .expect_or_abort("begin should expose execution fingerprint for complete"),
+            ],
+            "complete task 1 step 1 for task-boundary fixture",
+        );
+        let begin_task1_step2 = run_plan_execution_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                complete_task1_step1["execution_fingerprint"]
+                    .as_str()
+                    .expect_or_abort("complete should expose execution fingerprint for next begin"),
+            ],
+            "begin task 1 step 2 for task-boundary fixture",
+        );
+        run_plan_execution_json(
+            repo,
+            state,
+            &[
+                "complete",
+                "--plan",
+                PLAN_REL,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--source",
+                "featureforge:executing-plans",
+                "--claim",
+                "Completed task 1 step 2 for execution-query task-boundary fixture.",
+                "--manual-verify-summary",
+                "Verified by execution-query task-boundary fixture setup.",
+                "--file",
+                "tests/execution_query.rs",
+                "--expect-execution-fingerprint",
+                begin_task1_step2["execution_fingerprint"]
+                    .as_str()
+                    .expect_or_abort("begin should expose execution fingerprint for complete"),
+            ],
+            "complete task 1 step 2 for task-boundary fixture",
+        );
+    }
 }
 
 #[test]
@@ -425,12 +442,12 @@ fn query_boundary_reports_empty_review_state_before_execution_starts() {
     let runtime = execution_runtime(repo, state);
     let plan = PathBuf::from(PLAN_REL);
     let status_args = StatusArgs {
-        plan: plan.clone(),
+        plan,
         external_review_result_ready: false,
     };
 
     let review_state = query_review_state(&runtime, &status_args)
-        .expect("review-state query should succeed before execution starts");
+        .expect_or_abort("review-state query should succeed before execution starts");
     assert!(
         review_state.current_task_closures.is_empty(),
         "fresh approved plans should not expose current task closures before execution starts",
@@ -449,7 +466,7 @@ fn query_boundary_reports_empty_review_state_before_execution_starts() {
     );
 
     let workflow_state = query_workflow_execution_state(&runtime, PLAN_REL)
-        .expect("workflow query should succeed before execution starts");
+        .expect_or_abort("workflow query should succeed before execution starts");
     assert_eq!(
         workflow_state
             .execution_status
@@ -502,7 +519,7 @@ fn routing_snapshot_matches_workflow_operator_output_before_execution_starts() {
     let plan = PathBuf::from(PLAN_REL);
     let runtime = execution_runtime(repo, state);
     let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), false)
-        .expect("routing query should succeed before execution starts");
+        .expect_or_abort("routing query should succeed before execution starts");
     let operator = run_workflow_operator_json(
         repo,
         state,
@@ -524,7 +541,7 @@ fn routing_snapshot_matches_workflow_operator_execution_command_context_payload(
     let plan = PathBuf::from(PLAN_REL);
     let runtime = execution_runtime(repo, state);
     let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), false)
-        .expect("routing query should succeed after execution has started");
+        .expect_or_abort("routing query should succeed after execution has started");
     let operator = run_workflow_operator_json(
         repo,
         state,
@@ -565,7 +582,9 @@ fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
     let plan = PathBuf::from(PLAN_REL);
     let runtime = execution_runtime(repo, state);
     let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), true)
-        .expect("routing query should succeed for intent-level task-closure recording-ready state");
+        .expect_or_abort(
+            "routing query should succeed for intent-level task-closure recording-ready state",
+        );
     let operator = run_workflow_operator_json(
         repo,
         state,
@@ -581,7 +600,7 @@ fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
     let routing_recording_context = routing
         .recording_context
         .as_ref()
-        .expect("task_closure_recording_ready should include recording_context");
+        .expect_or_abort("task_closure_recording_ready should include recording_context");
     assert_eq!(
         routing_recording_context.task_number,
         Some(1),
@@ -607,7 +626,7 @@ fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocke
     let plan = PathBuf::from(PLAN_REL);
     let runtime = execution_runtime(repo, state);
     let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), false)
-        .expect("routing query should succeed for task-review-dispatch blocked fixture");
+        .expect_or_abort("routing query should succeed for task-review-dispatch blocked fixture");
     let operator = run_workflow_operator_json(
         repo,
         state,
@@ -624,11 +643,13 @@ fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocke
     let review_state = query_review_state(
         &runtime,
         &StatusArgs {
-            plan: plan.clone(),
+            plan,
             external_review_result_ready: false,
         },
     )
-    .expect("review-state query should succeed for FS-07 task-review-dispatch blocked fixture");
+    .expect_or_abort(
+        "review-state query should succeed for FS-07 task-review-dispatch blocked fixture",
+    );
 
     assert_eq!(routing.phase_detail, "task_closure_recording_ready");
     assert_routing_parity_with_operator_json(&routing, &operator);
@@ -656,7 +677,7 @@ fn routing_external_review_ready_without_dispatch_lineage_routes_to_close_curren
     let plan = PathBuf::from(PLAN_REL);
     let runtime = execution_runtime(repo, state);
     let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), true)
-        .expect("routing query should succeed for missing task-dispatch-lineage fixture");
+        .expect_or_abort("routing query should succeed for missing task-dispatch-lineage fixture");
     let operator = run_workflow_operator_json(
         repo,
         state,

@@ -114,7 +114,7 @@ pub(crate) struct BrowserQaWrite<'a> {
 
 pub(crate) fn record_current_task_closure(
     authoritative_state: &mut AuthoritativeTransitionState,
-    input: CurrentTaskClosureWrite<'_>,
+    input: &CurrentTaskClosureWrite<'_>,
 ) -> Result<(), JsonFailure> {
     authoritative_state
         .remove_current_task_closure_results(input.superseded_tasks.iter().copied())?;
@@ -140,7 +140,7 @@ pub(crate) fn record_current_task_closure(
 
 pub(crate) fn record_negative_task_closure(
     authoritative_state: &mut AuthoritativeTransitionState,
-    input: NegativeTaskClosureWrite<'_>,
+    input: &NegativeTaskClosureWrite<'_>,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_task_closure_negative_result(TaskClosureNegativeResultRecord {
         task: input.task,
@@ -157,7 +157,7 @@ pub(crate) fn record_negative_task_closure(
 
 pub(crate) fn record_current_branch_closure(
     authoritative_state: &mut AuthoritativeTransitionState,
-    input: BranchClosureWrite<'_>,
+    input: &BranchClosureWrite<'_>,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_branch_closure(BranchClosureResultRecord {
         branch_closure_id: input.branch_closure_id,
@@ -191,7 +191,7 @@ pub(crate) fn record_current_branch_closure(
 
 pub(crate) fn record_release_readiness(
     authoritative_state: &mut AuthoritativeTransitionState,
-    input: ReleaseReadinessWrite<'_>,
+    input: &ReleaseReadinessWrite<'_>,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_release_readiness_result(ReleaseReadinessResultRecord {
         branch_closure_id: input.branch_closure_id,
@@ -212,7 +212,7 @@ pub(crate) fn record_release_readiness(
 
 pub(crate) fn record_final_review(
     authoritative_state: &mut AuthoritativeTransitionState,
-    input: FinalReviewWrite<'_>,
+    input: &FinalReviewWrite<'_>,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_final_review_result(FinalReviewMilestoneRecord {
         branch_closure_id: input.branch_closure_id,
@@ -238,7 +238,7 @@ pub(crate) fn record_final_review(
 
 pub(crate) fn record_browser_qa(
     authoritative_state: &mut AuthoritativeTransitionState,
-    input: BrowserQaWrite<'_>,
+    input: &BrowserQaWrite<'_>,
 ) -> Result<(), JsonFailure> {
     authoritative_state.record_browser_qa_result(BrowserQaResultRecord {
         branch_closure_id: input.branch_closure_id,
@@ -279,120 +279,125 @@ pub(crate) fn restore_review_state_projection_overlays(
     runtime: &ExecutionRuntime,
     context: &ExecutionContext,
 ) -> Result<Vec<String>, JsonFailure> {
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let mut authoritative_state = load_authoritative_transition_state(context)?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "reconcile-review-state requires authoritative harness state.",
-        ));
-    };
+    {
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let mut authoritative_state = load_authoritative_transition_state(context)?;
+        let Some(authoritative_state) = authoritative_state.as_mut() else {
+            return Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                "reconcile-review-state requires authoritative harness state.",
+            ));
+        };
 
-    let mut actions_performed = Vec::new();
-    let mut push_action = |action: &str| {
-        if !actions_performed.iter().any(|existing| existing == action) {
-            actions_performed.push(action.to_owned());
+        let mut actions_performed = Vec::new();
+        let mut push_action = |action: &str| {
+            if !actions_performed.iter().any(|existing| existing == action) {
+                actions_performed.push(action.to_owned());
+            }
+        };
+        if authoritative_state.restore_current_task_closure_records_from_history()? {
+            push_action("restored_current_task_closure_records");
         }
-    };
-    if authoritative_state.restore_current_task_closure_records_from_history()? {
-        push_action("restored_current_task_closure_records");
-    }
-    if authoritative_state.restore_task_closure_negative_result_records_from_history()? {
-        push_action("restored_task_closure_negative_result_records");
-    }
+        if authoritative_state.restore_task_closure_negative_result_records_from_history()? {
+            push_action("restored_task_closure_negative_result_records");
+        }
 
-    let current_branch_identity = validated_current_branch_closure_identity(context);
-    if let Some(current_identity) = current_branch_identity.as_ref() {
-        let branch_id_changed = authoritative_state
-            .current_branch_closure_overlay_id()
-            .as_deref()
-            != Some(current_identity.branch_closure_id.as_str());
-        let reviewed_state_changed = authoritative_state
-            .current_branch_closure_overlay_reviewed_state_id()
-            .as_deref()
-            != Some(current_identity.reviewed_state_id.as_str());
-        let contract_identity_changed = authoritative_state
-            .current_branch_closure_overlay_contract_identity()
-            .as_deref()
-            != Some(current_identity.contract_identity.as_str());
-        if branch_id_changed || reviewed_state_changed || contract_identity_changed {
-            if branch_id_changed {
-                push_action("restored_current_branch_closure_id");
+        let current_branch_identity = validated_current_branch_closure_identity(context);
+        if let Some(current_identity) = current_branch_identity.as_ref() {
+            let branch_id_changed = authoritative_state
+                .current_branch_closure_overlay_id()
+                .as_deref()
+                != Some(current_identity.branch_closure_id.as_str());
+            let reviewed_state_changed = authoritative_state
+                .current_branch_closure_overlay_reviewed_state_id()
+                .as_deref()
+                != Some(current_identity.reviewed_state_id.as_str());
+            let contract_identity_changed = authoritative_state
+                .current_branch_closure_overlay_contract_identity()
+                .as_deref()
+                != Some(current_identity.contract_identity.as_str());
+            if branch_id_changed || reviewed_state_changed || contract_identity_changed {
+                if branch_id_changed {
+                    push_action("restored_current_branch_closure_id");
+                }
+                if reviewed_state_changed {
+                    push_action("restored_current_branch_closure_reviewed_state");
+                }
+                if contract_identity_changed {
+                    push_action("restored_current_branch_closure_contract_identity");
+                }
+                authoritative_state.restore_current_branch_closure_overlay_fields(
+                    &current_identity.branch_closure_id,
+                    &current_identity.reviewed_state_id,
+                    &current_identity.contract_identity,
+                )?;
             }
-            if reviewed_state_changed {
-                push_action("restored_current_branch_closure_reviewed_state");
-            }
-            if contract_identity_changed {
-                push_action("restored_current_branch_closure_contract_identity");
-            }
-            authoritative_state.restore_current_branch_closure_overlay_fields(
-                &current_identity.branch_closure_id,
-                &current_identity.reviewed_state_id,
-                &current_identity.contract_identity,
+        }
+        let late_stage_bindings = shared_current_late_stage_branch_bindings(
+            Some(authoritative_state),
+            current_branch_identity
+                .as_ref()
+                .map(|identity| identity.branch_closure_id.as_str()),
+            current_branch_identity
+                .as_ref()
+                .map(|identity| identity.reviewed_state_id.as_str()),
+        );
+
+        let current_release_readiness_record_id = late_stage_bindings
+            .current_release_readiness_record_id
+            .clone();
+        if authoritative_state
+            .current_release_readiness_record_id()
+            .as_deref()
+            != current_release_readiness_record_id.as_deref()
+        {
+            authoritative_state.set_current_release_readiness_record_id_cache(
+                current_release_readiness_record_id.as_deref(),
             )?;
+            push_action("restored_current_release_readiness_overlay");
         }
-    }
-    let late_stage_bindings = shared_current_late_stage_branch_bindings(
-        Some(authoritative_state),
-        current_branch_identity
-            .as_ref()
-            .map(|identity| identity.branch_closure_id.as_str()),
-        current_branch_identity
-            .as_ref()
-            .map(|identity| identity.reviewed_state_id.as_str()),
-    );
+        if current_release_readiness_record_id.is_some()
+            && authoritative_state.restore_current_release_readiness_overlay_fields()?
+        {
+            push_action("restored_current_release_readiness_overlay");
+        }
 
-    let current_release_readiness_record_id = late_stage_bindings
-        .current_release_readiness_record_id
-        .clone();
-    if authoritative_state
-        .current_release_readiness_record_id()
-        .as_deref()
-        != current_release_readiness_record_id.as_deref()
-    {
-        authoritative_state.set_current_release_readiness_record_id_cache(
-            current_release_readiness_record_id.as_deref(),
-        )?;
-        push_action("restored_current_release_readiness_overlay");
-    }
-    if current_release_readiness_record_id.is_some()
-        && authoritative_state.restore_current_release_readiness_overlay_fields()?
-    {
-        push_action("restored_current_release_readiness_overlay");
-    }
+        let current_final_review_record_id =
+            late_stage_bindings.current_final_review_record_id.clone();
+        if authoritative_state
+            .current_final_review_record_id()
+            .as_deref()
+            != current_final_review_record_id.as_deref()
+        {
+            authoritative_state.set_current_final_review_record_id_cache(
+                current_final_review_record_id.as_deref(),
+            )?;
+            push_action("restored_current_final_review_overlay");
+        }
+        if current_final_review_record_id.is_some()
+            && authoritative_state.restore_current_final_review_overlay_fields()?
+        {
+            push_action("restored_current_final_review_overlay");
+        }
 
-    let current_final_review_record_id = late_stage_bindings.current_final_review_record_id.clone();
-    if authoritative_state
-        .current_final_review_record_id()
-        .as_deref()
-        != current_final_review_record_id.as_deref()
-    {
-        authoritative_state
-            .set_current_final_review_record_id_cache(current_final_review_record_id.as_deref())?;
-        push_action("restored_current_final_review_overlay");
-    }
-    if current_final_review_record_id.is_some()
-        && authoritative_state.restore_current_final_review_overlay_fields()?
-    {
-        push_action("restored_current_final_review_overlay");
-    }
+        let current_qa_record_id = late_stage_bindings.current_qa_record_id;
+        if authoritative_state.current_qa_record_id().as_deref() != current_qa_record_id.as_deref()
+        {
+            authoritative_state.set_current_qa_record_id_cache(current_qa_record_id.as_deref())?;
+            push_action("restored_current_browser_qa_overlay");
+        }
+        if current_qa_record_id.is_some()
+            && authoritative_state.restore_current_browser_qa_overlay_fields()?
+        {
+            push_action("restored_current_browser_qa_overlay");
+        }
+        if actions_performed.is_empty() {
+            return Ok(actions_performed);
+        }
 
-    let current_qa_record_id = late_stage_bindings.current_qa_record_id.clone();
-    if authoritative_state.current_qa_record_id().as_deref() != current_qa_record_id.as_deref() {
-        authoritative_state.set_current_qa_record_id_cache(current_qa_record_id.as_deref())?;
-        push_action("restored_current_browser_qa_overlay");
+        authoritative_state.persist_if_dirty_with_failpoint(None)?;
+        Ok(actions_performed)
     }
-    if current_qa_record_id.is_some()
-        && authoritative_state.restore_current_browser_qa_overlay_fields()?
-    {
-        push_action("restored_current_browser_qa_overlay");
-    }
-    if actions_performed.is_empty() {
-        return Ok(actions_performed);
-    }
-
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
-    Ok(actions_performed)
 }
 
 pub(crate) fn clear_task_review_dispatch_lineage_for_execution_reentry(

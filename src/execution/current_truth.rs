@@ -34,14 +34,23 @@ use crate::workflow::pivot::{
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CurrentLateStageBranchBindings {
+    /// Runtime field.
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
+    /// Runtime field.
     pub current_release_readiness_record_id: Option<String>,
+    /// Runtime field.
     pub current_release_readiness_result: Option<String>,
+    /// Runtime field.
     pub current_final_review_record_id: Option<String>,
+    /// Runtime field.
     pub current_final_review_branch_closure_id: Option<String>,
+    /// Runtime field.
     pub current_final_review_result: Option<String>,
+    /// Runtime field.
     pub current_qa_record_id: Option<String>,
+    /// Runtime field.
     pub current_qa_branch_closure_id: Option<String>,
+    /// Runtime field.
     pub current_qa_result: Option<String>,
 }
 
@@ -75,8 +84,7 @@ pub(crate) fn normalize_summary_content(value: &str) -> String {
     let end = trimmed_lines
         .iter()
         .rposition(|line| !line.is_empty())
-        .map(|index| index + 1)
-        .unwrap_or(start);
+        .map_or(start, |index| index + 1);
     trimmed_lines[start..end].join("\n")
 }
 
@@ -227,11 +235,10 @@ pub(crate) fn normalize_late_stage_surface_entry(entry: &str) -> Result<String, 
 
 pub(crate) fn path_matches_late_stage_surface(path: &str, surface_entries: &[String]) -> bool {
     surface_entries.iter().any(|entry| {
-        if let Some(prefix) = entry.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
-        } else {
-            path == entry
-        }
+        entry.strip_suffix('/').map_or_else(
+            || path == entry,
+            |prefix| path == prefix || path.starts_with(&format!("{prefix}/")),
+        )
     })
 }
 
@@ -324,7 +331,7 @@ struct ReservedTempPath {
 }
 
 impl ReservedTempPath {
-    fn new(path: PathBuf) -> Self {
+    const fn new(path: PathBuf) -> Self {
         Self { path }
     }
 }
@@ -355,7 +362,7 @@ fn reserve_unique_reviewed_state_index_path() -> Result<PathBuf, JsonFailure> {
                 drop(file);
                 return Ok(candidate);
             }
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
             Err(error) => {
                 return Err(JsonFailure::new(
                     FailureClass::BranchDetectionFailed,
@@ -374,6 +381,27 @@ fn reserve_unique_reviewed_state_index_path() -> Result<PathBuf, JsonFailure> {
 
 type TrackedPathDiffCache = RwLock<BTreeMap<(PathBuf, String, String), Vec<String>>>;
 
+fn rwlock_read_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    match lock.read() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn rwlock_write_recover<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    match lock.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn mutex_lock_recover<T>(lock: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match lock.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 pub(crate) fn tracked_paths_changed_between(
     repo_root: &Path,
     baseline_tree_sha: &str,
@@ -386,13 +414,9 @@ pub(crate) fn tracked_paths_changed_between(
         baseline_tree_sha.to_owned(),
         current_tree_sha.to_owned(),
     );
-    if let Some(cached) = TRACKED_PATH_DIFF_CACHE
-        .get_or_init(|| RwLock::new(BTreeMap::new()))
-        .read()
-        .expect("tracked path diff cache lock should not be poisoned")
-        .get(&cache_key)
-        .cloned()
-    {
+    let cache = TRACKED_PATH_DIFF_CACHE.get_or_init(|| RwLock::new(BTreeMap::new()));
+    let cached = rwlock_read_recover(cache).get(&cache_key).cloned();
+    if let Some(cached) = cached {
         return Ok(cached);
     }
 
@@ -424,11 +448,7 @@ pub(crate) fn tracked_paths_changed_between(
         .collect::<Vec<_>>();
     changed_paths.sort();
     changed_paths.dedup();
-    TRACKED_PATH_DIFF_CACHE
-        .get_or_init(|| RwLock::new(BTreeMap::new()))
-        .write()
-        .expect("tracked path diff cache lock should not be poisoned")
-        .insert(cache_key, changed_paths.clone());
+    rwlock_write_recover(cache).insert(cache_key, changed_paths.clone());
     Ok(changed_paths)
 }
 
@@ -504,10 +524,15 @@ pub(crate) enum BranchRerecordingUnsupportedReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BranchRerecordingAssessment {
+    /// Runtime field.
     pub changed_paths: Vec<String>,
+    /// Runtime field.
     pub late_stage_surface: Vec<String>,
+    /// Runtime field.
     pub drift_confined_to_late_stage_surface: bool,
+    /// Runtime field.
     pub supported: bool,
+    /// Runtime field.
     pub unsupported_reason: Option<BranchRerecordingUnsupportedReason>,
 }
 
@@ -686,7 +711,8 @@ fn tracked_paths_changed_since_task_closure_records_baseline(
             .iter()
             .map(|(_, entries)| entries.get(&path))
             .collect::<Vec<_>>();
-        let Some(expected_entry) = consensus_tree_entry(&baseline_entries) else {
+        let TreeEntryConsensus::Consensus(expected_entry) = consensus_tree_entry(&baseline_entries)
+        else {
             changed_paths.push(path);
             continue;
         };
@@ -719,13 +745,9 @@ fn tree_entries_for_tree_sha(
         Mutex<BTreeMap<String, BTreeMap<String, TreeEntryIdentity>>>,
     > = OnceLock::new();
 
-    if let Some(cached) = TREE_ENTRIES_CACHE
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .expect("tree entries cache lock should not be poisoned")
-        .get(tree_sha)
-        .cloned()
-    {
+    let cache = TREE_ENTRIES_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let cached = mutex_lock_recover(cache).get(tree_sha).cloned();
+    if let Some(cached) = cached {
         return Ok(cached);
     }
 
@@ -763,11 +785,7 @@ fn tree_entries_for_tree_sha(
             },
         );
     }
-    TREE_ENTRIES_CACHE
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .expect("tree entries cache lock should not be poisoned")
-        .insert(tree_sha.to_owned(), entries.clone());
+    mutex_lock_recover(cache).insert(tree_sha.to_owned(), entries.clone());
     Ok(entries)
 }
 
@@ -818,7 +836,7 @@ fn require_unambiguous_task_closure_path_entry(
     path: &str,
     entries: &[Option<&TreeEntryIdentity>],
 ) -> Result<Option<TreeEntryIdentity>, JsonFailure> {
-    let Some(expected_entry) = consensus_tree_entry(entries) else {
+    let TreeEntryConsensus::Consensus(expected_entry) = consensus_tree_entry(entries) else {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
             format!(
@@ -829,15 +847,27 @@ fn require_unambiguous_task_closure_path_entry(
     Ok(expected_entry.cloned())
 }
 
-fn consensus_tree_entry<'a>(
-    entries: &[Option<&'a TreeEntryIdentity>],
-) -> Option<Option<&'a TreeEntryIdentity>> {
-    let first = entries.first().copied()?;
-    entries
-        .iter()
-        .copied()
-        .all(|entry| entry == first)
-        .then_some(first)
+enum TreeEntryConsensus<'a> {
+    Consensus(Option<&'a TreeEntryIdentity>),
+    Divergent,
+}
+
+fn consensus_tree_entry<'a>(entries: &[Option<&'a TreeEntryIdentity>]) -> TreeEntryConsensus<'a> {
+    let Some(first) = entries.first().copied() else {
+        return TreeEntryConsensus::Divergent;
+    };
+    if entries.iter().copied().all(|entry| entry == first) {
+        TreeEntryConsensus::Consensus(first)
+    } else {
+        TreeEntryConsensus::Divergent
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TaskScopeRepairSignals {
+    pub(crate) overlay_restore_required: bool,
+    pub(crate) structural_reason_present: bool,
+    pub(crate) stale_reason_present: bool,
 }
 
 pub(crate) fn gate_has_any_reason(gate: Option<&GateResult>, reason_codes: &[&str]) -> bool {
@@ -1008,7 +1038,9 @@ pub(crate) fn reason_code_requires_test_plan_refresh(reason_code: &str) -> bool 
     )
 }
 
-pub(crate) fn public_late_stage_rederivation_basis_present(status: &PlanExecutionStatus) -> bool {
+pub(crate) const fn public_late_stage_rederivation_basis_present(
+    status: &PlanExecutionStatus,
+) -> bool {
     status.current_branch_closure_id.is_some()
         || status.finish_review_gate_pass_branch_closure_id.is_some()
         || status.current_release_readiness_state.is_some()
@@ -1030,7 +1062,7 @@ pub(crate) fn public_late_stage_rederivation_basis_present(status: &PlanExecutio
         )
 }
 
-pub(crate) fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {
+pub(crate) const fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {
     status.active_task.is_some()
         || status.blocking_task.is_some()
         || status.resume_task.is_some()
@@ -1135,7 +1167,7 @@ pub(crate) fn repair_review_state_execution_reentry_active(
     repair_follow_up == Some("execution_reentry") && !task_scope_repair_precedence_active
 }
 
-pub(crate) fn live_review_state_status_for_reroute(
+pub(crate) const fn live_review_state_status_for_reroute(
     stale_unreviewed: bool,
     missing_current_closure: bool,
 ) -> Option<&'static str> {
@@ -1175,16 +1207,14 @@ pub(crate) fn live_review_state_repair_reroute(
 }
 
 pub(crate) fn live_task_scope_repair_precedence_active(
-    task_scope_overlay_restore_required: bool,
-    task_scope_structural_reason_present: bool,
-    task_scope_stale_reason_present: bool,
+    signals: TaskScopeRepairSignals,
     persisted_follow_up: Option<&str>,
     branch_reroute_still_valid: bool,
     live_review_state_status: Option<&str>,
 ) -> bool {
-    task_scope_overlay_restore_required
-        || task_scope_structural_reason_present
-        || (task_scope_stale_reason_present
+    signals.overlay_restore_required
+        || signals.structural_reason_present
+        || (signals.stale_reason_present
             && !(persisted_follow_up == Some("record_branch_closure")
                 && branch_reroute_still_valid
                 && matches!(
@@ -1205,157 +1235,157 @@ pub(crate) fn current_late_stage_branch_bindings(
     current_branch_closure_id: Option<&str>,
     current_branch_reviewed_state_id: Option<&str>,
 ) -> CurrentLateStageBranchBindings {
-    let Some(current_branch_closure_id) = current_branch_closure_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return CurrentLateStageBranchBindings::default();
-    };
-    let Some(current_branch_reviewed_state_id) = current_branch_reviewed_state_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return CurrentLateStageBranchBindings::default();
-    };
-    let Some(authoritative_state) = authoritative_state else {
-        return CurrentLateStageBranchBindings::default();
-    };
-    let Some(current_branch_record) =
-        authoritative_state.branch_closure_record(current_branch_closure_id)
-    else {
-        return CurrentLateStageBranchBindings::default();
-    };
-    if current_branch_record.reviewed_state_id != current_branch_reviewed_state_id {
-        return CurrentLateStageBranchBindings::default();
-    }
-    let milestone_matches_current_branch =
-        |source_plan_path: &str,
-         source_plan_revision: u32,
-         repo_slug: &str,
-         branch_name: &str,
-         base_branch: &str,
-         reviewed_state_id: &str| {
-            source_plan_path == current_branch_record.source_plan_path
-                && source_plan_revision == current_branch_record.source_plan_revision
-                && repo_slug == current_branch_record.repo_slug
-                && branch_name == current_branch_record.branch_name
-                && base_branch == current_branch_record.base_branch
-                && reviewed_state_id == current_branch_record.reviewed_state_id
+    {
+        let Some(current_branch_closure_id) = current_branch_closure_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return CurrentLateStageBranchBindings::default();
         };
-    let closure_graph = AuthoritativeClosureGraph::from_state(
-        Some(authoritative_state),
-        &ClosureGraphSignals::from_authoritative_state(
+        let Some(current_branch_reviewed_state_id) = current_branch_reviewed_state_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return CurrentLateStageBranchBindings::default();
+        };
+        let Some(authoritative_state) = authoritative_state else {
+            return CurrentLateStageBranchBindings::default();
+        };
+        let Some(current_branch_record) =
+            authoritative_state.branch_closure_record(current_branch_closure_id)
+        else {
+            return CurrentLateStageBranchBindings::default();
+        };
+        if current_branch_record.reviewed_state_id != current_branch_reviewed_state_id {
+            return CurrentLateStageBranchBindings::default();
+        }
+        let milestone_matches_current_branch =
+            |source_plan_path: &str,
+             source_plan_revision: u32,
+             repo_slug: &str,
+             branch_name: &str,
+             base_branch: &str,
+             reviewed_state_id: &str| {
+                source_plan_path == current_branch_record.source_plan_path
+                    && source_plan_revision == current_branch_record.source_plan_revision
+                    && repo_slug == current_branch_record.repo_slug
+                    && branch_name == current_branch_record.branch_name
+                    && base_branch == current_branch_record.base_branch
+                    && reviewed_state_id == current_branch_record.reviewed_state_id
+            };
+        let closure_graph = AuthoritativeClosureGraph::from_state(
             Some(authoritative_state),
-            Some(current_branch_closure_id),
-            false,
-            false,
-            Vec::new(),
-        ),
-    );
+            &ClosureGraphSignals::from_authoritative_state(
+                Some(authoritative_state),
+                Some(current_branch_closure_id),
+                false,
+                false,
+                Vec::new(),
+            ),
+        );
 
-    let finish_review_gate_pass_branch_closure_id = authoritative_state
-        .finish_review_gate_pass_branch_closure_id()
-        .filter(|branch_closure_id| branch_closure_id == current_branch_closure_id);
-    let current_release_readiness_record_id = closure_graph
-        .current_release_readiness_record_id()
-        .map(str::to_owned);
-    let current_release_readiness_record = current_release_readiness_record_id
-        .as_deref()
-        .and_then(|record_id| authoritative_state.release_readiness_record_by_id(record_id))
-        .filter(|record| {
-            record.record_status == "current"
-                && record.branch_closure_id == current_branch_closure_id
-                && milestone_matches_current_branch(
-                    &record.source_plan_path,
-                    record.source_plan_revision,
-                    &record.repo_slug,
-                    &record.branch_name,
-                    &record.base_branch,
-                    &record.reviewed_state_id,
+        let finish_review_gate_pass_branch_closure_id = authoritative_state
+            .finish_review_gate_pass_branch_closure_id()
+            .filter(|branch_closure_id| branch_closure_id == current_branch_closure_id);
+        let current_release_readiness_record_id = closure_graph
+            .current_release_readiness_record_id()
+            .map(str::to_owned);
+        let current_release_readiness_record = current_release_readiness_record_id
+            .as_deref()
+            .and_then(|record_id| authoritative_state.release_readiness_record_by_id(record_id))
+            .filter(|record| {
+                record.record_status == "current"
+                    && record.branch_closure_id == current_branch_closure_id
+                    && milestone_matches_current_branch(
+                        &record.source_plan_path,
+                        record.source_plan_revision,
+                        &record.repo_slug,
+                        &record.branch_name,
+                        &record.base_branch,
+                        &record.reviewed_state_id,
+                    )
+            });
+        let current_release_readiness_record_id = current_release_readiness_record_id
+            .filter(|_| current_release_readiness_record.is_some());
+        let required_release_readiness_record_id = current_release_readiness_record_id.as_deref();
+        let current_release_readiness_result = current_release_readiness_record
+            .as_ref()
+            .map(|record| record.result.clone());
+
+        let current_final_review_record_id = closure_graph
+            .current_final_review_record_id()
+            .map(str::to_owned);
+        let current_final_review_record = current_final_review_record_id
+            .as_deref()
+            .and_then(|record_id| authoritative_state.final_review_record_by_id(record_id))
+            .filter(|record| {
+                record.record_status == "current"
+                    && record.branch_closure_id == current_branch_closure_id
+                    && required_release_readiness_record_id.is_some()
+                    && record.release_readiness_record_id.as_deref()
+                        == required_release_readiness_record_id
+                    && milestone_matches_current_branch(
+                        &record.source_plan_path,
+                        record.source_plan_revision,
+                        &record.repo_slug,
+                        &record.branch_name,
+                        &record.base_branch,
+                        &record.reviewed_state_id,
+                    )
+            });
+        let current_final_review_record_id =
+            current_final_review_record_id.filter(|_| current_final_review_record.is_some());
+        let required_final_review_record_id = current_final_review_record_id.as_deref();
+        let (current_final_review_branch_closure_id, current_final_review_result) =
+            current_final_review_record
+                .as_ref()
+                .map_or((None, None), |record| {
+                    (
+                        Some(record.branch_closure_id.clone()),
+                        Some(record.result.clone()),
+                    )
+                });
+
+        let current_qa_record_id = closure_graph
+            .current_browser_qa_record_id()
+            .map(str::to_owned);
+        let current_qa_record = current_qa_record_id
+            .as_deref()
+            .and_then(|record_id| authoritative_state.browser_qa_record_by_id(record_id))
+            .filter(|record| {
+                record.record_status == "current"
+                    && record.branch_closure_id == current_branch_closure_id
+                    && required_final_review_record_id.is_some()
+                    && record.final_review_record_id.as_deref() == required_final_review_record_id
+                    && milestone_matches_current_branch(
+                        &record.source_plan_path,
+                        record.source_plan_revision,
+                        &record.repo_slug,
+                        &record.branch_name,
+                        &record.base_branch,
+                        &record.reviewed_state_id,
+                    )
+            });
+        let current_qa_record_id = current_qa_record_id.filter(|_| current_qa_record.is_some());
+        let (current_qa_branch_closure_id, current_qa_result) =
+            current_qa_record.as_ref().map_or((None, None), |record| {
+                (
+                    Some(record.branch_closure_id.clone()),
+                    Some(record.result.clone()),
                 )
-        });
-    let current_release_readiness_record_id =
-        current_release_readiness_record_id.filter(|_| current_release_readiness_record.is_some());
-    let required_release_readiness_record_id = current_release_readiness_record_id.as_deref();
-    let current_release_readiness_result = current_release_readiness_record
-        .as_ref()
-        .map(|record| record.result.clone());
+            });
 
-    let current_final_review_record_id = closure_graph
-        .current_final_review_record_id()
-        .map(str::to_owned);
-    let current_final_review_record = current_final_review_record_id
-        .as_deref()
-        .and_then(|record_id| authoritative_state.final_review_record_by_id(record_id))
-        .filter(|record| {
-            record.record_status == "current"
-                && record.branch_closure_id == current_branch_closure_id
-                && required_release_readiness_record_id.is_some()
-                && record.release_readiness_record_id.as_deref()
-                    == required_release_readiness_record_id
-                && milestone_matches_current_branch(
-                    &record.source_plan_path,
-                    record.source_plan_revision,
-                    &record.repo_slug,
-                    &record.branch_name,
-                    &record.base_branch,
-                    &record.reviewed_state_id,
-                )
-        });
-    let current_final_review_record_id =
-        current_final_review_record_id.filter(|_| current_final_review_record.is_some());
-    let required_final_review_record_id = current_final_review_record_id.as_deref();
-    let (current_final_review_branch_closure_id, current_final_review_result) =
-        if let Some(record) = current_final_review_record.as_ref() {
-            (
-                Some(record.branch_closure_id.clone()),
-                Some(record.result.clone()),
-            )
-        } else {
-            (None, None)
-        };
-
-    let current_qa_record_id = closure_graph
-        .current_browser_qa_record_id()
-        .map(str::to_owned);
-    let current_qa_record = current_qa_record_id
-        .as_deref()
-        .and_then(|record_id| authoritative_state.browser_qa_record_by_id(record_id))
-        .filter(|record| {
-            record.record_status == "current"
-                && record.branch_closure_id == current_branch_closure_id
-                && required_final_review_record_id.is_some()
-                && record.final_review_record_id.as_deref() == required_final_review_record_id
-                && milestone_matches_current_branch(
-                    &record.source_plan_path,
-                    record.source_plan_revision,
-                    &record.repo_slug,
-                    &record.branch_name,
-                    &record.base_branch,
-                    &record.reviewed_state_id,
-                )
-        });
-    let current_qa_record_id = current_qa_record_id.filter(|_| current_qa_record.is_some());
-    let (current_qa_branch_closure_id, current_qa_result) =
-        if let Some(record) = current_qa_record.as_ref() {
-            (
-                Some(record.branch_closure_id.clone()),
-                Some(record.result.clone()),
-            )
-        } else {
-            (None, None)
-        };
-
-    CurrentLateStageBranchBindings {
-        finish_review_gate_pass_branch_closure_id,
-        current_release_readiness_record_id,
-        current_release_readiness_result,
-        current_final_review_record_id,
-        current_final_review_branch_closure_id,
-        current_final_review_result,
-        current_qa_record_id,
-        current_qa_branch_closure_id,
-        current_qa_result,
+        CurrentLateStageBranchBindings {
+            finish_review_gate_pass_branch_closure_id,
+            current_release_readiness_record_id,
+            current_release_readiness_result,
+            current_final_review_record_id,
+            current_final_review_branch_closure_id,
+            current_final_review_result,
+            current_qa_record_id,
+            current_qa_branch_closure_id,
+            current_qa_result,
+        }
     }
 }
 
@@ -1386,6 +1416,7 @@ pub(crate) fn resolve_public_follow_up_override(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct FollowUpOverrideInputs<'a> {
     pub(crate) state_dir: &'a Path,
     pub(crate) repo_slug: &'a str,
@@ -1505,16 +1536,16 @@ pub(crate) fn current_final_review_dispatch_id(
         .final_review_dispatch_lineage
         .as_ref()
         .and_then(|record| {
-            let execution_run_id = record.execution_run_id.as_deref()?;
+            let execution_run_id = record.execution_run.as_deref()?;
             if execution_run_id.trim().is_empty() {
                 return None;
             }
-            let branch_closure_id = record.branch_closure_id.as_deref()?;
+            let branch_closure_id = record.branch_closure.as_deref()?;
             if usable_current_branch_closure_id != branch_closure_id {
                 return None;
             }
             record
-                .dispatch_id
+                .dispatch
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
@@ -1610,10 +1641,8 @@ fn current_workflow_pivot_record_exists_for_decision(inputs: &FollowUpOverrideIn
     let Some(head_sha) = inputs.head_sha.filter(|value| !value.trim().is_empty()) else {
         return false;
     };
-    let qa_requirement_missing_or_invalid = !matches!(
-        inputs.qa_requirement,
-        Some("required") | Some("not-required")
-    );
+    let qa_requirement_missing_or_invalid =
+        !matches!(inputs.qa_requirement, Some("required" | "not-required"));
     let decision_reason_codes =
         pivot_decision_reason_codes(inputs.reason_codes, true, qa_requirement_missing_or_invalid);
     current_workflow_pivot_record_exists(

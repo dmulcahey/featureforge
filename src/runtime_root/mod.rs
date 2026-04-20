@@ -16,19 +16,25 @@ const RUNTIME_ROOT_SCHEMA_FILE: &str = "repo-runtime-root.schema.json";
 const RUNTIME_BINARY_NAMES: &[&str] = &["featureforge", "featureforge.exe"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Runtime enum.
 pub enum RuntimeRootField {
+    /// Runtime enum variant.
     UpgradeEligible,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct RuntimeRootValidation {
+    /// Runtime field.
     pub has_version: bool,
+    /// Runtime field.
     pub has_binary: bool,
+    /// Runtime field.
     pub upgrade_eligible: bool,
 }
 
 impl RuntimeRootValidation {
-    fn unresolved() -> Self {
+    const fn unresolved() -> Self {
         Self {
             has_version: false,
             has_binary: false,
@@ -38,15 +44,22 @@ impl RuntimeRootValidation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct RuntimeRootOutput {
+    /// Runtime field.
     pub resolved: bool,
+    /// Runtime field.
     pub root: Option<String>,
     #[schemars(with = "RuntimeRootSourceSchemaDoc")]
+    /// Runtime field.
     pub source: String,
+    /// Runtime field.
     pub validation: RuntimeRootValidation,
 }
 
 impl RuntimeRootOutput {
+    #[must_use]
+    /// Runtime function.
     pub fn unresolved() -> Self {
         Self {
             resolved: false,
@@ -69,13 +82,19 @@ enum RuntimeRootSourceSchemaDoc {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Runtime struct.
 pub struct ResolvedRuntimeRoot {
+    /// Runtime field.
     pub root: PathBuf,
+    /// Runtime field.
     pub source: String,
+    /// Runtime field.
     pub validation: RuntimeRootValidation,
 }
 
 impl ResolvedRuntimeRoot {
+    #[must_use]
+    /// Runtime function.
     pub fn as_output(&self) -> RuntimeRootOutput {
         RuntimeRootOutput {
             resolved: true,
@@ -105,18 +124,26 @@ impl CandidateSource {
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn resolve_current_output() -> Result<RuntimeRootOutput, DiagnosticError> {
-    Ok(resolve_current_root()?
-        .map(|resolved| resolved.as_output())
-        .unwrap_or_else(RuntimeRootOutput::unresolved))
+    Ok(
+        resolve_current_root()?.map_or_else(RuntimeRootOutput::unresolved, |resolved| {
+            resolved.as_output()
+        }),
+    )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn resolve_current_path_output() -> Result<String, DiagnosticError> {
     Ok(resolve_current_root()?
         .map(|resolved| format!("{}\n", resolved.root.display()))
         .unwrap_or_default())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn resolve_current_field_output(field: RuntimeRootField) -> Result<String, DiagnosticError> {
     let resolved = resolve_current_root()?;
     Ok(match field {
@@ -132,6 +159,8 @@ pub fn resolve_current_field_output(field: RuntimeRootField) -> Result<String, D
     })
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn resolve_current_root() -> Result<Option<ResolvedRuntimeRoot>, DiagnosticError> {
     let current_dir = env::current_dir().map_err(|error| {
         DiagnosticError::new(
@@ -156,6 +185,8 @@ pub fn resolve_current_root() -> Result<Option<ResolvedRuntimeRoot>, DiagnosticE
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn write_runtime_root_schema(output_dir: &Path) -> Result<(), DiagnosticError> {
     fs::create_dir_all(output_dir).map_err(|error| {
         DiagnosticError::new(
@@ -198,8 +229,7 @@ fn resolve_with_context(
     }
 
     let repo_local = git::discover_repo_identity(current_dir)
-        .map(|identity| identity.repo_root)
-        .unwrap_or_else(|_| current_dir.to_path_buf());
+        .map_or_else(|_| current_dir.to_path_buf(), |identity| identity.repo_root);
     if seen.insert(repo_local.clone())
         && let Some(resolved) =
             validate_optional_candidate(&repo_local, CandidateSource::RepoLocal)?
@@ -315,7 +345,7 @@ fn runtime_binary_present(candidate: &Path) -> Result<bool, DiagnosticError> {
         let metadata = match fs::metadata(&binary_path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(runtime_failure(&binary_path, error)),
+            Err(error) => return Err(runtime_failure(&binary_path, &error)),
         };
         if !metadata.is_file() {
             continue;
@@ -337,7 +367,7 @@ fn metadata_is_file(path: &Path) -> Result<bool, DiagnosticError> {
     match fs::metadata(path) {
         Ok(metadata) => Ok(metadata.is_file()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(runtime_failure(path, error)),
+        Err(error) => Err(runtime_failure(path, &error)),
     }
 }
 
@@ -346,11 +376,11 @@ fn git_marker_present(candidate: &Path) -> Result<bool, DiagnosticError> {
     match fs::metadata(&git_marker) {
         Ok(metadata) => Ok(metadata.is_dir() || metadata.is_file()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(runtime_failure(&git_marker, error)),
+        Err(error) => Err(runtime_failure(&git_marker, &error)),
     }
 }
 
-fn runtime_failure(path: &Path, error: std::io::Error) -> DiagnosticError {
+fn runtime_failure(path: &Path, error: &std::io::Error) -> DiagnosticError {
     DiagnosticError::new(
         FailureClass::ResolverRuntimeFailure,
         format!(

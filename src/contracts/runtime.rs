@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -209,6 +210,8 @@ struct ParsedStep {
     number: u32,
 }
 
+#[must_use]
+/// Runtime function.
 pub fn run_lint(args: &LintArgs) -> std::process::ExitCode {
     let spec_path = match normalize_cli_repo_path(&args.spec, "spec path") {
         Ok(path) => path,
@@ -262,16 +265,13 @@ pub fn run_lint(args: &LintArgs) -> std::process::ExitCode {
         }
     };
 
-    let headers = match parse_plan_headers(&plan_source) {
-        Ok(headers) => headers,
-        Err(_) => {
-            return emit_lint_failure(
-                &spec_path,
-                &plan_path,
-                "UnexpectedPlanContractFailure",
-                "Plan headers are missing or malformed.",
-            );
-        }
+    let Ok(headers) = parse_plan_headers(&plan_source) else {
+        return emit_lint_failure(
+            &spec_path,
+            &plan_path,
+            "UnexpectedPlanContractFailure",
+            "Plan headers are missing or malformed.",
+        );
     };
     if headers.source_spec_path != spec_path {
         return emit_lint_failure(
@@ -295,6 +295,8 @@ pub fn run_lint(args: &LintArgs) -> std::process::ExitCode {
     }
 }
 
+#[must_use]
+/// Runtime function.
 pub fn run_analyze_plan(args: &AnalyzePlanArgs) -> std::process::ExitCode {
     let spec_path = match normalize_cli_repo_path(&args.spec, "spec path") {
         Ok(path) => path,
@@ -359,191 +361,192 @@ pub fn run_analyze_plan(args: &AnalyzePlanArgs) -> std::process::ExitCode {
     emit_json_value(&report)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCode {
-    let plan_path = match normalize_cli_repo_path(&args.plan, "plan path") {
-        Ok(path) => path,
-        Err(error) => return emit_json_failure(error),
-    };
+    {
+        let plan_path = match normalize_cli_repo_path(&args.plan, "plan path") {
+            Ok(path) => path,
+            Err(error) => return emit_json_failure(error),
+        };
 
-    let repo_root = repo_root();
-    let plan_abs = repo_root.join(&plan_path);
-    if !plan_abs.is_file() {
-        return emit_json_failure(JsonFailure {
-            error_class: String::from("PlanContractInvalid"),
-            message: String::from("Plan file does not exist."),
-        });
-    }
-
-    let plan_source = match fs::read_to_string(&plan_abs) {
-        Ok(source) => source,
-        Err(error) => {
+        let repo_root = repo_root();
+        let plan_abs = repo_root.join(&plan_path);
+        if !plan_abs.is_file() {
             return emit_json_failure(JsonFailure {
                 error_class: String::from("PlanContractInvalid"),
-                message: format!("Could not read plan file {}: {error}", plan_abs.display()),
+                message: String::from("Plan file does not exist."),
             });
         }
-    };
 
-    let headers = match parse_plan_headers(&plan_source) {
-        Ok(headers) => headers,
-        Err(_) => {
+        let plan_source = match fs::read_to_string(&plan_abs) {
+            Ok(source) => source,
+            Err(error) => {
+                return emit_json_failure(JsonFailure {
+                    error_class: String::from("PlanContractInvalid"),
+                    message: format!("Could not read plan file {}: {error}", plan_abs.display()),
+                });
+            }
+        };
+
+        let Ok(headers) = parse_plan_headers(&plan_source) else {
             return emit_json_failure(JsonFailure {
                 error_class: String::from("UnsupportedPlanRevision"),
                 message: String::from("Plan headers are missing or malformed."),
             });
-        }
-    };
+        };
 
-    let spec_abs = repo_root.join(&headers.source_spec_path);
-    if !spec_abs.is_file() {
-        return emit_json_failure(JsonFailure {
-            error_class: String::from("SourceSpecUnavailable"),
-            message: String::from("Source spec cannot be loaded from the approved plan."),
-        });
-    }
-    let spec_source = match fs::read_to_string(&spec_abs) {
-        Ok(source) => source,
-        Err(error) => {
+        let spec_abs = repo_root.join(&headers.source_spec_path);
+        if !spec_abs.is_file() {
             return emit_json_failure(JsonFailure {
                 error_class: String::from("SourceSpecUnavailable"),
-                message: format!("Could not read source spec {}: {error}", spec_abs.display()),
+                message: String::from("Source spec cannot be loaded from the approved plan."),
             });
         }
-    };
-
-    let (spec, plan, _) = match validate_contract(&spec_source, &plan_source) {
-        Ok(values) => values,
-        Err(error) => {
-            return emit_json_failure(JsonFailure {
-                error_class: String::from("PlanContractInvalid"),
-                message: format!("{}: {}", error.error_class, error.message),
-            });
-        }
-    };
-
-    let Some(task) = plan.tasks.iter().find(|task| task.number == args.task) else {
-        return emit_json_failure(JsonFailure {
-            error_class: String::from("TaskNotFound"),
-            message: format!("Task {} does not exist in the approved plan.", args.task),
-        });
-    };
-
-    let plan_fingerprint = sha256_hex(plan_source.as_bytes());
-    let source_spec_fingerprint = sha256_hex(spec_source.as_bytes());
-    let packet_fingerprint = build_packet_fingerprint(
-        &plan_path,
-        headers.plan_revision,
-        &plan_fingerprint,
-        &headers.source_spec_path,
-        headers.source_spec_revision,
-        &source_spec_fingerprint,
-        task,
-    );
-    let generated_at = Timestamp::now().to_string();
-    let requirement_statements = task
-        .spec_coverage_ids
-        .iter()
-        .filter_map(|requirement_id| {
-            spec.requirement_index
-                .get(requirement_id)
-                .and_then(|index| spec.requirements.get(*index))
-        })
-        .map(|requirement| RequirementStatement {
-            id: requirement.id.clone(),
-            kind: requirement.kind.clone(),
-            statement: requirement.statement.clone(),
-        })
-        .collect::<Vec<_>>();
-    let packet_markdown = render_packet_markdown(&PacketMarkdownInput {
-        plan_path: &plan_path,
-        plan_revision: headers.plan_revision,
-        plan_fingerprint: &plan_fingerprint,
-        source_spec_path: &headers.source_spec_path,
-        source_spec_revision: headers.source_spec_revision,
-        source_spec_fingerprint: &source_spec_fingerprint,
-        task,
-        requirement_statements: &requirement_statements,
-        generated_at: &generated_at,
-        packet_fingerprint: &packet_fingerprint,
-    });
-
-    let persisted = args.persist == PersistMode::Yes;
-    let mut cache_status = String::from("ephemeral");
-    let mut packet_path = None;
-    if persisted {
-        let path = packet_cache_path(&plan_path, args.task);
-        let metadata = PacketCacheMetadata {
-            plan_path: plan_path.clone(),
-            plan_revision: headers.plan_revision,
-            plan_fingerprint: plan_fingerprint.clone(),
-            source_spec_path: headers.source_spec_path.clone(),
-            source_spec_revision: headers.source_spec_revision,
-            source_spec_fingerprint: source_spec_fingerprint.clone(),
-            task_number: args.task,
-            packet_fingerprint: packet_fingerprint.clone(),
-        };
-        if packet_cache_matches_current(&path, &metadata) {
-            cache_status = String::from("reused");
-        } else {
-            cache_status = if path.is_file() {
-                String::from("regenerated")
-            } else {
-                String::from("fresh")
-            };
-            if let Err(error) =
-                write_packet_cache(&path, &metadata, &generated_at, &packet_markdown)
-            {
+        let spec_source = match fs::read_to_string(&spec_abs) {
+            Ok(source) => source,
+            Err(error) => {
                 return emit_json_failure(JsonFailure {
-                    error_class: String::from("TaskPacketBuildFailed"),
-                    message: format!("Could not persist the task packet: {error}"),
+                    error_class: String::from("SourceSpecUnavailable"),
+                    message: format!("Could not read source spec {}: {error}", spec_abs.display()),
                 });
             }
-        }
-        if let Some(parent) = path.parent() {
-            prune_packet_cache(parent, &path);
-        }
-        packet_path = Some(path.display().to_string());
-    }
+        };
 
-    let output = BuildTaskPacketSuccess {
-        status: String::from("ok"),
-        plan_path,
-        plan_revision: headers.plan_revision,
-        plan_fingerprint,
-        source_spec_path: headers.source_spec_path,
-        source_spec_revision: headers.source_spec_revision,
-        source_spec_fingerprint,
-        task_number: task.number,
-        task_title: task.title.clone(),
-        task_block: task.block.clone(),
-        step_list: task.steps_raw.clone(),
-        file_entries: task
-            .file_entries
+        let (spec, plan, _) = match validate_contract(&spec_source, &plan_source) {
+            Ok(values) => values,
+            Err(error) => {
+                return emit_json_failure(JsonFailure {
+                    error_class: String::from("PlanContractInvalid"),
+                    message: format!("{}: {}", error.error_class, error.message),
+                });
+            }
+        };
+
+        let Some(task) = plan.tasks.iter().find(|task| task.number == args.task) else {
+            return emit_json_failure(JsonFailure {
+                error_class: String::from("TaskNotFound"),
+                message: format!("Task {} does not exist in the approved plan.", args.task),
+            });
+        };
+
+        let plan_fingerprint = sha256_hex(plan_source.as_bytes());
+        let source_spec_fingerprint = sha256_hex(spec_source.as_bytes());
+        let packet_fingerprint = build_packet_fingerprint(
+            &plan_path,
+            headers.plan_revision,
+            &plan_fingerprint,
+            &headers.source_spec_path,
+            headers.source_spec_revision,
+            &source_spec_fingerprint,
+            task,
+        );
+        let generated_at = Timestamp::now().to_string();
+        let requirement_statements = task
+            .spec_coverage_ids
             .iter()
-            .map(|entry| PacketFileEntry {
-                action: entry.action.clone(),
-                path: entry.path.clone(),
-                normalized_path: entry.normalized_path.clone(),
+            .filter_map(|requirement_id| {
+                spec.requirement_index
+                    .get(requirement_id)
+                    .and_then(|index| spec.requirements.get(*index))
             })
-            .collect(),
-        file_scope: task.file_scope.clone(),
-        requirement_ids: task.spec_coverage_ids.clone(),
-        requirement_statements,
-        plan_constraints: task.plan_constraints.clone(),
-        open_questions: task.open_questions.clone(),
-        packet_timestamp: generated_at,
-        packet_fingerprint,
-        persisted,
-        cache_status,
-        packet_path,
-        packet_markdown: packet_markdown.clone(),
-    };
+            .map(|requirement| RequirementStatement {
+                id: requirement.id.clone(),
+                kind: requirement.kind.clone(),
+                statement: requirement.statement.clone(),
+            })
+            .collect::<Vec<_>>();
+        let packet_markdown = render_packet_markdown(&PacketMarkdownInput {
+            plan_path: &plan_path,
+            plan_revision: headers.plan_revision,
+            plan_fingerprint: &plan_fingerprint,
+            source_spec_path: &headers.source_spec_path,
+            source_spec_revision: headers.source_spec_revision,
+            source_spec_fingerprint: &source_spec_fingerprint,
+            task,
+            requirement_statements: &requirement_statements,
+            generated_at: &generated_at,
+            packet_fingerprint: &packet_fingerprint,
+        });
 
-    if args.format == PacketOutputFormat::Markdown {
-        println!("{packet_markdown}");
-        std::process::ExitCode::SUCCESS
-    } else {
-        emit_json_value(&output)
+        let persisted = args.persist == PersistMode::Yes;
+        let mut cache_status = String::from("ephemeral");
+        let packet_path = if persisted {
+            let path = packet_cache_path(&plan_path, args.task);
+            let metadata = PacketCacheMetadata {
+                plan_path: plan_path.clone(),
+                plan_revision: headers.plan_revision,
+                plan_fingerprint: plan_fingerprint.clone(),
+                source_spec_path: headers.source_spec_path.clone(),
+                source_spec_revision: headers.source_spec_revision,
+                source_spec_fingerprint: source_spec_fingerprint.clone(),
+                task_number: args.task,
+                packet_fingerprint: packet_fingerprint.clone(),
+            };
+            if packet_cache_matches_current(&path, &metadata) {
+                cache_status = String::from("reused");
+            } else {
+                cache_status = String::from("fresh");
+                if path.is_file() {
+                    cache_status = String::from("regenerated");
+                }
+                if let Err(error) =
+                    write_packet_cache(&path, &metadata, &generated_at, &packet_markdown)
+                {
+                    return emit_json_failure(JsonFailure {
+                        error_class: String::from("TaskPacketBuildFailed"),
+                        message: format!("Could not persist the task packet: {error}"),
+                    });
+                }
+            }
+            if let Some(parent) = path.parent() {
+                prune_packet_cache(parent, &path);
+            }
+            Some(path.display().to_string())
+        } else {
+            None
+        };
+
+        let output = BuildTaskPacketSuccess {
+            status: String::from("ok"),
+            plan_path,
+            plan_revision: headers.plan_revision,
+            plan_fingerprint,
+            source_spec_path: headers.source_spec_path,
+            source_spec_revision: headers.source_spec_revision,
+            source_spec_fingerprint,
+            task_number: task.number,
+            task_title: task.title.clone(),
+            task_block: task.block.clone(),
+            step_list: task.steps_raw.clone(),
+            file_entries: task
+                .file_entries
+                .iter()
+                .map(|entry| PacketFileEntry {
+                    action: entry.action.clone(),
+                    path: entry.path.clone(),
+                    normalized_path: entry.normalized_path.clone(),
+                })
+                .collect(),
+            file_scope: task.file_scope.clone(),
+            requirement_ids: task.spec_coverage_ids.clone(),
+            requirement_statements,
+            plan_constraints: task.plan_constraints.clone(),
+            open_questions: task.open_questions.clone(),
+            packet_timestamp: generated_at,
+            packet_fingerprint,
+            persisted,
+            cache_status,
+            packet_path,
+            packet_markdown: packet_markdown.clone(),
+        };
+
+        if args.format == PacketOutputFormat::Markdown {
+            println!("{packet_markdown}");
+            std::process::ExitCode::SUCCESS
+        } else {
+            emit_json_value(&output)
+        }
     }
 }
 
@@ -551,160 +554,165 @@ fn validate_contract(
     spec_source: &str,
     plan_source: &str,
 ) -> Result<(SpecContract, ParsedPlan, CoverageMatrix), LintContractError> {
-    let spec = match parse_requirement_index(spec_source) {
-        Ok(spec) => spec,
-        Err(RequirementIndexState::Malformed) => {
-            return Err(LintContractError {
-                error_class: String::from("MalformedRequirementIndex"),
-                message: String::from(
-                    "Requirement Index is missing entries or contains malformed lines.",
-                ),
-            });
-        }
-        Err(RequirementIndexState::Missing) => {
-            return Err(LintContractError {
-                error_class: String::from("MissingRequirementIndex"),
-                message: String::from("Spec is missing the required Requirement Index section."),
-            });
-        }
-        Err(RequirementIndexState::Unexpected) => {
-            return Err(LintContractError {
-                error_class: String::from("UnexpectedPlanContractFailure"),
-                message: String::from("Could not parse the source spec Requirement Index."),
-            });
-        }
-    };
+    {
+        let spec = match parse_requirement_index(spec_source) {
+            Ok(spec) => spec,
+            Err(RequirementIndexState::Malformed) => {
+                return Err(LintContractError {
+                    error_class: String::from("MalformedRequirementIndex"),
+                    message: String::from(
+                        "Requirement Index is missing entries or contains malformed lines.",
+                    ),
+                });
+            }
+            Err(RequirementIndexState::Missing) => {
+                return Err(LintContractError {
+                    error_class: String::from("MissingRequirementIndex"),
+                    message: String::from(
+                        "Spec is missing the required Requirement Index section.",
+                    ),
+                });
+            }
+            Err(RequirementIndexState::Unexpected) => {
+                return Err(LintContractError {
+                    error_class: String::from("UnexpectedPlanContractFailure"),
+                    message: String::from("Could not parse the source spec Requirement Index."),
+                });
+            }
+        };
 
-    let plan = parse_plan(plan_source).map_err(|error| LintContractError {
-        error_class: error.error_class,
-        message: error.message,
-    })?;
+        let plan = parse_plan(plan_source).map_err(|error| LintContractError {
+            error_class: error.error_class,
+            message: error.message,
+        })?;
 
-    let matrix = match parse_coverage_matrix(plan_source) {
-        Ok(matrix) => matrix,
-        Err(CoverageMatrixState::Malformed) => {
-            return Err(LintContractError {
-                error_class: String::from("CoverageMatrixMismatch"),
-                message: String::from("Requirement Coverage Matrix is malformed."),
-            });
-        }
-        Err(CoverageMatrixState::Missing) => {
-            return Err(LintContractError {
-                error_class: String::from("MissingRequirementCoverage"),
-                message: String::from("Requirement Coverage Matrix is missing or empty."),
-            });
-        }
-        Err(CoverageMatrixState::Unexpected) => {
-            return Err(LintContractError {
-                error_class: String::from("UnexpectedPlanContractFailure"),
-                message: String::from("Could not parse the Requirement Coverage Matrix."),
-            });
-        }
-    };
+        let matrix = match parse_coverage_matrix(plan_source) {
+            Ok(matrix) => matrix,
+            Err(CoverageMatrixState::Malformed) => {
+                return Err(LintContractError {
+                    error_class: String::from("CoverageMatrixMismatch"),
+                    message: String::from("Requirement Coverage Matrix is malformed."),
+                });
+            }
+            Err(CoverageMatrixState::Missing) => {
+                return Err(LintContractError {
+                    error_class: String::from("MissingRequirementCoverage"),
+                    message: String::from("Requirement Coverage Matrix is missing or empty."),
+                });
+            }
+            Err(CoverageMatrixState::Unexpected) => {
+                return Err(LintContractError {
+                    error_class: String::from("UnexpectedPlanContractFailure"),
+                    message: String::from("Could not parse the Requirement Coverage Matrix."),
+                });
+            }
+        };
 
-    let mut covered = BTreeSet::new();
-    for task in &plan.tasks {
-        if task.spec_coverage_ids.is_empty() {
-            return Err(LintContractError {
-                error_class: String::from("TaskMissingSpecCoverage"),
-                message: format!(
-                    "Task {} must include at least one Spec Coverage id.",
-                    task.number
-                ),
-            });
+        let mut covered = BTreeSet::new();
+        for task in &plan.tasks {
+            if task.spec_coverage_ids.is_empty() {
+                return Err(LintContractError {
+                    error_class: String::from("TaskMissingSpecCoverage"),
+                    message: format!(
+                        "Task {} must include at least one Spec Coverage id.",
+                        task.number
+                    ),
+                });
+            }
+            for requirement_id in &task.spec_coverage_ids {
+                if !spec.requirement_index.contains_key(requirement_id) {
+                    return Err(LintContractError {
+                        error_class: String::from("UnknownRequirementId"),
+                        message: format!(
+                            "Task {} references unknown requirement id {}.",
+                            task.number, requirement_id
+                        ),
+                    });
+                }
+                match matrix.entries.get(requirement_id) {
+                    Some(task_numbers) if task_numbers.contains(&task.number) => {}
+                    _ => {
+                        return Err(LintContractError {
+                            error_class: String::from("CoverageMatrixMismatch"),
+                            message: format!(
+                                "Coverage Matrix does not map {} to Task {}.",
+                                requirement_id, task.number
+                            ),
+                        });
+                    }
+                }
+                covered.insert(requirement_id.clone());
+            }
+            if normalize_whitespace(&task.open_questions) != "none" {
+                return Err(LintContractError {
+                    error_class: String::from("TaskOpenQuestionsNotResolved"),
+                    message: format!("Task {} has unresolved Open Questions.", task.number),
+                });
+            }
+            let lower_task = task.block.to_lowercase();
+            if let Some(phrase) = detect_ambiguous_task_wording(&lower_task) {
+                return Err(LintContractError {
+                    error_class: String::from("AmbiguousTaskWording"),
+                    message: format!(
+                        "Task {} uses ambiguous wording ('{}').",
+                        task.number, phrase
+                    ),
+                });
+            }
+            if let Some(message) = detect_requirement_weakening(
+                &spec,
+                task.number,
+                &lower_task,
+                &task.spec_coverage_ids,
+            ) {
+                return Err(LintContractError {
+                    error_class: String::from("RequirementWeakeningDetected"),
+                    message,
+                });
+            }
         }
-        for requirement_id in &task.spec_coverage_ids {
+
+        for (requirement_id, task_numbers) in &matrix.entries {
             if !spec.requirement_index.contains_key(requirement_id) {
                 return Err(LintContractError {
                     error_class: String::from("UnknownRequirementId"),
                     message: format!(
-                        "Task {} references unknown requirement id {}.",
-                        task.number, requirement_id
+                        "Requirement Coverage Matrix references unknown requirement id {requirement_id}."
                     ),
                 });
             }
-            match matrix.entries.get(requirement_id) {
-                Some(task_numbers) if task_numbers.contains(&task.number) => {}
-                _ => {
+            for task_number in task_numbers {
+                if !plan.tasks.iter().any(|task| task.number == *task_number) {
                     return Err(LintContractError {
                         error_class: String::from("CoverageMatrixMismatch"),
                         message: format!(
-                            "Coverage Matrix does not map {} to Task {}.",
-                            requirement_id, task.number
+                            "Requirement Coverage Matrix references missing Task {task_number}."
                         ),
                     });
                 }
             }
-            covered.insert(requirement_id.clone());
         }
-        if normalize_whitespace(&task.open_questions) != "none" {
-            return Err(LintContractError {
-                error_class: String::from("TaskOpenQuestionsNotResolved"),
-                message: format!("Task {} has unresolved Open Questions.", task.number),
-            });
-        }
-        let lower_task = task.block.to_lowercase();
-        if let Some(phrase) = detect_ambiguous_task_wording(&lower_task) {
-            return Err(LintContractError {
-                error_class: String::from("AmbiguousTaskWording"),
-                message: format!(
-                    "Task {} uses ambiguous wording ('{}').",
-                    task.number, phrase
-                ),
-            });
-        }
-        if let Some(message) =
-            detect_requirement_weakening(&spec, task.number, &lower_task, &task.spec_coverage_ids)
-        {
-            return Err(LintContractError {
-                error_class: String::from("RequirementWeakeningDetected"),
-                message,
-            });
-        }
-    }
 
-    for (requirement_id, task_numbers) in &matrix.entries {
-        if !spec.requirement_index.contains_key(requirement_id) {
-            return Err(LintContractError {
-                error_class: String::from("UnknownRequirementId"),
-                message: format!(
-                    "Requirement Coverage Matrix references unknown requirement id {}.",
-                    requirement_id
-                ),
-            });
-        }
-        for task_number in task_numbers {
-            if !plan.tasks.iter().any(|task| task.number == *task_number) {
+        for requirement in &spec.requirements {
+            if !covered.contains(&requirement.id) {
                 return Err(LintContractError {
-                    error_class: String::from("CoverageMatrixMismatch"),
+                    error_class: String::from("MissingRequirementCoverage"),
+                    message: format!("{} is not covered by any task.", requirement.id),
+                });
+            }
+            if !matrix.entries.contains_key(&requirement.id) {
+                return Err(LintContractError {
+                    error_class: String::from("MissingRequirementCoverage"),
                     message: format!(
-                        "Requirement Coverage Matrix references missing Task {}.",
-                        task_number
+                        "{} is missing from the Requirement Coverage Matrix.",
+                        requirement.id
                     ),
                 });
             }
         }
-    }
 
-    for requirement in &spec.requirements {
-        if !covered.contains(&requirement.id) {
-            return Err(LintContractError {
-                error_class: String::from("MissingRequirementCoverage"),
-                message: format!("{} is not covered by any task.", requirement.id),
-            });
-        }
-        if !matrix.entries.contains_key(&requirement.id) {
-            return Err(LintContractError {
-                error_class: String::from("MissingRequirementCoverage"),
-                message: format!(
-                    "{} is missing from the Requirement Coverage Matrix.",
-                    requirement.id
-                ),
-            });
-        }
+        Ok((spec, plan, matrix))
     }
-
-    Ok((spec, plan, matrix))
 }
 
 fn analyze_contract(
@@ -713,350 +721,351 @@ fn analyze_contract(
     spec_source: &str,
     plan_source: &str,
 ) -> AnalyzePlanReport {
-    let mut report = AnalyzePlanReport {
-        contract_state: String::from("invalid"),
-        spec_path: spec_path.to_owned(),
-        spec_revision: 0,
-        spec_fingerprint: sha256_hex(spec_source.as_bytes()),
-        plan_path: plan_path.to_owned(),
-        plan_revision: 0,
-        plan_fingerprint: sha256_hex(plan_source.as_bytes()),
-        task_count: 0,
-        packet_buildable_tasks: 0,
-        coverage_complete: true,
-        open_questions_resolved: true,
-        task_structure_valid: true,
-        files_blocks_valid: true,
-        execution_strategy_present: false,
-        dependency_diagram_present: false,
-        execution_topology_valid: false,
-        serial_hazards_resolved: false,
-        parallel_lane_ownership_valid: false,
-        parallel_workspace_isolation_valid: false,
-        parallel_worktree_groups: Vec::new(),
-        parallel_worktree_requirements: Vec::new(),
-        reason_codes: Vec::new(),
-        overlapping_write_scopes: Vec::new(),
-        plan_fidelity_receipt: crate::contracts::plan::PlanFidelityGateReport {
-            state: String::from("not_applicable"),
-            receipt_path: String::new(),
-            reviewer_stage: String::new(),
-            provenance_source: String::new(),
-            verified_requirement_index: false,
-            verified_execution_topology: false,
+    {
+        let mut report = AnalyzePlanReport {
+            contract_state: String::from("invalid"),
+            spec_path: spec_path.to_owned(),
+            spec_revision: 0,
+            spec_fingerprint: sha256_hex(spec_source.as_bytes()),
+            plan_path: plan_path.to_owned(),
+            plan_revision: 0,
+            plan_fingerprint: sha256_hex(plan_source.as_bytes()),
+            task_count: 0,
+            packet_buildable_tasks: 0,
+            coverage_complete: true.into(),
+            open_questions_resolved: true.into(),
+            task_structure_valid: true.into(),
+            files_blocks_valid: true.into(),
+            execution_strategy_present: false.into(),
+            dependency_diagram_present: false.into(),
+            execution_topology_valid: false.into(),
+            serial_hazards_resolved: false.into(),
+            parallel_lane_ownership_valid: false.into(),
+            parallel_workspace_isolation_valid: false.into(),
+            parallel_worktree_groups: Vec::new(),
+            parallel_worktree_requirements: Vec::new(),
             reason_codes: Vec::new(),
+            overlapping_write_scopes: Vec::new(),
+            plan_fidelity_receipt: crate::contracts::plan::PlanFidelityGateReport {
+                state: String::from("not_applicable"),
+                receipt_path: String::new(),
+                reviewer_stage: String::new(),
+                provenance_source: String::new(),
+                verified_requirement_index: false,
+                verified_execution_topology: false,
+                reason_codes: Vec::new(),
+                diagnostics: Vec::new(),
+            },
             diagnostics: Vec::new(),
-        },
-        diagnostics: Vec::new(),
-    };
+        };
 
-    match parse_spec_revision(spec_source) {
-        Ok(revision) => report.spec_revision = revision,
-        Err(()) => {
-            report.coverage_complete = false;
+        if let Ok(revision) = parse_spec_revision(spec_source) {
+            report.spec_revision = revision;
+        } else {
+            report.coverage_complete = false.into();
             push_reason(
                 &mut report,
                 "missing_spec_revision",
                 "Spec Revision header is missing or malformed.",
             );
         }
-    }
 
-    let headers = match parse_plan_headers(plan_source) {
-        Ok(headers) => {
-            report.plan_revision = headers.plan_revision;
-            if headers.source_spec_path != spec_path
-                || (report.spec_revision != 0
-                    && headers.source_spec_revision != report.spec_revision)
-            {
+        let headers = match parse_plan_headers(plan_source) {
+            Ok(headers) => {
+                report.plan_revision = headers.plan_revision;
+                if headers.source_spec_path != spec_path
+                    || (report.spec_revision != 0
+                        && headers.source_spec_revision != report.spec_revision)
+                {
+                    push_reason(
+                        &mut report,
+                        "stale_spec_plan_linkage",
+                        "Plan source spec linkage does not match the current approved spec.",
+                    );
+                }
+                Some(headers)
+            }
+            Err(error) => {
+                push_reason(&mut report, &error.reason_code, &error.message);
+                None
+            }
+        };
+
+        let loose_tasks = parse_loose_tasks(plan_source);
+        let full_plan = parse_plan(plan_source);
+        match &full_plan {
+            Ok(plan) => {
+                report.task_count = plan.tasks.len();
+                report.packet_buildable_tasks = plan.tasks.len();
+            }
+            Err(error) => {
+                report.task_count = loose_tasks.len();
+                report.packet_buildable_tasks = 0;
+                if error.error_class == "MalformedFilesBlock" {
+                    report.files_blocks_valid = false.into();
+                    push_reason(&mut report, "malformed_files_block", &error.message);
+                } else {
+                    report.task_structure_valid = false.into();
+                    push_reason(&mut report, "malformed_task_structure", &error.message);
+                }
+            }
+        }
+
+        let spec_result = match std::env::var("FEATUREFORGE_PLAN_CONTRACT_TEST_FAILPOINT") {
+            Ok(value) if value == "requirement_index_unexpected_failure" => {
+                Err(RequirementIndexState::Unexpected)
+            }
+            _ => parse_requirement_index(spec_source),
+        };
+        let spec = match spec_result {
+            Ok(spec) => Some(spec),
+            Err(RequirementIndexState::Malformed) => {
+                report.coverage_complete = false.into();
                 push_reason(
                     &mut report,
-                    "stale_spec_plan_linkage",
-                    "Plan source spec linkage does not match the current approved spec.",
+                    "malformed_requirement_index",
+                    "Requirement Index is missing entries or contains malformed lines.",
+                );
+                None
+            }
+            Err(RequirementIndexState::Missing) => {
+                report.coverage_complete = false.into();
+                push_reason(
+                    &mut report,
+                    "missing_requirement_index",
+                    "Spec is missing the required Requirement Index section.",
+                );
+                None
+            }
+            Err(RequirementIndexState::Unexpected) => {
+                report.coverage_complete = false.into();
+                push_reason(
+                    &mut report,
+                    "unexpected_plan_contract_failure",
+                    "Could not parse the source spec Requirement Index.",
+                );
+                None
+            }
+        };
+
+        let matrix_result = match std::env::var("FEATUREFORGE_PLAN_CONTRACT_TEST_FAILPOINT") {
+            Ok(value) if value == "coverage_matrix_unexpected_failure" => {
+                Err(CoverageMatrixState::Unexpected)
+            }
+            _ => parse_coverage_matrix(plan_source),
+        };
+        let matrix = match matrix_result {
+            Ok(matrix) => Some(matrix),
+            Err(CoverageMatrixState::Malformed) => {
+                report.coverage_complete = false.into();
+                push_reason(
+                    &mut report,
+                    "coverage_matrix_mismatch",
+                    "Requirement Coverage Matrix is malformed.",
+                );
+                None
+            }
+            Err(CoverageMatrixState::Missing) => {
+                report.coverage_complete = false.into();
+                push_reason(
+                    &mut report,
+                    "missing_requirement_coverage",
+                    "Requirement Coverage Matrix is missing or empty.",
+                );
+                None
+            }
+            Err(CoverageMatrixState::Unexpected) => {
+                report.coverage_complete = false.into();
+                push_reason(
+                    &mut report,
+                    "unexpected_plan_contract_failure",
+                    "Could not parse the Requirement Coverage Matrix.",
+                );
+                None
+            }
+        };
+
+        let mut task_scopes = Vec::new();
+        let mut covered = BTreeSet::new();
+        for task in &loose_tasks {
+            if normalize_whitespace(&task.open_questions) != "none" {
+                report.open_questions_resolved = false.into();
+                push_reason(
+                    &mut report,
+                    "task_open_questions_not_resolved",
+                    &format!("Task {} has unresolved Open Questions.", task.number),
                 );
             }
-            Some(headers)
-        }
-        Err(error) => {
-            push_reason(&mut report, &error.reason_code, &error.message);
-            None
-        }
-    };
 
-    let loose_tasks = parse_loose_tasks(plan_source);
-    let full_plan = parse_plan(plan_source);
-    match &full_plan {
-        Ok(plan) => {
-            report.task_count = plan.tasks.len();
-            report.packet_buildable_tasks = plan.tasks.len();
-        }
-        Err(error) => {
-            report.task_count = loose_tasks.len();
-            report.packet_buildable_tasks = 0;
-            if error.error_class == "MalformedFilesBlock" {
-                report.files_blocks_valid = false;
-                push_reason(&mut report, "malformed_files_block", &error.message);
-            } else {
-                report.task_structure_valid = false;
-                push_reason(&mut report, "malformed_task_structure", &error.message);
-            }
-        }
-    }
-
-    let spec_result = match std::env::var("FEATUREFORGE_PLAN_CONTRACT_TEST_FAILPOINT") {
-        Ok(value) if value == "requirement_index_unexpected_failure" => {
-            Err(RequirementIndexState::Unexpected)
-        }
-        _ => parse_requirement_index(spec_source),
-    };
-    let spec = match spec_result {
-        Ok(spec) => Some(spec),
-        Err(RequirementIndexState::Malformed) => {
-            report.coverage_complete = false;
-            push_reason(
-                &mut report,
-                "malformed_requirement_index",
-                "Requirement Index is missing entries or contains malformed lines.",
-            );
-            None
-        }
-        Err(RequirementIndexState::Missing) => {
-            report.coverage_complete = false;
-            push_reason(
-                &mut report,
-                "missing_requirement_index",
-                "Spec is missing the required Requirement Index section.",
-            );
-            None
-        }
-        Err(RequirementIndexState::Unexpected) => {
-            report.coverage_complete = false;
-            push_reason(
-                &mut report,
-                "unexpected_plan_contract_failure",
-                "Could not parse the source spec Requirement Index.",
-            );
-            None
-        }
-    };
-
-    let matrix_result = match std::env::var("FEATUREFORGE_PLAN_CONTRACT_TEST_FAILPOINT") {
-        Ok(value) if value == "coverage_matrix_unexpected_failure" => {
-            Err(CoverageMatrixState::Unexpected)
-        }
-        _ => parse_coverage_matrix(plan_source),
-    };
-    let matrix = match matrix_result {
-        Ok(matrix) => Some(matrix),
-        Err(CoverageMatrixState::Malformed) => {
-            report.coverage_complete = false;
-            push_reason(
-                &mut report,
-                "coverage_matrix_mismatch",
-                "Requirement Coverage Matrix is malformed.",
-            );
-            None
-        }
-        Err(CoverageMatrixState::Missing) => {
-            report.coverage_complete = false;
-            push_reason(
-                &mut report,
-                "missing_requirement_coverage",
-                "Requirement Coverage Matrix is missing or empty.",
-            );
-            None
-        }
-        Err(CoverageMatrixState::Unexpected) => {
-            report.coverage_complete = false;
-            push_reason(
-                &mut report,
-                "unexpected_plan_contract_failure",
-                "Could not parse the Requirement Coverage Matrix.",
-            );
-            None
-        }
-    };
-
-    let mut task_scopes = Vec::new();
-    let mut covered = BTreeSet::new();
-    for task in &loose_tasks {
-        if normalize_whitespace(&task.open_questions) != "none" {
-            report.open_questions_resolved = false;
-            push_reason(
-                &mut report,
-                "task_open_questions_not_resolved",
-                &format!("Task {} has unresolved Open Questions.", task.number),
-            );
-        }
-
-        if full_plan.is_err() {
-            match parse_task_block(&task.block) {
-                Ok(parsed) => {
-                    report.packet_buildable_tasks += 1;
-                    task_scopes.push((parsed.number, parsed.file_scope.clone()));
+            if full_plan.is_err() {
+                match parse_task_block(&task.block) {
+                    Ok(parsed) => {
+                        report.packet_buildable_tasks += 1;
+                        task_scopes.push((parsed.number, parsed.file_scope.clone()));
+                    }
+                    Err(error) => {
+                        if error.error_class == "MalformedFilesBlock" {
+                            report.files_blocks_valid = false.into();
+                            push_reason(&mut report, "malformed_files_block", &error.message);
+                        } else {
+                            report.task_structure_valid = false.into();
+                            push_reason(&mut report, "malformed_task_structure", &error.message);
+                        }
+                    }
                 }
-                Err(error) => {
-                    if error.error_class == "MalformedFilesBlock" {
-                        report.files_blocks_valid = false;
-                        push_reason(&mut report, "malformed_files_block", &error.message);
-                    } else {
-                        report.task_structure_valid = false;
-                        push_reason(&mut report, "malformed_task_structure", &error.message);
+            }
+
+            if let (Some(spec), Some(matrix)) = (&spec, &matrix) {
+                let coverage_ids = parse_task_coverage_ids(&task.spec_coverage_raw);
+                if coverage_ids.is_empty() {
+                    report.coverage_complete = false.into();
+                    push_reason(
+                        &mut report,
+                        "task_missing_spec_coverage",
+                        &format!(
+                            "Task {} must include at least one Spec Coverage id.",
+                            task.number
+                        ),
+                    );
+                } else {
+                    for requirement_id in &coverage_ids {
+                        if !spec.requirement_index.contains_key(requirement_id) {
+                            report.coverage_complete = false.into();
+                            push_reason(
+                                &mut report,
+                                "unknown_requirement_id",
+                                &format!(
+                                    "Task {} references unknown requirement id {}.",
+                                    task.number, requirement_id
+                                ),
+                            );
+                            continue;
+                        }
+                        match matrix.entries.get(requirement_id) {
+                            Some(task_numbers) if task_numbers.contains(&task.number) => {}
+                            _ => {
+                                report.coverage_complete = false.into();
+                                push_reason(
+                                    &mut report,
+                                    "coverage_matrix_mismatch",
+                                    &format!(
+                                        "Coverage Matrix does not map {} to Task {}.",
+                                        requirement_id, task.number
+                                    ),
+                                );
+                            }
+                        }
+                        covered.insert(requirement_id.clone());
+                    }
+                    let lower_task = task.block.to_lowercase();
+                    if let Some(phrase) = detect_ambiguous_task_wording(&lower_task) {
+                        push_reason(
+                            &mut report,
+                            "ambiguous_task_wording",
+                            &format!(
+                                "Task {} uses ambiguous wording ('{}').",
+                                task.number, phrase
+                            ),
+                        );
+                    }
+                    if let Some(message) =
+                        detect_requirement_weakening(spec, task.number, &lower_task, &coverage_ids)
+                    {
+                        push_reason(&mut report, "requirement_weakening_detected", &message);
                     }
                 }
             }
         }
 
         if let (Some(spec), Some(matrix)) = (&spec, &matrix) {
-            let coverage_ids = parse_task_coverage_ids(&task.spec_coverage_raw);
-            if coverage_ids.is_empty() {
-                report.coverage_complete = false;
-                push_reason(
-                    &mut report,
-                    "task_missing_spec_coverage",
-                    &format!(
-                        "Task {} must include at least one Spec Coverage id.",
-                        task.number
-                    ),
-                );
-            } else {
-                for requirement_id in &coverage_ids {
-                    if !spec.requirement_index.contains_key(requirement_id) {
-                        report.coverage_complete = false;
+            for (requirement_id, task_numbers) in &matrix.entries {
+                if !spec.requirement_index.contains_key(requirement_id) {
+                    report.coverage_complete = false.into();
+                    push_reason(
+                        &mut report,
+                        "unknown_requirement_id",
+                        &format!(
+                            "Requirement Coverage Matrix references unknown requirement id {requirement_id}."
+                        ),
+                    );
+                }
+                for task_number in task_numbers {
+                    if !loose_tasks.iter().any(|task| task.number == *task_number) {
+                        report.coverage_complete = false.into();
                         push_reason(
                             &mut report,
-                            "unknown_requirement_id",
+                            "coverage_matrix_mismatch",
                             &format!(
-                                "Task {} references unknown requirement id {}.",
-                                task.number, requirement_id
+                                "Requirement Coverage Matrix references missing Task {task_number}."
                             ),
                         );
-                        continue;
                     }
-                    match matrix.entries.get(requirement_id) {
-                        Some(task_numbers) if task_numbers.contains(&task.number) => {}
-                        _ => {
-                            report.coverage_complete = false;
-                            push_reason(
-                                &mut report,
-                                "coverage_matrix_mismatch",
-                                &format!(
-                                    "Coverage Matrix does not map {} to Task {}.",
-                                    requirement_id, task.number
-                                ),
-                            );
-                        }
-                    }
-                    covered.insert(requirement_id.clone());
                 }
-                let lower_task = task.block.to_lowercase();
-                if let Some(phrase) = detect_ambiguous_task_wording(&lower_task) {
+            }
+            for requirement in &spec.requirements {
+                if !covered.contains(&requirement.id) {
+                    report.coverage_complete = false.into();
                     push_reason(
                         &mut report,
-                        "ambiguous_task_wording",
-                        &format!(
-                            "Task {} uses ambiguous wording ('{}').",
-                            task.number, phrase
-                        ),
+                        "missing_requirement_coverage",
+                        &format!("{} is not covered by any task.", requirement.id),
                     );
                 }
-                if let Some(message) =
-                    detect_requirement_weakening(spec, task.number, &lower_task, &coverage_ids)
-                {
-                    push_reason(&mut report, "requirement_weakening_detected", &message);
-                }
-            }
-        }
-    }
-
-    if let (Some(spec), Some(matrix)) = (&spec, &matrix) {
-        for (requirement_id, task_numbers) in &matrix.entries {
-            if !spec.requirement_index.contains_key(requirement_id) {
-                report.coverage_complete = false;
-                push_reason(
-                    &mut report,
-                    "unknown_requirement_id",
-                    &format!(
-                        "Requirement Coverage Matrix references unknown requirement id {}.",
-                        requirement_id
-                    ),
-                );
-            }
-            for task_number in task_numbers {
-                if !loose_tasks.iter().any(|task| task.number == *task_number) {
-                    report.coverage_complete = false;
+                if !matrix.entries.contains_key(&requirement.id) {
+                    report.coverage_complete = false.into();
                     push_reason(
                         &mut report,
-                        "coverage_matrix_mismatch",
+                        "missing_requirement_coverage",
                         &format!(
-                            "Requirement Coverage Matrix references missing Task {}.",
-                            task_number
+                            "{} is missing from the Requirement Coverage Matrix.",
+                            requirement.id
                         ),
                     );
                 }
             }
         }
-        for requirement in &spec.requirements {
-            if !covered.contains(&requirement.id) {
-                report.coverage_complete = false;
-                push_reason(
-                    &mut report,
-                    "missing_requirement_coverage",
-                    &format!("{} is not covered by any task.", requirement.id),
-                );
-            }
-            if !matrix.entries.contains_key(&requirement.id) {
-                report.coverage_complete = false;
-                push_reason(
-                    &mut report,
-                    "missing_requirement_coverage",
-                    &format!(
-                        "{} is missing from the Requirement Coverage Matrix.",
-                        requirement.id
-                    ),
-                );
-            }
-        }
-    }
 
-    if let Ok(plan) = full_plan {
-        task_scopes = plan
-            .tasks
-            .iter()
-            .map(|task| {
-                (
-                    task.number,
-                    task.file_entries
-                        .iter()
-                        .filter(|entry| entry.action != "Test")
-                        .map(|entry| entry.normalized_path.clone())
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect();
+        if let Ok(plan) = full_plan {
+            task_scopes = plan
+                .tasks
+                .iter()
+                .map(|task| {
+                    (
+                        task.number,
+                        task.file_entries
+                            .iter()
+                            .filter(|entry| entry.action != "Test")
+                            .map(|entry| entry.normalized_path.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+        }
+        let topology = analyze_execution_topology(plan_source, &task_scopes);
+        report.execution_strategy_present = topology.execution_strategy_present;
+        report.dependency_diagram_present = topology.dependency_diagram_present;
+        report.execution_topology_valid = topology.execution_topology_valid;
+        report.serial_hazards_resolved = topology.serial_hazards_resolved;
+        report.parallel_lane_ownership_valid = topology.parallel_lane_ownership_valid;
+        report.parallel_workspace_isolation_valid = topology.parallel_workspace_isolation_valid;
+        report.parallel_worktree_groups = topology.parallel_worktree_groups;
+        report.parallel_worktree_requirements = topology.parallel_worktree_requirements;
+        for diagnostic in topology.diagnostics {
+            push_reason(&mut report, &diagnostic.code, &diagnostic.message);
+        }
+        report.overlapping_write_scopes = overlapping_scopes(&task_scopes);
+        if report.reason_codes.is_empty() {
+            report.contract_state = String::from("valid");
+        }
+        if headers.is_none() {
+            report.plan_revision = 0;
+        }
+        report
     }
-    let topology = analyze_execution_topology(plan_source, &task_scopes);
-    report.execution_strategy_present = topology.execution_strategy_present;
-    report.dependency_diagram_present = topology.dependency_diagram_present;
-    report.execution_topology_valid = topology.execution_topology_valid;
-    report.serial_hazards_resolved = topology.serial_hazards_resolved;
-    report.parallel_lane_ownership_valid = topology.parallel_lane_ownership_valid;
-    report.parallel_workspace_isolation_valid = topology.parallel_workspace_isolation_valid;
-    report.parallel_worktree_groups = topology.parallel_worktree_groups;
-    report.parallel_worktree_requirements = topology.parallel_worktree_requirements;
-    for diagnostic in topology.diagnostics {
-        push_reason(&mut report, &diagnostic.code, &diagnostic.message);
-    }
-    report.overlapping_write_scopes = overlapping_scopes(&task_scopes);
-    if report.reason_codes.is_empty() {
-        report.contract_state = String::from("valid");
-    }
-    if headers.is_none() {
-        report.plan_revision = 0;
-    }
-    report
 }
 
+#[must_use]
+/// Runtime function.
 pub fn analyze_contract_report(
     repo_root: &Path,
     spec_path: &str,
@@ -1141,7 +1150,7 @@ fn parse_spec_revision(source: &str) -> Result<u32, ()> {
 }
 
 fn parse_requirement_index(source: &str) -> Result<SpecContract, RequirementIndexState> {
-    let revision = parse_spec_revision(source).map_err(|_| RequirementIndexState::Unexpected)?;
+    let revision = parse_spec_revision(source).map_err(|()| RequirementIndexState::Unexpected)?;
     let mut requirements = Vec::new();
     let mut requirement_index = BTreeMap::new();
     let mut in_index = false;
@@ -1361,152 +1370,154 @@ fn parse_tasks(source: &str) -> Result<Vec<ParsedTask>, TaskParseError> {
 }
 
 fn parse_task_block(block: &str) -> Result<ParsedTask, TaskParseError> {
-    let lines = block.lines().collect::<Vec<_>>();
-    let heading = lines.first().copied().ok_or_else(|| TaskParseError {
-        error_class: String::from("MalformedTaskStructure"),
-        message: String::from("Plan task structure is malformed."),
-    })?;
-    let heading = heading
-        .strip_prefix("## Task ")
-        .ok_or_else(|| TaskParseError {
+    {
+        let lines = block.lines().collect::<Vec<_>>();
+        let heading = lines.first().copied().ok_or_else(|| TaskParseError {
+            error_class: String::from("MalformedTaskStructure"),
+            message: String::from("Plan task structure is malformed."),
+        })?;
+        let heading = heading
+            .strip_prefix("## Task ")
+            .ok_or_else(|| TaskParseError {
+                error_class: String::from("MalformedTaskStructure"),
+                message: String::from("Task headings must use canonical '## Task N:' form."),
+            })?;
+        let (number, title) = heading.split_once(": ").ok_or_else(|| TaskParseError {
             error_class: String::from("MalformedTaskStructure"),
             message: String::from("Task headings must use canonical '## Task N:' form."),
         })?;
-    let (number, title) = heading.split_once(": ").ok_or_else(|| TaskParseError {
-        error_class: String::from("MalformedTaskStructure"),
-        message: String::from("Task headings must use canonical '## Task N:' form."),
-    })?;
-    let number = number.parse::<u32>().map_err(|_| TaskParseError {
-        error_class: String::from("MalformedTaskStructure"),
-        message: String::from("Task headings must use canonical '## Task N:' form."),
-    })?;
+        let number = number.parse::<u32>().map_err(|_| TaskParseError {
+            error_class: String::from("MalformedTaskStructure"),
+            message: String::from("Task headings must use canonical '## Task N:' form."),
+        })?;
 
-    let mut spec_coverage_raw = None;
-    let mut task_outcome = None;
-    let mut plan_constraints = Vec::new();
-    let mut open_questions = None;
-    let mut file_entries = Vec::new();
-    let mut file_scope = Vec::new();
-    let mut steps_raw = Vec::new();
-    let mut step_numbers = BTreeSet::new();
-    let mut in_constraints = false;
-    let mut in_files = false;
-    let mut files_seen = false;
+        let mut spec_coverage_raw = None;
+        let mut task_outcome = None;
+        let mut plan_constraints = Vec::new();
+        let mut open_questions = None;
+        let mut file_entries = Vec::new();
+        let mut file_scope = Vec::new();
+        let mut steps_raw = Vec::new();
+        let mut step_numbers = BTreeSet::new();
+        let mut in_constraints = false;
+        let mut in_files = false;
+        let mut files_seen = false;
 
-    for line in &lines[1..] {
-        let normalized = normalize_whitespace(line);
-        if in_constraints {
-            if let Some(constraint) = line.strip_prefix("- ") {
-                plan_constraints.push(constraint.to_owned());
-                continue;
-            }
-            if normalized.is_empty() {
-                continue;
-            }
-            in_constraints = false;
-        }
-
-        if in_files {
-            if normalized.is_empty() {
-                continue;
-            }
-            if is_step_line(line) {
-                in_files = false;
-            } else {
-                if let Some(file_entry) = parse_file_entry(line, number)? {
-                    file_scope.push(file_entry.normalized_path.clone());
-                    file_entries.push(file_entry);
+        for line in &lines[1..] {
+            let normalized = normalize_whitespace(line);
+            if in_constraints {
+                if let Some(constraint) = line.strip_prefix("- ") {
+                    plan_constraints.push(constraint.to_owned());
                     continue;
                 }
-                return Err(TaskParseError {
-                    error_class: String::from("MalformedFilesBlock"),
-                    message: format!("Task {} contains a malformed Files block.", number),
-                });
+                if normalized.is_empty() {
+                    continue;
+                }
+                in_constraints = false;
+            }
+
+            if in_files {
+                if normalized.is_empty() {
+                    continue;
+                }
+                if is_step_line(line) {
+                    in_files = false;
+                } else {
+                    if let Some(file_entry) = parse_file_entry(line, number)? {
+                        file_scope.push(file_entry.normalized_path.clone());
+                        file_entries.push(file_entry);
+                        continue;
+                    }
+                    return Err(TaskParseError {
+                        error_class: String::from("MalformedFilesBlock"),
+                        message: format!("Task {number} contains a malformed Files block."),
+                    });
+                }
+            }
+
+            if let Some(value) = line.strip_prefix("**Spec Coverage:** ") {
+                spec_coverage_raw = Some(value.to_owned());
+                continue;
+            }
+            if let Some(value) = line.strip_prefix("**Task Outcome:** ") {
+                task_outcome = Some(value.to_owned());
+                continue;
+            }
+            if *line == "**Plan Constraints:**" {
+                in_constraints = true;
+                continue;
+            }
+            if let Some(value) = line.strip_prefix("**Open Questions:** ") {
+                open_questions = Some(value.to_owned());
+                continue;
+            }
+            if *line == "**Files:**" {
+                files_seen = true;
+                in_files = true;
+                continue;
+            }
+            if let Some(step) = parse_step_line(line) {
+                if !files_seen {
+                    return Err(TaskParseError {
+                        error_class: String::from("MalformedTaskStructure"),
+                        message: format!("Task {number} steps must appear after a Files block."),
+                    });
+                }
+                if !step_numbers.insert(step.number) {
+                    return Err(TaskParseError {
+                        error_class: String::from("MalformedTaskStructure"),
+                        message: format!("Task {} has duplicate Step {}.", number, step.number),
+                    });
+                }
+                steps_raw.push((*line).to_owned());
             }
         }
 
-        if let Some(value) = line.strip_prefix("**Spec Coverage:** ") {
-            spec_coverage_raw = Some(value.to_owned());
-            continue;
+        let spec_coverage_raw = spec_coverage_raw.ok_or_else(|| TaskParseError {
+            error_class: String::from("TaskMissingSpecCoverage"),
+            message: format!("Task {number} is missing Spec Coverage."),
+        })?;
+        if task_outcome.is_none() {
+            return Err(TaskParseError {
+                error_class: String::from("MalformedTaskStructure"),
+                message: format!("Task {number} is missing Task Outcome."),
+            });
         }
-        if let Some(value) = line.strip_prefix("**Task Outcome:** ") {
-            task_outcome = Some(value.to_owned());
-            continue;
+        if plan_constraints.is_empty() {
+            return Err(TaskParseError {
+                error_class: String::from("MalformedTaskStructure"),
+                message: format!("Task {number} is missing Plan Constraints."),
+            });
         }
-        if *line == "**Plan Constraints:**" {
-            in_constraints = true;
-            continue;
+        let open_questions = open_questions.ok_or_else(|| TaskParseError {
+            error_class: String::from("MalformedTaskStructure"),
+            message: format!("Task {number} is missing Open Questions."),
+        })?;
+        if !files_seen || file_entries.is_empty() {
+            return Err(TaskParseError {
+                error_class: String::from("MalformedFilesBlock"),
+                message: format!("Task {number} is missing a parseable Files block."),
+            });
         }
-        if let Some(value) = line.strip_prefix("**Open Questions:** ") {
-            open_questions = Some(value.to_owned());
-            continue;
+        if steps_raw.is_empty() {
+            return Err(TaskParseError {
+                error_class: String::from("MalformedTaskStructure"),
+                message: format!("Task {number} must include at least one step."),
+            });
         }
-        if *line == "**Files:**" {
-            files_seen = true;
-            in_files = true;
-            continue;
-        }
-        if let Some(step) = parse_step_line(line) {
-            if !files_seen {
-                return Err(TaskParseError {
-                    error_class: String::from("MalformedTaskStructure"),
-                    message: format!("Task {} steps must appear after a Files block.", number),
-                });
-            }
-            if !step_numbers.insert(step.number) {
-                return Err(TaskParseError {
-                    error_class: String::from("MalformedTaskStructure"),
-                    message: format!("Task {} has duplicate Step {}.", number, step.number),
-                });
-            }
-            steps_raw.push((*line).to_owned());
-        }
-    }
 
-    let spec_coverage_raw = spec_coverage_raw.ok_or_else(|| TaskParseError {
-        error_class: String::from("TaskMissingSpecCoverage"),
-        message: format!("Task {} is missing Spec Coverage.", number),
-    })?;
-    if task_outcome.is_none() {
-        return Err(TaskParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: format!("Task {} is missing Task Outcome.", number),
-        });
+        Ok(ParsedTask {
+            number,
+            title: title.to_owned(),
+            block: block.to_owned(),
+            spec_coverage_ids: parse_task_coverage_ids(&spec_coverage_raw),
+            plan_constraints,
+            open_questions,
+            file_entries,
+            file_scope,
+            steps_raw,
+        })
     }
-    if plan_constraints.is_empty() {
-        return Err(TaskParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: format!("Task {} is missing Plan Constraints.", number),
-        });
-    }
-    let open_questions = open_questions.ok_or_else(|| TaskParseError {
-        error_class: String::from("MalformedTaskStructure"),
-        message: format!("Task {} is missing Open Questions.", number),
-    })?;
-    if !files_seen || file_entries.is_empty() {
-        return Err(TaskParseError {
-            error_class: String::from("MalformedFilesBlock"),
-            message: format!("Task {} is missing a parseable Files block.", number),
-        });
-    }
-    if steps_raw.is_empty() {
-        return Err(TaskParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: format!("Task {} must include at least one step.", number),
-        });
-    }
-
-    Ok(ParsedTask {
-        number,
-        title: title.to_owned(),
-        block: block.to_owned(),
-        spec_coverage_ids: parse_task_coverage_ids(&spec_coverage_raw),
-        plan_constraints,
-        open_questions,
-        file_entries,
-        file_scope,
-        steps_raw,
-    })
 }
 
 fn parse_loose_tasks(source: &str) -> Vec<LooseTask> {
@@ -1534,9 +1545,11 @@ fn parse_loose_tasks(source: &str) -> Vec<LooseTask> {
         if current_number.is_some() {
             current_block.push(line);
             if let Some(value) = line.strip_prefix("**Spec Coverage:** ") {
-                current_spec_coverage = value.to_owned();
+                current_spec_coverage.clear();
+                current_spec_coverage.push_str(value);
             } else if let Some(value) = line.strip_prefix("**Open Questions:** ") {
-                current_open_questions = value.to_owned();
+                current_open_questions.clear();
+                current_open_questions.push_str(value);
             }
         }
     }
@@ -1567,7 +1580,7 @@ fn parse_file_entry(
     let Some((action, value)) = rest.split_once(": ") else {
         return Err(TaskParseError {
             error_class: String::from("MalformedFilesBlock"),
-            message: format!("Task {} contains a malformed Files block.", task_number),
+            message: format!("Task {task_number} contains a malformed Files block."),
         });
     };
     match action {
@@ -1575,20 +1588,20 @@ fn parse_file_entry(
         _ => {
             return Err(TaskParseError {
                 error_class: String::from("MalformedFilesBlock"),
-                message: format!("Task {} contains a malformed Files block.", task_number),
+                message: format!("Task {task_number} contains a malformed Files block."),
             });
         }
     }
     if !(value.starts_with('`') && value.ends_with('`')) {
         return Err(TaskParseError {
             error_class: String::from("MalformedFilesBlock"),
-            message: format!("Task {} contains a malformed Files block.", task_number),
+            message: format!("Task {task_number} contains a malformed Files block."),
         });
     }
     let path = value.trim_matches('`').to_owned();
     let normalized_path = normalize_scope_path(&path).map_err(|_| TaskParseError {
         error_class: String::from("MalformedFilesBlock"),
-        message: format!("Task {} contains an invalid Files entry path.", task_number),
+        message: format!("Task {task_number} contains an invalid Files entry path."),
     })?;
     Ok(Some(ParsedFileEntry {
         action: action.to_owned(),
@@ -1698,8 +1711,7 @@ fn detect_requirement_weakening(
             let weakened = requirement.normalized_lower.replace(" must ", " should ");
             if lower_task.contains(&weakened) {
                 return Some(format!(
-                    "Task {} weakens {} from 'must' to 'should'.",
-                    task_number, requirement_id
+                    "Task {task_number} weakens {requirement_id} from 'must' to 'should'."
                 ));
             }
         }
@@ -1709,8 +1721,7 @@ fn detect_requirement_weakening(
                 .replace(" must not ", " should not ");
             if lower_task.contains(&weakened) {
                 return Some(format!(
-                    "Task {} weakens {} from 'must not' to 'should not'.",
-                    task_number, requirement_id
+                    "Task {task_number} weakens {requirement_id} from 'must not' to 'should not'."
                 ));
             }
         }
@@ -1719,8 +1730,7 @@ fn detect_requirement_weakening(
                 let anchor = normalize_whitespace(&token).to_lowercase();
                 if !anchor.is_empty() && lower_task.contains(&anchor) {
                     return Some(format!(
-                        "Task {} weakens {} by downgrading requirement force around {}.",
-                        task_number, requirement_id, token
+                        "Task {task_number} weakens {requirement_id} by downgrading requirement force around {token}."
                     ));
                 }
             }
@@ -1756,16 +1766,14 @@ fn build_packet_fingerprint(
     task: &ParsedTask,
 ) -> String {
     let mut body = String::new();
-    body.push_str(&format!("plan_path={plan_path}\n"));
-    body.push_str(&format!("plan_revision={plan_revision}\n"));
-    body.push_str(&format!("plan_fingerprint={plan_fingerprint}\n"));
-    body.push_str(&format!("source_spec_path={source_spec_path}\n"));
-    body.push_str(&format!("source_spec_revision={source_spec_revision}\n"));
-    body.push_str(&format!(
-        "source_spec_fingerprint={source_spec_fingerprint}\n"
-    ));
-    body.push_str(&format!("task_number={}\n", task.number));
-    body.push_str(&format!("task_title={}\n", task.title));
+    let _ = writeln!(body, "plan_path={plan_path}");
+    let _ = writeln!(body, "plan_revision={plan_revision}");
+    let _ = writeln!(body, "plan_fingerprint={plan_fingerprint}");
+    let _ = writeln!(body, "source_spec_path={source_spec_path}");
+    let _ = writeln!(body, "source_spec_revision={source_spec_revision}");
+    let _ = writeln!(body, "source_spec_fingerprint={source_spec_fingerprint}");
+    let _ = writeln!(body, "task_number={}", task.number);
+    let _ = writeln!(body, "task_title={}", task.title);
     body.push_str("coverage=");
     body.push_str(&task.spec_coverage_ids.join("\n"));
     body.push('\n');
@@ -1792,45 +1800,53 @@ struct PacketMarkdownInput<'a> {
 fn render_packet_markdown(input: &PacketMarkdownInput<'_>) -> String {
     let mut markdown = String::new();
     markdown.push_str("## Task Packet\n\n");
-    markdown.push_str(&format!("**Plan Path:** `{}`\n", input.plan_path));
-    markdown.push_str(&format!("**Plan Revision:** {}\n", input.plan_revision));
-    markdown.push_str(&format!(
-        "**Plan Fingerprint:** `{}`\n",
+    let _ = writeln!(markdown, "**Plan Path:** `{}`", input.plan_path);
+    let _ = writeln!(markdown, "**Plan Revision:** {}", input.plan_revision);
+    let _ = writeln!(
+        markdown,
+        "**Plan Fingerprint:** `{}`",
         input.plan_fingerprint
-    ));
-    markdown.push_str(&format!(
-        "**Source Spec Path:** `{}`\n",
+    );
+    let _ = writeln!(
+        markdown,
+        "**Source Spec Path:** `{}`",
         input.source_spec_path
-    ));
-    markdown.push_str(&format!(
-        "**Source Spec Revision:** {}\n",
+    );
+    let _ = writeln!(
+        markdown,
+        "**Source Spec Revision:** {}",
         input.source_spec_revision
-    ));
-    markdown.push_str(&format!(
-        "**Source Spec Fingerprint:** `{}`\n",
+    );
+    let _ = writeln!(
+        markdown,
+        "**Source Spec Fingerprint:** `{}`",
         input.source_spec_fingerprint
-    ));
-    markdown.push_str(&format!("**Task Number:** {}\n", input.task.number));
-    markdown.push_str(&format!("**Task Title:** {}\n", input.task.title));
-    markdown.push_str(&format!(
-        "**Open Questions:** {}\n",
+    );
+    let _ = writeln!(markdown, "**Task Number:** {}", input.task.number);
+    let _ = writeln!(markdown, "**Task Title:** {}", input.task.title);
+    let _ = writeln!(
+        markdown,
+        "**Open Questions:** {}",
         input.task.open_questions
-    ));
-    markdown.push_str(&format!(
-        "**Packet Fingerprint:** `{}`\n",
+    );
+    let _ = writeln!(
+        markdown,
+        "**Packet Fingerprint:** `{}`",
         input.packet_fingerprint
-    ));
-    markdown.push_str(&format!("**Generated At:** {}\n\n", input.generated_at));
+    );
+    let _ = writeln!(markdown, "**Generated At:** {}", input.generated_at);
+    markdown.push('\n');
     markdown.push_str("## Covered Requirements\n\n");
     for requirement in input.requirement_statements {
-        markdown.push_str(&format!(
-            "- [{}][{}] {}\n",
+        let _ = writeln!(
+            markdown,
+            "- [{}][{}] {}",
             requirement.id, requirement.kind, requirement.statement
-        ));
+        );
     }
     markdown.push_str("\n## Plan Constraints\n\n");
     for constraint in &input.task.plan_constraints {
-        markdown.push_str(&format!("- {constraint}\n"));
+        let _ = writeln!(markdown, "- {constraint}");
     }
     markdown.push_str("\n## Task Block\n\n");
     markdown.push_str(&input.task.block);
@@ -1890,24 +1906,23 @@ fn write_packet_cache(
         fs::create_dir_all(parent)?;
     }
     let mut body = String::new();
-    body.push_str(&format!("plan_path={}\n", metadata.plan_path));
-    body.push_str(&format!("plan_revision={}\n", metadata.plan_revision));
-    body.push_str(&format!("plan_fingerprint={}\n", metadata.plan_fingerprint));
-    body.push_str(&format!("source_spec_path={}\n", metadata.source_spec_path));
-    body.push_str(&format!(
-        "source_spec_revision={}\n",
+    let _ = writeln!(body, "plan_path={}", metadata.plan_path);
+    let _ = writeln!(body, "plan_revision={}", metadata.plan_revision);
+    let _ = writeln!(body, "plan_fingerprint={}", metadata.plan_fingerprint);
+    let _ = writeln!(body, "source_spec_path={}", metadata.source_spec_path);
+    let _ = writeln!(
+        body,
+        "source_spec_revision={}",
         metadata.source_spec_revision
-    ));
-    body.push_str(&format!(
-        "source_spec_fingerprint={}\n",
+    );
+    let _ = writeln!(
+        body,
+        "source_spec_fingerprint={}",
         metadata.source_spec_fingerprint
-    ));
-    body.push_str(&format!("task_number={}\n", metadata.task_number));
-    body.push_str(&format!(
-        "packet_fingerprint={}\n",
-        metadata.packet_fingerprint
-    ));
-    body.push_str(&format!("generated_at={generated_at}\n"));
+    );
+    let _ = writeln!(body, "task_number={}", metadata.task_number);
+    let _ = writeln!(body, "packet_fingerprint={}", metadata.packet_fingerprint);
+    let _ = writeln!(body, "generated_at={generated_at}");
     body.push_str("---\n");
     body.push_str(packet_markdown);
     fs::write(path, body)
@@ -2088,7 +2103,14 @@ fn emit_lint_failure(
 }
 
 fn emit_json_failure(error: JsonFailure) -> std::process::ExitCode {
-    match serde_json::to_string(&error) {
+    let JsonFailure {
+        error_class,
+        message,
+    } = error;
+    match serde_json::to_string(&JsonFailure {
+        error_class,
+        message,
+    }) {
         Ok(json) => {
             eprintln!("{json}");
             std::process::ExitCode::from(1)
@@ -2108,56 +2130,88 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Runtime function.
 pub fn plan_fidelity_receipt_path(state_dir: &Path, repo_slug: &str, branch_name: &str) -> PathBuf {
     let branch_root = harness_branch_root(state_dir, repo_slug, branch_name)
         .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| harness_branch_root(state_dir, repo_slug, branch_name));
+        .map_or_else(
+            || harness_branch_root(state_dir, repo_slug, branch_name),
+            Path::to_path_buf,
+        );
     branch_root
         .join("workflow")
         .join("plan-fidelity-receipt.json")
 }
 
+/// Runtime struct.
 pub struct PlanFidelityReceiptInput<'a> {
+    /// Runtime field.
     pub spec: &'a SpecDocument,
+    /// Runtime field.
     pub plan: &'a PlanDocument,
+    /// Runtime field.
     pub verdict: &'a str,
+    /// Runtime field.
     pub review_artifact_path: &'a str,
+    /// Runtime field.
     pub review_artifact_fingerprint: &'a str,
+    /// Runtime field.
     pub reviewer_stage: &'a str,
+    /// Runtime field.
     pub reviewer_source: &'a str,
+    /// Runtime field.
     pub reviewer_id: &'a str,
+    /// Runtime field.
     pub distinct_from_stages: &'a [String],
+    /// Runtime field.
     pub checked_surfaces: &'a [String],
+    /// Runtime field.
     pub verified_requirement_ids: &'a [String],
 }
 
-pub fn build_plan_fidelity_receipt(input: PlanFidelityReceiptInput<'_>) -> PlanFidelityReceipt {
+#[must_use]
+/// Runtime function.
+pub fn build_plan_fidelity_receipt(input: &PlanFidelityReceiptInput<'_>) -> PlanFidelityReceipt {
+    let PlanFidelityReceiptInput {
+        spec,
+        plan,
+        verdict,
+        review_artifact_path,
+        review_artifact_fingerprint,
+        reviewer_stage,
+        reviewer_source,
+        reviewer_id,
+        distinct_from_stages,
+        checked_surfaces,
+        verified_requirement_ids,
+    } = *input;
     PlanFidelityReceipt {
         schema_version: PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION,
         receipt_kind: String::from(PLAN_FIDELITY_RECEIPT_KIND),
-        verdict: input.verdict.to_owned(),
-        spec_path: input.spec.path.clone(),
-        spec_revision: input.spec.spec_revision,
-        spec_fingerprint: sha256_hex(input.spec.source.as_bytes()),
-        plan_path: input.plan.path.clone(),
-        plan_revision: input.plan.plan_revision,
-        plan_fingerprint: sha256_hex(input.plan.source.as_bytes()),
-        review_artifact_path: input.review_artifact_path.to_owned(),
-        review_artifact_fingerprint: input.review_artifact_fingerprint.to_owned(),
+        verdict: verdict.to_owned(),
+        spec_path: spec.path.clone(),
+        spec_revision: spec.spec_revision,
+        spec_fingerprint: sha256_hex(spec.source.as_bytes()),
+        plan_path: plan.path.clone(),
+        plan_revision: plan.plan_revision,
+        plan_fingerprint: sha256_hex(plan.source.as_bytes()),
+        review_artifact_path: review_artifact_path.to_owned(),
+        review_artifact_fingerprint: review_artifact_fingerprint.to_owned(),
         reviewer_provenance: PlanFidelityReviewerProvenance {
-            review_stage: input.reviewer_stage.to_owned(),
-            reviewer_source: input.reviewer_source.to_owned(),
-            reviewer_id: input.reviewer_id.to_owned(),
-            distinct_from_stages: input.distinct_from_stages.to_vec(),
+            review_stage: reviewer_stage.to_owned(),
+            reviewer_source: reviewer_source.to_owned(),
+            reviewer_id: reviewer_id.to_owned(),
+            distinct_from_stages: distinct_from_stages.to_vec(),
         },
         verification: PlanFidelityVerification {
-            checked_surfaces: input.checked_surfaces.to_vec(),
-            verified_requirement_ids: input.verified_requirement_ids.to_vec(),
+            checked_surfaces: checked_surfaces.to_vec(),
+            verified_requirement_ids: verified_requirement_ids.to_vec(),
         },
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn persist_plan_fidelity_receipt(
     receipt_path: &Path,
     receipt: &PlanFidelityReceipt,

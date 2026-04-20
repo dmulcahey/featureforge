@@ -1,21 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RuntimeRootOutput",
+  "description": "Runtime struct.",
   "type": "object",
   "properties": {
     "resolved": {
+      "description": "Runtime field.",
       "type": "boolean"
     },
     "root": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "source": {
+      "description": "Runtime field.",
       "$ref": "#/$defs/RuntimeRootSourceSchemaDoc"
     },
     "validation": {
+      "description": "Runtime field.",
       "$ref": "#/$defs/RuntimeRootValidation"
     }
   },
@@ -36,15 +41,19 @@
       ]
     },
     "RuntimeRootValidation": {
+      "description": "Runtime struct.",
       "type": "object",
       "properties": {
         "has_binary": {
+          "description": "Runtime field.",
           "type": "boolean"
         },
         "has_version": {
+          "description": "Runtime field.",
           "type": "boolean"
         },
         "upgrade_eligible": {
+          "description": "Runtime field.",
           "type": "boolean"
         }
       },

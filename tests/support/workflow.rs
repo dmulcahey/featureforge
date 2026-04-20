@@ -1,6 +1,7 @@
 #[path = "repo_template.rs"]
 mod repo_template_support;
 
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -23,9 +24,9 @@ pub fn harness_fixture_path(file_name: &str) -> PathBuf {
 pub fn copy_workflow_fixture(relative: &str, dest: &Path) {
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)
-            .expect("fixture destination parent directory should be creatable");
+            .expect_or_abort("fixture destination parent directory should be creatable");
     }
-    fs::copy(workflow_fixture_path(relative), dest).expect("workflow fixture should copy");
+    fs::copy(workflow_fixture_path(relative), dest).expect_or_abort("workflow fixture should copy");
 }
 
 pub fn copy_harness_fixture(file_name: &str, dest: &Path) {
@@ -33,17 +34,19 @@ pub fn copy_harness_fixture(file_name: &str, dest: &Path) {
 }
 
 pub fn read_harness_fixture_text(file_name: &str) -> String {
-    fs::read_to_string(harness_fixture_path(file_name)).expect("harness fixture should load")
+    fs::read_to_string(harness_fixture_path(file_name))
+        .expect_or_abort("harness fixture should load")
 }
 
 pub fn read_harness_json_fixture(file_name: &str) -> Value {
-    serde_json::from_str(&read_harness_fixture_text(file_name))
-        .expect("harness fixture should contain valid json")
+    let parsed = serde_json::from_str(&read_harness_fixture_text(file_name));
+    assert!(parsed.is_ok(), "harness fixture should contain valid json");
+    parsed.map_or(Value::Null, |value| value)
 }
 
 pub fn init_repo(_name: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
     repo_template_support::populate_repo_from_template(repo_dir.path());
 
     (repo_dir, state_dir)
@@ -63,7 +66,7 @@ pub fn install_full_contract_ready_artifacts(repo: &Path) {
     let plan_source = fs::read_to_string(workflow_fixture_path(
         "plans/2026-03-22-runtime-integration-hardening.md",
     ))
-    .expect("full-contract ready plan fixture should load");
+    .expect_or_abort("full-contract ready plan fixture should load");
     let adjusted_plan = plan_source.replace(
         "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md",
         spec_rel,
@@ -71,10 +74,11 @@ pub fn install_full_contract_ready_artifacts(repo: &Path) {
     fs::create_dir_all(
         plan_path
             .parent()
-            .expect("plan fixture should have a parent directory"),
+            .expect_or_abort("plan fixture should have a parent directory"),
     )
-    .expect("plan directory should be creatable");
-    fs::write(&plan_path, adjusted_plan).expect("full-contract ready plan fixture should write");
+    .expect_or_abort("plan directory should be creatable");
+    fs::write(&plan_path, adjusted_plan)
+        .expect_or_abort("full-contract ready plan fixture should write");
 }
 
 #[cfg(test)]
@@ -101,29 +105,31 @@ mod tests {
 
     #[test]
     fn copy_workflow_fixture_copies_fixture_contents() {
-        let tmp = TempDir::new().expect("tempdir should exist");
+        let tmp = TempDir::new().expect_or_abort("tempdir should exist");
         let relative = "specs/2026-03-22-runtime-integration-hardening-design.md";
         let dest = tmp.path().join("copied.md");
 
         copy_workflow_fixture(relative, &dest);
 
         let expected = fs::read_to_string(workflow_fixture_path(relative))
-            .expect("workflow fixture source should read");
-        let copied = fs::read_to_string(&dest).expect("copied workflow fixture should read");
+            .expect_or_abort("workflow fixture source should read");
+        let copied =
+            fs::read_to_string(&dest).expect_or_abort("copied workflow fixture should read");
         assert_eq!(copied, expected);
     }
 
     #[test]
     fn copy_harness_fixture_copies_fixture_contents() {
-        let tmp = TempDir::new().expect("tempdir should exist");
+        let tmp = TempDir::new().expect_or_abort("tempdir should exist");
         let file_name = "valid-execution-contract.md";
         let dest = tmp.path().join("copied-harness.md");
 
         copy_harness_fixture(file_name, &dest);
 
         let expected = fs::read_to_string(harness_fixture_path(file_name))
-            .expect("harness fixture source should read");
-        let copied = fs::read_to_string(&dest).expect("copied harness fixture should read");
+            .expect_or_abort("harness fixture source should read");
+        let copied =
+            fs::read_to_string(&dest).expect_or_abort("copied harness fixture should read");
         assert_eq!(copied, expected);
     }
 
@@ -131,7 +137,7 @@ mod tests {
     fn read_harness_fixture_text_returns_fixture_contents() {
         let file_name = "valid-evaluation-report.md";
         let expected = fs::read_to_string(harness_fixture_path(file_name))
-            .expect("harness fixture source should read");
+            .expect_or_abort("harness fixture source should read");
 
         assert_eq!(read_harness_fixture_text(file_name), expected);
     }
@@ -158,8 +164,8 @@ mod tests {
         assert!(spec_path.exists(), "spec fixture should be copied");
         assert!(plan_path.exists(), "plan fixture should be copied");
 
-        let plan_contents =
-            fs::read_to_string(plan_path).expect("installed plan fixture should be readable");
+        let plan_contents = fs::read_to_string(plan_path)
+            .expect_or_abort("installed plan fixture should be readable");
         assert!(
             plan_contents.contains(spec_rel),
             "plan fixture should reference repo-relative spec path"

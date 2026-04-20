@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -11,33 +12,57 @@ use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::runtime_root::write_runtime_root_schema;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct TaskPacket {
+    /// Runtime field.
     pub plan_path: String,
+    /// Runtime field.
     pub plan_revision: u32,
+    /// Runtime field.
     pub plan_fingerprint: String,
+    /// Runtime field.
     pub source_spec_path: String,
+    /// Runtime field.
     pub source_spec_revision: u32,
+    /// Runtime field.
     pub source_spec_fingerprint: String,
+    /// Runtime field.
     pub task_number: u32,
+    /// Runtime field.
     pub task_title: String,
+    /// Runtime field.
     pub open_questions: String,
+    /// Runtime field.
     pub requirement_ids: Vec<String>,
+    /// Runtime field.
     pub generated_at: String,
+    /// Runtime field.
     pub packet_fingerprint: String,
+    /// Runtime field.
     pub markdown: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct HarnessContractProvenance {
+    /// Runtime field.
     pub source_plan_path: String,
+    /// Runtime field.
     pub source_plan_revision: u32,
+    /// Runtime field.
     pub source_plan_fingerprint: String,
+    /// Runtime field.
     pub source_spec_path: String,
+    /// Runtime field.
     pub source_spec_revision: u32,
+    /// Runtime field.
     pub source_spec_fingerprint: String,
+    /// Runtime field.
     pub source_task_packet_fingerprints: Vec<String>,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn build_harness_contract_provenance(
     task_packets: &[TaskPacket],
 ) -> Result<HarnessContractProvenance, DiagnosticError> {
@@ -88,6 +113,8 @@ pub fn build_harness_contract_provenance(
     })
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn build_task_packet_with_timestamp(
     spec: &SpecDocument,
     plan: &PlanDocument,
@@ -135,6 +162,8 @@ pub fn build_task_packet_with_timestamp(
     })
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn write_contract_schemas(output_dir: impl AsRef<Path>) -> Result<(), DiagnosticError> {
     let output_dir = output_dir.as_ref();
     fs::create_dir_all(output_dir).map_err(|err| {
@@ -149,9 +178,15 @@ pub fn write_contract_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
 
     let analyze_schema = schema_for!(AnalyzePlanReport);
     let packet_schema = schema_for!(TaskPacket);
+    let analyze_schema_source = serde_json::to_string_pretty(&analyze_schema).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize analyze schema: {err}"),
+        )
+    })?;
     fs::write(
         output_dir.join("plan-contract-analyze.schema.json"),
-        serde_json::to_string_pretty(&analyze_schema).expect("analyze schema should serialize"),
+        analyze_schema_source,
     )
     .map_err(|err| {
         DiagnosticError::new(
@@ -159,9 +194,15 @@ pub fn write_contract_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
             format!("Could not write analyze schema: {err}"),
         )
     })?;
+    let packet_schema_source = serde_json::to_string_pretty(&packet_schema).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize packet schema: {err}"),
+        )
+    })?;
     fs::write(
         output_dir.join("plan-contract-packet.schema.json"),
-        serde_json::to_string_pretty(&packet_schema).expect("packet schema should serialize"),
+        packet_schema_source,
     )
     .map_err(|err| {
         DiagnosticError::new(
@@ -183,50 +224,58 @@ fn render_packet_markdown(
 ) -> String {
     let mut markdown = String::new();
     markdown.push_str("## Task Packet\n\n");
-    markdown.push_str(&format!("**Plan Path:** `{}`\n", plan.path));
-    markdown.push_str(&format!("**Plan Revision:** {}\n", plan.plan_revision));
-    markdown.push_str(&format!("**Plan Fingerprint:** `{plan_fingerprint}`\n"));
-    markdown.push_str(&format!(
-        "**Source Spec Path:** `{}`\n",
+    let _ = writeln!(markdown, "**Plan Path:** `{}`", plan.path);
+    let _ = writeln!(markdown, "**Plan Revision:** {}", plan.plan_revision);
+    let _ = writeln!(markdown, "**Plan Fingerprint:** `{plan_fingerprint}`");
+    let _ = writeln!(
+        markdown,
+        "**Source Spec Path:** `{}`",
         plan.source_spec_path
-    ));
-    markdown.push_str(&format!(
-        "**Source Spec Revision:** {}\n",
+    );
+    let _ = writeln!(
+        markdown,
+        "**Source Spec Revision:** {}",
         plan.source_spec_revision
-    ));
-    markdown.push_str(&format!(
-        "**Source Spec Fingerprint:** `{source_spec_fingerprint}`\n"
-    ));
-    markdown.push_str(&format!("**Task Number:** {}\n", task.number));
-    markdown.push_str(&format!("**Task Title:** {}\n", task.title));
-    markdown.push_str(&format!("**Open Questions:** {}\n", task.open_questions));
-    markdown.push_str(&format!("**Generated At:** {generated_at}\n\n"));
+    );
+    let _ = writeln!(
+        markdown,
+        "**Source Spec Fingerprint:** `{source_spec_fingerprint}`"
+    );
+    let _ = writeln!(markdown, "**Task Number:** {}", task.number);
+    let _ = writeln!(markdown, "**Task Title:** {}", task.title);
+    let _ = writeln!(markdown, "**Open Questions:** {}", task.open_questions);
+    let _ = writeln!(markdown, "**Generated At:** {generated_at}");
+    markdown.push('\n');
     markdown.push_str("## Covered Requirements\n\n");
     for requirement in requirements {
-        markdown.push_str(&format!(
-            "- [{}][{}] {}\n",
+        let _ = writeln!(
+            markdown,
+            "- [{}][{}] {}",
             requirement.id, requirement.kind, requirement.text
-        ));
+        );
     }
     markdown.push_str("\n## Task Block\n\n");
-    markdown.push_str(&format!("## Task {}: {}\n\n", task.number, task.title));
-    markdown.push_str(&format!(
-        "**Spec Coverage:** {}\n",
+    let _ = writeln!(markdown, "## Task {}: {}", task.number, task.title);
+    markdown.push('\n');
+    let _ = writeln!(
+        markdown,
+        "**Spec Coverage:** {}",
         task.spec_coverage.join(", ")
-    ));
-    markdown.push_str(&format!("**Task Outcome:** {}\n", task.task_outcome));
+    );
+    let _ = writeln!(markdown, "**Task Outcome:** {}", task.task_outcome);
     markdown.push_str("**Plan Constraints:**\n");
     for constraint in &task.plan_constraints {
-        markdown.push_str(&format!("- {constraint}\n"));
+        let _ = writeln!(markdown, "- {constraint}");
     }
-    markdown.push_str(&format!("**Open Questions:** {}\n\n", task.open_questions));
+    let _ = writeln!(markdown, "**Open Questions:** {}", task.open_questions);
+    markdown.push('\n');
     markdown.push_str("**Files:**\n");
     for file in &task.files {
-        markdown.push_str(&format!("- {}: `{}`\n", file.action, file.path));
+        let _ = writeln!(markdown, "- {}: `{}`", file.action, file.path);
     }
     markdown.push('\n');
     for step in &task.steps {
-        markdown.push_str(&format!("- [ ] **Step {}: {}**\n", step.number, step.text));
+        let _ = writeln!(markdown, "- [ ] **Step {}: {}**", step.number, step.text);
     }
     markdown
 }

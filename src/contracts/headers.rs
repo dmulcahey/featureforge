@@ -1,4 +1,5 @@
-pub(crate) fn parse_required_header(source: &str, header: &str) -> Option<String> {
+/// Runtime function.
+pub fn parse_required_header(source: &str, header: &str) -> Option<String> {
     let prefix = format!("**{header}:** ");
     source
         .lines()

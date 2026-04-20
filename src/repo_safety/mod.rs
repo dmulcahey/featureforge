@@ -35,23 +35,38 @@ const WRITE_TARGET_ALLOWLIST: &[&str] = &[
 const MAX_REASON_LENGTH: usize = 240;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct RepoSafetyResult {
+    /// Runtime field.
     pub outcome: String,
+    /// Runtime field.
     pub intent: String,
+    /// Runtime field.
     pub branch: String,
+    /// Runtime field.
     pub protected: bool,
+    /// Runtime field.
     pub protected_by: String,
+    /// Runtime field.
     pub task_id: String,
+    /// Runtime field.
     pub approval_fingerprint: String,
+    /// Runtime field.
     pub approval_path: String,
+    /// Runtime field.
     pub failure_class: String,
+    /// Runtime field.
     pub reason: String,
+    /// Runtime field.
     pub suggested_next_skill: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Runtime struct.
 pub struct ApprovalMigrationSummary {
+    /// Runtime field.
     pub migrated: Vec<(PathBuf, PathBuf)>,
+    /// Runtime field.
     pub invalidated_backups: Vec<PathBuf>,
 }
 
@@ -80,6 +95,7 @@ struct Scope {
 }
 
 #[derive(Debug, Clone)]
+/// Runtime struct.
 pub struct RepoSafetyRuntime {
     repo_root: PathBuf,
     branch_name: String,
@@ -91,10 +107,14 @@ pub struct RepoSafetyRuntime {
 }
 
 impl RepoSafetyRuntime {
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn discover(current_dir: &Path) -> Result<Self, DiagnosticError> {
         Self::discover_for_state_dir(current_dir, &state_dir())
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn discover_for_state_dir(
         current_dir: &Path,
         state_dir: &Path,
@@ -125,6 +145,8 @@ impl RepoSafetyRuntime {
         })
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn check(&self, args: &RepoSafetyCheckArgs) -> Result<RepoSafetyResult, DiagnosticError> {
         let intent = args.intent.as_str();
         let write_targets = args
@@ -181,6 +203,8 @@ impl RepoSafetyRuntime {
         }
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn approve(
         &self,
         args: &RepoSafetyApproveArgs,
@@ -209,7 +233,7 @@ impl RepoSafetyRuntime {
             protected_by: self.protected_by.clone(),
             approved_at: String::from("1970-01-01T00:00:00Z"),
         };
-        self.write_approval_record(&scope.canonical_approval_path, &record)?;
+        Self::write_approval_record(&scope.canonical_approval_path, &record)?;
 
         Ok(self.result("allowed", "write", &scope, "", "approval_recorded", ""))
     }
@@ -302,11 +326,7 @@ impl RepoSafetyRuntime {
         Ok(None)
     }
 
-    fn write_approval_record(
-        &self,
-        path: &Path,
-        record: &ApprovalRecord,
-    ) -> Result<(), DiagnosticError> {
+    fn write_approval_record(path: &Path, record: &ApprovalRecord) -> Result<(), DiagnosticError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 DiagnosticError::new(
@@ -371,6 +391,8 @@ impl RepoSafetyRuntime {
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn write_repo_safety_schema(output_dir: &Path) -> Result<(), DiagnosticError> {
     fs::create_dir_all(output_dir).map_err(|error| {
         DiagnosticError::new(
@@ -396,10 +418,14 @@ pub fn write_repo_safety_schema(output_dir: &Path) -> Result<(), DiagnosticError
     Ok(())
 }
 
+#[must_use]
+/// Runtime function.
 pub fn pending_explicit_migration(state_dir: &Path) -> bool {
     !legacy_approval_files(state_dir).is_empty()
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn migrate_legacy_approvals(
     state_dir: &Path,
 ) -> Result<ApprovalMigrationSummary, DiagnosticError> {
@@ -634,9 +660,8 @@ fn legacy_approval_files(state_dir: &Path) -> Vec<PathBuf> {
 }
 
 fn collect_json_files(path: &Path, files: &mut Vec<PathBuf>) {
-    let entries = match fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(_) => return,
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
     };
     for entry in entries.flatten() {
         let path = entry.path();

@@ -5,8 +5,11 @@ use crate::cli::config::{ConfigGetArgs, ConfigSetArgs};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::paths::{featureforge_state_dir, write_atomic as write_atomic_file};
 
+/// Runtime constant.
 pub const LEGACY_CONFIG_FILE: &str = "config.yaml";
+/// Runtime constant.
 pub const CANONICAL_CONFIG_FILE: &str = "config/config.yaml";
+/// Runtime constant.
 pub const CONFIG_BACKUP_FILE: &str = "config.yaml.bak";
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -16,25 +19,38 @@ struct ConfigValues {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Runtime struct.
 pub struct ConfigMigration {
+    /// Runtime field.
     pub migrated: bool,
+    /// Runtime field.
     pub backup_created: bool,
+    /// Runtime field.
     pub canonical_path: PathBuf,
+    /// Runtime field.
     pub backup_path: PathBuf,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn get(args: &ConfigGetArgs) -> Result<String, DiagnosticError> {
     get_for_state_dir(&state_dir(), args)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn set(args: &ConfigSetArgs) -> Result<String, DiagnosticError> {
     set_for_state_dir(&state_dir(), args)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn list() -> Result<String, DiagnosticError> {
     list_for_state_dir(&state_dir())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn get_for_state_dir(
     state_dir: &Path,
     args: &ConfigGetArgs,
@@ -48,6 +64,8 @@ pub fn get_for_state_dir(
     Ok(value.unwrap_or_default())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn set_for_state_dir(
     state_dir: &Path,
     args: &ConfigSetArgs,
@@ -66,18 +84,26 @@ pub fn set_for_state_dir(
     Ok(String::new())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn list_for_state_dir(state_dir: &Path) -> Result<String, DiagnosticError> {
     Ok(render_config(&load_config(state_dir)?))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn read_update_check_preference(state_dir: &Path) -> Result<Option<bool>, DiagnosticError> {
     Ok(load_config(state_dir)?.update_check)
 }
 
-pub fn pending_explicit_migration(_: &Path) -> bool {
+#[must_use]
+/// Runtime constant.
+pub const fn pending_explicit_migration(_: &Path) -> bool {
     false
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn migrate_explicit(state_dir: &Path) -> Result<ConfigMigration, DiagnosticError> {
     let canonical_path = state_dir.join(CANONICAL_CONFIG_FILE);
     let backup_path = state_dir.join(CONFIG_BACKUP_FILE);
@@ -122,6 +148,8 @@ pub fn migrate_explicit(state_dir: &Path) -> Result<ConfigMigration, DiagnosticE
     })
 }
 
+#[must_use]
+/// Runtime function.
 pub fn state_dir() -> PathBuf {
     featureforge_state_dir()
 }

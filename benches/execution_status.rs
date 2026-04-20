@@ -1,5 +1,7 @@
+//! Execution status integration/benchmark crate.
 mod common;
 
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::path::PathBuf;
 
 use featureforge::cli::plan_execution::StatusArgs;
@@ -16,15 +18,15 @@ fn main() {
     let state = state_dir.path();
 
     let report = common::run_benchmark(&config, || {
-        let mut runtime =
-            ExecutionRuntime::discover(repo).expect("execution benchmark repo should resolve");
+        let mut runtime = ExecutionRuntime::discover(repo)
+            .expect_or_abort("execution benchmark repo should resolve");
         runtime.state_dir = state.to_path_buf();
         runtime
             .status(&StatusArgs {
                 plan: PathBuf::from(common::EXECUTION_PLAN_REL),
                 external_review_result_ready: false,
             })
-            .expect("execution-status benchmark should succeed");
+            .expect_or_abort("execution-status benchmark should succeed");
     });
 
     common::emit_report(&config, &report);

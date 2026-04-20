@@ -14,86 +14,144 @@ pub(crate) struct ArtifactDocument {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Runtime struct.
 pub struct FinalReviewReceipt {
+    /// Runtime field.
     pub title: Option<String>,
+    /// Runtime field.
     pub review_stage: Option<String>,
+    /// Runtime field.
     pub reviewer_provenance: Option<String>,
+    /// Runtime field.
     pub reviewer_source: Option<String>,
+    /// Runtime field.
     pub reviewer_id: Option<String>,
+    /// Runtime field.
     pub reviewer_artifact_path: Option<String>,
+    /// Runtime field.
     pub reviewer_artifact_fingerprint: Option<String>,
+    /// Runtime field.
     pub distinct_from_stages: Vec<String>,
+    /// Runtime field.
     pub source_plan: Option<String>,
+    /// Runtime field.
     pub source_plan_revision: Option<u32>,
+    /// Runtime field.
     pub strategy_checkpoint_fingerprint: Option<String>,
+    /// Runtime field.
     pub branch: Option<String>,
+    /// Runtime field.
     pub repo: Option<String>,
+    /// Runtime field.
     pub base_branch: Option<String>,
+    /// Runtime field.
     pub head_sha: Option<String>,
+    /// Runtime field.
     pub result: Option<String>,
+    /// Runtime field.
     pub generated_by: Option<String>,
+    /// Runtime field.
     pub recorded_execution_deviations: Option<String>,
+    /// Runtime field.
     pub deviation_review_verdict: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ReviewerArtifactExpectations<'a> {
-    expected_plan_path: &'a str,
-    expected_plan_revision: u32,
-    expected_strategy_checkpoint_fingerprint: Option<&'a str>,
-    expected_branch: &'a str,
-    expected_repo: &'a str,
-    expected_head_sha: &'a str,
-    expected_base_branch: &'a str,
-    expected_result: &'a str,
-    expected_recorded_execution_deviations: &'a str,
-    expected_deviation_review_verdict: &'a str,
+    plan_path: &'a str,
+    plan_revision: u32,
+    strategy_checkpoint_fingerprint: Option<&'a str>,
+    branch: &'a str,
+    repo: &'a str,
+    head_sha: &'a str,
+    base_branch: &'a str,
+    result: &'a str,
+    recorded_execution_deviations: &'a str,
+    deviation_review_verdict: &'a str,
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Runtime struct.
 pub struct FinalReviewReceiptExpectations<'a> {
+    /// Runtime field.
     pub expected_plan_path: &'a str,
+    /// Runtime field.
     pub expected_plan_revision: u32,
+    /// Runtime field.
     pub expected_strategy_checkpoint_fingerprint: Option<&'a str>,
+    /// Runtime field.
     pub expected_branch: &'a str,
+    /// Runtime field.
     pub expected_repo: &'a str,
+    /// Runtime field.
     pub expected_head_sha: &'a str,
+    /// Runtime field.
     pub expected_base_branch: &'a str,
+    /// Runtime field.
     pub expected_result: &'a str,
+    /// Runtime field.
     pub deviations_required: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Runtime enum.
 pub enum FinalReviewReceiptIssue {
+    /// Runtime enum variant.
     ReviewStageMismatch,
+    /// Runtime enum variant.
     ReviewerProvenanceMissing,
+    /// Runtime enum variant.
     ReviewerIdentityMissing,
+    /// Runtime enum variant.
     ReviewerSourceNotIndependent,
+    /// Runtime enum variant.
     ReviewerArtifactPathMissing,
+    /// Runtime enum variant.
     ReviewerArtifactUnreadable,
+    /// Runtime enum variant.
     ReviewerArtifactNotRuntimeOwned,
+    /// Runtime enum variant.
     ReviewerArtifactFingerprintInvalid,
+    /// Runtime enum variant.
     ReviewerArtifactFingerprintMismatch,
+    /// Runtime enum variant.
     ReviewerArtifactIdentityMismatch,
+    /// Runtime enum variant.
     ReviewerArtifactContractMismatch,
+    /// Runtime enum variant.
     DistinctFromStagesMissing,
+    /// Runtime enum variant.
     DistinctFromStagesInvalid,
+    /// Runtime enum variant.
     SourcePlanMismatch,
+    /// Runtime enum variant.
     SourcePlanRevisionMismatch,
+    /// Runtime enum variant.
     BranchMismatch,
+    /// Runtime enum variant.
     RepoMismatch,
+    /// Runtime enum variant.
     BaseBranchMismatch,
+    /// Runtime enum variant.
     StrategyCheckpointFingerprintMissing,
+    /// Runtime enum variant.
     StrategyCheckpointFingerprintMismatch,
+    /// Runtime enum variant.
     HeadMismatch,
+    /// Runtime enum variant.
     ResultNotPass,
+    /// Runtime enum variant.
     GeneratedByMismatch,
+    /// Runtime enum variant.
     DeviationRecordMismatch,
+    /// Runtime enum variant.
     DeviationReviewVerdictMismatch,
 }
 
 impl FinalReviewReceiptIssue {
-    pub fn reason_code(self) -> &'static str {
+    #[must_use]
+    /// Runtime constant.
+    pub const fn reason_code(self) -> &'static str {
         match self {
             Self::ReviewStageMismatch => "review_receipt_stage_mismatch",
             Self::ReviewerProvenanceMissing => "review_receipt_not_dedicated",
@@ -135,7 +193,9 @@ impl FinalReviewReceiptIssue {
         }
     }
 
-    pub fn message(self) -> &'static str {
+    #[must_use]
+    /// Runtime constant.
+    pub const fn message(self) -> &'static str {
         match self {
             Self::ReviewStageMismatch => {
                 "The latest code-review artifact does not prove the dedicated final-review stage."
@@ -230,6 +290,7 @@ pub(crate) fn parse_artifact_document(path: &Path) -> ArtifactDocument {
     }
 }
 
+/// Runtime function.
 pub fn parse_final_review_receipt(path: &Path) -> FinalReviewReceipt {
     let document = parse_artifact_document(path);
     FinalReviewReceipt {
@@ -246,7 +307,12 @@ pub fn parse_final_review_receipt(path: &Path) -> FinalReviewReceipt {
             .headers
             .get("Reviewer Artifact Fingerprint")
             .cloned(),
-        distinct_from_stages: parse_csv_header(document.headers.get("Distinct From Stages")),
+        distinct_from_stages: parse_csv_header(
+            document
+                .headers
+                .get("Distinct From Stages")
+                .map(String::as_str),
+        ),
         source_plan: document
             .headers
             .get("Source Plan")
@@ -273,130 +339,136 @@ pub fn parse_final_review_receipt(path: &Path) -> FinalReviewReceipt {
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn validate_final_review_receipt(
     receipt: &FinalReviewReceipt,
     review_receipt_path: &Path,
     expectations: &FinalReviewReceiptExpectations<'_>,
 ) -> Result<(), FinalReviewReceiptIssue> {
-    if receipt.title.as_deref() != Some("# Code Review Result")
-        || receipt.review_stage.as_deref() != Some("featureforge:requesting-code-review")
     {
-        return Err(FinalReviewReceiptIssue::ReviewStageMismatch);
-    }
-    if receipt.reviewer_provenance.as_deref() != Some("dedicated-independent") {
-        return Err(FinalReviewReceiptIssue::ReviewerProvenanceMissing);
-    }
-    let reviewer_source = receipt
-        .reviewer_source
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or_default();
-    let reviewer_id = receipt
-        .reviewer_id
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or_default();
-    if reviewer_source.is_empty() || reviewer_id.is_empty() {
-        return Err(FinalReviewReceiptIssue::ReviewerIdentityMissing);
-    }
-    if !matches!(
-        reviewer_source,
-        "fresh-context-subagent" | "cross-model" | "human-independent-reviewer"
-    ) {
-        return Err(FinalReviewReceiptIssue::ReviewerSourceNotIndependent);
-    }
-    let reviewer_artifact_fingerprint = receipt
-        .reviewer_artifact_fingerprint
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or_default();
-    if !is_canonical_fingerprint(reviewer_artifact_fingerprint) {
-        return Err(FinalReviewReceiptIssue::ReviewerArtifactFingerprintInvalid);
-    }
-    let expected_result = if expectations.expected_result == "fail" {
-        "fail"
-    } else {
-        "pass"
-    };
-    let expected_deviation_record = if expectations.deviations_required {
-        "present"
-    } else {
-        "none"
-    };
-    let expected_deviation_verdict = if expectations.deviations_required {
-        "pass"
-    } else {
-        "not_required"
-    };
-    if receipt.distinct_from_stages.is_empty() {
-        return Err(FinalReviewReceiptIssue::DistinctFromStagesMissing);
-    }
-    if !has_required_final_review_distinctness(&receipt.distinct_from_stages) {
-        return Err(FinalReviewReceiptIssue::DistinctFromStagesInvalid);
-    }
-    if receipt.source_plan.as_deref() != Some(expectations.expected_plan_path) {
-        return Err(FinalReviewReceiptIssue::SourcePlanMismatch);
-    }
-    if receipt.source_plan_revision != Some(expectations.expected_plan_revision) {
-        return Err(FinalReviewReceiptIssue::SourcePlanRevisionMismatch);
-    }
-    if receipt.branch.as_deref().map(str::trim) != Some(expectations.expected_branch) {
-        return Err(FinalReviewReceiptIssue::BranchMismatch);
-    }
-    if receipt.repo.as_deref().map(str::trim) != Some(expectations.expected_repo) {
-        return Err(FinalReviewReceiptIssue::RepoMismatch);
-    }
-    if receipt.base_branch.as_deref().map(str::trim) != Some(expectations.expected_base_branch) {
-        return Err(FinalReviewReceiptIssue::BaseBranchMismatch);
-    }
-    if let Some(expected_strategy_checkpoint_fingerprint) = expectations
-        .expected_strategy_checkpoint_fingerprint
-        .map(str::trim)
-    {
-        let Some(receipt_strategy_checkpoint_fingerprint) = receipt
-            .strategy_checkpoint_fingerprint
+        if receipt.title.as_deref() != Some("# Code Review Result")
+            || receipt.review_stage.as_deref() != Some("featureforge:requesting-code-review")
+        {
+            return Err(FinalReviewReceiptIssue::ReviewStageMismatch);
+        }
+        if receipt.reviewer_provenance.as_deref() != Some("dedicated-independent") {
+            return Err(FinalReviewReceiptIssue::ReviewerProvenanceMissing);
+        }
+        let reviewer_source = receipt
+            .reviewer_source
             .as_deref()
             .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return Err(FinalReviewReceiptIssue::StrategyCheckpointFingerprintMissing);
-        };
-        if receipt_strategy_checkpoint_fingerprint != expected_strategy_checkpoint_fingerprint {
-            return Err(FinalReviewReceiptIssue::StrategyCheckpointFingerprintMismatch);
+            .unwrap_or_default();
+        let reviewer_id = receipt
+            .reviewer_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        if reviewer_source.is_empty() || reviewer_id.is_empty() {
+            return Err(FinalReviewReceiptIssue::ReviewerIdentityMissing);
         }
+        if !matches!(
+            reviewer_source,
+            "fresh-context-subagent" | "cross-model" | "human-independent-reviewer"
+        ) {
+            return Err(FinalReviewReceiptIssue::ReviewerSourceNotIndependent);
+        }
+        let reviewer_artifact_fingerprint = receipt
+            .reviewer_artifact_fingerprint
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        if !is_canonical_fingerprint(reviewer_artifact_fingerprint) {
+            return Err(FinalReviewReceiptIssue::ReviewerArtifactFingerprintInvalid);
+        }
+        let expected_result = if expectations.expected_result == "fail" {
+            "fail"
+        } else {
+            "pass"
+        };
+        let expected_deviation_record = if expectations.deviations_required {
+            "present"
+        } else {
+            "none"
+        };
+        let expected_deviation_verdict = if expectations.deviations_required {
+            "pass"
+        } else {
+            "not_required"
+        };
+        if receipt.distinct_from_stages.is_empty() {
+            return Err(FinalReviewReceiptIssue::DistinctFromStagesMissing);
+        }
+        if !has_required_final_review_distinctness(&receipt.distinct_from_stages) {
+            return Err(FinalReviewReceiptIssue::DistinctFromStagesInvalid);
+        }
+        if receipt.source_plan.as_deref() != Some(expectations.expected_plan_path) {
+            return Err(FinalReviewReceiptIssue::SourcePlanMismatch);
+        }
+        if receipt.source_plan_revision != Some(expectations.expected_plan_revision) {
+            return Err(FinalReviewReceiptIssue::SourcePlanRevisionMismatch);
+        }
+        if receipt.branch.as_deref().map(str::trim) != Some(expectations.expected_branch) {
+            return Err(FinalReviewReceiptIssue::BranchMismatch);
+        }
+        if receipt.repo.as_deref().map(str::trim) != Some(expectations.expected_repo) {
+            return Err(FinalReviewReceiptIssue::RepoMismatch);
+        }
+        if receipt.base_branch.as_deref().map(str::trim) != Some(expectations.expected_base_branch)
+        {
+            return Err(FinalReviewReceiptIssue::BaseBranchMismatch);
+        }
+        if let Some(expected_strategy_checkpoint_fingerprint) = expectations
+            .expected_strategy_checkpoint_fingerprint
+            .map(str::trim)
+        {
+            let Some(receipt_strategy_checkpoint_fingerprint) = receipt
+                .strategy_checkpoint_fingerprint
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                return Err(FinalReviewReceiptIssue::StrategyCheckpointFingerprintMissing);
+            };
+            if receipt_strategy_checkpoint_fingerprint != expected_strategy_checkpoint_fingerprint {
+                return Err(FinalReviewReceiptIssue::StrategyCheckpointFingerprintMismatch);
+            }
+        }
+        if receipt.head_sha.as_deref() != Some(expectations.expected_head_sha) {
+            return Err(FinalReviewReceiptIssue::HeadMismatch);
+        }
+        if receipt.result.as_deref() != Some(expected_result) {
+            return Err(FinalReviewReceiptIssue::ResultNotPass);
+        }
+        if receipt.generated_by.as_deref() != Some("featureforge:requesting-code-review") {
+            return Err(FinalReviewReceiptIssue::GeneratedByMismatch);
+        }
+        if receipt.recorded_execution_deviations.as_deref() != Some(expected_deviation_record) {
+            return Err(FinalReviewReceiptIssue::DeviationRecordMismatch);
+        }
+        if receipt.deviation_review_verdict.as_deref() != Some(expected_deviation_verdict) {
+            return Err(FinalReviewReceiptIssue::DeviationReviewVerdictMismatch);
+        }
+        let expectations = ReviewerArtifactExpectations {
+            plan_path: expectations.expected_plan_path,
+            plan_revision: expectations.expected_plan_revision,
+            strategy_checkpoint_fingerprint: expectations.expected_strategy_checkpoint_fingerprint,
+            branch: expectations.expected_branch,
+            repo: expectations.expected_repo,
+            head_sha: expectations.expected_head_sha,
+            base_branch: expectations.expected_base_branch,
+            result: expected_result,
+            recorded_execution_deviations: expected_deviation_record,
+            deviation_review_verdict: expected_deviation_verdict,
+        };
+        validate_reviewer_artifact_binding(receipt, review_receipt_path, &expectations)?;
+        Ok(())
     }
-    if receipt.head_sha.as_deref() != Some(expectations.expected_head_sha) {
-        return Err(FinalReviewReceiptIssue::HeadMismatch);
-    }
-    if receipt.result.as_deref() != Some(expected_result) {
-        return Err(FinalReviewReceiptIssue::ResultNotPass);
-    }
-    if receipt.generated_by.as_deref() != Some("featureforge:requesting-code-review") {
-        return Err(FinalReviewReceiptIssue::GeneratedByMismatch);
-    }
-    if receipt.recorded_execution_deviations.as_deref() != Some(expected_deviation_record) {
-        return Err(FinalReviewReceiptIssue::DeviationRecordMismatch);
-    }
-    if receipt.deviation_review_verdict.as_deref() != Some(expected_deviation_verdict) {
-        return Err(FinalReviewReceiptIssue::DeviationReviewVerdictMismatch);
-    }
-    let expectations = ReviewerArtifactExpectations {
-        expected_plan_path: expectations.expected_plan_path,
-        expected_plan_revision: expectations.expected_plan_revision,
-        expected_strategy_checkpoint_fingerprint: expectations
-            .expected_strategy_checkpoint_fingerprint,
-        expected_branch: expectations.expected_branch,
-        expected_repo: expectations.expected_repo,
-        expected_head_sha: expectations.expected_head_sha,
-        expected_base_branch: expectations.expected_base_branch,
-        expected_result,
-        expected_recorded_execution_deviations: expected_deviation_record,
-        expected_deviation_review_verdict: expected_deviation_verdict,
-    };
-    validate_reviewer_artifact_binding(receipt, review_receipt_path, &expectations)?;
-    Ok(())
 }
 
+#[must_use]
+/// Runtime function.
 pub fn resolve_release_base_branch(git_dir: &Path, current_branch: &str) -> Option<String> {
     const COMMON_BASE_BRANCHES: &[&str] = &["main", "master", "develop", "dev", "trunk"];
     let common_git_dir = common_git_dir(git_dir);
@@ -431,6 +503,7 @@ pub fn resolve_release_base_branch(git_dir: &Path, current_branch: &str) -> Opti
     None
 }
 
+/// Runtime function.
 pub fn latest_branch_artifact_path(
     artifact_dir: &Path,
     branch_name: &str,
@@ -596,7 +669,7 @@ fn strip_backticks(value: &str) -> String {
     value.trim_matches('`').to_owned()
 }
 
-fn parse_csv_header(value: Option<&String>) -> Vec<String> {
+fn parse_csv_header(value: Option<&str>) -> Vec<String> {
     value
         .map(|raw| {
             raw.split(',')
@@ -701,120 +774,122 @@ fn reviewer_artifact_matches_final_review_contract(
     reviewer_artifact: &ArtifactDocument,
     expectations: &ReviewerArtifactExpectations<'_>,
 ) -> bool {
-    if reviewer_artifact.title.as_deref() != Some("# Code Review Result") {
-        return false;
-    }
-    if reviewer_artifact
-        .headers
-        .get("Review Stage")
-        .map(String::as_str)
-        != Some("featureforge:requesting-code-review")
     {
-        return false;
-    }
-    if reviewer_artifact
-        .headers
-        .get("Reviewer Provenance")
-        .map(String::as_str)
-        != Some("dedicated-independent")
-    {
-        return false;
-    }
-    if reviewer_artifact.headers.get("Result").map(String::as_str)
-        != Some(expectations.expected_result)
-    {
-        return false;
-    }
-    if let Some(expected_strategy_checkpoint_fingerprint) = expectations
-        .expected_strategy_checkpoint_fingerprint
-        .map(str::trim)
-        && reviewer_artifact
+        if reviewer_artifact.title.as_deref() != Some("# Code Review Result") {
+            return false;
+        }
+        if reviewer_artifact
             .headers
-            .get("Strategy Checkpoint Fingerprint")
+            .get("Review Stage")
             .map(String::as_str)
-            .map(str::trim)
-            != Some(expected_strategy_checkpoint_fingerprint)
-    {
-        return false;
-    }
-    if reviewer_artifact
-        .headers
-        .get("Recorded Execution Deviations")
-        .map(String::as_str)
-        != Some(expectations.expected_recorded_execution_deviations)
-    {
-        return false;
-    }
-    if reviewer_artifact
-        .headers
-        .get("Deviation Review Verdict")
-        .map(String::as_str)
-        != Some(expectations.expected_deviation_review_verdict)
-    {
-        return false;
-    }
-    if reviewer_artifact
-        .headers
-        .get("Generated By")
-        .map(String::as_str)
-        != Some("featureforge:requesting-code-review")
-    {
-        return false;
-    }
-    if reviewer_artifact
-        .headers
-        .contains_key("Reviewer Artifact Path")
-        || reviewer_artifact
+            != Some("featureforge:requesting-code-review")
+        {
+            return false;
+        }
+        if reviewer_artifact
             .headers
-            .contains_key("Reviewer Artifact Fingerprint")
-    {
-        return false;
+            .get("Reviewer Provenance")
+            .map(String::as_str)
+            != Some("dedicated-independent")
+        {
+            return false;
+        }
+        if reviewer_artifact.headers.get("Result").map(String::as_str) != Some(expectations.result)
+        {
+            return false;
+        }
+        if let Some(expected_strategy_checkpoint_fingerprint) =
+            expectations.strategy_checkpoint_fingerprint.map(str::trim)
+            && reviewer_artifact
+                .headers
+                .get("Strategy Checkpoint Fingerprint")
+                .map(String::as_str)
+                .map(str::trim)
+                != Some(expected_strategy_checkpoint_fingerprint)
+        {
+            return false;
+        }
+        if reviewer_artifact
+            .headers
+            .get("Recorded Execution Deviations")
+            .map(String::as_str)
+            != Some(expectations.recorded_execution_deviations)
+        {
+            return false;
+        }
+        if reviewer_artifact
+            .headers
+            .get("Deviation Review Verdict")
+            .map(String::as_str)
+            != Some(expectations.deviation_review_verdict)
+        {
+            return false;
+        }
+        if reviewer_artifact
+            .headers
+            .get("Generated By")
+            .map(String::as_str)
+            != Some("featureforge:requesting-code-review")
+        {
+            return false;
+        }
+        if reviewer_artifact
+            .headers
+            .contains_key("Reviewer Artifact Path")
+            || reviewer_artifact
+                .headers
+                .contains_key("Reviewer Artifact Fingerprint")
+        {
+            return false;
+        }
+        let Some(reviewer_artifact_source_plan) = reviewer_artifact
+            .headers
+            .get("Source Plan")
+            .map(|value| strip_backticks(value))
+        else {
+            return false;
+        };
+        if reviewer_artifact_source_plan != expectations.plan_path {
+            return false;
+        }
+        let reviewer_artifact_source_plan_revision = reviewer_artifact
+            .headers
+            .get("Source Plan Revision")
+            .and_then(|value| value.trim().parse::<u32>().ok());
+        if reviewer_artifact_source_plan_revision != Some(expectations.plan_revision) {
+            return false;
+        }
+        if reviewer_artifact.headers.get("Branch").map(String::as_str) != Some(expectations.branch)
+        {
+            return false;
+        }
+        if reviewer_artifact.headers.get("Repo").map(String::as_str) != Some(expectations.repo) {
+            return false;
+        }
+        if reviewer_artifact
+            .headers
+            .get("Head SHA")
+            .map(String::as_str)
+            != Some(expectations.head_sha)
+        {
+            return false;
+        }
+        if reviewer_artifact
+            .headers
+            .get("Base Branch")
+            .map(String::as_str)
+            != Some(expectations.base_branch)
+        {
+            return false;
+        }
+        let reviewer_distinct_stages = parse_csv_header(
+            reviewer_artifact
+                .headers
+                .get("Distinct From Stages")
+                .map(String::as_str),
+        );
+        has_required_final_review_distinctness(&reviewer_distinct_stages)
     }
-    let Some(reviewer_artifact_source_plan) = reviewer_artifact
-        .headers
-        .get("Source Plan")
-        .map(|value| strip_backticks(value))
-    else {
-        return false;
-    };
-    if reviewer_artifact_source_plan != expectations.expected_plan_path {
-        return false;
-    }
-    let reviewer_artifact_source_plan_revision = reviewer_artifact
-        .headers
-        .get("Source Plan Revision")
-        .and_then(|value| value.trim().parse::<u32>().ok());
-    if reviewer_artifact_source_plan_revision != Some(expectations.expected_plan_revision) {
-        return false;
-    }
-    if reviewer_artifact.headers.get("Branch").map(String::as_str)
-        != Some(expectations.expected_branch)
-    {
-        return false;
-    }
-    if reviewer_artifact.headers.get("Repo").map(String::as_str) != Some(expectations.expected_repo)
-    {
-        return false;
-    }
-    if reviewer_artifact
-        .headers
-        .get("Head SHA")
-        .map(String::as_str)
-        != Some(expectations.expected_head_sha)
-    {
-        return false;
-    }
-    if reviewer_artifact
-        .headers
-        .get("Base Branch")
-        .map(String::as_str)
-        != Some(expectations.expected_base_branch)
-    {
-        return false;
-    }
-    let reviewer_distinct_stages =
-        parse_csv_header(reviewer_artifact.headers.get("Distinct From Stages"));
-    has_required_final_review_distinctness(&reviewer_distinct_stages)
 }
 
 fn has_required_final_review_distinctness(stages: &[String]) -> bool {

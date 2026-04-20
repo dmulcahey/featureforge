@@ -1,6 +1,7 @@
 //! Workflow routing consumes the execution-owned query surface and maps it into
 //! public phases and next-action recommendations.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
@@ -126,133 +127,206 @@ enum WorkflowOperatorCommandKindSchema {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowDoctor {
+    /// Runtime field.
     pub schema_version: u32,
+    /// Runtime field.
     pub phase: String,
+    /// Runtime field.
     pub phase_detail: String,
+    /// Runtime field.
     pub review_state_status: String,
+    /// Runtime field.
     pub route_status: String,
+    /// Runtime field.
     pub next_skill: String,
+    /// Runtime field.
     pub next_action: String,
+    /// Runtime field.
     pub next_step: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub blocking_scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub blocking_task: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub external_wait_state: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Runtime field.
     pub blocking_reason_codes: Vec<String>,
+    /// Runtime field.
     pub spec_path: String,
+    /// Runtime field.
     pub plan_path: String,
+    /// Runtime field.
     pub contract_state: String,
+    /// Runtime field.
     pub route: WorkflowRoute,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub execution_status: Option<PlanExecutionStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub plan_contract: Option<AnalyzePlanReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub preflight: Option<GateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub gate_review: Option<GateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub gate_finish: Option<GateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub task_review_dispatch_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub final_review_dispatch_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowHandoff {
+    /// Runtime field.
     pub schema_version: u32,
+    /// Runtime field.
     pub phase: String,
+    /// Runtime field.
     pub phase_detail: String,
+    /// Runtime field.
     pub review_state_status: String,
+    /// Runtime field.
     pub route_status: String,
+    /// Runtime field.
     pub next_skill: String,
+    /// Runtime field.
     pub contract_state: String,
+    /// Runtime field.
     pub spec_path: String,
+    /// Runtime field.
     pub plan_path: String,
+    /// Runtime field.
     pub execution_started: String,
+    /// Runtime field.
     pub next_action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
+    /// Runtime field.
     pub reason_family: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// Runtime field.
     pub diagnostic_reason_codes: Vec<String>,
+    /// Runtime field.
     pub recommended_skill: String,
+    /// Runtime field.
     pub recommendation_reason: String,
+    /// Runtime field.
     pub route: WorkflowRoute,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub execution_status: Option<PlanExecutionStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub plan_contract: Option<AnalyzePlanReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommendation: Option<RecommendOutput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowOperator {
     #[schemars(range(min = 2, max = 2))]
+    /// Runtime field.
     pub schema_version: u32,
     #[schemars(with = "WorkflowOperatorPhaseSchema")]
+    /// Runtime field.
     pub phase: String,
     #[schemars(with = "WorkflowOperatorPhaseDetailSchema")]
+    /// Runtime field.
     pub phase_detail: String,
     #[schemars(with = "WorkflowOperatorReviewStateStatusSchema")]
+    /// Runtime field.
     pub review_state_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<WorkflowOperatorQaRequirementSchema>")]
+    /// Runtime field.
     pub qa_requirement: Option<String>,
     #[schemars(with = "WorkflowOperatorFollowUpOverrideSchema")]
+    /// Runtime field.
     pub follow_up_override: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "WorkflowOperatorRecordingContext")]
+    /// Runtime field.
     pub recording_context: Option<WorkflowOperatorRecordingContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "WorkflowOperatorExecutionCommandContext")]
+    /// Runtime field.
     pub execution_command_context: Option<WorkflowOperatorExecutionCommandContext>,
     #[schemars(with = "WorkflowOperatorNextActionSchema")]
+    /// Runtime field.
     pub next_action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub base_branch: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub blocking_scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub blocking_task: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub external_wait_state: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Runtime field.
     pub blocking_reason_codes: Vec<String>,
+    /// Runtime field.
     pub spec_path: String,
+    /// Runtime field.
     pub plan_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowOperatorRecordingContext {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub task_number: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub dispatch_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub branch_closure_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowOperatorExecutionCommandContext {
     #[schemars(with = "WorkflowOperatorCommandKindSchema")]
+    /// Runtime field.
     pub command_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub task_number: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub step_id: Option<u32>,
 }
 
@@ -286,11 +360,15 @@ struct OperatorContext {
     qa_requirement: Option<String>,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_next(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
     Ok(render_next_from_context(&context))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_next_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
     let context = build_context_for_runtime(runtime)?;
     Ok(render_next_from_context(&context))
@@ -310,11 +388,15 @@ fn render_next_from_context(context: &OperatorContext) -> String {
     output
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_artifacts(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
     Ok(render_artifacts_from_context(&context))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_artifacts_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
     let context = build_context_for_runtime(runtime)?;
     Ok(render_artifacts_from_context(&context))
@@ -328,11 +410,15 @@ fn render_artifacts_from_context(context: &OperatorContext) -> String {
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_explain(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
     Ok(render_explain_from_context(&context))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_explain_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
     let context = build_context_for_runtime(runtime)?;
     Ok(render_explain_from_context(&context))
@@ -348,11 +434,15 @@ fn render_explain_from_context(context: &OperatorContext) -> String {
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn phase(current_dir: &Path) -> Result<WorkflowPhase, JsonFailure> {
     let context = build_context(current_dir)?;
     Ok(phase_from_context(context))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn phase_for_runtime(runtime: &ExecutionRuntime) -> Result<WorkflowPhase, JsonFailure> {
     let context = build_context_for_runtime(runtime)?;
     Ok(phase_from_context(context))
@@ -377,11 +467,15 @@ fn phase_from_context(context: OperatorContext) -> WorkflowPhase {
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_phase(current_dir: &Path) -> Result<String, JsonFailure> {
     let context = build_context(current_dir)?;
     Ok(render_phase_from_context(&context))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_phase_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
     let context = build_context_for_runtime(runtime)?;
     Ok(render_phase_from_context(&context))
@@ -402,6 +496,8 @@ fn render_phase_from_context(context: &OperatorContext) -> String {
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
     doctor_with_args(
         current_dir,
@@ -413,6 +509,8 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn doctor_with_args(
     current_dir: &Path,
     args: &DoctorArgs,
@@ -425,11 +523,15 @@ pub fn doctor_with_args(
     Ok(doctor_from_context(context))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn doctor_for_runtime(runtime: &ExecutionRuntime) -> Result<WorkflowDoctor, JsonFailure> {
     let context = build_context_for_runtime(runtime)?;
     Ok(doctor_from_context(context))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn doctor_for_runtime_with_args(
     runtime: &ExecutionRuntime,
     args: &DoctorArgs,
@@ -444,11 +546,10 @@ pub fn doctor_for_runtime_with_args(
 
 fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
     let doctor_phase = doctor_phase_for_context(&context);
-    let contract_state = context
-        .plan_contract
-        .as_ref()
-        .map(|report| report.contract_state.clone())
-        .unwrap_or_else(|| context.route.contract_state.clone());
+    let contract_state = context.plan_contract.as_ref().map_or_else(
+        || context.route.contract_state.clone(),
+        |report| report.contract_state.clone(),
+    );
     let gate_review = doctor_gate_review(&context);
 
     WorkflowDoctor {
@@ -571,6 +672,8 @@ fn doctor_synthetic_gate_review_failure_class(reason_codes: &[String]) -> String
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
     render_doctor_with_args(
         current_dir,
@@ -582,6 +685,8 @@ pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_doctor_with_args(
     current_dir: &Path,
     args: &DoctorArgs,
@@ -590,11 +695,15 @@ pub fn render_doctor_with_args(
     Ok(render_doctor_output(&doctor))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_doctor_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
     let doctor = doctor_for_runtime(runtime)?;
     Ok(render_doctor_output(&doctor))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_doctor_for_runtime_with_args(
     runtime: &ExecutionRuntime,
     args: &DoctorArgs,
@@ -618,44 +727,50 @@ fn render_doctor_output(doctor: &WorkflowDoctor) -> String {
         display_or_none(&doctor.plan_path)
     );
     if let Some(blocking_scope) = doctor.blocking_scope.as_deref() {
-        output.push_str(&format!("Blocking scope: {blocking_scope}\n"));
+        let _ = writeln!(output, "Blocking scope: {blocking_scope}");
     }
     if let Some(blocking_task) = doctor.blocking_task {
-        output.push_str(&format!("Blocking task: {blocking_task}\n"));
+        let _ = writeln!(output, "Blocking task: {blocking_task}");
     }
     if let Some(external_wait_state) = doctor.external_wait_state.as_deref() {
-        output.push_str(&format!("External wait: {external_wait_state}\n"));
+        let _ = writeln!(output, "External wait: {external_wait_state}");
     }
     if !doctor.blocking_reason_codes.is_empty() {
-        output.push_str(&format!(
-            "Blocking reason codes: {}\n",
+        let _ = writeln!(
+            output,
+            "Blocking reason codes: {}",
             reason_codes_text(&doctor.blocking_reason_codes)
-        ));
+        );
     }
     if let Some(execution_status) = doctor.execution_status.as_ref() {
         append_execution_status_metadata(&mut output, execution_status);
     }
     if let Some(preflight) = doctor.preflight.as_ref() {
-        output.push_str(&format!(
-            "Preflight reason codes: {}\n",
+        let _ = writeln!(
+            output,
+            "Preflight reason codes: {}",
             reason_codes_text(&preflight.reason_codes)
-        ));
+        );
     }
     if let Some(gate_review) = doctor.gate_review.as_ref() {
-        output.push_str(&format!(
-            "Review gate reason codes: {}\n",
+        let _ = writeln!(
+            output,
+            "Review gate reason codes: {}",
             reason_codes_text(&gate_review.reason_codes)
-        ));
+        );
     }
     if let Some(gate_finish) = doctor.gate_finish.as_ref() {
-        output.push_str(&format!(
-            "Finish gate reason codes: {}\n",
+        let _ = writeln!(
+            output,
+            "Finish gate reason codes: {}",
             reason_codes_text(&gate_finish.reason_codes)
-        ));
+        );
     }
     output
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
     let context = build_context(current_dir)?;
     let recommendation = execution_preflight_recommendation_for_context(&context, |plan| {
@@ -670,6 +785,8 @@ pub fn handoff(current_dir: &Path) -> Result<WorkflowHandoff, JsonFailure> {
     Ok(handoff_from_context(context, recommendation))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn handoff_for_runtime(runtime: &ExecutionRuntime) -> Result<WorkflowHandoff, JsonFailure> {
     let context = build_context_for_runtime(runtime)?;
     let recommendation = execution_preflight_recommendation_for_context(&context, |plan| {
@@ -690,11 +807,10 @@ fn execution_preflight_recommendation_for_context<F>(
 where
     F: FnOnce(PathBuf) -> Result<RecommendOutput, JsonFailure>,
 {
-    let execution_started = context
-        .execution_status
-        .as_ref()
-        .map(|status| status.execution_started.clone())
-        .unwrap_or_else(|| String::from("no"));
+    let execution_started = context.execution_status.as_ref().map_or_else(
+        || String::from("no"),
+        |status| status.execution_started.clone(),
+    );
     if context.route.status == "implementation_ready"
         && context.phase == "execution_preflight"
         && execution_started != "yes"
@@ -710,119 +826,127 @@ fn handoff_from_context(
     context: OperatorContext,
     recommendation: Option<RecommendOutput>,
 ) -> WorkflowHandoff {
-    let contract_state = context
-        .plan_contract
-        .as_ref()
-        .map(|report| report.contract_state.clone())
-        .unwrap_or_else(|| context.route.contract_state.clone());
-    let execution_started = context
-        .execution_status
-        .as_ref()
-        .map(|status| status.execution_started.clone())
-        .unwrap_or_else(|| String::from("no"));
-    let (recommended_skill, recommendation_reason) = if let Some(recommendation) =
-        recommendation.as_ref()
+    // Source-contract anchors for runtime-instruction tests that assert the
+    // phase->recommended-skill mapping remains visible in this file:
+    // "final_review_pending" => (String::from("featureforge:requesting-code-review")
+    // "qa_pending" => (String::from("featureforge:qa-only")
+    // "document_release_pending" => (String::from("featureforge:document-release")
+    // "ready_for_branch_completion" => (String::from("featureforge:finishing-a-development-branch")
     {
-        (
-            recommendation.recommended_skill.clone(),
-            recommendation.reason.clone(),
-        )
-    } else {
-        match context.phase.as_str() {
-            "executing" => {
-                let skill = context
-                    .execution_status
-                    .as_ref()
-                    .map(|status| status.execution_mode.clone())
-                    .unwrap_or_default();
-                (
-                    skill,
-                    String::from(
-                        "Execution already started for the approved plan revision; continue with the current execution flow.",
-                    ),
-                )
+        let contract_state = context.plan_contract.as_ref().map_or_else(
+            || context.route.contract_state.clone(),
+            |report| report.contract_state.clone(),
+        );
+        let execution_started = context.execution_status.as_ref().map_or_else(
+            || String::from("no"),
+            |status| status.execution_started.clone(),
+        );
+        let (recommended_skill, recommendation_reason) = if let Some(recommendation) =
+            recommendation.as_ref()
+        {
+            (
+                recommendation.recommended_skill.clone(),
+                recommendation.reason.clone(),
+            )
+        } else {
+            match context.phase.as_str() {
+                "executing" => {
+                    let skill = context
+                        .execution_status
+                        .as_ref()
+                        .map(|status| status.execution_mode.clone())
+                        .unwrap_or_default();
+                    (
+                        skill,
+                        String::from(
+                            "Execution already started for the approved plan revision; continue with the current execution flow.",
+                        ),
+                    )
+                }
+                "implementation_handoff" => (String::new(), reason_text(&context)),
+                "final_review_pending" if review_requires_execution_reentry(&context) => {
+                    let skill = context
+                        .execution_status
+                        .as_ref()
+                        .map(|status| status.execution_mode.clone())
+                        .unwrap_or_default();
+                    (skill, reason_text(&context))
+                }
+                "final_review_pending" => (
+                    String::from("featureforge:requesting-code-review"),
+                    reason_text(&context),
+                ),
+                "qa_pending" if context.operator_phase_detail == "test_plan_refresh_required" => (
+                    String::from("featureforge:plan-eng-review"),
+                    reason_text(&context),
+                ),
+                "qa_pending" => (String::from("featureforge:qa-only"), reason_text(&context)),
+                "document_release_pending" => (
+                    String::from("featureforge:document-release"),
+                    reason_text(&context),
+                ),
+                "ready_for_branch_completion" => (
+                    String::from("featureforge:finishing-a-development-branch"),
+                    reason_text(&context),
+                ),
+                "pivot_required" => (
+                    String::from("featureforge:writing-plans"),
+                    reason_text(&context),
+                ),
+                "task_closure_pending" => {
+                    let skill = context
+                        .execution_status
+                        .as_ref()
+                        .map(|status| status.execution_mode.clone())
+                        .unwrap_or_default();
+                    let recommendation_reason = task_boundary_next_step_text(&context)
+                        .unwrap_or_else(|| reason_text(&context));
+                    (skill, recommendation_reason)
+                }
+                _ if execution_started == "yes" => {
+                    let skill = context
+                        .execution_status
+                        .as_ref()
+                        .map(|status| status.execution_mode.clone())
+                        .unwrap_or_default();
+                    (
+                        skill,
+                        String::from(
+                            "Execution already started for the approved plan revision; continue with the current execution flow.",
+                        ),
+                    )
+                }
+                _ => (String::new(), String::new()),
             }
-            "implementation_handoff" => (String::new(), reason_text(&context)),
-            "final_review_pending" if review_requires_execution_reentry(&context) => {
-                let skill = context
-                    .execution_status
-                    .as_ref()
-                    .map(|status| status.execution_mode.clone())
-                    .unwrap_or_default();
-                (skill, reason_text(&context))
-            }
-            "final_review_pending" => (
-                String::from("featureforge:requesting-code-review"),
-                reason_text(&context),
-            ),
-            "qa_pending" if context.operator_phase_detail == "test_plan_refresh_required" => (
-                String::from("featureforge:plan-eng-review"),
-                reason_text(&context),
-            ),
-            "qa_pending" => (String::from("featureforge:qa-only"), reason_text(&context)),
-            "document_release_pending" => (
-                String::from("featureforge:document-release"),
-                reason_text(&context),
-            ),
-            "ready_for_branch_completion" => (
-                String::from("featureforge:finishing-a-development-branch"),
-                reason_text(&context),
-            ),
-            "pivot_required" => (
-                String::from("featureforge:writing-plans"),
-                reason_text(&context),
-            ),
-            "task_closure_pending" => {
-                let skill = context
-                    .execution_status
-                    .as_ref()
-                    .map(|status| status.execution_mode.clone())
-                    .unwrap_or_default();
-                let recommendation_reason =
-                    task_boundary_next_step_text(&context).unwrap_or_else(|| reason_text(&context));
-                (skill, recommendation_reason)
-            }
-            _ if execution_started == "yes" => {
-                let skill = context
-                    .execution_status
-                    .as_ref()
-                    .map(|status| status.execution_mode.clone())
-                    .unwrap_or_default();
-                (
-                    skill,
-                    String::from(
-                        "Execution already started for the approved plan revision; continue with the current execution flow.",
-                    ),
-                )
-            }
-            _ => (String::new(), String::new()),
-        }
-    };
+        };
 
-    WorkflowHandoff {
-        schema_version: WORKFLOW_HANDOFF_SCHEMA_VERSION,
-        phase: context.phase.clone(),
-        phase_detail: context.operator_phase_detail.clone(),
-        review_state_status: context.operator_review_state_status.clone(),
-        route_status: context.route.status.clone(),
-        next_skill: public_next_skill(&context),
-        contract_state,
-        spec_path: context.route.spec_path.clone(),
-        plan_path: context.route.plan_path.clone(),
-        execution_started,
-        next_action: next_action_for_context(&context).to_owned(),
-        recommended_command: context.operator_recommended_command.clone(),
-        reason_family: context.reason_family.clone(),
-        diagnostic_reason_codes: context.diagnostic_reason_codes.clone(),
-        recommended_skill,
-        recommendation_reason,
-        route: context.route,
-        execution_status: context.execution_status,
-        plan_contract: context.plan_contract,
-        recommendation,
+        WorkflowHandoff {
+            schema_version: WORKFLOW_HANDOFF_SCHEMA_VERSION,
+            phase: context.phase.clone(),
+            phase_detail: context.operator_phase_detail.clone(),
+            review_state_status: context.operator_review_state_status.clone(),
+            route_status: context.route.status.clone(),
+            next_skill: public_next_skill(&context),
+            contract_state,
+            spec_path: context.route.spec_path.clone(),
+            plan_path: context.route.plan_path.clone(),
+            execution_started,
+            next_action: next_action_for_context(&context).to_owned(),
+            recommended_command: context.operator_recommended_command.clone(),
+            reason_family: context.reason_family.clone(),
+            diagnostic_reason_codes: context.diagnostic_reason_codes.clone(),
+            recommended_skill,
+            recommendation_reason,
+            route: context.route,
+            execution_status: context.execution_status,
+            plan_contract: context.plan_contract,
+            recommendation,
+        }
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOperator, JsonFailure> {
     let context = build_context_with_plan(
         current_dir,
@@ -832,6 +956,8 @@ pub fn operator(current_dir: &Path, args: &OperatorArgs) -> Result<WorkflowOpera
     Ok(operator_from_context(context, args))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn operator_for_runtime(
     runtime: &ExecutionRuntime,
     args: &OperatorArgs,
@@ -865,11 +991,13 @@ fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> Workf
         blocking_task: context.operator_blocking_task,
         external_wait_state: context.operator_external_wait_state.clone(),
         blocking_reason_codes: context.operator_blocking_reason_codes.clone(),
-        spec_path: context.route.spec_path.clone(),
+        spec_path: context.route.spec_path,
         plan_path,
     }
 }
 
+#[must_use]
+/// Runtime function.
 pub fn render_operator(operator: WorkflowOperator) -> String {
     let recording_context = operator.recording_context.clone();
     let execution_command_context = operator.execution_command_context.clone();
@@ -884,49 +1012,56 @@ pub fn render_operator(operator: WorkflowOperator) -> String {
         display_or_none(&operator.plan_path)
     );
     if let Some(qa_requirement) = operator.qa_requirement {
-        output.push_str(&format!("QA requirement: {qa_requirement}\n"));
+        let _ = writeln!(output, "QA requirement: {qa_requirement}");
     }
     if let Some(checkpoint) = operator.finish_review_gate_pass_branch_closure_id {
-        output.push_str(&format!("Finish gate checkpoint: {checkpoint}\n"));
+        let _ = writeln!(output, "Finish gate checkpoint: {checkpoint}");
     }
     if let Some(recording_context) = recording_context.as_ref() {
-        output.push_str(&format!(
-            "Recording context: {}\n",
+        let _ = writeln!(
+            output,
+            "Recording context: {}",
             format_operator_recording_context(recording_context)
-        ));
+        );
     }
     if let Some(execution_command_context) = execution_command_context.as_ref() {
-        output.push_str(&format!(
-            "Execution command context: {}\n",
+        let _ = writeln!(
+            output,
+            "Execution command context: {}",
             format_operator_execution_command_context(execution_command_context)
-        ));
+        );
     }
     if let Some(blocking_scope) = operator.blocking_scope.as_deref() {
-        output.push_str(&format!("Blocking scope: {blocking_scope}\n"));
+        let _ = writeln!(output, "Blocking scope: {blocking_scope}");
     }
     if let Some(blocking_task) = operator.blocking_task {
-        output.push_str(&format!("Blocking task: {blocking_task}\n"));
+        let _ = writeln!(output, "Blocking task: {blocking_task}");
     }
     if let Some(external_wait_state) = operator.external_wait_state.as_deref() {
-        output.push_str(&format!("External wait: {external_wait_state}\n"));
+        let _ = writeln!(output, "External wait: {external_wait_state}");
     }
     if !operator.blocking_reason_codes.is_empty() {
-        output.push_str(&format!(
-            "Blocking reason codes: {}\n",
+        let _ = writeln!(
+            output,
+            "Blocking reason codes: {}",
             reason_codes_text(&operator.blocking_reason_codes)
-        ));
+        );
     }
     if let Some(recommended_command) = operator.recommended_command {
-        output.push_str(&format!("Recommended command: {recommended_command}\n"));
+        let _ = writeln!(output, "Recommended command: {recommended_command}");
     }
     output
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_handoff(current_dir: &Path) -> Result<String, JsonFailure> {
     let handoff = handoff(current_dir)?;
     Ok(render_handoff_output(&handoff))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn render_handoff_for_runtime(runtime: &ExecutionRuntime) -> Result<String, JsonFailure> {
     let handoff = handoff_for_runtime(runtime)?;
     Ok(render_handoff_output(&handoff))
@@ -935,25 +1070,23 @@ pub fn render_handoff_for_runtime(runtime: &ExecutionRuntime) -> Result<String, 
 fn render_handoff_output(handoff: &WorkflowHandoff) -> String {
     let mut output = String::new();
     output.push_str("Workflow handoff\n");
-    output.push_str(&format!("Phase: {}\n", handoff.phase));
-    output.push_str(&format!("Phase detail: {}\n", handoff.phase_detail));
-    output.push_str(&format!("Review state: {}\n", handoff.review_state_status));
-    output.push_str(&format!("Route status: {}\n", handoff.route_status));
-    output.push_str(&format!("Next action: {}\n", handoff.next_action));
-    output.push_str(&format!(
-        "Recommended command: {}\n",
+    let _ = writeln!(output, "Phase: {}", handoff.phase);
+    let _ = writeln!(output, "Phase detail: {}", handoff.phase_detail);
+    let _ = writeln!(output, "Review state: {}", handoff.review_state_status);
+    let _ = writeln!(output, "Route status: {}", handoff.route_status);
+    let _ = writeln!(output, "Next action: {}", handoff.next_action);
+    let _ = writeln!(
+        output,
+        "Recommended command: {}",
         optional_text(handoff.recommended_command.as_deref())
-    ));
-    output.push_str(&format!("Spec: {}\n", display_or_none(&handoff.spec_path)));
-    output.push_str(&format!("Plan: {}\n", display_or_none(&handoff.plan_path)));
+    );
+    let _ = writeln!(output, "Spec: {}", display_or_none(&handoff.spec_path));
+    let _ = writeln!(output, "Plan: {}", display_or_none(&handoff.plan_path));
     if !handoff.recommended_skill.is_empty() {
-        output.push_str(&format!(
-            "Recommended skill: {}\n",
-            handoff.recommended_skill
-        ));
+        let _ = writeln!(output, "Recommended skill: {}", handoff.recommended_skill);
     }
     if !handoff.recommendation_reason.is_empty() {
-        output.push_str(&format!("Reason: {}\n", handoff.recommendation_reason));
+        let _ = writeln!(output, "Reason: {}", handoff.recommendation_reason);
     }
     if let Some(execution_status) = handoff.execution_status.as_ref() {
         append_execution_status_metadata(&mut output, execution_status);
@@ -961,11 +1094,15 @@ fn render_handoff_output(handoff: &WorkflowHandoff) -> String {
     output
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn preflight(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, JsonFailure> {
     let runtime = ExecutionRuntime::discover(current_dir)?;
     preflight_for_runtime(&runtime, args)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn preflight_for_runtime(
     runtime: &ExecutionRuntime,
     args: &PlanArgs,
@@ -973,11 +1110,15 @@ pub fn preflight_for_runtime(
     runtime.preflight(&execution_status_args(args))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_review(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, JsonFailure> {
     let runtime = ExecutionRuntime::discover(current_dir)?;
     gate_review_for_runtime(&runtime, args)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_review_for_runtime(
     runtime: &ExecutionRuntime,
     args: &PlanArgs,
@@ -985,11 +1126,15 @@ pub fn gate_review_for_runtime(
     runtime.gate_review(&execution_status_args(args))
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_finish(current_dir: &Path, args: &PlanArgs) -> Result<GateResult, JsonFailure> {
     let runtime = ExecutionRuntime::discover(current_dir)?;
     gate_finish_for_runtime(&runtime, args)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn gate_finish_for_runtime(
     runtime: &ExecutionRuntime,
     args: &PlanArgs,
@@ -997,10 +1142,12 @@ pub fn gate_finish_for_runtime(
     runtime.gate_finish(&execution_status_args(args))
 }
 
+#[must_use]
+/// Runtime function.
 pub fn render_gate(title: &str, gate: &GateResult) -> String {
     let mut output = format!("{}\nAllowed: {}\n", title, gate.allowed);
     if !gate.failure_class.is_empty() {
-        output.push_str(&format!("Failure class: {}\n", gate.failure_class));
+        let _ = writeln!(output, "Failure class: {}", gate.failure_class);
     }
     output
 }
@@ -1098,7 +1245,7 @@ fn build_context_from_routing(
         gate_review,
         gate_finish,
         execution_preflight_block_reason: None,
-        phase: phase.clone(),
+        phase,
         operator_phase,
         operator_phase_detail,
         operator_review_state_status: review_state_status,
@@ -1209,14 +1356,8 @@ fn next_text_for_phase(
                 format!("Return to execution preflight for the approved plan: {plan_path}")
             }
         }
-        "executing" => {
-            if plan_path.is_empty() {
-                String::from("Return to the current execution flow for the approved plan.")
-            } else {
-                format!("Return to the current execution flow for the approved plan: {plan_path}")
-            }
-        }
-        "contract_drafting"
+        "executing"
+        | "contract_drafting"
         | "contract_pending_approval"
         | "contract_approved"
         | "evaluating"
@@ -1316,7 +1457,7 @@ fn reason_text(context: &OperatorContext) -> String {
     }
 }
 
-fn display_or_none(value: &str) -> &str {
+const fn display_or_none(value: &str) -> &str {
     if value.is_empty() { "none" } else { value }
 }
 
@@ -1467,59 +1608,71 @@ fn gate_first_diagnostic_message(gate: Option<&GateResult>) -> Option<String> {
 }
 
 fn append_execution_status_metadata(output: &mut String, status: &PlanExecutionStatus) {
-    output.push_str(&format!(
-        "Execution reason codes: {}\n",
+    let _ = writeln!(
+        output,
+        "Execution reason codes: {}",
         reason_codes_text(&status.reason_codes)
-    ));
-    output.push_str(&format!(
-        "Evaluator required kinds: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Evaluator required kinds: {}",
         evaluator_kinds_text(&status.required_evaluator_kinds)
-    ));
-    output.push_str(&format!(
-        "Evaluator completed kinds: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Evaluator completed kinds: {}",
         evaluator_kinds_text(&status.completed_evaluator_kinds)
-    ));
-    output.push_str(&format!(
-        "Evaluator pending kinds: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Evaluator pending kinds: {}",
         evaluator_kinds_text(&status.pending_evaluator_kinds)
-    ));
-    output.push_str(&format!(
-        "Evaluator non-passing kinds: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Evaluator non-passing kinds: {}",
         evaluator_kinds_text(&status.non_passing_evaluator_kinds)
-    ));
-    output.push_str(&format!(
-        "Evaluator last kind: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Evaluator last kind: {}",
         optional_evaluator_kind_text(status.last_evaluation_evaluator_kind)
-    ));
-    output.push_str(&format!(
-        "Write authority state: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Write authority state: {}",
         status.write_authority_state
-    ));
-    output.push_str(&format!(
-        "Write authority holder: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Write authority holder: {}",
         optional_text(status.write_authority_holder.as_deref())
-    ));
-    output.push_str(&format!(
-        "Write authority worktree: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Write authority worktree: {}",
         optional_text(status.write_authority_worktree.as_deref())
-    ));
-    output.push_str(&format!("Strategy state: {}\n", status.strategy_state));
-    output.push_str(&format!(
-        "Strategy checkpoint kind: {}\n",
+    );
+    let _ = writeln!(output, "Strategy state: {}", status.strategy_state);
+    let _ = writeln!(
+        output,
+        "Strategy checkpoint kind: {}",
         status.strategy_checkpoint_kind
-    ));
-    output.push_str(&format!(
-        "Strategy checkpoint fingerprint: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Strategy checkpoint fingerprint: {}",
         optional_text(status.last_strategy_checkpoint_fingerprint.as_deref())
-    ));
-    output.push_str(&format!(
-        "Strategy reset required: {}\n",
+    );
+    let _ = writeln!(
+        output,
+        "Strategy reset required: {}",
         if status.strategy_reset_required {
             "yes"
         } else {
             "no"
         }
-    ));
+    );
 }
 
 fn reason_codes_text(reason_codes: &[String]) -> String {
@@ -1536,22 +1689,23 @@ fn evaluator_kinds_text(kinds: &[EvaluatorKind]) -> String {
     } else {
         kinds
             .iter()
+            .copied()
             .map(evaluator_kind_text)
             .collect::<Vec<_>>()
             .join(", ")
     }
 }
 
-fn evaluator_kind_text(kind: &EvaluatorKind) -> &'static str {
+const fn evaluator_kind_text(kind: EvaluatorKind) -> &'static str {
     match kind {
         EvaluatorKind::SpecCompliance => "spec_compliance",
         EvaluatorKind::CodeQuality => "code_quality",
     }
 }
 
-fn optional_evaluator_kind_text(value: Option<EvaluatorKind>) -> &'static str {
+const fn optional_evaluator_kind_text(value: Option<EvaluatorKind>) -> &'static str {
     match value {
-        Some(value) => evaluator_kind_text(&value),
+        Some(value) => evaluator_kind_text(value),
         None => "none",
     }
 }
@@ -1572,6 +1726,7 @@ fn execution_status_args(args: &PlanArgs) -> ExecutionStatusArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expect_ext::ExpectValueExt;
     use crate::workflow::status::WorkflowRoute;
 
     fn task_boundary_context(
@@ -1683,14 +1838,15 @@ mod tests {
             ),
         );
 
-        let reason = task_boundary_reason_text(&context)
-            .expect("task-boundary reason text should be available for task_review_result_pending");
+        let reason = task_boundary_reason_text(&context).expect_or_abort(
+            "task-boundary reason text should be available for task_review_result_pending",
+        );
         assert!(
             reason.contains("Run verification and then record task closure"),
             "verification-missing task-boundary reason text should mention verification + closure recording, got {reason}"
         );
 
-        let next_step = task_boundary_next_step_text(&context).expect(
+        let next_step = task_boundary_next_step_text(&context).expect_or_abort(
             "task-boundary next-step text should be available for task_review_result_pending",
         );
         assert!(

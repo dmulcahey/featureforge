@@ -1,53 +1,67 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AnalyzePlanReport",
+  "description": "Runtime struct.",
   "type": "object",
   "properties": {
     "contract_state": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "coverage_complete": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "dependency_diagram_present": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "diagnostics": {
+      "description": "Runtime field.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/ContractDiagnostic"
       }
     },
     "execution_strategy_present": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "execution_topology_valid": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "files_blocks_valid": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "open_questions_resolved": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "overlapping_write_scopes": {
+      "description": "Runtime field.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/OverlappingWriteScope"
       }
     },
     "packet_buildable_tasks": {
+      "description": "Runtime field.",
       "type": "integer",
       "format": "uint",
       "minimum": 0
     },
     "parallel_lane_ownership_valid": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "parallel_workspace_isolation_valid": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "parallel_worktree_groups": {
+      "description": "Runtime field.",
       "type": "array",
       "items": {
         "type": "array",
@@ -59,52 +73,64 @@
       }
     },
     "parallel_worktree_requirements": {
+      "description": "Runtime field.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/ParallelWorktreeRequirement"
       }
     },
     "plan_fidelity_receipt": {
+      "description": "Runtime field.",
       "$ref": "#/$defs/PlanFidelityGateReport"
     },
     "plan_fingerprint": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "plan_path": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "plan_revision": {
+      "description": "Runtime field.",
       "type": "integer",
       "format": "uint32",
       "minimum": 0
     },
     "reason_codes": {
+      "description": "Runtime field.",
       "type": "array",
       "items": {
         "type": "string"
       }
     },
     "serial_hazards_resolved": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     },
     "spec_fingerprint": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "spec_path": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "spec_revision": {
+      "description": "Runtime field.",
       "type": "integer",
       "format": "uint32",
       "minimum": 0
     },
     "task_count": {
+      "description": "Runtime field.",
       "type": "integer",
       "format": "uint",
       "minimum": 0
     },
     "task_structure_valid": {
-      "type": "boolean"
+      "description": "Runtime field.",
+      "$ref": "#/$defs/BoolFlag"
     }
   },
   "required": [
@@ -135,13 +161,20 @@
     "diagnostics"
   ],
   "$defs": {
+    "BoolFlag": {
+      "description": "Runtime struct.",
+      "type": "boolean"
+    },
     "ContractDiagnostic": {
+      "description": "Runtime struct.",
       "type": "object",
       "properties": {
         "code": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "message": {
+          "description": "Runtime field.",
           "type": "string"
         }
       },
@@ -151,12 +184,15 @@
       ]
     },
     "OverlappingWriteScope": {
+      "description": "Runtime struct.",
       "type": "object",
       "properties": {
         "path": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "tasks": {
+          "description": "Runtime field.",
           "type": "array",
           "items": {
             "type": "integer",
@@ -171,19 +207,23 @@
       ]
     },
     "ParallelWorktreeRequirement": {
+      "description": "Runtime struct.",
       "type": "object",
       "properties": {
         "declared_worktrees": {
+          "description": "Runtime field.",
           "type": "integer",
           "format": "uint",
           "minimum": 0
         },
         "required_worktrees": {
+          "description": "Runtime field.",
           "type": "integer",
           "format": "uint",
           "minimum": 0
         },
         "tasks": {
+          "description": "Runtime field.",
           "type": "array",
           "items": {
             "type": "integer",
@@ -199,36 +239,45 @@
       ]
     },
     "PlanFidelityGateReport": {
+      "description": "Runtime struct.",
       "type": "object",
       "properties": {
         "diagnostics": {
+          "description": "Runtime field.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/ContractDiagnostic"
           }
         },
         "provenance_source": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "reason_codes": {
+          "description": "Runtime field.",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "receipt_path": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "reviewer_stage": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "state": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "verified_execution_topology": {
+          "description": "Runtime field.",
           "type": "boolean"
         },
         "verified_requirement_index": {
+          "description": "Runtime field.",
           "type": "boolean"
         }
       },

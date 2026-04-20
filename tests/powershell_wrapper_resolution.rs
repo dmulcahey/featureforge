@@ -1,6 +1,8 @@
+//! Powershell wrapper resolution integration/benchmark crate.
 #[path = "support/prebuilt.rs"]
 mod prebuilt_support;
 
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -14,18 +16,23 @@ fn repo_root() -> PathBuf {
 }
 
 fn read_utf8(path: impl AsRef<Path>) -> String {
-    fs::read_to_string(path.as_ref())
-        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.as_ref().display()))
+    fs::read_to_string(path.as_ref()).unwrap_or_else(|error| {
+        featureforge::abort!("{} should be readable: {error}", path.as_ref().display())
+    })
 }
 
 #[test]
 fn standalone_runtime_has_no_powershell_wrapper_entrypoints() {
     let root = repo_root();
     let powershell_entries = fs::read_dir(root.join("bin"))
-        .expect("bin dir should be readable")
+        .expect_or_abort("bin dir should be readable")
         .filter_map(Result::ok)
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.ends_with(".ps1"))
+        .filter(|name| {
+            Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1"))
+        })
         .collect::<Vec<_>>();
     assert!(
         powershell_entries.is_empty(),
@@ -35,7 +42,7 @@ fn standalone_runtime_has_no_powershell_wrapper_entrypoints() {
     if compat_powershell.exists() {
         assert!(
             fs::read_dir(&compat_powershell)
-                .expect("compat/powershell should be readable")
+                .expect_or_abort("compat/powershell should be readable")
                 .next()
                 .is_none(),
             "compat/powershell should be empty in the standalone runtime"
@@ -59,10 +66,10 @@ fn canonical_prebuilt_manifest_and_assets_use_featureforge_names() {
         );
     }
     let manifest_json: serde_json::Value =
-        serde_json::from_str(&manifest).expect("manifest json should parse");
+        serde_json::from_str(&manifest).expect_or_abort("manifest json should parse");
     let targets = manifest_json["targets"]
         .as_object()
-        .expect("manifest targets should be an object");
+        .expect_or_abort("manifest targets should be an object");
     let target_keys = targets.keys().map(String::as_str).collect::<Vec<_>>();
     assert_eq!(
         target_keys,
@@ -72,10 +79,10 @@ fn canonical_prebuilt_manifest_and_assets_use_featureforge_names() {
     for entry in targets.values() {
         let runtime_path = entry["binary_path"]
             .as_str()
-            .expect("manifest binary path should be a string");
+            .expect_or_abort("manifest binary path should be a string");
         let checksum_path = entry["checksum_path"]
             .as_str()
-            .expect("manifest checksum path should be a string");
+            .expect_or_abort("manifest checksum path should be a string");
         assert!(
             runtime_path.contains("featureforge"),
             "prebuilt runtime path should stay on the FeatureForge basename: {runtime_path}"

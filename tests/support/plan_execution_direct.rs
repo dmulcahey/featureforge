@@ -1,3 +1,4 @@
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::path::Path;
 use std::process::{ExitStatus, Output};
 
@@ -19,22 +20,20 @@ pub fn try_run_plan_execution_output_direct(
     state: &Path,
     args: &[&str],
     context: &str,
-) -> Result<Option<Output>, String> {
-    Ok(
-        match try_run_plan_execution_result_direct(repo, state, args, context)? {
-            Some(Ok(output)) => Some(output_with_code(
-                i32::from(output.exit_code),
-                output.stdout,
-                Vec::new(),
-            )),
-            Some(Err(failure)) => Some(output_with_code(
-                1,
-                Vec::new(),
-                json_line(&failure).expect("direct plan execution failure should serialize"),
-            )),
-            None => None,
-        },
-    )
+) -> Option<Output> {
+    match try_run_plan_execution_result_direct(repo, state, args, context) {
+        Some(Ok(output)) => Some(output_with_code(
+            i32::from(output.exit_code),
+            output.stdout,
+            Vec::new(),
+        )),
+        Some(Err(failure)) => Some(output_with_code(
+            1,
+            Vec::new(),
+            json_line(&failure).expect_or_abort("direct plan execution failure should serialize"),
+        )),
+        None => None,
+    }
 }
 
 fn try_run_plan_execution_result_direct(
@@ -42,42 +41,38 @@ fn try_run_plan_execution_result_direct(
     state: &Path,
     args: &[&str],
     _context: &str,
-) -> Result<Option<Result<DirectPlanExecutionSuccess, JsonFailure>>, String> {
+) -> Option<Result<DirectPlanExecutionSuccess, JsonFailure>> {
     if has_relative_summary_path_arg(args) {
         // Relative summary-file paths are resolved by the real CLI against the subprocess cwd.
         // The direct helper runs in-process, so it must defer these cases to the real binary
         // instead of rewriting argv and changing user-visible path semantics.
-        return Ok(None);
+        return None;
     }
-    let argv = std::iter::once("featureforge")
+    let cli_args = std::iter::once("featureforge")
         .chain(["plan", "execution"])
         .chain(args.iter().copied());
-    let cli = match Cli::try_parse_from(argv) {
-        Ok(cli) => cli,
-        Err(_) => return Ok(None),
+    let Ok(cli) = Cli::try_parse_from(cli_args) else {
+        return None;
     };
     let Some(RootCommand::Plan(plan_cli)) = cli.command else {
-        return Ok(None);
+        return None;
     };
     let PlanCommand::Execution(plan_execution_cli) = plan_cli.command else {
-        return Ok(None);
+        return None;
     };
     let command = plan_execution_cli.command;
     if matches!(
         &command,
-        PlanExecutionCommand::RebuildEvidence(args) if !args.json
+        PlanExecutionCommand::RebuildEvidence(args) if !args.json()
     ) {
-        return Ok(None);
+        return None;
     }
-    let runtime = match execution_runtime(repo, state) {
-        Ok(runtime) => runtime,
-        Err(_) => {
-            // When runtime discovery is unavailable for this fixture, defer to the real CLI
-            // boundary instead of failing the in-process helper path.
-            return Ok(None);
-        }
+    let Ok(runtime) = execution_runtime(repo, state) else {
+        // When runtime discovery is unavailable for this fixture, defer to the real CLI
+        // boundary instead of failing the in-process helper path.
+        return None;
     };
-    Ok(Some(execute_plan_execution_command_json(&runtime, command)))
+    Some(execute_plan_execution_command_json(&runtime, command))
 }
 
 fn has_relative_summary_path_arg(args: &[&str]) -> bool {
@@ -126,7 +121,8 @@ fn execute_plan_execution_command_json(
     macro_rules! to_json {
         ($expr:expr) => {
             DirectPlanExecutionSuccess {
-                stdout: json_line(&$expr).expect("plan execution command output should serialize"),
+                stdout: json_line(&$expr)
+                    .expect_or_abort("plan execution command output should serialize"),
                 exit_code: 0,
             }
         };
@@ -145,7 +141,8 @@ fn execute_plan_execution_command_json(
             let output = mutate::rebuild_evidence(runtime, &args)?;
             Ok(DirectPlanExecutionSuccess {
                 exit_code: output.exit_code(),
-                stdout: json_line(&output).expect("plan execution command output should serialize"),
+                stdout: json_line(&output)
+                    .expect_or_abort("plan execution command output should serialize"),
             })
         }
         PlanExecutionCommand::GateContract(args) => Ok(to_json!(runtime.gate_contract(&args)?)),

@@ -1,0 +1,4 @@
+msrv = "1.94.0"
+# Runtime and integration-contract functions are intentionally large in this repository
+# because they model end-to-end workflow boundaries in a single semantic unit.
+too-many-lines-threshold = 2000

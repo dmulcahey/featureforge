@@ -1,3 +1,4 @@
+//! Cli parse boundary integration/benchmark crate.
 #[path = "support/failure_json.rs"]
 mod failure_json_support;
 #[path = "support/files.rs"]
@@ -10,6 +11,7 @@ mod json_support;
 mod process_support;
 
 use assert_cmd::cargo::{CommandCargoExt, cargo_bin};
+use featureforge::expect_ext::ExpectValueExt as _;
 use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -24,15 +26,15 @@ const SPEC_REL: &str = "docs/featureforge/specs/2026-03-25-cli-parse-boundary-de
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-25-cli-parse-boundary.md";
 
 fn init_repo(name: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
     let repo = repo_dir.path();
 
     git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
 
     write_file(
         &repo.join(SPEC_REL),
-        r#"# CLI Parse Boundary Design
+        r"# CLI Parse Boundary Design
 
 **Workflow State:** CEO Approved
 **Spec Revision:** 1
@@ -45,12 +47,12 @@ Fixture spec for CLI parse-boundary coverage.
 ## Requirement Index
 
 - [REQ-001][behavior] Bounded CLI values must fail at the clap boundary.
-"#,
+",
     );
     write_file(
         &repo.join(PLAN_REL),
         &format!(
-            r#"# CLI Parse Boundary Plan
+            r"# CLI Parse Boundary Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
@@ -76,7 +78,7 @@ Fixture spec for CLI parse-boundary coverage.
 - Test: `cargo nextest run --test cli_parse_boundary`
 
 - [ ] **Step 1: Add red parse-boundary tests**
-"#
+"
         ),
     );
 
@@ -84,8 +86,8 @@ Fixture spec for CLI parse-boundary coverage.
 }
 
 fn run_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge cargo binary should exist");
+    let mut command = Command::cargo_bin("featureforge")
+        .expect_or_abort("featureforge cargo binary should exist");
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state_dir)
@@ -105,19 +107,20 @@ fn execution_fingerprint(repo: &Path, state_dir: &Path) -> String {
     );
     status["execution_fingerprint"]
         .as_str()
-        .expect("execution fingerprint should stay a string")
+        .expect_or_abort("execution fingerprint should stay a string")
         .to_owned()
 }
 
 #[test]
 fn bare_featureforge_prints_help_instead_of_silent_success() {
     let output = run(
-        Command::cargo_bin("featureforge").expect("featureforge cargo binary should exist"),
+        Command::cargo_bin("featureforge")
+            .expect_or_abort("featureforge cargo binary should exist"),
         "bare featureforge command",
     );
 
     assert!(output.status.success(), "bare command should exit cleanly");
-    let stdout = String::from_utf8(output.stdout).expect("help stdout should be utf-8");
+    let stdout = String::from_utf8(output.stdout).expect_or_abort("help stdout should be utf-8");
     assert!(
         stdout.contains("Usage: featureforge"),
         "bare command should print help output, got:\n{stdout}"
@@ -159,7 +162,7 @@ fn plan_execution_begin_rejects_unknown_execution_modes_at_parse_boundary() {
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("possible values"));
     assert!(message.contains("featureforge:executing-plans"));
     assert!(message.contains("featureforge:subagent-driven-development"));
@@ -201,7 +204,7 @@ fn plan_execution_note_rejects_unknown_states_at_parse_boundary() {
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("possible values"));
     assert!(message.contains("blocked"));
     assert!(message.contains("interrupted"));
@@ -239,7 +242,7 @@ fn plan_execution_recommend_rejects_unknown_strategy_flags_at_parse_boundary() {
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("possible values"));
     assert!(message.contains("available"));
     assert!(message.contains("unavailable"));
@@ -276,7 +279,7 @@ fn plan_execution_task3_commands_require_their_artifact_flags_at_parse_boundary(
         );
         let message = json["message"]
             .as_str()
-            .expect("failure message should stay a string");
+            .expect_or_abort("failure message should stay a string");
         assert!(
             message.contains("required arguments were not provided"),
             "command {command_name} should be parsed and fail because a required argument is missing, got: {message}"
@@ -317,7 +320,7 @@ fn plan_execution_record_review_dispatch_requires_scope_at_parse_boundary() {
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("required arguments were not provided"));
     assert!(message.contains("--scope"));
 }
@@ -351,7 +354,7 @@ fn plan_execution_record_release_readiness_requires_primitive_arguments_at_parse
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("required arguments were not provided"));
     assert!(message.contains("--branch-closure-id"));
     assert!(message.contains("--result"));
@@ -387,7 +390,7 @@ fn plan_execution_record_final_review_requires_primitive_arguments_at_parse_boun
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("required arguments were not provided"));
     assert!(message.contains("--branch-closure-id"));
     assert!(message.contains("--dispatch-id"));
@@ -427,7 +430,7 @@ fn plan_execution_advance_late_stage_rejects_unknown_results_at_parse_boundary()
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("possible values"));
     assert!(message.contains("ready"));
     assert!(message.contains("blocked"));
@@ -463,7 +466,7 @@ fn repo_safety_check_rejects_unknown_bounded_values_at_parse_boundary() {
     );
     let intent_message = invalid_intent["message"]
         .as_str()
-        .expect("intent failure should include a string message");
+        .expect_or_abort("intent failure should include a string message");
     assert!(intent_message.contains("possible values"));
     assert!(intent_message.contains("read"));
     assert!(intent_message.contains("write"));
@@ -490,7 +493,7 @@ fn repo_safety_check_rejects_unknown_bounded_values_at_parse_boundary() {
     );
     let target_message = invalid_target["message"]
         .as_str()
-        .expect("write-target failure should include a string message");
+        .expect_or_abort("write-target failure should include a string message");
     assert!(target_message.contains("possible values"));
     assert!(target_message.contains("execution-task-slice"));
     assert!(target_message.contains("git-commit"));
@@ -500,8 +503,8 @@ fn repo_safety_check_rejects_unknown_bounded_values_at_parse_boundary() {
 fn session_entry_command_is_removed_from_active_cli_surface() {
     let output = run(
         {
-            let mut command =
-                Command::cargo_bin("featureforge").expect("featureforge cargo binary should exist");
+            let mut command = Command::cargo_bin("featureforge")
+                .expect_or_abort("featureforge cargo binary should exist");
             command.args(["session-entry", "record", "--decision", "enabled"]);
             command
         },
@@ -515,7 +518,7 @@ fn session_entry_command_is_removed_from_active_cli_surface() {
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("unrecognized subcommand"));
     assert!(message.contains("session-entry"));
 }
@@ -525,10 +528,10 @@ fn session_entry_command_is_removed_from_active_cli_surface() {
 fn session_entry_argv0_alias_is_removed_from_active_cli_surface() {
     use std::os::unix::fs::symlink;
 
-    let alias_dir = TempDir::new().expect("alias tempdir should be available");
+    let alias_dir = TempDir::new().expect_or_abort("alias tempdir should be available");
     let alias_path = alias_dir.path().join("featureforge-session-entry");
     symlink(cargo_bin("featureforge"), &alias_path)
-        .expect("session-entry argv0 alias symlink should be creatable");
+        .expect_or_abort("session-entry argv0 alias symlink should be creatable");
 
     let output = run(
         Command::new(&alias_path),
@@ -542,7 +545,7 @@ fn session_entry_argv0_alias_is_removed_from_active_cli_surface() {
     );
     let message = json["message"]
         .as_str()
-        .expect("failure message should stay a string");
+        .expect_or_abort("failure message should stay a string");
     assert!(message.contains("featureforge-session-entry"));
     assert!(message.contains("invoke `featureforge <subcommand>` instead"));
 }

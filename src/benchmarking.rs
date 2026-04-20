@@ -2,18 +2,27 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Runtime struct.
 pub struct BenchConfig {
+    /// Runtime field.
     pub benchmark: &'static str,
+    /// Runtime field.
     pub iterations: u32,
+    /// Runtime field.
     pub warmup_iterations: u32,
+    /// Runtime field.
     pub output_path: Option<PathBuf>,
+    /// Runtime field.
     pub run_requested: bool,
 }
 
+#[must_use]
+/// Runtime function.
 pub fn parse_args(benchmark: &'static str) -> BenchConfig {
     parse_args_from(benchmark, std::env::args_os().skip(1))
 }
 
+/// Runtime function.
 pub fn parse_args_from<I, S>(benchmark: &'static str, args: I) -> BenchConfig
 where
     I: IntoIterator<Item = S>,
@@ -35,25 +44,25 @@ where
                 run_requested = true;
             }
             "--iterations" => {
-                let value = args
-                    .next()
-                    .unwrap_or_else(|| panic!("--iterations requires a numeric value"));
-                iterations = value
-                    .parse::<u32>()
-                    .unwrap_or_else(|_| panic!("invalid --iterations value: {value}"));
+                let value = args.next().unwrap_or_else(|| {
+                    invalid_benchmark_arg("--iterations requires a numeric value")
+                });
+                iterations = value.parse::<u32>().unwrap_or_else(|_| {
+                    invalid_benchmark_arg(&format!("invalid --iterations value: {value}"))
+                });
             }
             "--warmup" => {
                 let value = args
                     .next()
-                    .unwrap_or_else(|| panic!("--warmup requires a numeric value"));
-                warmup_iterations = value
-                    .parse::<u32>()
-                    .unwrap_or_else(|_| panic!("invalid --warmup value: {value}"));
+                    .unwrap_or_else(|| invalid_benchmark_arg("--warmup requires a numeric value"));
+                warmup_iterations = value.parse::<u32>().unwrap_or_else(|_| {
+                    invalid_benchmark_arg(&format!("invalid --warmup value: {value}"))
+                });
             }
             "--output" => {
                 let value = args
                     .next()
-                    .unwrap_or_else(|| panic!("--output requires a file path"));
+                    .unwrap_or_else(|| invalid_benchmark_arg("--output requires a file path"));
                 output_path = Some(PathBuf::from(value));
             }
             _ => {}
@@ -69,6 +78,8 @@ where
     }
 }
 
+#[must_use]
+/// Runtime function.
 pub fn render_run_gate_message(config: &BenchConfig) -> Option<String> {
     (!config.run_requested).then(|| {
         format!(
@@ -82,6 +93,11 @@ fn os_string_to_string(value: OsString) -> String {
     value
         .into_string()
         .unwrap_or_else(|value| value.to_string_lossy().into_owned())
+}
+
+fn invalid_benchmark_arg(message: &str) -> ! {
+    eprintln!("{message}");
+    std::process::exit(2);
 }
 
 #[cfg(test)]

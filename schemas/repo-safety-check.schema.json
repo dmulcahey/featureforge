@@ -1,39 +1,51 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RepoSafetyResult",
+  "description": "Runtime struct.",
   "type": "object",
   "properties": {
     "approval_fingerprint": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "approval_path": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "branch": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "failure_class": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "intent": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "outcome": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "protected": {
+      "description": "Runtime field.",
       "type": "boolean"
     },
     "protected_by": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "reason": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "suggested_next_skill": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "task_id": {
+      "description": "Runtime field.",
       "type": "string"
     }
   },

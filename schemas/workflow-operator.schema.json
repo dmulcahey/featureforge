@@ -10,16 +10,20 @@
     },
     "WorkflowOperatorExecutionCommandContext": {
       "additionalProperties": false,
+      "description": "Runtime struct.",
       "properties": {
         "command_kind": {
-          "$ref": "#/$defs/WorkflowOperatorCommandKindSchema"
+          "$ref": "#/$defs/WorkflowOperatorCommandKindSchema",
+          "description": "Runtime field."
         },
         "step_id": {
+          "description": "Runtime field.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "task_number": {
+          "description": "Runtime field.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -116,15 +120,19 @@
           ]
         }
       ],
+      "description": "Runtime struct.",
       "minProperties": 1,
       "properties": {
         "branch_closure_id": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "dispatch_id": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "task_number": {
+          "description": "Runtime field.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -294,26 +302,31 @@
       }
     }
   ],
+  "description": "Runtime struct.",
   "properties": {
     "base_branch": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "blocking_reason_codes": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "blocking_scope": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "blocking_task": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -322,33 +335,41 @@
       ]
     },
     "execution_command_context": {
-      "$ref": "#/$defs/WorkflowOperatorExecutionCommandContext"
+      "$ref": "#/$defs/WorkflowOperatorExecutionCommandContext",
+      "description": "Runtime field."
     },
     "external_wait_state": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "finish_review_gate_pass_branch_closure_id": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "follow_up_override": {
-      "$ref": "#/$defs/WorkflowOperatorFollowUpOverrideSchema"
+      "$ref": "#/$defs/WorkflowOperatorFollowUpOverrideSchema",
+      "description": "Runtime field."
     },
     "next_action": {
-      "$ref": "#/$defs/WorkflowOperatorNextActionSchema"
+      "$ref": "#/$defs/WorkflowOperatorNextActionSchema",
+      "description": "Runtime field."
     },
     "phase": {
-      "$ref": "#/$defs/WorkflowOperatorPhaseSchema"
+      "$ref": "#/$defs/WorkflowOperatorPhaseSchema",
+      "description": "Runtime field."
     },
     "phase_detail": {
-      "$ref": "#/$defs/WorkflowOperatorPhaseDetailSchema"
+      "$ref": "#/$defs/WorkflowOperatorPhaseDetailSchema",
+      "description": "Runtime field."
     },
     "plan_path": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "qa_requirement": {
@@ -359,25 +380,31 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Runtime field."
     },
     "recommended_command": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "recording_context": {
-      "$ref": "#/$defs/WorkflowOperatorRecordingContext"
+      "$ref": "#/$defs/WorkflowOperatorRecordingContext",
+      "description": "Runtime field."
     },
     "review_state_status": {
-      "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema"
+      "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema",
+      "description": "Runtime field."
     },
     "schema_version": {
       "const": 2,
+      "description": "Runtime field.",
       "format": "uint32",
       "maximum": 2,
       "minimum": 2,
       "type": "integer"
     },
     "spec_path": {
+      "description": "Runtime field.",
       "type": "string"
     }
   },

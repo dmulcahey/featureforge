@@ -11,23 +11,38 @@ use crate::contracts::harness::{
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::harness::{ChunkId, EvaluatorKind, ExecutionRunId, HarnessPhase};
 
+/// Runtime constant.
 pub const REASON_CODE_WAITING_ON_REQUIRED_EVALUATOR: &str = "waiting_on_required_evaluator";
+/// Runtime constant.
 pub const REASON_CODE_REQUIRED_EVALUATOR_FAILED: &str = "required_evaluator_failed";
+/// Runtime constant.
 pub const REASON_CODE_REQUIRED_EVALUATOR_BLOCKED: &str = "required_evaluator_blocked";
+/// Runtime constant.
 pub const REASON_CODE_HANDOFF_REQUIRED: &str = "handoff_required";
+/// Runtime constant.
 pub const REASON_CODE_REPAIR_WITHIN_BUDGET: &str = "repair_within_budget";
+/// Runtime constant.
 pub const REASON_CODE_PIVOT_THRESHOLD_EXCEEDED: &str = "pivot_threshold_exceeded";
+/// Runtime constant.
 pub const REASON_CODE_BLOCKED_ON_PLAN_REVISION: &str = "blocked_on_plan_revision";
+/// Runtime constant.
 pub const REASON_CODE_WRITE_AUTHORITY_CONFLICT: &str = "write_authority_conflict";
+/// Runtime constant.
 pub const REASON_CODE_REPO_STATE_DRIFT: &str = "repo_state_drift";
+/// Runtime constant.
 pub const REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED: &str = "post_review_repo_write_detected";
+/// Runtime constant.
 pub const REASON_CODE_STALE_PROVENANCE: &str = "stale_provenance";
+/// Runtime constant.
 pub const REASON_CODE_RECOVERING_INCOMPLETE_AUTHORITATIVE_MUTATION: &str =
     "recovering_incomplete_authoritative_mutation";
+/// Runtime constant.
 pub const REASON_CODE_MISSING_REQUIRED_EVIDENCE: &str = "missing_required_evidence";
+/// Runtime constant.
 pub const REASON_CODE_INVALID_EVIDENCE_SATISFACTION_RULE: &str =
     "invalid_evidence_satisfaction_rule";
 
+/// Runtime constant.
 pub const STABLE_REASON_CODES: [&str; 14] = [
     REASON_CODE_WAITING_ON_REQUIRED_EVALUATOR,
     REASON_CODE_REQUIRED_EVALUATOR_FAILED,
@@ -45,24 +60,42 @@ pub const STABLE_REASON_CODES: [&str; 14] = [
     REASON_CODE_INVALID_EVIDENCE_SATISFACTION_RULE,
 ];
 
+/// Runtime constant.
 pub const EVENT_KIND_PHASE_TRANSITION: &str = "phase_transition";
+/// Runtime constant.
 pub const EVENT_KIND_GATE_RESULT: &str = "gate_result";
+/// Runtime constant.
 pub const EVENT_KIND_BLOCKED_STATE_ENTERED: &str = "blocked_state_entered";
+/// Runtime constant.
 pub const EVENT_KIND_BLOCKED_STATE_CLEARED: &str = "blocked_state_cleared";
+/// Runtime constant.
 pub const EVENT_KIND_WRITE_AUTHORITY_CONFLICT: &str = "write_authority_conflict";
+/// Runtime constant.
 pub const EVENT_KIND_WRITE_AUTHORITY_RECLAIMED: &str = "write_authority_reclaimed";
+/// Runtime constant.
 pub const EVENT_KIND_REPLAY_ACCEPTED: &str = "replay_accepted";
+/// Runtime constant.
 pub const EVENT_KIND_REPLAY_CONFLICT: &str = "replay_conflict";
+/// Runtime constant.
 pub const EVENT_KIND_REPO_STATE_DRIFT_DETECTED: &str = "repo_state_drift_detected";
+/// Runtime constant.
 pub const EVENT_KIND_REPO_STATE_RECONCILED: &str = "repo_state_reconciled";
+/// Runtime constant.
 pub const EVENT_KIND_INTEGRITY_MISMATCH_DETECTED: &str = "integrity_mismatch_detected";
+/// Runtime constant.
 pub const EVENT_KIND_PARTIAL_MUTATION_RECOVERED: &str = "partial_mutation_recovered";
+/// Runtime constant.
 pub const EVENT_KIND_DOWNSTREAM_GATE_REJECTED: &str = "downstream_gate_rejected";
+/// Runtime constant.
 pub const EVENT_KIND_RECOMMENDATION_PROPOSED: &str = "recommendation_proposed";
+/// Runtime constant.
 pub const EVENT_KIND_POLICY_ACCEPTED: &str = "policy_accepted";
+/// Runtime constant.
 pub const EVENT_KIND_AUTHORITATIVE_MUTATION_RECORDED: &str = "authoritative_mutation_recorded";
+/// Runtime constant.
 pub const EVENT_KIND_ORDERING_GAP_DETECTED: &str = "ordering_gap_detected";
 
+/// Runtime constant.
 pub const STABLE_EVENT_KINDS: [&str; 17] = [
     EVENT_KIND_PHASE_TRANSITION,
     EVENT_KIND_GATE_RESULT,
@@ -83,31 +116,52 @@ pub const STABLE_EVENT_KINDS: [&str; 17] = [
     EVENT_KIND_ORDERING_GAP_DETECTED,
 ];
 
+/// Runtime constant.
 pub const STABLE_DOWNGRADE_REASON_CLASSES: [DowngradeReasonClass; 6] = DowngradeReasonClass::ALL;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+/// Runtime enum.
 pub enum HarnessEventKind {
+    /// Runtime enum variant.
     PhaseTransition,
+    /// Runtime enum variant.
     GateResult,
+    /// Runtime enum variant.
     BlockedStateEntered,
+    /// Runtime enum variant.
     BlockedStateCleared,
+    /// Runtime enum variant.
     WriteAuthorityConflict,
+    /// Runtime enum variant.
     WriteAuthorityReclaimed,
+    /// Runtime enum variant.
     ReplayAccepted,
+    /// Runtime enum variant.
     ReplayConflict,
+    /// Runtime enum variant.
     RepoStateDriftDetected,
+    /// Runtime enum variant.
     RepoStateReconciled,
+    /// Runtime enum variant.
     IntegrityMismatchDetected,
+    /// Runtime enum variant.
     PartialMutationRecovered,
+    /// Runtime enum variant.
     DownstreamGateRejected,
+    /// Runtime enum variant.
     RecommendationProposed,
+    /// Runtime enum variant.
     PolicyAccepted,
+    /// Runtime enum variant.
     AuthoritativeMutationRecorded,
+    /// Runtime enum variant.
     OrderingGapDetected,
 }
 
 impl HarnessEventKind {
+    #[must_use]
+    /// Runtime constant.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PhaseTransition => EVENT_KIND_PHASE_TRANSITION,
@@ -132,26 +186,44 @@ impl HarnessEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Runtime struct.
 pub struct HarnessObservabilityEvent {
+    /// Runtime field.
     pub event_kind: HarnessEventKind,
+    /// Runtime field.
     pub timestamp: String,
+    /// Runtime field.
     pub execution_run_id: Option<ExecutionRunId>,
+    /// Runtime field.
     pub authoritative_sequence: Option<u64>,
+    /// Runtime field.
     pub source_plan_path: Option<String>,
+    /// Runtime field.
     pub source_plan_revision: Option<u32>,
+    /// Runtime field.
     pub harness_phase: Option<HarnessPhase>,
+    /// Runtime field.
     pub chunk_id: Option<ChunkId>,
+    /// Runtime field.
     pub evaluator_kind: Option<EvaluatorKind>,
+    /// Runtime field.
     pub active_contract_fingerprint: Option<String>,
+    /// Runtime field.
     pub evaluation_report_fingerprint: Option<String>,
+    /// Runtime field.
     pub handoff_fingerprint: Option<String>,
+    /// Runtime field.
     pub command_name: Option<String>,
+    /// Runtime field.
     pub gate_name: Option<String>,
+    /// Runtime field.
     pub failure_class: Option<String>,
+    /// Runtime field.
     pub reason_codes: Vec<String>,
 }
 
 impl HarnessObservabilityEvent {
+    /// Runtime function.
     pub fn new(event_kind: HarnessEventKind, timestamp: impl Into<String>) -> Self {
         Self {
             event_kind,
@@ -173,6 +245,7 @@ impl HarnessObservabilityEvent {
         }
     }
 
+    /// Runtime function.
     pub fn add_reason_code(&mut self, code: impl Into<String>) {
         let code = code.into();
         if !self.reason_codes.iter().any(|existing| existing == &code) {
@@ -181,18 +254,26 @@ impl HarnessObservabilityEvent {
     }
 }
 
+#[must_use]
+/// Runtime function.
 pub fn is_stable_reason_code(code: &str) -> bool {
     STABLE_REASON_CODES.contains(&code)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn is_stable_event_kind(kind: &str) -> bool {
     STABLE_EVENT_KINDS.contains(&kind)
 }
 
-pub fn downgrade_reason_classes() -> &'static [DowngradeReasonClass] {
+#[must_use]
+/// Runtime constant.
+pub const fn downgrade_reason_classes() -> &'static [DowngradeReasonClass] {
     &STABLE_DOWNGRADE_REASON_CLASSES
 }
 
+#[must_use]
+/// Runtime function.
 pub fn downgrade_records_share_rerun_guidance(
     left: &ExecutionTopologyDowngradeRecord,
     right: &ExecutionTopologyDowngradeRecord,
@@ -202,20 +283,32 @@ pub fn downgrade_records_share_rerun_guidance(
         && left.primary_reason_class == right.primary_reason_class
 }
 
-pub fn downgrade_rerun_guidance_key(
+#[must_use]
+/// Runtime constant.
+pub const fn downgrade_rerun_guidance_key(
     record: &ExecutionTopologyDowngradeRecord,
 ) -> DowngradeReasonClass {
     record.primary_reason_class
 }
 
-pub fn downgrade_record_is_active_guidance(record: &ExecutionTopologyDowngradeRecord) -> bool {
+#[must_use]
+/// Runtime constant.
+pub const fn downgrade_record_is_active_guidance(
+    record: &ExecutionTopologyDowngradeRecord,
+) -> bool {
     !record.rerun_guidance_superseded
 }
 
-pub fn downgrade_record_is_superseded_guidance(record: &ExecutionTopologyDowngradeRecord) -> bool {
+#[must_use]
+/// Runtime constant.
+pub const fn downgrade_record_is_superseded_guidance(
+    record: &ExecutionTopologyDowngradeRecord,
+) -> bool {
     record.rerun_guidance_superseded
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn validate_execution_topology_downgrade_record(
     record: &ExecutionTopologyDowngradeRecord,
 ) -> Result<(), JsonFailure> {
@@ -240,6 +333,8 @@ pub fn validate_execution_topology_downgrade_record(
     Ok(())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn validate_execution_topology_downgrade_detail(
     detail: &ExecutionTopologyDowngradeDetail,
 ) -> Result<(), JsonFailure> {
@@ -341,30 +436,49 @@ fn require_non_empty(value: &str, field_name: &str) -> Result<(), JsonFailure> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+/// Runtime struct.
 pub struct HarnessTelemetryCounters {
+    /// Runtime field.
     pub phase_transition_count: u64,
+    /// Runtime field.
     pub blocked_state_entries_by_reason: BTreeMap<String, u64>,
+    /// Runtime field.
     pub gate_failures_by_gate: BTreeMap<String, u64>,
+    /// Runtime field.
     pub retry_count: u64,
+    /// Runtime field.
     pub pivot_count: u64,
+    /// Runtime field.
     pub authoritative_mutation_count: u64,
+    /// Runtime field.
     pub evaluator_outcomes: BTreeMap<String, u64>,
+    /// Runtime field.
     pub ordering_gap_count: u64,
+    /// Runtime field.
     pub replay_accepted_count: u64,
+    /// Runtime field.
     pub replay_conflict_count: u64,
+    /// Runtime field.
     pub write_authority_conflict_count: u64,
+    /// Runtime field.
     pub write_authority_reclaim_count: u64,
+    /// Runtime field.
     pub repo_state_drift_count: u64,
+    /// Runtime field.
     pub integrity_mismatch_count: u64,
+    /// Runtime field.
     pub partial_mutation_recovery_count: u64,
+    /// Runtime field.
     pub downstream_gate_rejection_count: u64,
 }
 
 impl HarnessTelemetryCounters {
-    pub fn record_phase_transition(&mut self) {
+    /// Runtime constant.
+    pub const fn record_phase_transition(&mut self) {
         self.phase_transition_count += 1;
     }
 
+    /// Runtime function.
     pub fn record_blocked_state_entry(&mut self, reason_code: impl Into<String>) {
         increment_map_counter(
             &mut self.blocked_state_entries_by_reason,
@@ -372,59 +486,73 @@ impl HarnessTelemetryCounters {
         );
     }
 
+    /// Runtime function.
     pub fn record_gate_failure(&mut self, gate_name: impl Into<String>) {
         increment_map_counter(&mut self.gate_failures_by_gate, gate_name.into());
     }
 
-    pub fn record_retry(&mut self) {
+    /// Runtime constant.
+    pub const fn record_retry(&mut self) {
         self.retry_count += 1;
     }
 
-    pub fn record_pivot(&mut self) {
+    /// Runtime constant.
+    pub const fn record_pivot(&mut self) {
         self.pivot_count += 1;
     }
 
-    pub fn record_authoritative_mutation(&mut self) {
+    /// Runtime constant.
+    pub const fn record_authoritative_mutation(&mut self) {
         self.authoritative_mutation_count += 1;
     }
 
+    /// Runtime function.
     pub fn record_evaluator_outcome(&mut self, outcome: impl Into<String>) {
         increment_map_counter(&mut self.evaluator_outcomes, outcome.into());
     }
 
-    pub fn record_ordering_gap(&mut self) {
+    /// Runtime constant.
+    pub const fn record_ordering_gap(&mut self) {
         self.ordering_gap_count += 1;
     }
 
-    pub fn record_replay_accepted(&mut self) {
+    /// Runtime constant.
+    pub const fn record_replay_accepted(&mut self) {
         self.replay_accepted_count += 1;
     }
 
-    pub fn record_replay_conflict(&mut self) {
+    /// Runtime constant.
+    pub const fn record_replay_conflict(&mut self) {
         self.replay_conflict_count += 1;
     }
 
-    pub fn record_write_authority_conflict(&mut self) {
+    /// Runtime constant.
+    pub const fn record_write_authority_conflict(&mut self) {
         self.write_authority_conflict_count += 1;
     }
 
-    pub fn record_write_authority_reclaim(&mut self) {
+    /// Runtime constant.
+    pub const fn record_write_authority_reclaim(&mut self) {
         self.write_authority_reclaim_count += 1;
     }
 
-    pub fn record_repo_state_drift(&mut self) {
+    /// Runtime constant.
+    pub const fn record_repo_state_drift(&mut self) {
         self.repo_state_drift_count += 1;
     }
 
-    pub fn record_integrity_mismatch(&mut self) {
+    /// Runtime constant.
+    pub const fn record_integrity_mismatch(&mut self) {
         self.integrity_mismatch_count += 1;
     }
 
-    pub fn record_partial_mutation_recovery(&mut self) {
+    /// Runtime constant.
+    pub const fn record_partial_mutation_recovery(&mut self) {
         self.partial_mutation_recovery_count += 1;
     }
 
-    pub fn record_downstream_gate_rejection(&mut self) {
+    /// Runtime constant.
+    pub const fn record_downstream_gate_rejection(&mut self) {
         self.downstream_gate_rejection_count += 1;
     }
 }

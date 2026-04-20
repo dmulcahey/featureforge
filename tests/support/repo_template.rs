@@ -1,3 +1,4 @@
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -17,7 +18,7 @@ fn template_repo_root() -> &'static Path {
             let tempdir = tempfile::Builder::new()
                 .prefix("featureforge-test-repo-template-")
                 .tempdir()
-                .expect("template tempdir should exist");
+                .expect_or_abort("template tempdir should exist");
             let path = tempdir.path().to_path_buf();
             std::mem::forget(tempdir);
             initialize_template_repo(&path);
@@ -27,28 +28,30 @@ fn template_repo_root() -> &'static Path {
 }
 
 fn copy_dir_recursive(source: &Path, destination: &Path) {
-    fs::create_dir_all(destination).expect("destination directory should be creatable");
-    for entry in fs::read_dir(source).expect("source directory should be readable") {
-        let entry = entry.expect("directory entry should be readable");
+    fs::create_dir_all(destination).expect_or_abort("destination directory should be creatable");
+    for entry in fs::read_dir(source).expect_or_abort("source directory should be readable") {
+        let entry = entry.expect_or_abort("directory entry should be readable");
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
         let file_type = entry
             .file_type()
-            .expect("directory entry type should be readable");
+            .expect_or_abort("directory entry type should be readable");
         if file_type.is_dir() {
             copy_dir_recursive(&source_path, &destination_path);
         } else if file_type.is_file() {
-            fs::copy(&source_path, &destination_path)
-                .unwrap_or_else(|error| panic!("failed to copy {:?}: {error}", source_path));
+            fs::copy(&source_path, &destination_path).unwrap_or_else(|error| {
+                featureforge::abort!("failed to copy {source_path:?}: {error}")
+            });
         }
     }
 }
 
 pub fn populate_repo_from_template(destination: &Path) {
     if !destination.exists() {
-        fs::create_dir_all(destination).expect("destination should be creatable");
+        fs::create_dir_all(destination).expect_or_abort("destination should be creatable");
     }
-    let mut entries = fs::read_dir(destination).expect("destination directory should be readable");
+    let mut entries =
+        fs::read_dir(destination).expect_or_abort("destination directory should be readable");
     assert!(
         entries.next().is_none(),
         "destination repository path should be empty before template copy: {}",

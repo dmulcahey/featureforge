@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::paths::{normalize_identifier_token, normalize_whitespace};
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn collect_active_instruction_files(
     repo_root: &Path,
     start_dir: &Path,
@@ -52,7 +54,7 @@ pub fn collect_active_instruction_files(
         repo_root.clone()
     };
     let mut nested_dirs = Vec::new();
-    let mut cursor = effective_start.clone();
+    let mut cursor = effective_start;
     loop {
         nested_dirs.push(cursor.clone());
         if cursor == repo_root {
@@ -60,8 +62,7 @@ pub fn collect_active_instruction_files(
         }
         cursor = cursor
             .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| repo_root.clone());
+            .map_or_else(|| repo_root.clone(), Path::to_path_buf);
     }
     nested_dirs.reverse();
 
@@ -73,6 +74,8 @@ pub fn collect_active_instruction_files(
     Ok(files)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn parse_protected_branches(files: &[PathBuf]) -> Result<Vec<String>, DiagnosticError> {
     let mut branches = Vec::new();
 

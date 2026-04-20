@@ -1,3 +1,4 @@
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -24,8 +25,9 @@ fn run_git_with_env(repo: &Path, args: &[&str], envs: &[(&str, &str)], context: 
 }
 
 fn init_repo(repo: &Path, context: &str) {
-    gix::init(repo)
-        .unwrap_or_else(|error| panic!("{context} should initialize a git repo: {error}"));
+    gix::init(repo).unwrap_or_else(|error| {
+        featureforge::abort!("{context} should initialize a git repo: {error}")
+    });
 }
 
 fn add(repo: &Path, paths: &[&str], context: &str) -> Output {
@@ -66,18 +68,18 @@ fn hermetic_git_global_config_path() -> &'static Path {
             let tmp_path = path.with_extension("tmp");
             let contents = "[user]\n\tname = FeatureForge Test\n\temail = featureforge-tests@example.com\n[init]\n\tdefaultBranch = main\n";
             fs::write(&tmp_path, contents)
-                .expect("git helper should write hermetic global git config");
+                .expect_or_abort("git helper should write hermetic global git config");
             fs::rename(&tmp_path, &path)
-                .expect("git helper should atomically install hermetic git config");
+                .expect_or_abort("git helper should atomically install hermetic git config");
             path
         })
         .as_path()
 }
 
 pub fn init_repo_with_initial_commit(repo: &Path, readme_contents: &str, commit_message: &str) {
-    fs::create_dir_all(repo).expect("repo directory should be creatable");
+    fs::create_dir_all(repo).expect_or_abort("repo directory should be creatable");
     init_repo(repo, "git init");
-    fs::write(repo.join("README.md"), readme_contents).expect("README should be writable");
+    fs::write(repo.join("README.md"), readme_contents).expect_or_abort("README should be writable");
     add(repo, &["README.md"], "git add README");
     commit(repo, commit_message, "git commit init");
 }
@@ -85,7 +87,7 @@ pub fn init_repo_with_initial_commit(repo: &Path, readme_contents: &str, commit_
 fn run(mut command: Command, context: &str) -> Output {
     command
         .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
+        .unwrap_or_else(|error| featureforge::abort!("{context} should run: {error}"))
 }
 
 fn run_checked(command: Command, context: &str) -> Output {

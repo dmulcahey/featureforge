@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use featureforge::expect_ext::ExpectValueExt as _;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -20,7 +21,7 @@ pub struct PrebuiltManifestEntry<'a> {
     pub checksum_path: &'a str,
 }
 
-pub fn canonical_prebuilt_entries() -> [PrebuiltManifestEntry<'static>; 2] {
+pub const fn canonical_prebuilt_entries() -> [PrebuiltManifestEntry<'static>; 2] {
     [
         PrebuiltManifestEntry {
             target: DARWIN_ARM64_TARGET,
@@ -49,16 +50,16 @@ pub fn write_prebuilt_artifact(
 ) {
     let binary_path = root.join(binary_rel);
     if let Some(parent) = binary_path.parent() {
-        fs::create_dir_all(parent).expect("binary parent should be creatable");
+        fs::create_dir_all(parent).expect_or_abort("binary parent should be creatable");
     }
-    fs::write(&binary_path, binary_contents).expect("prebuilt runtime should be writable");
+    fs::write(&binary_path, binary_contents).expect_or_abort("prebuilt runtime should be writable");
     make_executable(&binary_path);
 
     let checksum_path = root.join(checksum_rel);
     if let Some(parent) = checksum_path.parent() {
-        fs::create_dir_all(parent).expect("checksum parent should be creatable");
+        fs::create_dir_all(parent).expect_or_abort("checksum parent should be creatable");
     }
-    fs::write(&checksum_path, checksum_contents).expect("checksum should be writable");
+    fs::write(&checksum_path, checksum_contents).expect_or_abort("checksum should be writable");
 }
 
 pub fn write_prebuilt_manifest(
@@ -68,7 +69,7 @@ pub fn write_prebuilt_manifest(
 ) {
     let manifest_path = root.join("bin/prebuilt/manifest.json");
     if let Some(parent) = manifest_path.parent() {
-        fs::create_dir_all(parent).expect("manifest parent should be creatable");
+        fs::create_dir_all(parent).expect_or_abort("manifest parent should be creatable");
     }
 
     let mut manifest_targets = serde_json::Map::new();
@@ -88,9 +89,9 @@ pub fn write_prebuilt_manifest(
             "runtime_revision": runtime_revision,
             "targets": manifest_targets,
         }))
-        .expect("manifest should serialize"),
+        .expect_or_abort("manifest should serialize"),
     )
-    .expect("manifest should be writable");
+    .expect_or_abort("manifest should be writable");
 }
 
 fn make_executable(path: &Path) {
@@ -98,7 +99,7 @@ fn make_executable(path: &Path) {
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-            .expect("path should be executable");
+            .expect_or_abort("path should be executable");
     }
     #[cfg(not(unix))]
     {

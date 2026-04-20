@@ -39,14 +39,23 @@ pub(crate) enum NextActionKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NextActionDecision {
+    /// Runtime field.
     pub kind: NextActionKind,
+    /// Runtime field.
     pub phase: String,
+    /// Runtime field.
     pub phase_detail: String,
+    /// Runtime field.
     pub review_state_status: String,
+    /// Runtime field.
     pub task_number: Option<u32>,
+    /// Runtime field.
     pub step_number: Option<u32>,
+    /// Runtime field.
     pub blocking_task: Option<u32>,
+    /// Runtime field.
     pub blocking_reason_codes: Vec<String>,
+    /// Runtime field.
     pub recommended_command: Option<String>,
 }
 
@@ -130,10 +139,384 @@ pub(crate) fn compute_next_action_decision_with_inputs(
     final_review_dispatch_id: Option<&str>,
     final_review_dispatch_lineage_present: bool,
 ) -> Option<NextActionDecision> {
-    let review_state_status = canonical_review_state_status(status);
-    // Step 4.1 (ordered pass #1): hard structural corruption must route to repair before any
-    // open-step, stale-boundary, or closure-prerequisite routing is attempted.
-    if hard_structural_corruption_detected(status) {
+    {
+        if plan_path.trim().is_empty() {
+            return None;
+        }
+        let review_state_status = canonical_review_state_status(status);
+        // Step 4.1 (ordered pass #1): hard structural corruption must route to repair before any
+        // open-step, stale-boundary, or closure-prerequisite routing is attempted.
+        if hard_structural_corruption_detected(status) {
+            if let Some(task_number) = execution_reentry_blocking_task(context, status) {
+                return Some(execution_reentry_decision_for_task(
+                    context,
+                    status,
+                    plan_path,
+                    review_state_status.as_str(),
+                    task_number,
+                    false,
+                ));
+            }
+            return Some(execution_repair_decision(
+                context,
+                status,
+                plan_path,
+                review_state_status.as_str(),
+            ));
+        }
+        let earliest_stale_boundary =
+            earliest_unresolved_stale_task_from_closure_graph(context, status);
+        let open_step_task = status.active_task.or(status.resume_task).or_else(|| {
+            status
+                .blocking_task
+                .filter(|_| status.blocking_step.is_some())
+        });
+        let open_step_preempted_by_earlier_stale = open_step_task
+            .is_some_and(|task| earliest_stale_boundary.is_some_and(|earliest| earliest < task));
+        let open_step_matches_earliest_stale_boundary =
+            earliest_stale_boundary.is_none_or(|earliest_task| {
+                open_step_task.is_some_and(|open_task| open_task == earliest_task)
+            });
+        let open_step_preempted_by_execution_reentry_blocker =
+            execution_reentry_blocking_task(context, status)
+                .is_some_and(|blocking_task| Some(blocking_task) != open_step_task)
+                || (status.phase_detail == "execution_reentry_required"
+                    && status.blocking_step.is_none()
+                    && status
+                        .blocking_task
+                        .is_some_and(|blocking_task| Some(blocking_task) != open_step_task))
+                || (review_state_status == "stale_unreviewed"
+                    && !open_step_matches_earliest_stale_boundary);
+        let open_step_preempted_by_closure_recording_ready =
+            open_step_task.is_some_and(|task_number| {
+                missing_current_closure_allows_task_closure_baseline_route(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                ) && status
+                    .reason_codes
+                    .iter()
+                    .any(|reason_code| reason_code == "prior_task_current_closure_missing")
+                    && task_closure_baseline_repair_candidate(context, status, task_number)
+                        .ok()
+                        .flatten()
+                        .is_some()
+            });
+
+        // Step 4.1 (ordered pass #2): authoritative open-step state, unless an earlier stale boundary wins.
+        if open_step_task.is_some()
+            && !open_step_preempted_by_earlier_stale
+            && !open_step_preempted_by_execution_reentry_blocker
+            && !open_step_preempted_by_closure_recording_ready
+            && !task_scope_pivot_override_active(status, review_state_status.as_str())
+        {
+            let stale_boundary_open_step_resume_allowed = earliest_stale_boundary
+                .is_some_and(|earliest_task| open_step_task == Some(earliest_task))
+                && review_state_status == "stale_unreviewed"
+                && status.blocking_task.is_none()
+                && task_scope_structural_review_state_reason(status).is_none();
+            if execution_reentry_requires_review_state_repair(status)
+                && !stale_boundary_open_step_resume_allowed
+                && !status.reason_codes.is_empty()
+            {
+                return Some(execution_repair_decision(
+                    context,
+                    status,
+                    plan_path,
+                    review_state_status.as_str(),
+                ));
+            }
+            if let Some(exact_decision) = decision_from_exact_execution_command(
+                status,
+                resolve_exact_execution_command(status, plan_path),
+            ) {
+                return Some(exact_decision);
+            }
+        }
+
+        // Step 4.1 (ordered pass #3): earliest unresolved stale task-closure boundary.
+        if let Some(stale_task) = earliest_stale_boundary {
+            let stale_boundary_closure_recording_ready = status.blocking_task == Some(stale_task)
+                && review_state_status == "clean"
+                && task_scope_structural_review_state_reason(status).is_none()
+                && missing_current_closure_allows_task_closure_baseline_route(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                )
+                && status
+                    .reason_codes
+                    .iter()
+                    .any(|reason_code| reason_code == "prior_task_current_closure_missing")
+                && task_closure_baseline_repair_candidate(context, status, stale_task)
+                    .ok()
+                    .flatten()
+                    .is_some();
+            if stale_boundary_closure_recording_ready {
+                return Some(task_closure_recording_ready_decision(
+                    status, plan_path, stale_task,
+                ));
+            }
+            return Some(execution_reentry_decision_for_task(
+                context,
+                status,
+                plan_path,
+                review_state_status.as_str(),
+                stale_task,
+                true,
+            ));
+        }
+
+        // Step 4.1 (ordered pass #4): current-task closure recording prerequisites.
+        if review_state_status != "stale_unreviewed"
+            && execution_reentry_requires_review_state_repair(status)
+        {
+            return Some(execution_repair_decision(
+                context,
+                status,
+                plan_path,
+                review_state_status.as_str(),
+            ));
+        }
+        let late_stage_projection_refresh_candidate_task = if review_state_status
+            == "missing_current_closure"
+            && status.current_branch_closure_id.is_none()
+            && status.blocking_task.is_none()
+            && status.blocking_step.is_none()
+            && status.active_task.is_none()
+            && status.resume_task.is_none()
+        {
+            projection_refresh_candidate_task(context, status)
+        } else {
+            None
+        };
+        if let Some(candidate_task) = late_stage_projection_refresh_candidate_task {
+            let projection_refresh_task_route_allowed =
+                projection_refresh_candidate_requires_newer_task_closure_baseline(
+                    context,
+                    status,
+                    candidate_task,
+                ) && missing_current_closure_allows_task_closure_baseline_route(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                );
+            if projection_refresh_task_route_allowed {
+                return Some(task_closure_recording_ready_decision(
+                    status,
+                    plan_path,
+                    candidate_task,
+                ));
+            }
+        }
+        if status.harness_phase == HarnessPhase::Executing
+            && review_state_status == "missing_current_closure"
+            && status.current_branch_closure_id.is_none()
+            && status.phase_detail != "execution_reentry_required"
+            && status.blocking_task.is_none()
+            && status.blocking_step.is_none()
+            && status.active_task.is_none()
+            && status.resume_task.is_none()
+        {
+            return Some(late_stage_decision(
+                status,
+                NextActionKind::AdvanceLateStage,
+                "branch_closure_recording_required_for_release_readiness",
+                plan_path,
+            ));
+        }
+        if let Some(decision) = late_stage_execution_reentry_decision(
+            context,
+            status,
+            plan_path,
+            review_state_status.as_str(),
+        ) {
+            return Some(decision);
+        }
+        if let Some(task_number) = task_review_dispatch_task(status) {
+            return Some(closure_prerequisite_decision(
+                status,
+                NextActionKind::RequestTaskReview,
+                "task_review_dispatch_required",
+                Some(task_number),
+                None,
+            ));
+        }
+        if let Some(task_number) = task_review_result_pending_task(status, task_review_dispatch_id)
+        {
+            let closure_baseline_candidate =
+                task_closure_baseline_repair_candidate(context, status, task_number)
+                    .ok()
+                    .flatten();
+            if task_review_pending_allows_closure_baseline_route(status)
+                && missing_current_closure_allows_task_closure_baseline_route(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                )
+                && closure_baseline_candidate.is_some()
+            {
+                return Some(task_closure_recording_ready_decision(
+                    status,
+                    plan_path,
+                    task_number,
+                ));
+            }
+            if external_review_result_ready
+                && external_review_ready_promotes_closure_recording(status)
+            {
+                return Some(task_closure_recording_ready_decision(
+                    status,
+                    plan_path,
+                    task_number,
+                ));
+            }
+            return Some(closure_prerequisite_decision(
+                status,
+                NextActionKind::WaitForTaskReviewResult,
+                "task_review_result_pending",
+                Some(task_number),
+                None,
+            ));
+        }
+        if let Some(task_number) = status
+            .blocking_task
+            .filter(|task_number| {
+                status.blocking_step.is_none()
+                    || blocking_step_allows_task_closure_baseline_route(status, *task_number)
+            })
+            .filter(|_| {
+                matches!(
+                    status.harness_phase,
+                    HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
+                )
+            })
+            .filter(|_| {
+                stale_provenance_allows_task_closure_baseline_route(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                )
+            })
+            .filter(|_| review_state_status != "stale_unreviewed")
+            && let Ok(Some(_candidate)) =
+                task_closure_baseline_repair_candidate(context, status, task_number)
+        {
+            return Some(task_closure_recording_ready_decision(
+                status,
+                plan_path,
+                task_number,
+            ));
+        }
+        if let Some(task_number) = status
+            .blocking_task
+            .filter(|task_number| {
+                status.blocking_step.is_none()
+                    || blocking_step_allows_task_closure_baseline_route(status, *task_number)
+            })
+            .filter(|_| {
+                matches!(
+                    status.harness_phase,
+                    HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
+                )
+            })
+            .filter(|_| {
+                stale_provenance_allows_task_closure_baseline_route(
+                    context,
+                    status,
+                    review_state_status.as_str(),
+                )
+            })
+            .filter(|_| review_state_status != "stale_unreviewed")
+            .filter(|_| task_review_dispatch_task(status).is_none())
+            .filter(|task_number| {
+                task_closure_baseline_repair_candidate(context, status, *task_number)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
+            .filter(|_| {
+                status
+                    .reason_codes
+                    .iter()
+                    .any(|reason_code| reason_code == "prior_task_current_closure_missing")
+                    && status
+                        .reason_codes
+                        .iter()
+                        .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
+            })
+        {
+            return Some(task_closure_recording_ready_decision(
+                status,
+                plan_path,
+                task_number,
+            ));
+        }
+        if external_review_result_ready
+            && external_review_ready_promotes_closure_recording(status)
+            && (status.blocking_step.is_none()
+                || status.blocking_task.is_some_and(|task_number| {
+                    blocking_step_allows_task_closure_baseline_route(status, task_number)
+                }))
+            && matches!(
+                status.harness_phase,
+                HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
+            )
+            && let Some(task_number) = status.blocking_task
+            && status
+                .reason_codes
+                .iter()
+                .any(|reason_code| reason_code == "prior_task_current_closure_missing")
+            && status
+                .reason_codes
+                .iter()
+                .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
+            && task_closure_baseline_repair_candidate(context, status, task_number)
+                .ok()
+                .flatten()
+                .is_some()
+            && missing_current_closure_allows_task_closure_baseline_route(
+                context,
+                status,
+                review_state_status.as_str(),
+            )
+        {
+            return Some(task_closure_recording_ready_decision(
+                status,
+                plan_path,
+                task_number,
+            ));
+        }
+        if status.blocking_task.is_none()
+            && status.blocking_step.is_none()
+            && matches!(
+                status.harness_phase,
+                HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
+            )
+            && status.reason_codes.iter().any(|reason_code| {
+                matches!(
+                    reason_code.as_str(),
+                    "prior_task_current_closure_missing"
+                        | "task_closure_baseline_repair_candidate"
+                        | "current_task_closure_overlay_restore_required"
+                        | "task_closure_negative_result_overlay_restore_required"
+                )
+            })
+            && let Some(candidate_task) = closure_baseline_candidate_task(context)
+            && let Ok(Some(_candidate)) =
+                task_closure_baseline_repair_candidate(context, status, candidate_task)
+            && missing_current_closure_allows_task_closure_baseline_route(
+                context,
+                status,
+                review_state_status.as_str(),
+            )
+        {
+            return Some(task_closure_recording_ready_decision(
+                status,
+                plan_path,
+                candidate_task,
+            ));
+        }
         if let Some(task_number) = execution_reentry_blocking_task(context, status) {
             return Some(execution_reentry_decision_for_task(
                 context,
@@ -144,425 +527,19 @@ pub(crate) fn compute_next_action_decision_with_inputs(
                 false,
             ));
         }
-        return Some(execution_repair_decision(
-            context,
-            status,
-            plan_path,
-            review_state_status.as_str(),
-        ));
-    }
-    let earliest_stale_boundary =
-        earliest_unresolved_stale_task_from_closure_graph(context, status);
-    let open_step_task = status.active_task.or(status.resume_task).or(status
-        .blocking_task
-        .filter(|_| status.blocking_step.is_some()));
-    let open_step_preempted_by_earlier_stale = open_step_task
-        .is_some_and(|task| earliest_stale_boundary.is_some_and(|earliest| earliest < task));
-    let open_step_matches_earliest_stale_boundary =
-        earliest_stale_boundary.is_none_or(|earliest_task| {
-            open_step_task.is_some_and(|open_task| open_task == earliest_task)
-        });
-    let open_step_preempted_by_execution_reentry_blocker =
-        execution_reentry_blocking_task(context, status)
-            .is_some_and(|blocking_task| Some(blocking_task) != open_step_task)
-            || (status.phase_detail == "execution_reentry_required"
-                && status.blocking_step.is_none()
-                && status
-                    .blocking_task
-                    .is_some_and(|blocking_task| Some(blocking_task) != open_step_task))
-            || (review_state_status == "stale_unreviewed"
-                && !open_step_matches_earliest_stale_boundary);
-    let open_step_preempted_by_closure_recording_ready =
-        open_step_task.is_some_and(|task_number| {
-            missing_current_closure_allows_task_closure_baseline_route(
-                context,
-                status,
-                review_state_status.as_str(),
-            ) && status
-                .reason_codes
-                .iter()
-                .any(|reason_code| reason_code == "prior_task_current_closure_missing")
-                && task_closure_baseline_repair_candidate(context, status, task_number)
-                    .ok()
-                    .flatten()
-                    .is_some()
-        });
-
-    // Step 4.1 (ordered pass #2): authoritative open-step state, unless an earlier stale boundary wins.
-    if open_step_task.is_some()
-        && !open_step_preempted_by_earlier_stale
-        && !open_step_preempted_by_execution_reentry_blocker
-        && !open_step_preempted_by_closure_recording_ready
-        && !task_scope_pivot_override_active(status, review_state_status.as_str())
-    {
-        let stale_boundary_open_step_resume_allowed = earliest_stale_boundary
-            .is_some_and(|earliest_task| open_step_task == Some(earliest_task))
-            && review_state_status == "stale_unreviewed"
-            && status.blocking_task.is_none()
-            && task_scope_structural_review_state_reason(status).is_none();
-        if execution_reentry_requires_review_state_repair(status)
-            && !stale_boundary_open_step_resume_allowed
-            && !status.reason_codes.is_empty()
-        {
-            return Some(execution_repair_decision(
-                context,
+        // Step 4.1 (ordered pass #5): late-stage milestones.
+        if task_scope_handoff_override_active(status) {
+            return Some(task_scope_handoff_decision(
                 status,
                 plan_path,
                 review_state_status.as_str(),
             ));
         }
-        if let Some(exact_decision) = decision_from_exact_execution_command(
+        if persisted_late_stage_reroute_missing_current_closure(
+            context,
             status,
-            resolve_exact_execution_command(status, plan_path),
+            review_state_status.as_str(),
         ) {
-            return Some(exact_decision);
-        }
-    }
-
-    // Step 4.1 (ordered pass #3): earliest unresolved stale task-closure boundary.
-    if let Some(stale_task) = earliest_stale_boundary {
-        let stale_boundary_closure_recording_ready = status.blocking_task == Some(stale_task)
-            && review_state_status == "clean"
-            && task_scope_structural_review_state_reason(status).is_none()
-            && missing_current_closure_allows_task_closure_baseline_route(
-                context,
-                status,
-                review_state_status.as_str(),
-            )
-            && status
-                .reason_codes
-                .iter()
-                .any(|reason_code| reason_code == "prior_task_current_closure_missing")
-            && task_closure_baseline_repair_candidate(context, status, stale_task)
-                .ok()
-                .flatten()
-                .is_some();
-        if stale_boundary_closure_recording_ready {
-            return Some(task_closure_recording_ready_decision(
-                status, plan_path, stale_task,
-            ));
-        }
-        return Some(execution_reentry_decision_for_task(
-            context,
-            status,
-            plan_path,
-            review_state_status.as_str(),
-            stale_task,
-            true,
-        ));
-    }
-
-    // Step 4.1 (ordered pass #4): current-task closure recording prerequisites.
-    if review_state_status != "stale_unreviewed"
-        && execution_reentry_requires_review_state_repair(status)
-    {
-        return Some(execution_repair_decision(
-            context,
-            status,
-            plan_path,
-            review_state_status.as_str(),
-        ));
-    }
-    let late_stage_projection_refresh_candidate_task = if review_state_status
-        == "missing_current_closure"
-        && status.current_branch_closure_id.is_none()
-        && status.blocking_task.is_none()
-        && status.blocking_step.is_none()
-        && status.active_task.is_none()
-        && status.resume_task.is_none()
-    {
-        projection_refresh_candidate_task(context, status)
-    } else {
-        None
-    };
-    if let Some(candidate_task) = late_stage_projection_refresh_candidate_task {
-        let projection_refresh_task_route_allowed =
-            projection_refresh_candidate_requires_newer_task_closure_baseline(
-                context,
-                status,
-                candidate_task,
-            ) && missing_current_closure_allows_task_closure_baseline_route(
-                context,
-                status,
-                review_state_status.as_str(),
-            );
-        if projection_refresh_task_route_allowed {
-            return Some(task_closure_recording_ready_decision(
-                status,
-                plan_path,
-                candidate_task,
-            ));
-        }
-    }
-    if status.harness_phase == HarnessPhase::Executing
-        && review_state_status == "missing_current_closure"
-        && status.current_branch_closure_id.is_none()
-        && status.phase_detail != "execution_reentry_required"
-        && status.blocking_task.is_none()
-        && status.blocking_step.is_none()
-        && status.active_task.is_none()
-        && status.resume_task.is_none()
-    {
-        return Some(late_stage_decision(
-            status,
-            NextActionKind::AdvanceLateStage,
-            "branch_closure_recording_required_for_release_readiness",
-            plan_path,
-        ));
-    }
-    if let Some(decision) = late_stage_execution_reentry_decision(
-        context,
-        status,
-        plan_path,
-        review_state_status.as_str(),
-    ) {
-        return Some(decision);
-    }
-    if let Some(task_number) = task_review_dispatch_task(status) {
-        return Some(closure_prerequisite_decision(
-            status,
-            NextActionKind::RequestTaskReview,
-            "task_review_dispatch_required",
-            Some(task_number),
-            None,
-        ));
-    }
-    if let Some(task_number) = task_review_result_pending_task(status, task_review_dispatch_id) {
-        let closure_baseline_candidate =
-            task_closure_baseline_repair_candidate(context, status, task_number)
-                .ok()
-                .flatten();
-        if task_review_pending_allows_closure_baseline_route(status)
-            && missing_current_closure_allows_task_closure_baseline_route(
-                context,
-                status,
-                review_state_status.as_str(),
-            )
-            && closure_baseline_candidate.is_some()
-        {
-            return Some(task_closure_recording_ready_decision(
-                status,
-                plan_path,
-                task_number,
-            ));
-        }
-        if external_review_result_ready && external_review_ready_promotes_closure_recording(status)
-        {
-            return Some(task_closure_recording_ready_decision(
-                status,
-                plan_path,
-                task_number,
-            ));
-        }
-        return Some(closure_prerequisite_decision(
-            status,
-            NextActionKind::WaitForTaskReviewResult,
-            "task_review_result_pending",
-            Some(task_number),
-            None,
-        ));
-    }
-    if let Some(task_number) = status
-        .blocking_task
-        .filter(|task_number| {
-            status.blocking_step.is_none()
-                || blocking_step_allows_task_closure_baseline_route(status, *task_number)
-        })
-        .filter(|_| {
-            matches!(
-                status.harness_phase,
-                HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
-            )
-        })
-        .filter(|_| {
-            stale_provenance_allows_task_closure_baseline_route(
-                context,
-                status,
-                review_state_status.as_str(),
-            )
-        })
-        .filter(|_| review_state_status != "stale_unreviewed")
-        && let Ok(Some(_candidate)) =
-            task_closure_baseline_repair_candidate(context, status, task_number)
-    {
-        return Some(task_closure_recording_ready_decision(
-            status,
-            plan_path,
-            task_number,
-        ));
-    }
-    if let Some(task_number) = status
-        .blocking_task
-        .filter(|task_number| {
-            status.blocking_step.is_none()
-                || blocking_step_allows_task_closure_baseline_route(status, *task_number)
-        })
-        .filter(|_| {
-            matches!(
-                status.harness_phase,
-                HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
-            )
-        })
-        .filter(|_| {
-            stale_provenance_allows_task_closure_baseline_route(
-                context,
-                status,
-                review_state_status.as_str(),
-            )
-        })
-        .filter(|_| review_state_status != "stale_unreviewed")
-        .filter(|_| task_review_dispatch_task(status).is_none())
-        .filter(|task_number| {
-            task_closure_baseline_repair_candidate(context, status, *task_number)
-                .ok()
-                .flatten()
-                .is_some()
-        })
-        .filter(|_| {
-            status
-                .reason_codes
-                .iter()
-                .any(|reason_code| reason_code == "prior_task_current_closure_missing")
-                && status
-                    .reason_codes
-                    .iter()
-                    .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
-        })
-    {
-        return Some(task_closure_recording_ready_decision(
-            status,
-            plan_path,
-            task_number,
-        ));
-    }
-    if external_review_result_ready
-        && external_review_ready_promotes_closure_recording(status)
-        && (status.blocking_step.is_none()
-            || status.blocking_task.is_some_and(|task_number| {
-                blocking_step_allows_task_closure_baseline_route(status, task_number)
-            }))
-        && matches!(
-            status.harness_phase,
-            HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
-        )
-        && let Some(task_number) = status.blocking_task
-        && status
-            .reason_codes
-            .iter()
-            .any(|reason_code| reason_code == "prior_task_current_closure_missing")
-        && status
-            .reason_codes
-            .iter()
-            .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
-        && task_closure_baseline_repair_candidate(context, status, task_number)
-            .ok()
-            .flatten()
-            .is_some()
-        && missing_current_closure_allows_task_closure_baseline_route(
-            context,
-            status,
-            review_state_status.as_str(),
-        )
-    {
-        return Some(task_closure_recording_ready_decision(
-            status,
-            plan_path,
-            task_number,
-        ));
-    }
-    if status.blocking_task.is_none()
-        && status.blocking_step.is_none()
-        && matches!(
-            status.harness_phase,
-            HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
-        )
-        && status.reason_codes.iter().any(|reason_code| {
-            matches!(
-                reason_code.as_str(),
-                "prior_task_current_closure_missing"
-                    | "task_closure_baseline_repair_candidate"
-                    | "current_task_closure_overlay_restore_required"
-                    | "task_closure_negative_result_overlay_restore_required"
-            )
-        })
-        && let Some(candidate_task) = closure_baseline_candidate_task(context)
-        && let Ok(Some(_candidate)) =
-            task_closure_baseline_repair_candidate(context, status, candidate_task)
-        && missing_current_closure_allows_task_closure_baseline_route(
-            context,
-            status,
-            review_state_status.as_str(),
-        )
-    {
-        return Some(task_closure_recording_ready_decision(
-            status,
-            plan_path,
-            candidate_task,
-        ));
-    }
-    if let Some(task_number) = execution_reentry_blocking_task(context, status) {
-        return Some(execution_reentry_decision_for_task(
-            context,
-            status,
-            plan_path,
-            review_state_status.as_str(),
-            task_number,
-            false,
-        ));
-    }
-    // Step 4.1 (ordered pass #5): late-stage milestones.
-    if task_scope_handoff_override_active(status) {
-        return Some(task_scope_handoff_decision(
-            status,
-            plan_path,
-            review_state_status.as_str(),
-        ));
-    }
-    if persisted_late_stage_reroute_missing_current_closure(
-        context,
-        status,
-        review_state_status.as_str(),
-    ) {
-        return Some(late_stage_decision(
-            status,
-            NextActionKind::AdvanceLateStage,
-            "branch_closure_recording_required_for_release_readiness",
-            plan_path,
-        ));
-    }
-    if task_scope_pivot_override_active(status, review_state_status.as_str()) {
-        let recommended_command = (status.blocking_task.is_some()
-            || status.active_task.is_some()
-            || status.resume_task.is_some()
-            || !status.reason_codes.is_empty())
-        .then_some(format!(
-            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
-        ));
-        return Some(NextActionDecision {
-            kind: NextActionKind::PlanningReentry,
-            phase: String::from("pivot_required"),
-            phase_detail: String::from("planning_reentry_required"),
-            review_state_status,
-            task_number: status
-                .blocking_task
-                .or(status.resume_task)
-                .or(status.active_task),
-            step_number: status
-                .blocking_step
-                .or(status.resume_step)
-                .or(status.active_step),
-            blocking_task: status
-                .blocking_task
-                .or(status.resume_task)
-                .or(status.active_task),
-            blocking_reason_codes: status.reason_codes.clone(),
-            recommended_command,
-        });
-    }
-    if review_state_status == "missing_current_closure" {
-        if status.phase_detail == "branch_closure_recording_required_for_release_readiness"
-            || status.harness_phase == HarnessPhase::DocumentReleasePending
-        {
             return Some(late_stage_decision(
                 status,
                 NextActionKind::AdvanceLateStage,
@@ -570,9 +547,91 @@ pub(crate) fn compute_next_action_decision_with_inputs(
                 plan_path,
             ));
         }
-        if status.current_branch_closure_id.is_none()
-            && status.phase_detail == "execution_reentry_required"
-        {
+        if task_scope_pivot_override_active(status, review_state_status.as_str()) {
+            let recommended_command = (status.blocking_task.is_some()
+                || status.active_task.is_some()
+                || status.resume_task.is_some()
+                || !status.reason_codes.is_empty())
+            .then_some(format!(
+                "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
+            ));
+            return Some(NextActionDecision {
+                kind: NextActionKind::PlanningReentry,
+                phase: String::from("pivot_required"),
+                phase_detail: String::from("planning_reentry_required"),
+                review_state_status,
+                task_number: status
+                    .blocking_task
+                    .or(status.resume_task)
+                    .or(status.active_task),
+                step_number: status
+                    .blocking_step
+                    .or(status.resume_step)
+                    .or(status.active_step),
+                blocking_task: status
+                    .blocking_task
+                    .or(status.resume_task)
+                    .or(status.active_task),
+                blocking_reason_codes: status.reason_codes.clone(),
+                recommended_command,
+            });
+        }
+        if review_state_status == "missing_current_closure" {
+            if status.phase_detail == "branch_closure_recording_required_for_release_readiness"
+                || status.harness_phase == HarnessPhase::DocumentReleasePending
+            {
+                return Some(late_stage_decision(
+                    status,
+                    NextActionKind::AdvanceLateStage,
+                    "branch_closure_recording_required_for_release_readiness",
+                    plan_path,
+                ));
+            }
+            if status.current_branch_closure_id.is_none()
+                && status.phase_detail == "execution_reentry_required"
+            {
+                if let Ok(assessment) = branch_closure_rerecording_assessment(context) {
+                    return Some(late_stage_missing_current_closure_decision_from_assessment(
+                        context,
+                        status,
+                        plan_path,
+                        review_state_status.as_str(),
+                        &assessment,
+                    ));
+                }
+                return Some(execution_repair_decision(
+                    context,
+                    status,
+                    plan_path,
+                    review_state_status.as_str(),
+                ));
+            }
+            if let Some(task_number) = task_boundary_blocking_task(status) {
+                return Some(execution_reentry_decision_for_task(
+                    context,
+                    status,
+                    plan_path,
+                    review_state_status.as_str(),
+                    task_number,
+                    false,
+                ));
+            }
+            let task_scope_structural_blocker = status.reason_codes.iter().any(|reason_code| {
+                matches!(
+                    reason_code.as_str(),
+                    "prior_task_current_closure_invalid"
+                        | "prior_task_current_closure_reviewed_state_malformed"
+                        | "prior_task_current_closure_stale"
+                )
+            });
+            if task_scope_structural_blocker {
+                return Some(execution_repair_decision(
+                    context,
+                    status,
+                    plan_path,
+                    review_state_status.as_str(),
+                ));
+            }
             if let Ok(assessment) = branch_closure_rerecording_assessment(context) {
                 return Some(late_stage_missing_current_closure_decision_from_assessment(
                     context,
@@ -589,76 +648,11 @@ pub(crate) fn compute_next_action_decision_with_inputs(
                 review_state_status.as_str(),
             ));
         }
-        if let Some(task_number) = task_boundary_blocking_task(status) {
-            return Some(execution_reentry_decision_for_task(
-                context,
-                status,
-                plan_path,
-                review_state_status.as_str(),
-                task_number,
-                false,
-            ));
+        if review_state_status == "stale_unreviewed" {
+            return Some(stale_late_stage_repair_decision(context, status, plan_path));
         }
-        let task_scope_structural_blocker = status.reason_codes.iter().any(|reason_code| {
-            matches!(
-                reason_code.as_str(),
-                "prior_task_current_closure_invalid"
-                    | "prior_task_current_closure_reviewed_state_malformed"
-                    | "prior_task_current_closure_stale"
-            )
-        });
-        if task_scope_structural_blocker {
-            return Some(execution_repair_decision(
-                context,
-                status,
-                plan_path,
-                review_state_status.as_str(),
-            ));
-        }
-        if let Ok(assessment) = branch_closure_rerecording_assessment(context) {
-            return Some(late_stage_missing_current_closure_decision_from_assessment(
-                context,
-                status,
-                plan_path,
-                review_state_status.as_str(),
-                &assessment,
-            ));
-        }
-        return Some(execution_repair_decision(
-            context,
-            status,
-            plan_path,
-            review_state_status.as_str(),
-        ));
-    }
-    if review_state_status == "stale_unreviewed" {
-        return Some(stale_late_stage_repair_decision(context, status, plan_path));
-    }
-    match status.harness_phase {
-        HarnessPhase::DocumentReleasePending => {
-            let phase_detail =
-                if status.current_release_readiness_state.as_deref() == Some("blocked") {
-                    "release_blocker_resolution_required"
-                } else {
-                    "release_readiness_recording_ready"
-                };
-            return Some(late_stage_decision(
-                status,
-                NextActionKind::AdvanceLateStage,
-                phase_detail,
-                plan_path,
-            ));
-        }
-        HarnessPhase::FinalReviewPending => {
-            if status.current_branch_closure_id.is_none() {
-                return Some(late_stage_decision(
-                    status,
-                    NextActionKind::AdvanceLateStage,
-                    "branch_closure_recording_required_for_release_readiness",
-                    plan_path,
-                ));
-            }
-            if status.current_release_readiness_state.as_deref() != Some("ready") {
+        match status.harness_phase {
+            HarnessPhase::DocumentReleasePending => {
                 let phase_detail =
                     if status.current_release_readiness_state.as_deref() == Some("blocked") {
                         "release_blocker_resolution_required"
@@ -672,156 +666,181 @@ pub(crate) fn compute_next_action_decision_with_inputs(
                     plan_path,
                 ));
             }
-            let dispatch_lineage_present =
-                final_review_dispatch_lineage_present || final_review_dispatch_id.is_some();
-            let phase_requires_dispatch = status.phase_detail == "final_review_dispatch_required"
-                && (!dispatch_lineage_present || status.current_final_review_result.is_some());
-            let refresh_requires_dispatch = final_review_dispatch_requires_refresh(status);
-            if phase_requires_dispatch
-                || refresh_requires_dispatch
-                || (!dispatch_lineage_present && status.current_final_review_result.is_none())
-            {
+            HarnessPhase::FinalReviewPending => {
+                if status.current_branch_closure_id.is_none() {
+                    return Some(late_stage_decision(
+                        status,
+                        NextActionKind::AdvanceLateStage,
+                        "branch_closure_recording_required_for_release_readiness",
+                        plan_path,
+                    ));
+                }
+                if status.current_release_readiness_state.as_deref() != Some("ready") {
+                    let phase_detail =
+                        if status.current_release_readiness_state.as_deref() == Some("blocked") {
+                            "release_blocker_resolution_required"
+                        } else {
+                            "release_readiness_recording_ready"
+                        };
+                    return Some(late_stage_decision(
+                        status,
+                        NextActionKind::AdvanceLateStage,
+                        phase_detail,
+                        plan_path,
+                    ));
+                }
+                let dispatch_lineage_present =
+                    final_review_dispatch_lineage_present || final_review_dispatch_id.is_some();
+                let phase_requires_dispatch = status.phase_detail
+                    == "final_review_dispatch_required"
+                    && (!dispatch_lineage_present || status.current_final_review_result.is_some());
+                let refresh_requires_dispatch = final_review_dispatch_requires_refresh(status);
+                if phase_requires_dispatch
+                    || refresh_requires_dispatch
+                    || (!dispatch_lineage_present && status.current_final_review_result.is_none())
+                {
+                    return Some(late_stage_decision(
+                        status,
+                        NextActionKind::RequestFinalReview,
+                        "final_review_dispatch_required",
+                        plan_path,
+                    ));
+                }
+                if status.phase_detail == "final_review_recording_ready"
+                    || status.current_final_review_result.is_some()
+                        && status.current_final_review_branch_closure_id.as_deref()
+                            == status.current_branch_closure_id.as_deref()
+                {
+                    return Some(late_stage_decision(
+                        status,
+                        NextActionKind::AdvanceLateStage,
+                        "final_review_recording_ready",
+                        plan_path,
+                    ));
+                }
+                if external_review_result_ready {
+                    return Some(late_stage_decision(
+                        status,
+                        NextActionKind::AdvanceLateStage,
+                        "final_review_recording_ready",
+                        plan_path,
+                    ));
+                }
                 return Some(late_stage_decision(
                     status,
-                    NextActionKind::RequestFinalReview,
-                    "final_review_dispatch_required",
+                    NextActionKind::WaitForFinalReviewResult,
+                    "final_review_outcome_pending",
                     plan_path,
                 ));
             }
-            if status.phase_detail == "final_review_recording_ready"
-                || status.current_final_review_result.is_some()
-                    && status.current_final_review_branch_closure_id.as_deref()
-                        == status.current_branch_closure_id.as_deref()
-            {
+            HarnessPhase::QaPending => {
+                let gate_finish = gate_finish_from_context(context);
+                if qa_pending_requires_test_plan_refresh(context, Some(&gate_finish))
+                    || status
+                        .reason_codes
+                        .iter()
+                        .any(|reason_code| reason_code_requires_test_plan_refresh(reason_code))
+                {
+                    return Some(late_stage_decision(
+                        status,
+                        NextActionKind::RefreshTestPlan,
+                        "test_plan_refresh_required",
+                        plan_path,
+                    ));
+                }
                 return Some(late_stage_decision(
                     status,
-                    NextActionKind::AdvanceLateStage,
-                    "final_review_recording_ready",
+                    NextActionKind::RunQa,
+                    "qa_recording_required",
                     plan_path,
                 ));
             }
-            if external_review_result_ready {
+            HarnessPhase::ReadyForBranchCompletion => {
+                let phase_detail = if status
+                    .finish_review_gate_pass_branch_closure_id
+                    .as_deref()
+                    .zip(status.current_branch_closure_id.as_deref())
+                    .is_some_and(|(checkpoint, current)| checkpoint == current)
+                {
+                    "finish_completion_gate_ready"
+                } else {
+                    "finish_review_gate_ready"
+                };
                 return Some(late_stage_decision(
                     status,
-                    NextActionKind::AdvanceLateStage,
-                    "final_review_recording_ready",
+                    NextActionKind::FinishBranch,
+                    phase_detail,
                     plan_path,
                 ));
             }
-            return Some(late_stage_decision(
-                status,
-                NextActionKind::WaitForFinalReviewResult,
-                "final_review_outcome_pending",
-                plan_path,
-            ));
+            HarnessPhase::HandoffRequired => {
+                return Some(late_stage_decision(
+                    status,
+                    NextActionKind::Handoff,
+                    "handoff_recording_required",
+                    plan_path,
+                ));
+            }
+            _ => {}
         }
-        HarnessPhase::QaPending => {
-            let gate_finish = gate_finish_from_context(context);
-            if qa_pending_requires_test_plan_refresh(context, Some(&gate_finish))
-                || status
-                    .reason_codes
-                    .iter()
-                    .any(|reason_code| reason_code_requires_test_plan_refresh(reason_code))
-            {
-                return Some(late_stage_decision(
-                    status,
-                    NextActionKind::RefreshTestPlan,
-                    "test_plan_refresh_required",
-                    plan_path,
-                ));
-            }
-            return Some(late_stage_decision(
-                status,
-                NextActionKind::RunQa,
-                "qa_recording_required",
-                plan_path,
-            ));
-        }
-        HarnessPhase::ReadyForBranchCompletion => {
-            let phase_detail = if status
-                .finish_review_gate_pass_branch_closure_id
-                .as_deref()
-                .zip(status.current_branch_closure_id.as_deref())
-                .is_some_and(|(checkpoint, current)| checkpoint == current)
-            {
-                "finish_completion_gate_ready"
+
+        // Step 4.1 (ordered pass #6): first unchecked step begin.
+        if let Some(first_unchecked_step) = context.steps.iter().find(|step| !step.checked) {
+            let task_number = first_unchecked_step.task_number;
+            let step_number = first_unchecked_step.step_number;
+            let marker_free_preflight_projection = status.execution_mode != "none"
+                && status.execution_started == "no"
+                && status.active_task.is_none()
+                && status.active_step.is_none()
+                && status.resume_task.is_none()
+                && status.resume_step.is_none()
+                && status.blocking_task.is_none()
+                && status.blocking_step.is_none()
+                && status.current_task_closures.is_empty();
+            let begin_command = (!marker_free_preflight_projection).then(|| {
+                format!(
+                    "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_number} --expect-execution-fingerprint {}",
+                    status.execution_fingerprint
+                )
+            });
+            let (phase, phase_detail) = if marker_free_preflight_projection {
+                (
+                    String::from("execution_preflight"),
+                    String::from("execution_in_progress"),
+                )
+            } else if status.execution_started == "yes" {
+                (
+                    String::from("executing"),
+                    String::from("execution_reentry_required"),
+                )
             } else {
-                "finish_review_gate_ready"
+                (
+                    String::from("execution_preflight"),
+                    String::from("execution_preflight_required"),
+                )
             };
-            return Some(late_stage_decision(
-                status,
-                NextActionKind::FinishBranch,
+            return Some(NextActionDecision {
+                kind: NextActionKind::Begin,
+                phase,
                 phase_detail,
-                plan_path,
-            ));
+                review_state_status,
+                task_number: Some(task_number),
+                step_number: Some(step_number),
+                blocking_task: (status.execution_started == "yes"
+                    || !status.current_task_closures.is_empty())
+                .then_some(task_number),
+                blocking_reason_codes: status.reason_codes.clone(),
+                recommended_command: begin_command,
+            });
         }
-        HarnessPhase::HandoffRequired => {
-            return Some(late_stage_decision(
-                status,
-                NextActionKind::Handoff,
-                "handoff_recording_required",
-                plan_path,
-            ));
-        }
-        _ => {}
-    }
 
-    // Step 4.1 (ordered pass #6): first unchecked step begin.
-    if let Some(first_unchecked_step) = context.steps.iter().find(|step| !step.checked) {
-        let task_number = first_unchecked_step.task_number;
-        let step_number = first_unchecked_step.step_number;
-        let marker_free_preflight_projection = status.execution_mode != "none"
-            && status.execution_started == "no"
-            && status.active_task.is_none()
-            && status.active_step.is_none()
-            && status.resume_task.is_none()
-            && status.resume_step.is_none()
-            && status.blocking_task.is_none()
-            && status.blocking_step.is_none()
-            && status.current_task_closures.is_empty();
-        let begin_command = (!marker_free_preflight_projection).then(|| {
-            format!(
-                "featureforge plan execution begin --plan {plan_path} --task {task_number} --step {step_number} --expect-execution-fingerprint {}",
-                status.execution_fingerprint
-            )
-        });
-        let (phase, phase_detail) = if marker_free_preflight_projection {
-            (
-                String::from("execution_preflight"),
-                String::from("execution_in_progress"),
-            )
-        } else if status.execution_started == "yes" {
-            (
-                String::from("executing"),
-                String::from("execution_reentry_required"),
-            )
-        } else {
-            (
-                String::from("execution_preflight"),
-                String::from("execution_preflight_required"),
-            )
-        };
-        return Some(NextActionDecision {
-            kind: NextActionKind::Begin,
-            phase,
-            phase_detail,
-            review_state_status,
-            task_number: Some(task_number),
-            step_number: Some(step_number),
-            blocking_task: (status.execution_started == "yes"
-                || !status.current_task_closures.is_empty())
-            .then_some(task_number),
-            blocking_reason_codes: status.reason_codes.clone(),
-            recommended_command: begin_command,
-        });
+        Some(late_stage_decision(
+            status,
+            NextActionKind::PlanningReentry,
+            "planning_reentry_required",
+            plan_path,
+        ))
     }
-
-    Some(late_stage_decision(
-        status,
-        NextActionKind::PlanningReentry,
-        "planning_reentry_required",
-        plan_path,
-    ))
 }
 
 fn execution_repair_decision(
@@ -997,10 +1016,12 @@ fn stale_late_stage_repair_decision(
     status: &PlanExecutionStatus,
     plan_path: &str,
 ) -> NextActionDecision {
-    let target_task = execution_reentry_target_task(context, status, plan_path).or(status
-        .blocking_task
-        .or(status.resume_task)
-        .or(status.active_task));
+    let target_task = execution_reentry_target_task(context, status, plan_path).or_else(|| {
+        status
+            .blocking_task
+            .or(status.resume_task)
+            .or(status.active_task)
+    });
     if let Some(task_number) = target_task
         && status.resume_task.is_none()
         && status.active_task.is_none()
@@ -1136,8 +1157,9 @@ fn late_stage_missing_current_closure_decision_from_assessment(
                         plan_path,
                     );
                 }
-                return execution_reentry_target_task(context, status, plan_path)
-                    .map(|task_number| {
+                return execution_reentry_target_task(context, status, plan_path).map_or_else(
+                    || execution_repair_decision(context, status, plan_path, review_state_status),
+                    |task_number| {
                         execution_reentry_decision_for_task(
                             context,
                             status,
@@ -1146,16 +1168,15 @@ fn late_stage_missing_current_closure_decision_from_assessment(
                             task_number,
                             false,
                         )
-                    })
-                    .unwrap_or_else(|| {
-                        execution_repair_decision(context, status, plan_path, review_state_status)
-                    });
+                    },
+                );
             }
             late_stage_planning_reentry_decision(status, review_state_status)
         }
         Some(BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface) | None => {
-            execution_reentry_target_task(context, status, plan_path)
-                .map(|task_number| {
+            execution_reentry_target_task(context, status, plan_path).map_or_else(
+                || late_stage_planning_reentry_decision(status, review_state_status),
+                |task_number| {
                     execution_reentry_decision_for_task(
                         context,
                         status,
@@ -1164,10 +1185,8 @@ fn late_stage_missing_current_closure_decision_from_assessment(
                         task_number,
                         false,
                     )
-                })
-                .unwrap_or_else(|| {
-                    late_stage_planning_reentry_decision(status, review_state_status)
-                })
+                },
+            )
         }
     }
 }
@@ -1476,22 +1495,19 @@ fn late_stage_execution_reentry_decision(
         return None;
     }
     let reentry_task = execution_reentry_target_task(context, status, plan_path);
-    Some(
-        reentry_task
-            .map(|task_number| {
-                execution_reentry_decision_for_task(
-                    context,
-                    status,
-                    plan_path,
-                    review_state_status,
-                    task_number,
-                    false,
-                )
-            })
-            .unwrap_or_else(|| {
-                execution_repair_decision(context, status, plan_path, review_state_status)
-            }),
-    )
+    Some(reentry_task.map_or_else(
+        || execution_repair_decision(context, status, plan_path, review_state_status),
+        |task_number| {
+            execution_reentry_decision_for_task(
+                context,
+                status,
+                plan_path,
+                review_state_status,
+                task_number,
+                false,
+            )
+        },
+    ))
 }
 
 fn projection_refresh_candidate_task(

@@ -16,6 +16,7 @@ use crate::execution::transitions::{
 };
 use crate::paths::{atomic_publish_temp_path, harness_authoritative_artifact_path};
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct BranchClosureProjectionInput<'a> {
     pub(crate) contract_identity: &'a str,
     pub(crate) base_branch: &'a str,
@@ -26,6 +27,7 @@ pub(crate) struct BranchClosureProjectionInput<'a> {
     pub(crate) superseded_branch_closure_ids: &'a [String],
 }
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct FinalReviewProjectionInput<'a> {
     pub(crate) dispatch_id: &'a str,
     pub(crate) reviewer_source: &'a str,
@@ -41,6 +43,7 @@ pub(crate) struct RenderedFinalReviewArtifacts {
     pub(crate) final_review_source: String,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct QaProjectionInput<'a> {
     pub(crate) branch_closure_id: &'a str,
     pub(crate) reviewed_state_id: &'a str,
@@ -149,9 +152,8 @@ fn render_final_review_artifacts_with_generated_at(
     let current_head = context.current_head_sha()?;
     let strategy_checkpoint_fingerprint =
         authoritative_strategy_checkpoint_fingerprint_checked(context)?.unwrap_or_default();
-    let generated_at = generated_at_override
-        .map(str::to_owned)
-        .unwrap_or_else(|| Timestamp::now().to_string());
+    let generated_at =
+        generated_at_override.map_or_else(|| Timestamp::now().to_string(), str::to_owned);
     let recorded_execution_deviations = if inputs.deviations_required {
         "present"
     } else {
@@ -527,7 +529,7 @@ pub(crate) fn timestamp_slug() -> String {
     Timestamp::now()
         .to_string()
         .chars()
-        .filter(|ch| ch.is_ascii_digit())
+        .filter(char::is_ascii_digit)
         .collect()
 }
 
@@ -561,7 +563,7 @@ fn regenerate_branch_closure_projection(
                 contract_identity: &record.contract_identity,
                 base_branch: &record.base_branch,
                 reviewed_state_id,
-                effective_reviewed_branch_surface: &record._effective_reviewed_branch_surface,
+                effective_reviewed_branch_surface: &record.effective_reviewed_branch_surface,
                 source_task_closure_ids: &record.source_task_closure_ids,
                 provenance_basis: &record.provenance_basis,
                 superseded_branch_closure_ids: &[],
@@ -616,156 +618,162 @@ fn regenerate_final_review_projection(
     context: &ExecutionContext,
     record: &CurrentFinalReviewRecord,
 ) -> Result<(), JsonFailure> {
-    let summary = if record.summary.trim().is_empty() {
-        "Final review recorded without summary content."
-    } else {
-        record.summary.as_str()
-    };
-    let authoritative_projection = if let Some(fingerprint) =
-        record.final_review_fingerprint.as_deref()
     {
-        let path = harness_authoritative_artifact_path(
-            &runtime.state_dir,
-            &runtime.repo_slug,
-            &runtime.branch_name,
-            &format!("final-review-{fingerprint}.md"),
-        );
-        match fs::read_to_string(&path) {
-            Ok(source) => {
-                let observed_fingerprint = sha256_hex(source.as_bytes());
-                if observed_fingerprint != fingerprint {
+        let summary = if record.summary.trim().is_empty() {
+            "Final review recorded without summary content."
+        } else {
+            record.summary.as_str()
+        };
+        let authoritative_projection = if let Some(fingerprint) =
+            record.final_review_fingerprint.as_deref()
+        {
+            let path = harness_authoritative_artifact_path(
+                &runtime.state_dir,
+                &runtime.repo_slug,
+                &runtime.branch_name,
+                &format!("final-review-{fingerprint}.md"),
+            );
+            match fs::read_to_string(&path) {
+                Ok(source) => {
+                    let observed_fingerprint = sha256_hex(source.as_bytes());
+                    if observed_fingerprint != fingerprint {
+                        return Err(JsonFailure::new(
+                            FailureClass::StaleProvenance,
+                            format!(
+                                "Projection regeneration refused authoritative final review artifact {} because fingerprint {} does not match expected {fingerprint}.",
+                                path.display(),
+                                observed_fingerprint
+                            ),
+                        ));
+                    }
+                    Some((path, source))
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => None,
+                Err(error) => {
                     return Err(JsonFailure::new(
                         FailureClass::StaleProvenance,
                         format!(
-                            "Projection regeneration refused authoritative final review artifact {} because fingerprint {} does not match expected {fingerprint}.",
-                            path.display(),
-                            observed_fingerprint
+                            "Projection regeneration requires readable authoritative final review artifact {}: {error}",
+                            path.display()
                         ),
                     ));
                 }
-                Some((path, source))
             }
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
-            Err(error) => {
+        } else {
+            None
+        };
+        let (
+            authoritative_document,
+            authoritative_generated_at,
+            authoritative_reviewer_path,
+            authoritative_reviewer_fingerprint,
+        ) = if let Some((authoritative_path, _)) = authoritative_projection.as_ref() {
+            let document = parse_artifact_document(authoritative_path);
+            let generated_at = document.headers.get("Generated At").cloned();
+            let reviewer_path = document
+                .headers
+                .get("Reviewer Artifact Path")
+                .map(|value| value.trim().trim_matches('`').to_owned())
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from);
+            let reviewer_fingerprint = document
+                .headers
+                .get("Reviewer Artifact Fingerprint")
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty());
+            (
+                Some(document),
+                generated_at,
+                reviewer_path,
+                reviewer_fingerprint,
+            )
+        } else {
+            (None, None, None, None)
+        };
+        let authoritative_reviewer_path = authoritative_reviewer_path
+            .as_deref()
+            .map(|path| normalize_project_artifact_target(&project_artifact_dir(runtime), path))
+            .transpose()?;
+        let artifacts = render_final_review_artifacts_with_generated_at(
+            runtime,
+            context,
+            &record.branch_closure_id,
+            &record.reviewed_state_id,
+            &record.base_branch,
+            FinalReviewProjectionInput {
+                dispatch_id: &record.dispatch_id,
+                reviewer_source: &record.reviewer_source,
+                reviewer_id: &record.reviewer_id,
+                result: &record.result,
+                deviations_required: record.deviations_required.unwrap_or(false),
+                summary,
+            },
+            authoritative_generated_at.as_deref(),
+        )?;
+        let regenerated_reviewer_source = if let Some(expected_reviewer_fingerprint) =
+            authoritative_reviewer_fingerprint.as_deref()
+        {
+            let persisted_reviewer_source = authoritative_reviewer_path.as_ref().and_then(|path| {
+                fs::read_to_string(path)
+                    .ok()
+                    .filter(|source| sha256_hex(source.as_bytes()) == expected_reviewer_fingerprint)
+            });
+            let synthesized_reviewer_source = persisted_reviewer_source.or_else(|| {
+                authoritative_document.as_ref().and_then(|document| {
+                    reviewer_artifact_candidates_from_authoritative_final_review(
+                        document,
+                        summary,
+                        authoritative_reviewer_path.as_deref(),
+                    )
+                    .into_iter()
+                    .find(|source| sha256_hex(source.as_bytes()) == expected_reviewer_fingerprint)
+                })
+            });
+            let Some(source) = synthesized_reviewer_source else {
                 return Err(JsonFailure::new(
                     FailureClass::StaleProvenance,
-                    format!(
-                        "Projection regeneration requires readable authoritative final review artifact {}: {error}",
-                        path.display()
-                    ),
+                    "Projection regeneration could not restore reviewer projection content that matches authoritative final-review bindings.",
                 ));
+            };
+            source
+        } else {
+            artifacts.reviewer_source_text.clone()
+        };
+        let reviewer_name = artifacts
+            .reviewer_artifact_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| {
+                JsonFailure::new(
+                    FailureClass::EvidenceWriteFailed,
+                    "Could not derive regenerated reviewer artifact file name.",
+                )
+            })?;
+        write_project_artifact(runtime, reviewer_name, &regenerated_reviewer_source)?;
+        if let Some(reviewer_path) = authoritative_reviewer_path.as_deref() {
+            let canonical_projection_path = project_artifact_dir(runtime).join(reviewer_name);
+            if reviewer_path != canonical_projection_path {
+                write_project_artifact_at_path(
+                    runtime,
+                    reviewer_path,
+                    &regenerated_reviewer_source,
+                )?;
             }
         }
-    } else {
-        None
-    };
-    let (
-        authoritative_document,
-        authoritative_generated_at,
-        authoritative_reviewer_path,
-        authoritative_reviewer_fingerprint,
-    ) = if let Some((authoritative_path, _)) = authoritative_projection.as_ref() {
-        let document = parse_artifact_document(authoritative_path);
-        let generated_at = document.headers.get("Generated At").cloned();
-        let reviewer_path = document
-            .headers
-            .get("Reviewer Artifact Path")
-            .map(|value| value.trim().trim_matches('`').to_owned())
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from);
-        let reviewer_fingerprint = document
-            .headers
-            .get("Reviewer Artifact Fingerprint")
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
-        (
-            Some(document),
-            generated_at,
-            reviewer_path,
-            reviewer_fingerprint,
+        let final_review_source = authoritative_projection
+            .as_ref()
+            .map(|(_, source)| source.clone())
+            .unwrap_or(artifacts.final_review_source);
+        write_project_artifact(
+            runtime,
+            &format!(
+                "featureforge-{}-code-review-{}.md",
+                runtime.safe_branch,
+                timestamp_slug()
+            ),
+            &final_review_source,
         )
-    } else {
-        (None, None, None, None)
-    };
-    let authoritative_reviewer_path = authoritative_reviewer_path
-        .as_deref()
-        .map(|path| normalize_project_artifact_target(&project_artifact_dir(runtime), path))
-        .transpose()?;
-    let artifacts = render_final_review_artifacts_with_generated_at(
-        runtime,
-        context,
-        &record.branch_closure_id,
-        &record.reviewed_state_id,
-        &record.base_branch,
-        FinalReviewProjectionInput {
-            dispatch_id: &record.dispatch_id,
-            reviewer_source: &record.reviewer_source,
-            reviewer_id: &record.reviewer_id,
-            result: &record.result,
-            deviations_required: record.deviations_required.unwrap_or(false),
-            summary,
-        },
-        authoritative_generated_at.as_deref(),
-    )?;
-    let regenerated_reviewer_source = if let Some(expected_reviewer_fingerprint) =
-        authoritative_reviewer_fingerprint.as_deref()
-    {
-        let persisted_reviewer_source = authoritative_reviewer_path.as_ref().and_then(|path| {
-            fs::read_to_string(path)
-                .ok()
-                .filter(|source| sha256_hex(source.as_bytes()) == expected_reviewer_fingerprint)
-        });
-        let synthesized_reviewer_source = persisted_reviewer_source.or_else(|| {
-            authoritative_document.as_ref().and_then(|document| {
-                reviewer_artifact_candidates_from_authoritative_final_review(
-                    document,
-                    summary,
-                    authoritative_reviewer_path.as_deref(),
-                )
-                .into_iter()
-                .find(|source| sha256_hex(source.as_bytes()) == expected_reviewer_fingerprint)
-            })
-        });
-        let Some(source) = synthesized_reviewer_source else {
-            return Err(JsonFailure::new(
-                FailureClass::StaleProvenance,
-                "Projection regeneration could not restore reviewer projection content that matches authoritative final-review bindings.",
-            ));
-        };
-        source
-    } else {
-        artifacts.reviewer_source_text.clone()
-    };
-    let reviewer_name = artifacts
-        .reviewer_artifact_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::EvidenceWriteFailed,
-                "Could not derive regenerated reviewer artifact file name.",
-            )
-        })?;
-    write_project_artifact(runtime, reviewer_name, &regenerated_reviewer_source)?;
-    if let Some(reviewer_path) = authoritative_reviewer_path.as_deref() {
-        let canonical_projection_path = project_artifact_dir(runtime).join(reviewer_name);
-        if reviewer_path != canonical_projection_path {
-            write_project_artifact_at_path(runtime, reviewer_path, &regenerated_reviewer_source)?;
-        }
     }
-    let final_review_source = authoritative_projection
-        .as_ref()
-        .map(|(_, source)| source.clone())
-        .unwrap_or(artifacts.final_review_source);
-    write_project_artifact(
-        runtime,
-        &format!(
-            "featureforge-{}-code-review-{}.md",
-            runtime.safe_branch,
-            timestamp_slug()
-        ),
-        &final_review_source,
-    )
 }
 
 fn reviewer_artifact_candidates_from_authoritative_final_review(
@@ -1024,6 +1032,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expect_ext::{ExpectErrExt, ExpectValueExt};
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
@@ -1041,56 +1050,57 @@ mod tests {
 
     #[test]
     fn project_artifact_write_normalizes_parent_segments_within_runtime_scope() {
-        let temp = TempDir::new().expect("temp runtime root should exist");
+        let temp = TempDir::new().expect_or_abort("temp runtime root should exist");
         let runtime = test_runtime(temp.path());
         write_project_artifact_at_path(
             &runtime,
             Path::new("nested/../reviewer.md"),
             "normalized reviewer projection",
         )
-        .expect("writer should accept runtime-owned path with lexical parent segments");
+        .expect_or_abort("writer should accept runtime-owned path with lexical parent segments");
         let expected_path = project_artifact_dir(&runtime).join("reviewer.md");
         assert_eq!(
             fs::read_to_string(&expected_path)
-                .expect("normalized reviewer projection should exist"),
+                .expect_or_abort("normalized reviewer projection should exist"),
             "normalized reviewer projection"
         );
     }
 
     #[test]
     fn project_artifact_write_rejects_paths_that_escape_runtime_scope() {
-        let temp = TempDir::new().expect("temp runtime root should exist");
+        let temp = TempDir::new().expect_or_abort("temp runtime root should exist");
         let runtime = test_runtime(temp.path());
         let error =
             write_project_artifact_at_path(&runtime, Path::new("../../escape.md"), "escape")
-                .expect_err("writer should reject reviewer projection path escapes");
+                .expect_err_or_abort("writer should reject reviewer projection path escapes");
         assert_eq!(error.error_class, FailureClass::StaleProvenance.as_str());
     }
 
     #[cfg(unix)]
     #[test]
     fn project_artifact_write_rejects_symlinked_path_segments() {
-        let temp = TempDir::new().expect("temp runtime root should exist");
+        let temp = TempDir::new().expect_or_abort("temp runtime root should exist");
         let runtime = test_runtime(temp.path());
         let project_dir = project_artifact_dir(&runtime);
-        fs::create_dir_all(&project_dir).expect("project artifact dir should be creatable");
+        fs::create_dir_all(&project_dir)
+            .expect_or_abort("project artifact dir should be creatable");
         let outside_dir = temp.path().join("outside");
-        fs::create_dir_all(&outside_dir).expect("outside dir should be creatable");
+        fs::create_dir_all(&outside_dir).expect_or_abort("outside dir should be creatable");
         symlink(&outside_dir, project_dir.join("escaped"))
-            .expect("symlinked project segment fixture should be creatable");
+            .expect_or_abort("symlinked project segment fixture should be creatable");
 
         let error = write_project_artifact_at_path(
             &runtime,
             Path::new("escaped/reviewer.md"),
             "escaped projection",
         )
-        .expect_err("writer should reject symlinked project path segments");
+        .expect_err_or_abort("writer should reject symlinked project path segments");
         assert_eq!(error.error_class, FailureClass::StaleProvenance.as_str());
     }
 
     #[test]
     fn authoritative_projection_read_rejects_fingerprint_content_mismatch() {
-        let temp = TempDir::new().expect("temp runtime root should exist");
+        let temp = TempDir::new().expect_or_abort("temp runtime root should exist");
         let runtime = test_runtime(temp.path());
         let expected_fingerprint = sha256_hex(b"expected-authoritative-final-review");
         let authoritative_path = harness_authoritative_artifact_path(
@@ -1102,14 +1112,14 @@ mod tests {
         fs::create_dir_all(
             authoritative_path
                 .parent()
-                .expect("authoritative projection path should include parent"),
+                .expect_or_abort("authoritative projection path should include parent"),
         )
-        .expect("authoritative projection parent should be creatable");
+        .expect_or_abort("authoritative projection parent should be creatable");
         fs::write(
             &authoritative_path,
             "tampered authoritative projection content",
         )
-        .expect("tampered authoritative projection should write");
+        .expect_or_abort("tampered authoritative projection should write");
 
         let error = read_authoritative_projection(
             &runtime,
@@ -1117,7 +1127,7 @@ mod tests {
             &expected_fingerprint,
             "final review",
         )
-        .expect_err("fingerprint/content mismatch should fail closed");
+        .expect_err_or_abort("fingerprint/content mismatch should fail closed");
         assert_eq!(error.error_class, FailureClass::StaleProvenance.as_str());
     }
 }

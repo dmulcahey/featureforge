@@ -16,12 +16,19 @@ const UP_TO_DATE_TTL: Duration = Duration::from_secs(60 * 60);
 const UPGRADE_AVAILABLE_TTL: Duration = Duration::from_secs(60 * 60 * 12);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct UpdateCheckSchema {
+    /// Runtime field.
     pub schema_version: String,
+    /// Runtime field.
     pub outcome: String,
+    /// Runtime field.
     pub local_version: String,
+    /// Runtime field.
     pub remote_version: Option<String>,
+    /// Runtime field.
     pub cache_path: String,
+    /// Runtime field.
     pub snooze_path: String,
 }
 
@@ -46,6 +53,8 @@ enum CacheRelation {
     UpgradeAvailable,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn check(args: &UpdateCheckCli) -> Result<String, DiagnosticError> {
     let Some(paths) = discover_paths()? else {
         return Ok(String::new());
@@ -109,9 +118,8 @@ pub fn check(args: &UpdateCheckCli) -> Result<String, DiagnosticError> {
         }
     }
 
-    let remote_version = match fetch_remote_version(&paths.remote_url) {
-        Ok(version) => version,
-        Err(_) => return Ok(String::new()),
+    let Ok(remote_version) = fetch_remote_version(&paths.remote_url) else {
+        return Ok(String::new());
     };
     if parse_numeric_version(&remote_version).is_none() {
         return Ok(String::new());
@@ -165,6 +173,8 @@ fn promote_cache_if_needed(
     Ok(())
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn write_update_check_schema(output_dir: &Path) -> Result<(), DiagnosticError> {
     fs::create_dir_all(output_dir).map_err(|error| {
         DiagnosticError::new(
@@ -232,9 +242,8 @@ fn read_local_version(install_dir: &Path) -> Result<String, DiagnosticError> {
 }
 
 fn read_cache(paths: &UpdateCheckPaths) -> Result<Option<CacheRecord>, DiagnosticError> {
-    let contents = match read_first_existing(paths, "last-update-check")? {
-        Some(contents) => contents,
-        None => return Ok(None),
+    let Some(contents) = read_first_existing(paths, "last-update-check")? else {
+        return Ok(None);
     };
     let trimmed = contents.trim();
     if let Some(local_version) = trimmed.strip_prefix("UP_TO_DATE ") {
@@ -354,9 +363,8 @@ fn cache_is_fresh(path: &Path, ttl: Duration) -> Result<bool, DiagnosticError> {
 }
 
 fn snoozed(paths: &UpdateCheckPaths, remote_version: &str) -> Result<bool, DiagnosticError> {
-    let contents = match read_first_existing(paths, "update-snoozed")? {
-        Some(contents) => contents,
-        None => return Ok(false),
+    let Some(contents) = read_first_existing(paths, "update-snoozed")? else {
+        return Ok(false);
     };
     let mut parts = contents.split_whitespace();
     let snoozed_version = parts.next().unwrap_or_default();
@@ -367,9 +375,8 @@ fn snoozed(paths: &UpdateCheckPaths, remote_version: &str) -> Result<bool, Diagn
     }
     let level = level.parse::<u64>().ok();
     let epoch = epoch.parse::<u64>().ok();
-    let (level, epoch) = match (level, epoch) {
-        (Some(level), Some(epoch)) => (level, epoch),
-        _ => return Ok(false),
+    let (Some(level), Some(epoch)) = (level, epoch) else {
+        return Ok(false);
     };
     let duration = match level {
         1 => 86_400,

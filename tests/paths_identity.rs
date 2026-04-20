@@ -1,3 +1,5 @@
+//! Paths identity integration/benchmark crate.
+use featureforge::expect_ext::{ExpectErrExt as _, ExpectValueExt as _};
 use std::path::Path;
 
 use featureforge::paths::{
@@ -8,7 +10,7 @@ use featureforge::paths::{
 
 #[test]
 fn repo_paths_normalize_backslashes_and_dot_segments() {
-    let path = RepoPath::parse(r"docs\featureforge//specs/./new-spec.md").unwrap();
+    let path = RepoPath::parse(r"docs\featureforge//specs/./new-spec.md").unwrap_or_abort();
     assert_eq!(path.as_str(), "docs/featureforge/specs/new-spec.md");
 }
 
@@ -24,7 +26,7 @@ fn repo_paths_reject_absolute_and_traversing_inputs() {
         "C:/temp/spec.md",
         r"\\server\share\spec.md",
     ] {
-        let err = RepoPath::parse(input).unwrap_err();
+        let err = RepoPath::parse(input).unwrap_err_or_abort();
         assert_eq!(err.failure_class(), "InvalidRepoPath", "input: {input}");
     }
 }
@@ -79,12 +81,12 @@ fn atomic_publish_helpers_keep_temp_paths_adjacent_to_canonical_targets() {
     assert_eq!(state_publish_path.parent(), state_path.parent());
     let state_name = state_path
         .file_name()
-        .expect("state path should have a file name")
+        .expect_or_abort("state path should have a file name")
         .to_string_lossy()
         .to_string();
     let state_publish_name = state_publish_path
         .file_name()
-        .expect("publish path should have a file name")
+        .expect_or_abort("publish path should have a file name")
         .to_string_lossy()
         .to_string();
     assert!(state_publish_name.starts_with(&format!("{state_name}.tmp-")));
@@ -105,12 +107,12 @@ fn atomic_publish_helpers_keep_temp_paths_adjacent_to_canonical_targets() {
     assert_eq!(artifact_publish_path.parent(), artifact_path.parent());
     let artifact_name = artifact_path
         .file_name()
-        .expect("artifact path should have a file name")
+        .expect_or_abort("artifact path should have a file name")
         .to_string_lossy()
         .to_string();
     let artifact_publish_name = artifact_publish_path
         .file_name()
-        .expect("artifact publish path should have a file name")
+        .expect_or_abort("artifact publish path should have a file name")
         .to_string_lossy()
         .to_string();
     assert!(artifact_publish_name.starts_with(&format!("{artifact_name}.tmp-")));

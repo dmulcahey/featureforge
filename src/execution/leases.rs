@@ -29,11 +29,12 @@ pub(crate) struct StrategyReviewDispatchLineageRecord {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct FinalReviewDispatchLineageRecord {
     #[serde(default)]
-    pub(crate) execution_run_id: Option<String>,
-    #[serde(default)]
-    pub(crate) dispatch_id: Option<String>,
-    #[serde(default)]
-    pub(crate) branch_closure_id: Option<String>,
+    #[serde(rename = "execution_run_id")]
+    pub(crate) execution_run: Option<String>,
+    #[serde(default, rename = "dispatch_id")]
+    pub(crate) dispatch: Option<String>,
+    #[serde(default, rename = "branch_closure_id")]
+    pub(crate) branch_closure: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -344,7 +345,11 @@ pub(crate) fn latest_authoritative_artifact_sequence(
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("");
-        if file_name.starts_with("worktree-lease-") && file_name.ends_with(".json") {
+        let is_json = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"));
+        if file_name.starts_with("worktree-lease-") && is_json {
             let source = fs::read_to_string(&path).map_err(|error| {
                 JsonFailure::new(
                     FailureClass::ExecutionStateNotReady,
@@ -646,17 +651,23 @@ fn non_unix_process_probe(_pid: u32) -> Option<bool> {
     None
 }
 
-pub fn worktree_lease_states() -> &'static [WorktreeLeaseState] {
+#[must_use]
+/// Runtime constant.
+pub const fn worktree_lease_states() -> &'static [WorktreeLeaseState] {
     &WorktreeLeaseState::ALL
 }
 
-pub fn is_worktree_lease_terminal_state(state: WorktreeLeaseState) -> bool {
+#[must_use]
+/// Runtime constant.
+pub const fn is_worktree_lease_terminal_state(state: WorktreeLeaseState) -> bool {
     matches!(
         state,
         WorktreeLeaseState::Reconciled | WorktreeLeaseState::Cleaned
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn validate_worktree_lease(lease: &WorktreeLease) -> Result<(), JsonFailure> {
     if lease.lease_version != WORKTREE_LEASE_VERSION {
         return Err(JsonFailure::new(

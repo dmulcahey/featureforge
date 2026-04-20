@@ -1,3 +1,4 @@
+//! Repo safety integration/benchmark crate.
 #[path = "support/failure_json.rs"]
 mod failure_json_support;
 #[path = "support/featureforge.rs"]
@@ -12,6 +13,7 @@ mod json_support;
 mod process_support;
 
 use assert_cmd::cargo::CommandCargoExt;
+use featureforge::expect_ext::ExpectValueExt as _;
 use featureforge::git::derive_repo_slug;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -42,16 +44,18 @@ fn repo_slug(repo: &Path) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout)
-        .expect("repo slug output should be utf-8")
+        .expect_or_abort("repo slug output should be utf-8")
         .lines()
         .find_map(|line| line.strip_prefix("SLUG="))
-        .unwrap_or_else(|| panic!("repo slug output should include SLUG=..., got missing slug"))
+        .unwrap_or_else(|| {
+            featureforge::abort!("repo slug output should include SLUG=..., got missing slug")
+        })
         .to_owned()
 }
 
 fn init_repo(name: &str, branch: &str, remote_url: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
     let repo = repo_dir.path();
 
     git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
@@ -73,12 +77,14 @@ fn init_repo(name: &str, branch: &str, remote_url: &str) -> (TempDir, TempDir) {
 
 #[cfg(unix)]
 fn create_dir_symlink(target: &Path, link: &Path) {
-    std::os::unix::fs::symlink(target, link).expect("directory symlink should be creatable");
+    std::os::unix::fs::symlink(target, link)
+        .expect_or_abort("directory symlink should be creatable");
 }
 
 #[cfg(windows)]
 fn create_dir_symlink(target: &Path, link: &Path) {
-    std::os::windows::fs::symlink_dir(target, link).expect("directory symlink should be creatable");
+    std::os::windows::fs::symlink_dir(target, link)
+        .expect_or_abort("directory symlink should be creatable");
 }
 
 fn legacy_approval_fingerprint(
@@ -114,8 +120,8 @@ fn remove_origin_remote(repo: &Path) {
 }
 
 fn run_shell_repo_safety(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge cargo binary should be available");
+    let mut command = Command::cargo_bin("featureforge")
+        .expect_or_abort("featureforge cargo binary should be available");
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state_dir)
@@ -263,457 +269,354 @@ fn canonical_repo_safety_matches_helper_for_instruction_protected_branch_rule() 
 
 #[test]
 fn canonical_repo_safety_handles_read_intent_feature_branches_and_instruction_override_rules() {
-    let remote_url = "https://example.com/acme/repo-safety.git";
+    {
+        let remote_url = "https://example.com/acme/repo-safety.git";
 
-    let (read_repo_dir, read_state_dir) = init_repo("repo-safety-read", "main", remote_url);
-    let read_output = run_rust_featureforge(
-        read_repo_dir.path(),
-        read_state_dir.path(),
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "read",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "read-task",
-            "--path",
-            "docs/spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety read intent on protected branch",
-    );
-    let read_json = parse_json(
-        &read_output,
-        "canonical repo-safety read intent on protected branch",
-    );
-    assert_eq!(read_json["outcome"], Value::String(String::from("allowed")));
-    assert_eq!(read_json["intent"], Value::String(String::from("read")));
-    assert_eq!(read_json["protected"], Value::Bool(true));
-    assert_eq!(
-        read_json["protected_by"],
-        Value::String(String::from("default"))
-    );
-    assert_eq!(read_json["failure_class"], Value::String(String::from("")));
+        let (read_repo_dir, read_state_dir) = init_repo("repo-safety-read", "main", remote_url);
+        let read_output = run_rust_featureforge(
+            read_repo_dir.path(),
+            read_state_dir.path(),
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "read",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "read-task",
+                "--path",
+                "docs/spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety read intent on protected branch",
+        );
+        let read_json = parse_json(
+            &read_output,
+            "canonical repo-safety read intent on protected branch",
+        );
+        assert_eq!(read_json["outcome"], Value::String(String::from("allowed")));
+        assert_eq!(read_json["intent"], Value::String(String::from("read")));
+        assert_eq!(read_json["protected"], Value::Bool(true));
+        assert_eq!(
+            read_json["protected_by"],
+            Value::String(String::from("default"))
+        );
+        assert_eq!(read_json["failure_class"], Value::String(String::new()));
 
-    let (feature_repo_dir, feature_state_dir) =
-        init_repo("repo-safety-feature", "feature/repo-safety", remote_url);
-    let feature_output = run_rust_featureforge(
-        feature_repo_dir.path(),
-        feature_state_dir.path(),
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "feature-task",
-            "--path",
-            "docs/featureforge/specs/new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety feature branch write",
-    );
-    let feature_json = parse_json(
-        &feature_output,
-        "canonical repo-safety feature branch write",
-    );
-    assert_eq!(
-        feature_json["outcome"],
-        Value::String(String::from("allowed"))
-    );
-    assert_eq!(feature_json["protected"], Value::Bool(false));
-    assert_eq!(
-        feature_json["protected_by"],
-        Value::String(String::from("default"))
-    );
+        let (feature_repo_dir, feature_state_dir) =
+            init_repo("repo-safety-feature", "feature/repo-safety", remote_url);
+        let feature_output = run_rust_featureforge(
+            feature_repo_dir.path(),
+            feature_state_dir.path(),
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "feature-task",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety feature branch write",
+        );
+        let feature_json = parse_json(
+            &feature_output,
+            "canonical repo-safety feature branch write",
+        );
+        assert_eq!(
+            feature_json["outcome"],
+            Value::String(String::from("allowed"))
+        );
+        assert_eq!(feature_json["protected"], Value::Bool(false));
+        assert_eq!(
+            feature_json["protected_by"],
+            Value::String(String::from("default"))
+        );
 
-    let (override_repo_dir, override_state_dir) =
-        init_repo("repo-safety-override", "release", remote_url);
-    write_file(
-        &override_repo_dir.path().join("AGENTS.override.md"),
-        "FeatureForge protected branches: release\n",
-    );
-    let root_override_output = run_rust_featureforge(
-        override_repo_dir.path(),
-        override_state_dir.path(),
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "release-task",
-            "--path",
-            "docs/featureforge/specs/release-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety root instruction override",
-    );
-    let root_override_json = parse_json(
-        &root_override_output,
-        "canonical repo-safety root instruction override",
-    );
-    assert_eq!(
-        root_override_json["outcome"],
-        Value::String(String::from("blocked"))
-    );
-    assert_eq!(
-        root_override_json["failure_class"],
-        Value::String(String::from("ProtectedBranchDetected"))
-    );
-    assert_eq!(
-        root_override_json["protected_by"],
-        Value::String(String::from("instructions"))
-    );
+        let (override_repo_dir, override_state_dir) =
+            init_repo("repo-safety-override", "release", remote_url);
+        write_file(
+            &override_repo_dir.path().join("AGENTS.override.md"),
+            "FeatureForge protected branches: release\n",
+        );
+        let root_override_output = run_rust_featureforge(
+            override_repo_dir.path(),
+            override_state_dir.path(),
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "release-task",
+                "--path",
+                "docs/featureforge/specs/release-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety root instruction override",
+        );
+        let root_override_json = parse_json(
+            &root_override_output,
+            "canonical repo-safety root instruction override",
+        );
+        assert_eq!(
+            root_override_json["outcome"],
+            Value::String(String::from("blocked"))
+        );
+        assert_eq!(
+            root_override_json["failure_class"],
+            Value::String(String::from("ProtectedBranchDetected"))
+        );
+        assert_eq!(
+            root_override_json["protected_by"],
+            Value::String(String::from("instructions"))
+        );
 
-    fs::create_dir_all(override_repo_dir.path().join("apps/cli"))
-        .expect("nested override parent should exist");
-    write_file(
-        &override_repo_dir.path().join("apps/AGENTS.override.md"),
-        "FeatureForge protected branches: release\n",
-    );
-    let nested_override_output = run_rust_featureforge(
-        &override_repo_dir.path().join("apps/cli"),
-        override_state_dir.path(),
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "nested-release-task",
-            "--path",
-            "docs/featureforge/specs/release-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety nested instruction override",
-    );
-    let nested_override_json = parse_json(
-        &nested_override_output,
-        "canonical repo-safety nested instruction override",
-    );
-    assert_eq!(
-        nested_override_json["outcome"],
-        Value::String(String::from("blocked"))
-    );
-    assert_eq!(
-        nested_override_json["failure_class"],
-        Value::String(String::from("ProtectedBranchDetected"))
-    );
-    assert_eq!(
-        nested_override_json["protected_by"],
-        Value::String(String::from("instructions"))
-    );
+        fs::create_dir_all(override_repo_dir.path().join("apps/cli"))
+            .expect_or_abort("nested override parent should exist");
+        write_file(
+            &override_repo_dir.path().join("apps/AGENTS.override.md"),
+            "FeatureForge protected branches: release\n",
+        );
+        let nested_override_output = run_rust_featureforge(
+            &override_repo_dir.path().join("apps/cli"),
+            override_state_dir.path(),
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "nested-release-task",
+                "--path",
+                "docs/featureforge/specs/release-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety nested instruction override",
+        );
+        let nested_override_json = parse_json(
+            &nested_override_output,
+            "canonical repo-safety nested instruction override",
+        );
+        assert_eq!(
+            nested_override_json["outcome"],
+            Value::String(String::from("blocked"))
+        );
+        assert_eq!(
+            nested_override_json["failure_class"],
+            Value::String(String::from("ProtectedBranchDetected"))
+        );
+        assert_eq!(
+            nested_override_json["protected_by"],
+            Value::String(String::from("instructions"))
+        );
 
-    let (invalid_repo_dir, invalid_state_dir) =
-        init_repo("repo-safety-invalid-instruction", "release", remote_url);
-    write_file(
-        &invalid_repo_dir.path().join("AGENTS.override.md"),
-        "FeatureForge protected branches: release/*\n",
-    );
-    let invalid_instruction_output = run_rust_featureforge(
-        invalid_repo_dir.path(),
-        invalid_state_dir.path(),
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "release-task",
-            "--path",
-            "docs/featureforge/specs/release-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety invalid instruction entry",
-    );
-    let invalid_instruction_json = parse_failure_json(
-        &invalid_instruction_output,
-        "canonical repo-safety invalid instruction entry",
-    );
-    assert_eq!(
-        invalid_instruction_json["error_class"],
-        Value::String(String::from("InstructionParseFailed"))
-    );
+        let (invalid_repo_dir, invalid_state_dir) =
+            init_repo("repo-safety-invalid-instruction", "release", remote_url);
+        write_file(
+            &invalid_repo_dir.path().join("AGENTS.override.md"),
+            "FeatureForge protected branches: release/*\n",
+        );
+        let invalid_instruction_output = run_rust_featureforge(
+            invalid_repo_dir.path(),
+            invalid_state_dir.path(),
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "release-task",
+                "--path",
+                "docs/featureforge/specs/release-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety invalid instruction entry",
+        );
+        let invalid_instruction_json = parse_failure_json(
+            &invalid_instruction_output,
+            "canonical repo-safety invalid instruction entry",
+        );
+        assert_eq!(
+            invalid_instruction_json["error_class"],
+            Value::String(String::from("InstructionParseFailed"))
+        );
+    }
 }
 
 #[test]
 fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
-    let remote_url = "https://example.com/acme/repo-safety.git";
+    {
+        let remote_url = "https://example.com/acme/repo-safety.git";
 
-    let (repo_dir, state_dir) = init_repo("repo-safety-approval", "main", remote_url);
-    let repo = repo_dir.path();
-    let state = state_dir.path();
+        let (repo_dir, state_dir) = init_repo("repo-safety-approval", "main", remote_url);
+        let repo = repo_dir.path();
+        let state = state_dir.path();
 
-    let matching_approval = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "approve",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-task",
-            "--reason",
-            "User explicitly approved writing the spec on main.",
-            "--path",
-            "docs/featureforge/specs/new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety matching approval",
-    );
-    let matching_approval_json = parse_json(
-        &matching_approval,
-        "canonical repo-safety matching approval",
-    );
-    let matching_check = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-task",
-            "--path",
-            "docs/featureforge/specs/new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety matching approval check",
-    );
-    let matching_check_json = parse_json(
-        &matching_check,
-        "canonical repo-safety matching approval check",
-    );
-    assert_eq!(
-        matching_check_json["outcome"],
-        Value::String(String::from("allowed"))
-    );
-    assert_eq!(matching_check_json["protected"], Value::Bool(true));
-    assert_eq!(
-        matching_approval_json["approval_path"],
-        matching_check_json["approval_path"]
-    );
-    assert_eq!(
-        matching_check_json["failure_class"],
-        Value::String(String::from(""))
-    );
-    assert_ne!(
-        matching_check_json["approval_fingerprint"],
-        Value::String(String::from(""))
-    );
-
-    let full_scope_approval = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "approve",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-full-scope-task",
-            "--reason",
-            "User explicitly approved the spec write and same-slice commit on main.",
-            "--path",
-            "docs/featureforge/specs/new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-            "--write-target",
-            "git-commit",
-        ],
-        "canonical repo-safety full-scope approval",
-    );
-    let full_scope_approval_json = parse_json(
-        &full_scope_approval,
-        "canonical repo-safety full-scope approval",
-    );
-    let full_scope_check = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-full-scope-task",
-            "--path",
-            "docs/featureforge/specs/new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-            "--write-target",
-            "git-commit",
-        ],
-        "canonical repo-safety full-scope approval check",
-    );
-    let full_scope_check_json = parse_json(
-        &full_scope_check,
-        "canonical repo-safety full-scope approval check",
-    );
-    assert_eq!(
-        full_scope_check_json["outcome"],
-        Value::String(String::from("allowed"))
-    );
-    assert_eq!(full_scope_check_json["protected"], Value::Bool(true));
-    assert_eq!(
-        full_scope_approval_json["approval_path"],
-        full_scope_check_json["approval_path"]
-    );
-
-    let mismatched_path_approval = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "approve",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-mismatch-path",
-            "--reason",
-            "User explicitly approved the original spec path.",
-            "--path",
-            "docs/featureforge/specs/original.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety mismatched path approval",
-    );
-    let mismatched_path_approval_json = parse_json(
-        &mismatched_path_approval,
-        "canonical repo-safety mismatched path approval",
-    );
-    let mismatched_path_check = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-mismatch-path",
-            "--path",
-            "docs/featureforge/specs/other.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety mismatched path check",
-    );
-    let mismatched_path_check_json = parse_json(
-        &mismatched_path_check,
-        "canonical repo-safety mismatched path check",
-    );
-    assert_eq!(
-        mismatched_path_check_json["outcome"],
-        Value::String(String::from("blocked"))
-    );
-    assert_eq!(
-        mismatched_path_check_json["failure_class"],
-        Value::String(String::from("ApprovalFingerprintMismatch"))
-    );
-    assert_eq!(
-        mismatched_path_approval_json["approval_path"],
-        mismatched_path_check_json["approval_path"]
-    );
-
-    let mismatched_target_approval = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "approve",
-            "--stage",
-            "featureforge:finishing-a-development-branch",
-            "--task-id",
-            "finish-task",
-            "--reason",
-            "User explicitly approved the commit only.",
-            "--write-target",
-            "git-commit",
-        ],
-        "canonical repo-safety mismatched target approval",
-    );
-    let mismatched_target_approval_json = parse_json(
-        &mismatched_target_approval,
-        "canonical repo-safety mismatched target approval",
-    );
-    let mismatched_target_check = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:finishing-a-development-branch",
-            "--task-id",
-            "finish-task",
-            "--write-target",
-            "git-push",
-        ],
-        "canonical repo-safety mismatched target check",
-    );
-    let mismatched_target_check_json = parse_json(
-        &mismatched_target_check,
-        "canonical repo-safety mismatched target check",
-    );
-    assert_eq!(
-        mismatched_target_check_json["outcome"],
-        Value::String(String::from("blocked"))
-    );
-    assert_eq!(
-        mismatched_target_check_json["failure_class"],
-        Value::String(String::from("ApprovalFingerprintMismatch"))
-    );
-    assert_eq!(
-        mismatched_target_approval_json["approval_path"],
-        mismatched_target_check_json["approval_path"]
-    );
-
-    let malformed_scope_check = {
-        let approval_path = PathBuf::from(
-            mismatched_path_approval_json["approval_path"]
-                .as_str()
-                .expect("approval path should be a string"),
+        let matching_approval = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "approve",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--reason",
+                "User explicitly approved writing the spec on main.",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety matching approval",
         );
-        let mut record: Value =
-            serde_json::from_slice(&fs::read(&approval_path).expect("approval record should read"))
-                .expect("approval record should parse");
-        record["stage"] = Value::String(String::from("featureforge:writing-plans"));
-        fs::write(
-            &approval_path,
-            serde_json::to_vec(&record).expect("approval record should serialize"),
-        )
-        .expect("approval record should rewrite");
-        run_rust_featureforge(
+        let matching_approval_json = parse_json(
+            &matching_approval,
+            "canonical repo-safety matching approval",
+        );
+        let matching_check = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety matching approval check",
+        );
+        let matching_check_json = parse_json(
+            &matching_check,
+            "canonical repo-safety matching approval check",
+        );
+        assert_eq!(
+            matching_check_json["outcome"],
+            Value::String(String::from("allowed"))
+        );
+        assert_eq!(matching_check_json["protected"], Value::Bool(true));
+        assert_eq!(
+            matching_approval_json["approval_path"],
+            matching_check_json["approval_path"]
+        );
+        assert_eq!(
+            matching_check_json["failure_class"],
+            Value::String(String::new())
+        );
+        assert_ne!(
+            matching_check_json["approval_fingerprint"],
+            Value::String(String::new())
+        );
+
+        let full_scope_approval = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "approve",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-full-scope-task",
+                "--reason",
+                "User explicitly approved the spec write and same-slice commit on main.",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+                "--write-target",
+                "git-commit",
+            ],
+            "canonical repo-safety full-scope approval",
+        );
+        let full_scope_approval_json = parse_json(
+            &full_scope_approval,
+            "canonical repo-safety full-scope approval",
+        );
+        let full_scope_check = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-full-scope-task",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+                "--write-target",
+                "git-commit",
+            ],
+            "canonical repo-safety full-scope approval check",
+        );
+        let full_scope_check_json = parse_json(
+            &full_scope_check,
+            "canonical repo-safety full-scope approval check",
+        );
+        assert_eq!(
+            full_scope_check_json["outcome"],
+            Value::String(String::from("allowed"))
+        );
+        assert_eq!(full_scope_check_json["protected"], Value::Bool(true));
+        assert_eq!(
+            full_scope_approval_json["approval_path"],
+            full_scope_check_json["approval_path"]
+        );
+
+        let mismatched_path_approval = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "approve",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-mismatch-path",
+                "--reason",
+                "User explicitly approved the original spec path.",
+                "--path",
+                "docs/featureforge/specs/original.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety mismatched path approval",
+        );
+        let mismatched_path_approval_json = parse_json(
+            &mismatched_path_approval,
+            "canonical repo-safety mismatched path approval",
+        );
+        let mismatched_path_check = run_rust_featureforge(
             repo,
             state,
             &[
@@ -726,57 +629,165 @@ fn canonical_repo_safety_matching_approvals_and_scope_rules_are_precise() {
                 "--task-id",
                 "spec-mismatch-path",
                 "--path",
-                "docs/featureforge/specs/original.md",
+                "docs/featureforge/specs/other.md",
                 "--write-target",
                 "spec-artifact-write",
             ],
-            "canonical repo-safety malformed scope record check",
-        )
-    };
-    let malformed_scope_check_json = parse_json(
-        &malformed_scope_check,
-        "canonical repo-safety malformed scope record check",
-    );
-    assert_eq!(
-        malformed_scope_check_json["outcome"],
-        Value::String(String::from("blocked"))
-    );
-    assert_eq!(
-        malformed_scope_check_json["failure_class"],
-        Value::String(String::from("ApprovalScopeMismatch"))
-    );
+            "canonical repo-safety mismatched path check",
+        );
+        let mismatched_path_check_json = parse_json(
+            &mismatched_path_check,
+            "canonical repo-safety mismatched path check",
+        );
+        assert_eq!(
+            mismatched_path_check_json["outcome"],
+            Value::String(String::from("blocked"))
+        );
+        assert_eq!(
+            mismatched_path_check_json["failure_class"],
+            Value::String(String::from("ApprovalFingerprintMismatch"))
+        );
+        assert_eq!(
+            mismatched_path_approval_json["approval_path"],
+            mismatched_path_check_json["approval_path"]
+        );
 
-    let invalid_write_target = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-task",
-            "--write-target",
-            "totally-unknown-target",
-        ],
-        "canonical repo-safety invalid write target",
-    );
-    let invalid_write_target_json = parse_failure_json(
-        &invalid_write_target,
-        "canonical repo-safety invalid write target",
-    );
-    assert_eq!(
-        invalid_write_target_json["error_class"],
-        Value::String(String::from("InvalidCommandInput"))
-    );
-    assert!(
-        invalid_write_target_json["message"]
-            .as_str()
-            .expect("invalid write-target message should stay a string")
-            .contains("possible values")
-    );
+        let mismatched_target_approval = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "approve",
+                "--stage",
+                "featureforge:finishing-a-development-branch",
+                "--task-id",
+                "finish-task",
+                "--reason",
+                "User explicitly approved the commit only.",
+                "--write-target",
+                "git-commit",
+            ],
+            "canonical repo-safety mismatched target approval",
+        );
+        let mismatched_target_approval_json = parse_json(
+            &mismatched_target_approval,
+            "canonical repo-safety mismatched target approval",
+        );
+        let mismatched_target_check = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:finishing-a-development-branch",
+                "--task-id",
+                "finish-task",
+                "--write-target",
+                "git-push",
+            ],
+            "canonical repo-safety mismatched target check",
+        );
+        let mismatched_target_check_json = parse_json(
+            &mismatched_target_check,
+            "canonical repo-safety mismatched target check",
+        );
+        assert_eq!(
+            mismatched_target_check_json["outcome"],
+            Value::String(String::from("blocked"))
+        );
+        assert_eq!(
+            mismatched_target_check_json["failure_class"],
+            Value::String(String::from("ApprovalFingerprintMismatch"))
+        );
+        assert_eq!(
+            mismatched_target_approval_json["approval_path"],
+            mismatched_target_check_json["approval_path"]
+        );
+
+        let malformed_scope_check = {
+            let approval_path = PathBuf::from(
+                mismatched_path_approval_json["approval_path"]
+                    .as_str()
+                    .expect_or_abort("approval path should be a string"),
+            );
+            let mut record: Value = serde_json::from_slice(
+                &fs::read(&approval_path).expect_or_abort("approval record should read"),
+            )
+            .expect_or_abort("approval record should parse");
+            record["stage"] = Value::String(String::from("featureforge:writing-plans"));
+            fs::write(
+                &approval_path,
+                serde_json::to_vec(&record).expect_or_abort("approval record should serialize"),
+            )
+            .expect_or_abort("approval record should rewrite");
+            run_rust_featureforge(
+                repo,
+                state,
+                &[
+                    "repo-safety",
+                    "check",
+                    "--intent",
+                    "write",
+                    "--stage",
+                    "featureforge:brainstorming",
+                    "--task-id",
+                    "spec-mismatch-path",
+                    "--path",
+                    "docs/featureforge/specs/original.md",
+                    "--write-target",
+                    "spec-artifact-write",
+                ],
+                "canonical repo-safety malformed scope record check",
+            )
+        };
+        let malformed_scope_check_json = parse_json(
+            &malformed_scope_check,
+            "canonical repo-safety malformed scope record check",
+        );
+        assert_eq!(
+            malformed_scope_check_json["outcome"],
+            Value::String(String::from("blocked"))
+        );
+        assert_eq!(
+            malformed_scope_check_json["failure_class"],
+            Value::String(String::from("ApprovalScopeMismatch"))
+        );
+
+        let invalid_write_target = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--write-target",
+                "totally-unknown-target",
+            ],
+            "canonical repo-safety invalid write target",
+        );
+        let invalid_write_target_json = parse_failure_json(
+            &invalid_write_target,
+            "canonical repo-safety invalid write target",
+        );
+        assert_eq!(
+            invalid_write_target_json["error_class"],
+            Value::String(String::from("InvalidCommandInput"))
+        );
+        assert!(
+            invalid_write_target_json["message"]
+                .as_str()
+                .expect_or_abort("invalid write-target message should stay a string")
+                .contains("possible values")
+        );
+    }
 }
 
 #[test]
@@ -846,135 +857,137 @@ fn canonical_repo_safety_distinguishes_exact_branch_names_in_scope_identity() {
 
 #[test]
 fn canonical_repo_safety_rejects_invalid_inputs_and_keeps_deterministic_hot_paths() {
-    let remote_url = "https://example.com/acme/repo-safety.git";
-    let (repo_dir, state_dir) = init_repo("repo-safety-invalid-inputs", "main", remote_url);
-    let repo = repo_dir.path();
-    let state = state_dir.path();
+    {
+        let remote_url = "https://example.com/acme/repo-safety.git";
+        let (repo_dir, state_dir) = init_repo("repo-safety-invalid-inputs", "main", remote_url);
+        let repo = repo_dir.path();
+        let state = state_dir.path();
 
-    let whitespace_task = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "   ",
-            "--path",
-            "docs/featureforge/specs/new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety whitespace task id",
-    );
-    let whitespace_task_json =
-        parse_failure_json(&whitespace_task, "canonical repo-safety whitespace task id");
-    assert_eq!(
-        whitespace_task_json["error_class"],
-        Value::String(String::from("InvalidCommandInput"))
-    );
+        let whitespace_task = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "   ",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety whitespace task id",
+        );
+        let whitespace_task_json =
+            parse_failure_json(&whitespace_task, "canonical repo-safety whitespace task id");
+        assert_eq!(
+            whitespace_task_json["error_class"],
+            Value::String(String::from("InvalidCommandInput"))
+        );
 
-    let windows_path = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-task",
-            "--path",
-            "C:\\repo\\docs\\featureforge\\specs\\new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety windows absolute path",
-    );
-    let windows_path_json =
-        parse_failure_json(&windows_path, "canonical repo-safety windows absolute path");
-    assert_eq!(
-        windows_path_json["error_class"],
-        Value::String(String::from("InvalidCommandInput"))
-    );
+        let windows_path = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--path",
+                "C:\\repo\\docs\\featureforge\\specs\\new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety windows absolute path",
+        );
+        let windows_path_json =
+            parse_failure_json(&windows_path, "canonical repo-safety windows absolute path");
+        assert_eq!(
+            windows_path_json["error_class"],
+            Value::String(String::from("InvalidCommandInput"))
+        );
 
-    let approval = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "approve",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-task",
-            "--reason",
-            "User explicitly approved this scope.",
-            "--path",
-            "docs/featureforge/specs/new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety deterministic approval path",
-    );
-    let approval_json = parse_json(
-        &approval,
-        "canonical repo-safety deterministic approval path",
-    );
-    let expected_path = PathBuf::from(
-        approval_json["approval_path"]
-            .as_str()
-            .expect("approval path should be a string"),
-    );
-    for i in 1..=100 {
-        let decoy_root = state.join(format!("projects/decoy-{i}"));
-        let decoy_dir = decoy_root.join("user-main-repo-safety");
-        fs::create_dir_all(&decoy_dir).expect("decoy approval directory should exist");
-        fs::write(
-            decoy_dir.join(format!("decoy-{i}.json")),
-            format!(
-                r#"{{"repo_root":"/tmp/decoy-{i}","branch":"main","stage":"featureforge:brainstorming","task_id":"decoy-{i}","paths":[],"write_targets":["spec-artifact-write"],"approval_fingerprint":"decoy-{i}","approval_reason":"decoy","protected_by":"default","approved_at":"2026-03-21T00:00:00Z"}}"#
-            ),
-        )
-        .expect("decoy approval file should be writable");
+        let approval = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "approve",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--reason",
+                "User explicitly approved this scope.",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety deterministic approval path",
+        );
+        let approval_json = parse_json(
+            &approval,
+            "canonical repo-safety deterministic approval path",
+        );
+        let expected_path = PathBuf::from(
+            approval_json["approval_path"]
+                .as_str()
+                .expect_or_abort("approval path should be a string"),
+        );
+        for i in 1..=100 {
+            let decoy_root = state.join(format!("projects/decoy-{i}"));
+            let decoy_dir = decoy_root.join("user-main-repo-safety");
+            fs::create_dir_all(&decoy_dir).expect_or_abort("decoy approval directory should exist");
+            fs::write(
+                decoy_dir.join(format!("decoy-{i}.json")),
+                format!(
+                    r#"{{"repo_root":"/tmp/decoy-{i}","branch":"main","stage":"featureforge:brainstorming","task_id":"decoy-{i}","paths":[],"write_targets":["spec-artifact-write"],"approval_fingerprint":"decoy-{i}","approval_reason":"decoy","protected_by":"default","approved_at":"2026-03-21T00:00:00Z"}}"#
+                ),
+            )
+            .expect_or_abort("decoy approval file should be writable");
+        }
+
+        let hot_path_check = run_rust_featureforge(
+            repo,
+            state,
+            &[
+                "repo-safety",
+                "check",
+                "--intent",
+                "write",
+                "--stage",
+                "featureforge:brainstorming",
+                "--task-id",
+                "spec-task",
+                "--path",
+                "docs/featureforge/specs/new-spec.md",
+                "--write-target",
+                "spec-artifact-write",
+            ],
+            "canonical repo-safety deterministic hot path",
+        );
+        let hot_path_json = parse_json(
+            &hot_path_check,
+            "canonical repo-safety deterministic hot path",
+        );
+        assert_eq!(
+            hot_path_json["outcome"],
+            Value::String(String::from("allowed"))
+        );
+        assert_eq!(
+            hot_path_json["approval_path"],
+            Value::String(expected_path.to_string_lossy().into_owned())
+        );
     }
-
-    let hot_path_check = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "repo-safety",
-            "check",
-            "--intent",
-            "write",
-            "--stage",
-            "featureforge:brainstorming",
-            "--task-id",
-            "spec-task",
-            "--path",
-            "docs/featureforge/specs/new-spec.md",
-            "--write-target",
-            "spec-artifact-write",
-        ],
-        "canonical repo-safety deterministic hot path",
-    );
-    let hot_path_json = parse_json(
-        &hot_path_check,
-        "canonical repo-safety deterministic hot path",
-    );
-    assert_eq!(
-        hot_path_json["outcome"],
-        Value::String(String::from("allowed"))
-    );
-    assert_eq!(
-        hot_path_json["approval_path"],
-        Value::String(expected_path.to_string_lossy().into_owned())
-    );
 }
 
 #[test]
@@ -1011,11 +1024,12 @@ fn canonical_repo_safety_accepts_legacy_symlinked_repo_root_records() {
     let approval_path = PathBuf::from(
         approval_json["approval_path"]
             .as_str()
-            .expect("approval path should be a string"),
+            .expect_or_abort("approval path should be a string"),
     );
-    let mut record: Value =
-        serde_json::from_slice(&fs::read(&approval_path).expect("approval record should read"))
-            .expect("approval record should parse");
+    let mut record: Value = serde_json::from_slice(
+        &fs::read(&approval_path).expect_or_abort("approval record should read"),
+    )
+    .expect_or_abort("approval record should parse");
     record["repo_root"] = Value::String(alias_root.to_string_lossy().into_owned());
     record["approval_fingerprint"] = Value::String(legacy_approval_fingerprint(
         alias_root.to_string_lossy().as_ref(),
@@ -1027,9 +1041,9 @@ fn canonical_repo_safety_accepts_legacy_symlinked_repo_root_records() {
     ));
     fs::write(
         &approval_path,
-        serde_json::to_vec(&record).expect("approval record should serialize"),
+        serde_json::to_vec(&record).expect_or_abort("approval record should serialize"),
     )
-    .expect("approval record should rewrite");
+    .expect_or_abort("approval record should rewrite");
 
     let check_json = parse_json(
         &run_rust_featureforge(
@@ -1061,117 +1075,119 @@ fn canonical_repo_safety_accepts_legacy_symlinked_repo_root_records() {
 
 #[test]
 fn canonical_repo_safety_recovers_legacy_symlinked_local_repo_approvals() {
-    let remote_url = "https://example.com/acme/repo-safety-local.git";
-    let (repo_dir, state_dir) = init_repo("repo-safety-local", "main", remote_url);
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    remove_origin_remote(repo);
+    {
+        let remote_url = "https://example.com/acme/repo-safety-local.git";
+        let (repo_dir, state_dir) = init_repo("repo-safety-local", "main", remote_url);
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        remove_origin_remote(repo);
 
-    let alias_root = state.join("repo-safety-local-checkout");
-    create_dir_symlink(repo, &alias_root);
+        let alias_root = state.join("repo-safety-local-checkout");
+        create_dir_symlink(repo, &alias_root);
 
-    let canonical_check_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &[
-                "repo-safety",
-                "check",
-                "--intent",
-                "write",
-                "--stage",
-                "featureforge:brainstorming",
-                "--task-id",
-                "spec-task",
-                "--path",
-                "docs/featureforge/specs/new-spec.md",
-                "--write-target",
-                "spec-artifact-write",
-            ],
-            "repo-safety canonical local approval path",
-        ),
-        "repo-safety canonical local approval path",
-    );
-    let canonical_approval_path = PathBuf::from(
-        canonical_check_json["approval_path"]
-            .as_str()
-            .expect("approval path should be a string"),
-    );
-    let branch_dir = canonical_approval_path
-        .parent()
-        .and_then(Path::file_name)
-        .expect("canonical approval path should include a branch dir");
-    let legacy_approval_path = state
-        .join("repo-safety")
-        .join("approvals")
-        .join(derive_repo_slug(&alias_root, None))
-        .join(branch_dir)
-        .join(
-            canonical_approval_path
-                .file_name()
-                .expect("canonical approval path should include a filename"),
-        );
-    fs::create_dir_all(
-        legacy_approval_path
-            .parent()
-            .expect("legacy approval path should have a parent"),
-    )
-    .expect("legacy approval dir should exist");
-    fs::write(
-        &legacy_approval_path,
-        serde_json::to_vec(&serde_json::json!({
-            "repo_root": alias_root.to_string_lossy().into_owned(),
-            "branch": "main",
-            "stage": "featureforge:brainstorming",
-            "task_id": "spec-task",
-            "paths": ["docs/featureforge/specs/new-spec.md"],
-            "write_targets": ["spec-artifact-write"],
-            "approval_fingerprint": legacy_approval_fingerprint(
-                alias_root.to_string_lossy().as_ref(),
-                "main",
-                "featureforge:brainstorming",
-                "spec-task",
-                &["docs/featureforge/specs/new-spec.md"],
-                &["spec-artifact-write"],
+        let canonical_check_json = parse_json(
+            &run_rust_featureforge(
+                repo,
+                state,
+                &[
+                    "repo-safety",
+                    "check",
+                    "--intent",
+                    "write",
+                    "--stage",
+                    "featureforge:brainstorming",
+                    "--task-id",
+                    "spec-task",
+                    "--path",
+                    "docs/featureforge/specs/new-spec.md",
+                    "--write-target",
+                    "spec-artifact-write",
+                ],
+                "repo-safety canonical local approval path",
             ),
-            "approval_reason": "legacy symlinked local approval",
-            "protected_by": "default",
-            "approved_at": "2026-03-25T00:00:00Z",
-        }))
-        .expect("legacy approval record should serialize"),
-    )
-    .expect("legacy approval record should write");
+            "repo-safety canonical local approval path",
+        );
+        let canonical_approval_path = PathBuf::from(
+            canonical_check_json["approval_path"]
+                .as_str()
+                .expect_or_abort("approval path should be a string"),
+        );
+        let branch_dir = canonical_approval_path
+            .parent()
+            .and_then(Path::file_name)
+            .expect_or_abort("canonical approval path should include a branch dir");
+        let legacy_approval_path = state
+            .join("repo-safety")
+            .join("approvals")
+            .join(derive_repo_slug(&alias_root, None))
+            .join(branch_dir)
+            .join(
+                canonical_approval_path
+                    .file_name()
+                    .expect_or_abort("canonical approval path should include a filename"),
+            );
+        fs::create_dir_all(
+            legacy_approval_path
+                .parent()
+                .expect_or_abort("legacy approval path should have a parent"),
+        )
+        .expect_or_abort("legacy approval dir should exist");
+        fs::write(
+            &legacy_approval_path,
+            serde_json::to_vec(&serde_json::json!({
+                "repo_root": alias_root.to_string_lossy().into_owned(),
+                "branch": "main",
+                "stage": "featureforge:brainstorming",
+                "task_id": "spec-task",
+                "paths": ["docs/featureforge/specs/new-spec.md"],
+                "write_targets": ["spec-artifact-write"],
+                "approval_fingerprint": legacy_approval_fingerprint(
+                    alias_root.to_string_lossy().as_ref(),
+                    "main",
+                    "featureforge:brainstorming",
+                    "spec-task",
+                    &["docs/featureforge/specs/new-spec.md"],
+                    &["spec-artifact-write"],
+                ),
+                "approval_reason": "legacy symlinked local approval",
+                "protected_by": "default",
+                "approved_at": "2026-03-25T00:00:00Z",
+            }))
+            .expect_or_abort("legacy approval record should serialize"),
+        )
+        .expect_or_abort("legacy approval record should write");
 
-    let check_json = parse_json(
-        &run_rust_featureforge(
-            &alias_root,
-            state,
-            &[
-                "repo-safety",
-                "check",
-                "--intent",
-                "write",
-                "--stage",
-                "featureforge:brainstorming",
-                "--task-id",
-                "spec-task",
-                "--path",
-                "docs/featureforge/specs/new-spec.md",
-                "--write-target",
-                "spec-artifact-write",
-            ],
+        let check_json = parse_json(
+            &run_rust_featureforge(
+                &alias_root,
+                state,
+                &[
+                    "repo-safety",
+                    "check",
+                    "--intent",
+                    "write",
+                    "--stage",
+                    "featureforge:brainstorming",
+                    "--task-id",
+                    "spec-task",
+                    "--path",
+                    "docs/featureforge/specs/new-spec.md",
+                    "--write-target",
+                    "spec-artifact-write",
+                ],
+                "repo-safety legacy local symlink approval check",
+            ),
             "repo-safety legacy local symlink approval check",
-        ),
-        "repo-safety legacy local symlink approval check",
-    );
-    assert_eq!(
-        check_json["outcome"],
-        Value::String(String::from("allowed"))
-    );
-    assert_eq!(
-        check_json["approval_path"], canonical_check_json["approval_path"],
-        "compat fallback should still report the canonical approval path"
-    );
+        );
+        assert_eq!(
+            check_json["outcome"],
+            Value::String(String::from("allowed"))
+        );
+        assert_eq!(
+            check_json["approval_path"], canonical_check_json["approval_path"],
+            "compat fallback should still report the canonical approval path"
+        );
+    }
 }
 
 #[test]
@@ -1208,7 +1224,7 @@ fn canonical_repo_safety_approval_paths_use_canonical_repo_slug_directory() {
     let approval_path = PathBuf::from(
         check_json["approval_path"]
             .as_str()
-            .expect("approval_path should stay a string"),
+            .expect_or_abort("approval_path should stay a string"),
     );
     let expected_root = state
         .join("repo-safety")

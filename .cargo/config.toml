@@ -1,3 +1,5 @@
 [alias]
 xclippy = "clippy --workspace --all-targets --all-features -- -D warnings"
+xclippy-strict = "clippy --workspace --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::expect_used -W clippy::unwrap_used -W clippy::panic -W clippy::cargo -A clippy::multiple_crate_versions -W missing_docs"
+xdoc = "doc --workspace --no-deps"
 xtest = "nextest run --workspace"

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::fmt::Write as _;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -25,22 +26,34 @@ const GENERATED_BY: &str = "featureforge:workflow-record-pivot";
 
 #[derive(Clone, Copy)]
 pub(crate) struct WorkflowPivotRecordIdentity<'a> {
+    /// Runtime field.
     pub repo_slug: &'a str,
+    /// Runtime field.
     pub safe_branch: &'a str,
+    /// Runtime field.
     pub plan_path: &'a str,
+    /// Runtime field.
     pub branch_name: &'a str,
+    /// Runtime field.
     pub head_sha: &'a str,
+    /// Runtime field.
     pub decision_reason_codes: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowPivotRecordOutput {
+    /// Runtime field.
     pub action: String,
+    /// Runtime field.
     pub plan_path: String,
+    /// Runtime field.
     pub reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub record_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub remediation: Option<String>,
 }
 
@@ -115,7 +128,7 @@ pub(crate) fn write_workflow_pivot_record(
                 return Ok((path, record_fingerprint));
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                continue;
+                // Retry with the next timestamp-derived candidate path.
             }
             Err(error) => {
                 return Err(DiagnosticError::new(
@@ -130,6 +143,8 @@ pub(crate) fn write_workflow_pivot_record(
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_pivot(
     current_dir: &Path,
     args: &RecordPivotArgs,
@@ -146,173 +161,185 @@ pub fn record_pivot(
     record_pivot_for_runtime(&runtime, args)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_pivot_for_runtime(
     runtime: &ExecutionRuntime,
     args: &RecordPivotArgs,
 ) -> Result<WorkflowPivotRecordOutput, DiagnosticError> {
-    let head_sha = current_head_sha(&runtime.repo_root).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::BranchDetectionFailed,
-            format!(
-                "Could not determine the current HEAD commit: {}",
-                error.message
-            ),
-        )
-    })?;
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            format!(
-                "Could not load execution context for pivot recording: {}",
-                error.message
-            ),
-        )
-    })?;
-    let plan_path = context.plan_rel.clone();
-    let operator = operator_for_runtime(
-        runtime,
-        &OperatorArgs {
-            plan: args.plan.clone(),
-            external_review_result_ready: false,
-            json: false,
-        },
-    )
-    .map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            format!(
-                "Could not evaluate workflow operator for pivot recording: {}",
-                error.message
-            ),
-        )
-    })?;
-    if operator.phase != "pivot_required" || operator.phase_detail != "planning_reentry_required" {
-        return Ok(WorkflowPivotRecordOutput {
-            action: String::from("blocked"),
-            plan_path,
-            reason: normalize_reason(&args.reason),
-            record_path: None,
-            remediation: Some(String::from(
-                "workflow record-pivot is only valid when workflow/operator routes to pivot_required.",
-            )),
-        });
-    }
-    let status =
-        status_from_context_with_shared_routing(runtime, &context, false).map_err(|error| {
+    {
+        let head_sha = current_head_sha(&runtime.repo_root).map_err(|error| {
             DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
+                FailureClass::BranchDetectionFailed,
                 format!(
-                    "Could not load execution status for pivot recording: {}",
+                    "Could not determine the current HEAD commit: {}",
                     error.message
                 ),
             )
         })?;
-    let follow_up_requires_pivot =
-        operator.phase == "pivot_required" && operator.phase_detail == "planning_reentry_required";
-    let qa_requirement_missing_or_invalid = !matches!(
-        context.plan_document.qa_requirement.as_deref(),
-        Some("required") | Some("not-required")
-    );
-    let pivot_reason_supported = qa_requirement_missing_or_invalid
-        || status.reason_codes.iter().any(|reason_code| {
-            reason_code == "blocked_on_plan_revision"
-                || reason_code == "qa_requirement_missing_or_invalid"
-        });
-    if !pivot_reason_supported {
-        return Ok(WorkflowPivotRecordOutput {
-            action: String::from("blocked"),
-            plan_path,
-            reason: normalize_reason(&args.reason),
-            record_path: None,
-            remediation: Some(String::from(
-                "workflow record-pivot is only valid when workflow/operator routes to pivot_required.",
-            )),
-        });
-    }
-    let decision_reason_codes = pivot_decision_reason_codes(
-        &status.reason_codes,
-        follow_up_requires_pivot,
-        qa_requirement_missing_or_invalid,
-    );
-    let identity = WorkflowPivotRecordIdentity {
-        repo_slug: &runtime.repo_slug,
-        safe_branch: &runtime.safe_branch,
-        plan_path: &plan_path,
-        branch_name: &runtime.branch_name,
-        head_sha: &head_sha,
-        decision_reason_codes: &decision_reason_codes,
-    };
-    let state_dir = runtime.state_dir.clone();
-    let (action, record_path, record_fingerprint) =
-        if let Some(current_record) = current_workflow_pivot_record(&state_dir, identity) {
-            let current_source = fs::read_to_string(&current_record).map_err(|error| {
+        let context =
+            load_execution_context_for_exact_plan(runtime, &args.plan).map_err(|error| {
                 DiagnosticError::new(
                     FailureClass::InstructionParseFailed,
                     format!(
-                        "Could not read current workflow pivot record {}: {error}",
-                        current_record.display()
+                        "Could not load execution context for pivot recording: {}",
+                        error.message
                     ),
                 )
             })?;
-            (
-                String::from("already_current"),
-                current_record,
-                sha256_hex(current_source.as_bytes()),
+        let plan_path = context.plan_rel.clone();
+        let operator = operator_for_runtime(
+            runtime,
+            &OperatorArgs {
+                plan: args.plan.clone(),
+                external_review_result_ready: false,
+                json: false,
+            },
+        )
+        .map_err(|error| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!(
+                    "Could not evaluate workflow operator for pivot recording: {}",
+                    error.message
+                ),
             )
-        } else {
-            let (record_path, record_fingerprint) =
-                write_workflow_pivot_record(&state_dir, identity, &args.reason)?;
-            (String::from("recorded"), record_path, record_fingerprint)
+        })?;
+        if operator.phase != "pivot_required"
+            || operator.phase_detail != "planning_reentry_required"
+        {
+            return Ok(WorkflowPivotRecordOutput {
+                action: String::from("blocked"),
+                plan_path,
+                reason: normalize_reason(&args.reason),
+                record_path: None,
+                remediation: Some(String::from(
+                    "workflow record-pivot is only valid when workflow/operator routes to pivot_required.",
+                )),
+            });
+        }
+        let status =
+            status_from_context_with_shared_routing(runtime, &context, false).map_err(|error| {
+                DiagnosticError::new(
+                    FailureClass::InstructionParseFailed,
+                    format!(
+                        "Could not load execution status for pivot recording: {}",
+                        error.message
+                    ),
+                )
+            })?;
+        let follow_up_requires_pivot = operator.phase == "pivot_required"
+            && operator.phase_detail == "planning_reentry_required";
+        let qa_requirement_missing_or_invalid = !matches!(
+            context.plan_document.qa_requirement.as_deref(),
+            Some("required" | "not-required")
+        );
+        let pivot_reason_supported = qa_requirement_missing_or_invalid
+            || status.reason_codes.iter().any(|reason_code| {
+                reason_code == "blocked_on_plan_revision"
+                    || reason_code == "qa_requirement_missing_or_invalid"
+            });
+        if !pivot_reason_supported {
+            return Ok(WorkflowPivotRecordOutput {
+                action: String::from("blocked"),
+                plan_path,
+                reason: normalize_reason(&args.reason),
+                record_path: None,
+                remediation: Some(String::from(
+                    "workflow record-pivot is only valid when workflow/operator routes to pivot_required.",
+                )),
+            });
+        }
+        let decision_reason_codes = pivot_decision_reason_codes(
+            &status.reason_codes,
+            follow_up_requires_pivot,
+            qa_requirement_missing_or_invalid,
+        );
+        let identity = WorkflowPivotRecordIdentity {
+            repo_slug: &runtime.repo_slug,
+            safe_branch: &runtime.safe_branch,
+            plan_path: &plan_path,
+            branch_name: &runtime.branch_name,
+            head_sha: &head_sha,
+            decision_reason_codes: &decision_reason_codes,
         };
-    let mut authoritative_state =
-        load_authoritative_transition_state(&context).map_err(|error| {
-            DiagnosticError::new(
+        let state_dir = runtime.state_dir.clone();
+        let (action, record_path, record_fingerprint) =
+            if let Some(current_record) = current_workflow_pivot_record(&state_dir, identity) {
+                let current_source = fs::read_to_string(&current_record).map_err(|error| {
+                    DiagnosticError::new(
+                        FailureClass::InstructionParseFailed,
+                        format!(
+                            "Could not read current workflow pivot record {}: {error}",
+                            current_record.display()
+                        ),
+                    )
+                })?;
+                (
+                    String::from("already_current"),
+                    current_record,
+                    sha256_hex(current_source.as_bytes()),
+                )
+            } else {
+                let (record_path, record_fingerprint) =
+                    write_workflow_pivot_record(&state_dir, identity, &args.reason)?;
+                (String::from("recorded"), record_path, record_fingerprint)
+            };
+        let mut authoritative_state =
+            load_authoritative_transition_state(&context).map_err(|error| {
+                DiagnosticError::new(
+                    FailureClass::InstructionParseFailed,
+                    format!(
+                        "Could not load authoritative harness state for pivot recording: {}",
+                        error.message
+                    ),
+                )
+            })?;
+        let Some(authoritative_state) = authoritative_state.as_mut() else {
+            return Err(DiagnosticError::new(
                 FailureClass::InstructionParseFailed,
-                format!(
-                    "Could not load authoritative harness state for pivot recording: {}",
-                    error.message
-                ),
+                "workflow record-pivot requires authoritative harness state.",
+            ));
+        };
+        authoritative_state
+            .record_runtime_pivot_checkpoint(
+                &record_path.display().to_string(),
+                &record_fingerprint,
             )
-        })?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "workflow record-pivot requires authoritative harness state.",
-        ));
-    };
-    authoritative_state
-        .record_runtime_pivot_checkpoint(&record_path.display().to_string(), &record_fingerprint)
-        .map_err(|error| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                format!(
-                    "Could not persist runtime-owned pivot checkpoint for {}: {}",
-                    record_path.display(),
-                    error.message
-                ),
-            )
-        })?;
-    authoritative_state
-        .persist_if_dirty_with_failpoint(None)
-        .map_err(|error| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                format!(
-                    "Could not persist authoritative harness state after pivot recording: {}",
-                    error.message
-                ),
-            )
-        })?;
+            .map_err(|error| {
+                DiagnosticError::new(
+                    FailureClass::InstructionParseFailed,
+                    format!(
+                        "Could not persist runtime-owned pivot checkpoint for {}: {}",
+                        record_path.display(),
+                        error.message
+                    ),
+                )
+            })?;
+        authoritative_state
+            .persist_if_dirty_with_failpoint(None)
+            .map_err(|error| {
+                DiagnosticError::new(
+                    FailureClass::InstructionParseFailed,
+                    format!(
+                        "Could not persist authoritative harness state after pivot recording: {}",
+                        error.message
+                    ),
+                )
+            })?;
 
-    Ok(WorkflowPivotRecordOutput {
-        action,
-        plan_path,
-        reason: normalize_reason(&args.reason),
-        record_path: Some(record_path.display().to_string()),
-        remediation: None,
-    })
+        Ok(WorkflowPivotRecordOutput {
+            action,
+            plan_path,
+            reason: normalize_reason(&args.reason),
+            record_path: Some(record_path.display().to_string()),
+            remediation: None,
+        })
+    }
 }
 
+#[must_use]
+/// Runtime function.
 pub fn render_pivot_record(output: WorkflowPivotRecordOutput) -> String {
     let header = match output.action.as_str() {
         "recorded" => format!("Recorded workflow pivot for {}", output.plan_path),
@@ -322,10 +349,10 @@ pub fn render_pivot_record(output: WorkflowPivotRecordOutput) -> String {
     };
     let mut rendered = format!("{header}\nReason: {}", output.reason);
     if let Some(record_path) = output.record_path {
-        rendered.push_str(&format!("\nRecord: {record_path}"));
+        let _ = write!(rendered, "\nRecord: {record_path}");
     }
     if let Some(remediation) = output.remediation {
-        rendered.push_str(&format!("\nRemediation: {remediation}"));
+        let _ = write!(rendered, "\nRemediation: {remediation}");
     }
     rendered
 }
@@ -443,23 +470,25 @@ fn trusted_pivot_checkpoint_path(
     identity: WorkflowPivotRecordIdentity<'_>,
     path: &Path,
 ) -> bool {
-    let canonical_path = match fs::canonicalize(path) {
-        Ok(path) => path,
-        Err(_) => return false,
+    let Ok(canonical_path) = fs::canonicalize(path) else {
+        return false;
     };
-    let canonical_artifact_dir =
-        match fs::canonicalize(workflow_pivot_artifact_dir(state_dir, identity.repo_slug)) {
-            Ok(path) => path,
-            Err(_) => return false,
-        };
+    let Ok(canonical_artifact_dir) =
+        fs::canonicalize(workflow_pivot_artifact_dir(state_dir, identity.repo_slug))
+    else {
+        return false;
+    };
     if !canonical_path.starts_with(canonical_artifact_dir) {
         return false;
     }
     let Some(file_name) = canonical_path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };
-    file_name.contains(&format!("-{}-workflow-pivot-", identity.safe_branch))
-        && file_name.ends_with(".md")
+    let is_markdown = canonical_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"));
+    file_name.contains(&format!("-{}-workflow-pivot-", identity.safe_branch)) && is_markdown
 }
 
 fn workflow_pivot_record_matches_decision(
@@ -468,12 +497,14 @@ fn workflow_pivot_record_matches_decision(
 ) -> bool {
     let headers = parse_headers_file(path);
     let decision_reason_codes = render_decision_reason_codes(identity.decision_reason_codes);
-    headers.get("Source Plan") == Some(&format!("`{}`", identity.plan_path))
-        && headers.get("Branch") == Some(&identity.branch_name.to_owned())
-        && headers.get("Repo") == Some(&identity.repo_slug.to_owned())
-        && headers.get("Head SHA") == Some(&identity.head_sha.to_owned())
-        && headers.get("Decision Reason Codes") == Some(&decision_reason_codes)
-        && headers.get("Generated By") == Some(&String::from(GENERATED_BY))
+    let expected_source_plan = format!("`{}`", identity.plan_path);
+    headers.get("Source Plan").map(String::as_str) == Some(expected_source_plan.as_str())
+        && headers.get("Branch").map(String::as_str) == Some(identity.branch_name)
+        && headers.get("Repo").map(String::as_str) == Some(identity.repo_slug)
+        && headers.get("Head SHA").map(String::as_str) == Some(identity.head_sha)
+        && headers.get("Decision Reason Codes").map(String::as_str)
+            == Some(decision_reason_codes.as_str())
+        && headers.get("Generated By").map(String::as_str) == Some(GENERATED_BY)
 }
 
 fn current_user_name() -> String {
@@ -504,6 +535,7 @@ fn parse_headers(source: &str) -> BTreeMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{WorkflowPivotRecordOutput, next_workflow_pivot_record_path, render_pivot_record};
+    use crate::expect_ext::ExpectValueExt;
     use std::fs;
     use tempfile::TempDir;
 
@@ -551,10 +583,10 @@ mod tests {
 
     #[test]
     fn next_workflow_pivot_record_path_avoids_same_second_clobbering() {
-        let tempdir = TempDir::new().expect("tempdir should exist");
+        let tempdir = TempDir::new().expect_or_abort("tempdir should exist");
         let artifact_dir = tempdir.path();
         let first = artifact_dir.join("user-feature-workflow-pivot-123.md");
-        fs::write(&first, "existing").expect("existing pivot record should be writable");
+        fs::write(&first, "existing").expect_or_abort("existing pivot record should be writable");
 
         let next = next_workflow_pivot_record_path(artifact_dir, "user", "feature", 123);
         assert_eq!(
@@ -562,7 +594,7 @@ mod tests {
             Some("user-feature-workflow-pivot-123-1.md")
         );
 
-        fs::write(&next, "next").expect("next pivot record should be writable");
+        fs::write(&next, "next").expect_or_abort("next pivot record should be writable");
         let third = next_workflow_pivot_record_path(artifact_dir, "user", "feature", 123);
         assert_eq!(
             third.file_name().and_then(|name| name.to_str()),

@@ -9,6 +9,7 @@ pub fn parse_failure_json(output: &Output, context: &str) -> Value {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_slice(&output.stderr)
-        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
+    serde_json::from_slice(&output.stderr).unwrap_or_else(|error| {
+        featureforge::abort!("{context} should emit valid failure json: {error}")
+    })
 }

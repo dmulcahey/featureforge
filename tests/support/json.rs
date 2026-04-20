@@ -10,5 +10,5 @@ pub fn parse_json(output: &Output, context: &str) -> Value {
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+        .unwrap_or_else(|error| featureforge::abort!("{context} should emit valid json: {error}"))
 }

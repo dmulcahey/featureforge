@@ -1,3 +1,4 @@
+//! Contracts execution leases integration/benchmark crate.
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/git.rs"]
@@ -19,6 +20,7 @@ use featureforge::execution::observability::{
     downgrade_record_is_active_guidance, downgrade_record_is_superseded_guidance,
     downgrade_records_share_rerun_guidance, validate_execution_topology_downgrade_record,
 };
+use featureforge::expect_ext::{ExpectErrExt as _, ExpectValueExt as _};
 use featureforge::paths::branch_storage_key;
 use files_support::write_file;
 use json_support::parse_json;
@@ -36,8 +38,8 @@ const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-pla
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-17-example-execution-plan-design.md";
 
 fn init_repo(name: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
     let repo = repo_dir.path();
 
     git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
@@ -58,7 +60,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
 fn write_approved_spec(repo: &Path) {
     write_file(
         &repo.join(SPEC_REL),
-        r#"# Example Execution Plan Design
+        r"# Example Execution Plan Design
 
 **Workflow State:** CEO Approved
 **Spec Revision:** 1
@@ -71,7 +73,7 @@ fn write_approved_spec(repo: &Path) {
 ## Summary
 
 Fixture spec for focused execution-helper regression coverage.
-"#,
+",
     );
 }
 
@@ -79,7 +81,7 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
     write_file(
         &repo.join(PLAN_REL),
         &format!(
-            r#"# Example Execution Plan
+            r"# Example Execution Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
@@ -114,13 +116,13 @@ Task 1
 - Modify: `docs/example-output.md`
 
 - [ ] **Step 1: Prepare the workspace for execution**
-"#
+"
         ),
     );
 }
 
 fn blocking_evidence_reference(value: &str) -> BlockingEvidenceReference {
-    BlockingEvidenceReference::try_new(value).expect("valid blocking evidence reference")
+    BlockingEvidenceReference::try_new(value).expect_or_abort("valid blocking evidence reference")
 }
 
 fn branch_name(repo: &Path) -> String {
@@ -135,7 +137,7 @@ fn branch_name(repo: &Path) -> String {
         "git rev-parse branch",
     );
     String::from_utf8(output.stdout)
-        .expect("branch should be utf-8")
+        .expect_or_abort("branch should be utf-8")
         .trim()
         .to_owned()
 }
@@ -143,18 +145,18 @@ fn branch_name(repo: &Path) -> String {
 fn repo_slug(repo: &Path) -> String {
     let output = run_checked(
         {
-            let mut command =
-                Command::cargo_bin("featureforge").expect("featureforge binary should exist");
+            let mut command = Command::cargo_bin("featureforge")
+                .expect_or_abort("featureforge binary should exist");
             command.current_dir(repo).args(["repo", "slug"]);
             command
         },
         "featureforge repo slug",
     );
     String::from_utf8(output.stdout)
-        .expect("repo slug output should be utf-8")
+        .expect_or_abort("repo slug output should be utf-8")
         .lines()
         .find_map(|line| line.strip_prefix("SLUG="))
-        .unwrap_or_else(|| panic!("repo slug output should include SLUG=..."))
+        .unwrap_or_else(|| featureforge::abort!("repo slug output should include SLUG=..."))
         .to_owned()
 }
 
@@ -186,8 +188,8 @@ fn run_plan_execution_json(
 }
 
 fn run_plan_execution_output(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    let mut command = Command::cargo_bin("featureforge")
+        .expect_or_abort("featureforge binary should be available");
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)
@@ -207,11 +209,12 @@ impl DirectoryModeGuard {
     fn new(path: impl Into<PathBuf>, mode: u32) -> Self {
         let path = path.into();
         let original_permissions = fs::metadata(&path)
-            .expect("directory should exist")
+            .expect_or_abort("directory should exist")
             .permissions();
         let mut permissions = original_permissions.clone();
         permissions.set_mode(mode);
-        fs::set_permissions(&path, permissions).expect("directory permissions should update");
+        fs::set_permissions(&path, permissions)
+            .expect_or_abort("directory permissions should update");
         Self {
             path,
             original_permissions,
@@ -253,11 +256,11 @@ fn preflight_reclaims_stale_write_authority_lock_before_acceptance() {
         child_cmd.args(["-c", "exit 0"]);
         let mut child = child_cmd
             .spawn()
-            .expect("stale write-authority fixture process should spawn");
+            .expect_or_abort("stale write-authority fixture process should spawn");
         let pid = child.id();
         let exit_status = child
             .wait()
-            .expect("stale write-authority fixture process should exit");
+            .expect_or_abort("stale write-authority fixture process should exit");
         assert!(
             exit_status.success(),
             "stale write-authority fixture process should exit successfully"
@@ -319,7 +322,7 @@ fn preflight_blocks_live_write_authority_conflict_without_persisting_acceptance(
     holder_cmd.args(["-c", "sleep 30"]);
     let mut holder = holder_cmd
         .spawn()
-        .expect("live write-authority fixture process should spawn");
+        .expect_or_abort("live write-authority fixture process should spawn");
     write_file(&lock_path, &format!("pid={}\n", holder.id()));
 
     let acceptance_path = preflight_acceptance_state_path(repo, state);
@@ -375,8 +378,8 @@ fn status_fails_closed_when_authoritative_state_is_unreadable() {
     write_file(&state_path, r#"{"harness_phase":"executing"}"#);
     let _guard = DirectoryModeGuard::new(&harness_dir, 0o000);
 
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    let mut command = Command::cargo_bin("featureforge")
+        .expect_or_abort("featureforge binary should be available");
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)
@@ -439,8 +442,8 @@ fn preflight_fails_closed_when_write_authority_lock_is_unreadable() {
     } else {
         &output.stderr
     };
-    let failure: serde_json::Value =
-        serde_json::from_slice(failure_payload).expect("preflight failure payload should be json");
+    let failure: serde_json::Value = serde_json::from_slice(failure_payload)
+        .expect_or_abort("preflight failure payload should be json");
     assert_eq!(failure["error_class"], "MalformedExecutionState");
     assert!(
         failure["message"].as_str().is_some_and(
@@ -471,13 +474,13 @@ fn status_fails_closed_when_authoritative_state_is_dangling_symlink() {
     );
 
     let harness_dir = harness_branch_dir(repo, state).join("execution-harness");
-    fs::create_dir_all(&harness_dir).expect("harness directory should be creatable");
+    fs::create_dir_all(&harness_dir).expect_or_abort("harness directory should be creatable");
     let state_path = harness_dir.join("state.json");
     symlink("missing-state-target.json", &state_path)
-        .expect("dangling authoritative state symlink should be creatable");
+        .expect_or_abort("dangling authoritative state symlink should be creatable");
 
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    let mut command = Command::cargo_bin("featureforge")
+        .expect_or_abort("featureforge binary should be available");
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)
@@ -520,10 +523,10 @@ fn preflight_fails_closed_when_write_authority_lock_is_dangling_symlink() {
     );
 
     let harness_dir = harness_branch_dir(repo, state).join("execution-harness");
-    fs::create_dir_all(&harness_dir).expect("harness directory should be creatable");
+    fs::create_dir_all(&harness_dir).expect_or_abort("harness directory should be creatable");
     let lock_path = harness_dir.join("write-authority.lock");
     symlink("missing-lock-target.pid", &lock_path)
-        .expect("dangling write-authority symlink should be creatable");
+        .expect_or_abort("dangling write-authority symlink should be creatable");
 
     let gate = run_plan_execution_json(
         repo,
@@ -562,10 +565,10 @@ fn preflight_fails_closed_when_authoritative_state_is_dangling_symlink() {
     );
 
     let harness_dir = harness_branch_dir(repo, state).join("execution-harness");
-    fs::create_dir_all(&harness_dir).expect("harness directory should be creatable");
+    fs::create_dir_all(&harness_dir).expect_or_abort("harness directory should be creatable");
     let state_path = harness_dir.join("state.json");
     symlink("missing-state-target.json", &state_path)
-        .expect("dangling authoritative state symlink should be creatable");
+        .expect_or_abort("dangling authoritative state symlink should be creatable");
 
     let output = run_plan_execution_output(
         repo,
@@ -582,8 +585,8 @@ fn preflight_fails_closed_when_authoritative_state_is_dangling_symlink() {
     } else {
         &output.stderr
     };
-    let failure: serde_json::Value =
-        serde_json::from_slice(failure_payload).expect("preflight failure payload should be json");
+    let failure: serde_json::Value = serde_json::from_slice(failure_payload)
+        .expect_or_abort("preflight failure payload should be json");
     assert_eq!(failure["error_class"], "MalformedExecutionState");
     assert!(
         failure["message"].as_str().is_some_and(|message| {
@@ -650,7 +653,7 @@ fn worktree_lease_helper_requires_reviewed_checkpoint_when_pending_reconcile() {
     };
 
     let error = validate_worktree_lease(&lease)
-        .expect_err("pending reconcile leases require a reviewed checkpoint commit SHA");
+        .expect_err_or_abort("pending reconcile leases require a reviewed checkpoint commit SHA");
     assert!(
         error.message.contains("reviewed_checkpoint_commit_sha"),
         "pending reconcile validation should identify the missing reviewed checkpoint"
@@ -691,7 +694,8 @@ fn worktree_lease_helper_accepts_terminal_lease_state_with_reviewed_checkpoint()
         ),
     };
 
-    validate_worktree_lease(&lease).expect("reconciled leases with provenance should validate");
+    validate_worktree_lease(&lease)
+        .expect_or_abort("reconciled leases with provenance should validate");
 }
 
 #[test]
@@ -730,7 +734,7 @@ fn worktree_lease_helper_rejects_terminal_lease_without_reviewed_checkpoint() {
         };
 
         let error = validate_worktree_lease(&lease)
-            .expect_err("terminal leases require reviewed checkpoint provenance");
+            .expect_err_or_abort("terminal leases require reviewed checkpoint provenance");
         assert!(
             error.message.contains("reviewed_checkpoint_commit_sha"),
             "terminal lease validation should reject missing reviewed checkpoint provenance"
@@ -772,7 +776,7 @@ fn worktree_lease_helper_rejects_terminal_lease_without_reconcile_provenance() {
         };
 
         let error = validate_worktree_lease(&lease)
-            .expect_err("terminal leases require reconcile provenance");
+            .expect_err_or_abort("terminal leases require reconcile provenance");
         assert!(
             error.message.contains("reconcile_result_commit_sha")
                 || error.message.contains("reconcile_result_proof_fingerprint"),
@@ -927,9 +931,10 @@ fn downgrade_rerun_guidance_persists_through_json_round_trip() {
             "2222222222222222222222222222222222222222222222222222222222222222",
         ),
     };
-    let serialized = serde_json::to_string(&record).expect("downgrade record should serialize");
+    let serialized =
+        serde_json::to_string(&record).expect_or_abort("downgrade record should serialize");
     let persisted: ExecutionTopologyDowngradeRecord =
-        serde_json::from_str(&serialized).expect("downgrade record should deserialize");
+        serde_json::from_str(&serialized).expect_or_abort("downgrade record should deserialize");
 
     assert_eq!(
         persisted.primary_reason_class,
@@ -940,5 +945,5 @@ fn downgrade_rerun_guidance_persists_through_json_round_trip() {
         "round-tripped downgrade records must keep the same rerun guidance class"
     );
     validate_execution_topology_downgrade_record(&persisted)
-        .expect("round-tripped downgrade record should validate");
+        .expect_or_abort("round-tripped downgrade record should validate");
 }

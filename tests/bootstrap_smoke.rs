@@ -1,3 +1,5 @@
+//! Bootstrap smoke integration/benchmark crate.
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::path::PathBuf;
 
 fn featureforge_help_binaries() -> Vec<PathBuf> {
@@ -21,13 +23,14 @@ fn featureforge_help_and_version_exist() {
     let help_output = help
         .arg("--help")
         .output()
-        .expect("help command should run");
+        .expect_or_abort("help command should run");
     assert!(
         help_output.status.success(),
         "expected --help to succeed, got {:?}",
         help_output.status
     );
-    let help_stdout = String::from_utf8(help_output.stdout).expect("help stdout should be utf-8");
+    let help_stdout =
+        String::from_utf8(help_output.stdout).expect_or_abort("help stdout should be utf-8");
     assert!(
         help_stdout.contains("featureforge"),
         "expected help output to mention the featureforge binary name, got:\n{help_stdout}"
@@ -37,14 +40,14 @@ fn featureforge_help_and_version_exist() {
     let version_output = version
         .arg("--version")
         .output()
-        .expect("version command should run");
+        .expect_or_abort("version command should run");
     assert!(
         version_output.status.success(),
         "expected --version to succeed, got {:?}",
         version_output.status
     );
     let version_stdout =
-        String::from_utf8(version_output.stdout).expect("version stdout should be utf-8");
+        String::from_utf8(version_output.stdout).expect_or_abort("version stdout should be utf-8");
     assert!(
         version_stdout.starts_with(&format!("featureforge {}", env!("CARGO_PKG_VERSION"))),
         "expected version output to start with 'featureforge {}', got:\n{version_stdout}",
@@ -72,7 +75,7 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
             .args(["plan", "execution", "--help"])
             .output()
             .unwrap_or_else(|error| {
-                panic!(
+                featureforge::abort!(
                     "plan execution --help should run for binary {}: {error}",
                     binary.display()
                 )
@@ -83,8 +86,8 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
             binary.display(),
             output.status
         );
-        let stdout =
-            String::from_utf8(output.stdout).expect("plan execution help stdout should be utf-8");
+        let stdout = String::from_utf8(output.stdout)
+            .expect_or_abort("plan execution help stdout should be utf-8");
         for command in [
             "status",
             "begin",
@@ -153,7 +156,7 @@ fn normal_path_command_help_hides_dispatch_id_plumbing() {
                 .args(["plan", "execution", command, "--help"])
                 .output()
                 .unwrap_or_else(|error| {
-                    panic!(
+                    featureforge::abort!(
                         "plan execution {command} --help should run for binary {}: {error}",
                         binary.display()
                     )
@@ -165,7 +168,7 @@ fn normal_path_command_help_hides_dispatch_id_plumbing() {
                 output.status
             );
             let stdout = String::from_utf8(output.stdout)
-                .expect("normal-path command help stdout should be utf-8");
+                .expect_or_abort("normal-path command help stdout should be utf-8");
             assert!(
                 !stdout.contains("--dispatch-id"),
                 "plan execution {command} --help should not expose --dispatch-id plumbing for binary {}, got:\n{stdout}",
@@ -182,7 +185,7 @@ fn workflow_help_surface_hides_compatibility_only_commands() {
             .args(["workflow", "--help"])
             .output()
             .unwrap_or_else(|error| {
-                panic!(
+                featureforge::abort!(
                     "workflow --help should run for binary {}: {error}",
                     binary.display()
                 )
@@ -193,8 +196,8 @@ fn workflow_help_surface_hides_compatibility_only_commands() {
             binary.display(),
             output.status
         );
-        let stdout =
-            String::from_utf8(output.stdout).expect("workflow help stdout should be utf-8");
+        let stdout = String::from_utf8(output.stdout)
+            .expect_or_abort("workflow help stdout should be utf-8");
         for command in ["status", "operator", "record-pivot", "plan-fidelity"] {
             assert!(
                 stdout
@@ -235,7 +238,7 @@ fn workflow_direct_help_labels_non_normal_commands() {
             .args(["workflow", "record-pivot", "--help"])
             .output()
             .unwrap_or_else(|error| {
-                panic!(
+                featureforge::abort!(
                     "workflow record-pivot --help should run for binary {}: {error}",
                     binary.display()
                 )
@@ -247,7 +250,7 @@ fn workflow_direct_help_labels_non_normal_commands() {
             record_pivot.status
         );
         let record_pivot_stdout = String::from_utf8(record_pivot.stdout)
-            .expect("workflow record-pivot help stdout should be utf-8");
+            .expect_or_abort("workflow record-pivot help stdout should be utf-8");
         assert!(
             record_pivot_stdout.contains("Expert-only workflow pivot record emitter."),
             "workflow record-pivot --help should label the command as expert-only for binary {}, got:\n{record_pivot_stdout}",
@@ -258,7 +261,7 @@ fn workflow_direct_help_labels_non_normal_commands() {
             .args(["workflow", "preflight", "--help"])
             .output()
             .unwrap_or_else(|error| {
-                panic!(
+                featureforge::abort!(
                     "workflow preflight --help should run for binary {}: {error}",
                     binary.display()
                 )
@@ -270,7 +273,7 @@ fn workflow_direct_help_labels_non_normal_commands() {
             preflight.status
         );
         let preflight_stdout = String::from_utf8(preflight.stdout)
-            .expect("workflow preflight help stdout should be utf-8");
+            .expect_or_abort("workflow preflight help stdout should be utf-8");
         assert!(
             preflight_stdout.contains("Compatibility-only execution preflight helper."),
             "workflow preflight --help should label the command as compatibility-only for binary {}, got:\n{preflight_stdout}",
@@ -294,7 +297,7 @@ fn direct_compatibility_command_help_marks_non_normal_flow_usage() {
                 .args(["plan", "execution", compatibility_command, "--help"])
                 .output()
                 .unwrap_or_else(|error| {
-                    panic!(
+                    featureforge::abort!(
                         "plan execution {compatibility_command} --help should run for binary {}: {error}",
                         binary.display()
                     )
@@ -306,7 +309,7 @@ fn direct_compatibility_command_help_marks_non_normal_flow_usage() {
                 output.status
             );
             let stdout = String::from_utf8(output.stdout)
-                .expect("compatibility command help stdout should be utf-8");
+                .expect_or_abort("compatibility command help stdout should be utf-8");
             assert!(
                 stdout.contains("Compatibility/debug"),
                 "direct compatibility command help should explicitly mark non-normal flow usage for `{compatibility_command}` on binary {}, got:\n{stdout}",

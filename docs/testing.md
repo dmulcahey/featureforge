@@ -14,8 +14,13 @@ node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 npm --prefix tests/brainstorm-server test
+cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::expect_used -W clippy::unwrap_used -W clippy::panic -W clippy::cargo -W missing_docs
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+cargo tree -d --target all
 cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test runtime_instruction_plan_review_contracts --test session_config_slug --test repo_safety --test runtime_root_cli --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
+scripts/audit-rust-skills.sh --enforce
 ```
 ## Performance Budget
 
@@ -132,7 +137,11 @@ Editing workflow routing, runtime docs, or execution contracts:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::expect_used -W clippy::unwrap_used -W clippy::panic -W clippy::cargo -W missing_docs
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+cargo tree -d --target all
 cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test runtime_instruction_plan_review_contracts --test workflow_runtime --test workflow_shell_smoke --test plan_execution
+scripts/audit-rust-skills.sh --enforce
 ```
 
 Final-remediation verification also includes the Step 12 command sequence from the task-boundary gap-closure plan:

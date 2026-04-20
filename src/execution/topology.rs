@@ -24,36 +24,61 @@ const PREFLIGHT_ACCEPTANCE_DIR: &str = "execution-preflight";
 const PREFLIGHT_ACCEPTANCE_FILE: &str = "acceptance-state.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Runtime struct.
 pub struct RecommendDecisionFlags {
+    /// Runtime field.
     pub tasks_independent: String,
+    /// Runtime field.
     pub isolated_agents_available: String,
+    /// Runtime field.
     pub session_intent: String,
+    /// Runtime field.
     pub workspace_prepared: String,
+    /// Runtime field.
     pub same_session_viable: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct RecommendOutput {
+    /// Runtime field.
     pub selected_topology: ExecutionTopologyArg,
+    /// Runtime field.
     pub recommended_skill: String,
+    /// Runtime field.
     pub reason: String,
+    /// Runtime field.
     pub decision_flags: RecommendDecisionFlags,
+    /// Runtime field.
     pub reason_codes: Vec<String>,
+    /// Runtime field.
     pub learned_downgrade_reused: bool,
+    /// Runtime field.
     pub chunking_strategy: ChunkingStrategy,
+    /// Runtime field.
     pub evaluator_policy: EvaluatorPolicyName,
+    /// Runtime field.
     pub reset_policy: ResetPolicy,
+    /// Runtime field.
     pub review_stack: Vec<String>,
+    /// Runtime field.
     pub policy_reason_codes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Runtime struct.
 pub struct ExecutionTopologyRecommendation {
+    /// Runtime field.
     pub selected_topology: ExecutionTopologyArg,
+    /// Runtime field.
     pub recommended_skill: String,
+    /// Runtime field.
     pub reason: String,
+    /// Runtime field.
     pub decision_flags: RecommendDecisionFlags,
+    /// Runtime field.
     pub reason_codes: Vec<String>,
+    /// Runtime field.
     pub learned_downgrade_reused: bool,
 }
 
@@ -91,10 +116,10 @@ pub(crate) fn tasks_are_independent(plan_document: &PlanDocument) -> bool {
     true
 }
 
-fn plan_supports_worktree_parallel(report: &AnalyzePlanReport) -> bool {
-    report.execution_topology_valid
-        && report.parallel_lane_ownership_valid
-        && report.parallel_workspace_isolation_valid
+const fn plan_supports_worktree_parallel(report: &AnalyzePlanReport) -> bool {
+    report.execution_topology_valid.is_true()
+        && report.parallel_lane_ownership_valid.is_true()
+        && report.parallel_workspace_isolation_valid.is_true()
         && !report.parallel_worktree_groups.is_empty()
 }
 
@@ -170,6 +195,8 @@ fn learned_guidance_stale_reuse_matches(
         && guidance.primary_reason_class.trim() == current_blocker_reason_class
 }
 
+#[must_use]
+/// Runtime function.
 pub fn recommend_topology(
     report: &AnalyzePlanReport,
     context: &TopologySelectionContext,
@@ -231,9 +258,10 @@ pub fn recommend_topology(
             vec![String::from("matching_downgrade_history_reused")],
         )
     } else {
-        let codes = current_blocker_reason_class
-            .map(|reason_class| vec![format!("conservative_fallback_{reason_class}")])
-            .unwrap_or_else(|| vec![String::from("conservative_fallback_runtime_unavailable")]);
+        let codes = current_blocker_reason_class.map_or_else(
+            || vec![String::from("conservative_fallback_runtime_unavailable")],
+            |reason_class| vec![format!("conservative_fallback_{reason_class}")],
+        );
         (
             ExecutionTopologyArg::ConservativeFallback,
             String::from("featureforge:executing-plans"),
@@ -320,9 +348,8 @@ impl PreflightAcceptanceState {
         else {
             return false;
         };
-        let current_baseline_head_sha = match current_head_sha(&context.runtime.repo_root) {
-            Ok(value) => value,
-            Err(_) => return false,
+        let Ok(current_baseline_head_sha) = current_head_sha(&context.runtime.repo_root) else {
+            return false;
         };
         self.plan_path == context.plan_rel
             && self.plan_revision == context.plan_document.plan_revision
@@ -350,7 +377,7 @@ pub(crate) fn proposed_preflight_policy_tuple(
     )
 }
 
-pub(crate) fn default_preflight_chunking_strategy() -> ChunkingStrategy {
+pub(crate) const fn default_preflight_chunking_strategy() -> ChunkingStrategy {
     ChunkingStrategy::Task
 }
 
@@ -358,7 +385,7 @@ pub(crate) fn default_preflight_evaluator_policy() -> EvaluatorPolicyName {
     EvaluatorPolicyName(String::from("spec_compliance+code_quality"))
 }
 
-pub(crate) fn default_preflight_reset_policy() -> ResetPolicy {
+pub(crate) const fn default_preflight_reset_policy() -> ResetPolicy {
     ResetPolicy::ChunkBoundary
 }
 
@@ -598,7 +625,7 @@ fn authoritative_run_identity_present(
 ) -> Result<bool, crate::diagnostics::JsonFailure> {
     Ok(load_authoritative_transition_state(context)?
         .as_ref()
-        .and_then(|state| state.execution_run_id_opt())
+        .and_then(super::transitions::AuthoritativeTransitionState::execution_run_id_opt)
         .is_some())
 }
 

@@ -1,3 +1,4 @@
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::Path;
 
@@ -5,7 +6,7 @@ use std::path::Path;
 pub fn make_executable(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-        .expect("path should be executable");
+        .expect_or_abort("path should be executable");
 }
 
 #[cfg(not(unix))]

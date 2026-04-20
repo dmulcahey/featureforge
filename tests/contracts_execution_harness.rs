@@ -1,3 +1,4 @@
+//! Contracts execution harness integration/benchmark crate.
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/git.rs"]
@@ -18,6 +19,7 @@ use featureforge::contracts::plan::parse_plan_file;
 use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::observability::HarnessTelemetryCounters;
 use featureforge::execution::observability::validate_execution_topology_downgrade_record;
+use featureforge::expect_ext::{ExpectErrExt as _, ExpectValueExt as _};
 use files_support::write_file;
 use process_support::run_checked;
 use serde_json::{Value, json};
@@ -55,8 +57,8 @@ fn sha256_hex(contents: &str) -> String {
 }
 
 fn init_repo(name: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
     let repo = repo_dir.path();
 
     git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
@@ -67,7 +69,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
 fn write_approved_spec(repo: &Path) {
     write_file(
         &repo.join(SPEC_REL),
-        r#"# Execution Harness Design
+        r"# Execution Harness Design
 
 **Workflow State:** CEO Approved
 **Spec Revision:** 2
@@ -81,7 +83,7 @@ Fixture spec for execution-harness artifact regression coverage.
 
 - [REQ-001][behavior] Approved-work provenance must stay exact.
 - [REQ-002][behavior] Harness artifacts must keep authoritative ordering.
-"#,
+",
     );
 }
 
@@ -89,7 +91,7 @@ fn write_approved_plan(repo: &Path) {
     write_file(
         &repo.join(PLAN_REL),
         &format!(
-            r#"# Execution Harness Plan
+            r"# Execution Harness Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
@@ -117,24 +119,24 @@ fn write_approved_plan(repo: &Path) {
 
 - [ ] **Step 1: Validate contract, evaluation, handoff, and evidence artifacts**
 - [ ] **Step 2: Cover minimum schema and satisfaction-rule semantics**
-"#
+"
         ),
     );
 }
 
 fn task_packet(repo: &Path) -> String {
-    let spec = parse_spec_file(repo.join(SPEC_REL)).expect("spec should parse");
-    let plan = parse_plan_file(repo.join(PLAN_REL)).expect("plan should parse");
+    let spec = parse_spec_file(repo.join(SPEC_REL)).expect_or_abort("spec should parse");
+    let plan = parse_plan_file(repo.join(PLAN_REL)).expect_or_abort("plan should parse");
     build_task_packet_with_timestamp(&spec, &plan, 1, "2026-03-25T12:00:00Z")
-        .expect("task packet should build")
+        .expect_or_abort("task packet should build")
         .packet_fingerprint
 }
 
 fn task_packet_document(repo: &Path) -> TaskPacket {
-    let spec = parse_spec_file(repo.join(SPEC_REL)).expect("spec should parse");
-    let plan = parse_plan_file(repo.join(PLAN_REL)).expect("plan should parse");
+    let spec = parse_spec_file(repo.join(SPEC_REL)).expect_or_abort("spec should parse");
+    let plan = parse_plan_file(repo.join(PLAN_REL)).expect_or_abort("plan should parse");
     build_task_packet_with_timestamp(&spec, &plan, 1, "2026-03-25T12:00:00Z")
-        .expect("task packet should build")
+        .expect_or_abort("task packet should build")
 }
 
 fn git_head_sha(repo: &Path) -> String {
@@ -147,18 +149,18 @@ fn git_head_sha(repo: &Path) -> String {
         "git rev-parse HEAD",
     );
     String::from_utf8(output.stdout)
-        .expect("HEAD sha should be utf-8")
+        .expect_or_abort("HEAD sha should be utf-8")
         .trim()
         .to_owned()
 }
 
 fn markdown_field(path: &Path, label: &str) -> String {
-    let contents = fs::read_to_string(path).expect("artifact should be readable");
+    let contents = fs::read_to_string(path).expect_or_abort("artifact should be readable");
     let prefix = format!("**{label}:** ");
     contents
         .lines()
-        .find_map(|line| line.strip_prefix(&prefix))
-        .unwrap_or_else(|| panic!("missing {label} field in {}", path.display()))
+        .find_map(|line| line.trim_start().strip_prefix(&prefix))
+        .unwrap_or_else(|| featureforge::abort!("missing {label} field in {}", path.display()))
         .trim_matches('`')
         .to_owned()
 }
@@ -176,7 +178,7 @@ fn markdown_list(values: &[&str]) -> String {
 }
 
 fn blocking_evidence_reference(value: &str) -> BlockingEvidenceReference {
-    BlockingEvidenceReference::try_new(value).expect("valid blocking evidence reference")
+    BlockingEvidenceReference::try_new(value).expect_or_abort("valid blocking evidence reference")
 }
 
 fn replace_section_between_markers(
@@ -187,15 +189,15 @@ fn replace_section_between_markers(
 ) -> String {
     let (before, rest) = source
         .split_once(start_marker)
-        .unwrap_or_else(|| panic!("missing start marker `{start_marker}`"));
+        .unwrap_or_else(|| featureforge::abort!("missing start marker `{start_marker}`"));
     let (_, after) = rest
         .split_once(end_marker)
-        .unwrap_or_else(|| panic!("missing end marker `{end_marker}`"));
+        .unwrap_or_else(|| featureforge::abort!("missing end marker `{end_marker}`"));
     format!("{before}{start_marker}\n{replacement}\n{end_marker}{after}")
 }
 
 fn rewrite_contract_verifiers(contract_path: &Path, verifiers: &[&str]) {
-    let source = fs::read_to_string(contract_path).expect("contract should be readable");
+    let source = fs::read_to_string(contract_path).expect_or_abort("contract should be readable");
     let rewritten = replace_section_between_markers(
         &source,
         "**Verifiers:**",
@@ -206,7 +208,7 @@ fn rewrite_contract_verifiers(contract_path: &Path, verifiers: &[&str]) {
 }
 
 fn rewrite_first_contract_criterion_verifier_types(contract_path: &Path, verifier_types: &[&str]) {
-    let source = fs::read_to_string(contract_path).expect("contract should be readable");
+    let source = fs::read_to_string(contract_path).expect_or_abort("contract should be readable");
     let rewritten = replace_section_between_markers(
         &source,
         "**Verifier Types:**",
@@ -216,6 +218,7 @@ fn rewrite_first_contract_criterion_verifier_types(contract_path: &Path, verifie
     write_file(contract_path, &rewritten);
 }
 
+#[derive(Clone, Copy)]
 enum ContractArtifactFixture {
     Valid,
     EmptyScope,
@@ -231,451 +234,458 @@ fn write_contract_artifact(
     packet_fingerprint: &str,
     fixture: ContractArtifactFixture,
 ) -> PathBuf {
-    let path = state_dir.join(match fixture {
-        ContractArtifactFixture::Valid => "artifacts/valid-contract.md",
-        ContractArtifactFixture::EmptyScope => "artifacts/invalid-contract-empty-scope.md",
-        ContractArtifactFixture::EmptyCriteria => "artifacts/invalid-contract-empty-criteria.md",
-        ContractArtifactFixture::EmptyVerifiers => "artifacts/invalid-contract-empty-verifiers.md",
-        ContractArtifactFixture::UnsupportedSatisfactionRule => {
-            "artifacts/invalid-contract-unsupported-satisfaction-rule.md"
-        }
-        ContractArtifactFixture::EmptyEvidenceRequirements => {
-            "artifacts/valid-contract-empty-evidence-requirements.md"
-        }
-    });
+    {
+        let path = state_dir.join(match fixture {
+            ContractArtifactFixture::Valid => "artifacts/valid-contract.md",
+            ContractArtifactFixture::EmptyScope => "artifacts/invalid-contract-empty-scope.md",
+            ContractArtifactFixture::EmptyCriteria => {
+                "artifacts/invalid-contract-empty-criteria.md"
+            }
+            ContractArtifactFixture::EmptyVerifiers => {
+                "artifacts/invalid-contract-empty-verifiers.md"
+            }
+            ContractArtifactFixture::UnsupportedSatisfactionRule => {
+                "artifacts/invalid-contract-unsupported-satisfaction-rule.md"
+            }
+            ContractArtifactFixture::EmptyEvidenceRequirements => {
+                "artifacts/valid-contract-empty-evidence-requirements.md"
+            }
+        });
 
-    let body = match fixture {
-        ContractArtifactFixture::Valid => {
-            let plan_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable"),
-            );
-            let spec_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable"),
-            );
-            format!(
-                r#"# Execution Contract
+        let body = match fixture {
+            ContractArtifactFixture::Valid => {
+                let plan_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(PLAN_REL))
+                        .expect_or_abort("plan should be readable"),
+                );
+                let spec_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(SPEC_REL))
+                        .expect_or_abort("spec should be readable"),
+                );
+                format!(
+                    r"# Execution Contract
 
-**Contract Version:** 1
-**Authoritative Sequence:** 17
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Spec Path:** `{SPEC_REL}`
-**Source Spec Revision:** 2
-**Source Spec Fingerprint:** `{spec_fingerprint}`
-**Source Task Packet Fingerprints:**
-- `{packet_fingerprint}`
-**Chunk ID:** chunk-1
-**Chunking Strategy:** single_chunk
-**Covered Steps:**
-- Task 1 Step 1
-- Task 1 Step 2
-**Requirement IDs:**
-- REQ-001
-- REQ-002
-**Criteria:**
-### Criterion 1
-**Criterion ID:** criterion-1
-**Title:** Preserve provenance
-**Description:** Approved-work provenance remains traceable.
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Verifier Types:**
-- spec_compliance
-**Threshold:** all
-**Notes:** Minimal criterion for the red slice.
+    **Contract Version:** 1
+    **Authoritative Sequence:** 17
+    **Source Plan Path:** `{PLAN_REL}`
+    **Source Plan Revision:** 1
+    **Source Plan Fingerprint:** `{plan_fingerprint}`
+    **Source Spec Path:** `{SPEC_REL}`
+    **Source Spec Revision:** 2
+    **Source Spec Fingerprint:** `{spec_fingerprint}`
+    **Source Task Packet Fingerprints:**
+    - `{packet_fingerprint}`
+    **Chunk ID:** chunk-1
+    **Chunking Strategy:** single_chunk
+    **Covered Steps:**
+    - Task 1 Step 1
+    - Task 1 Step 2
+    **Requirement IDs:**
+    - REQ-001
+    - REQ-002
+    **Criteria:**
+    ### Criterion 1
+    **Criterion ID:** criterion-1
+    **Title:** Preserve provenance
+    **Description:** Approved-work provenance remains traceable.
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Verifier Types:**
+    - spec_compliance
+    **Threshold:** all
+    **Notes:** Minimal criterion for the red slice.
 
-### Criterion 2
-**Criterion ID:** criterion-2
-**Title:** Preserve ordering
-**Description:** Harness artifacts remain monotonic.
-**Requirement IDs:**
-- REQ-002
-**Covered Steps:**
-- Task 1 Step 2
-**Verifier Types:**
-- code_quality
-**Threshold:** all
-**Notes:** Ordering is tracked explicitly.
+    ### Criterion 2
+    **Criterion ID:** criterion-2
+    **Title:** Preserve ordering
+    **Description:** Harness artifacts remain monotonic.
+    **Requirement IDs:**
+    - REQ-002
+    **Covered Steps:**
+    - Task 1 Step 2
+    **Verifier Types:**
+    - code_quality
+    **Threshold:** all
+    **Notes:** Ordering is tracked explicitly.
 
-**Non Goals:**
-- none
+    **Non Goals:**
+    - none
 
-**Verifiers:**
-- spec_compliance
-- code_quality
+    **Verifiers:**
+    - spec_compliance
+    - code_quality
 
-**Evidence Requirements:**
-### Evidence Requirement 1
-**Evidence Requirement ID:** evidence-1
-**Kind:** repo
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Satisfaction Rule:** all_of
-**Notes:** All listed evidence is required.
+    **Evidence Requirements:**
+    ### Evidence Requirement 1
+    **Evidence Requirement ID:** evidence-1
+    **Kind:** repo
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Satisfaction Rule:** all_of
+    **Notes:** All listed evidence is required.
 
-### Evidence Requirement 2
-**Evidence Requirement ID:** evidence-2
-**Kind:** repo
-**Requirement IDs:**
-- REQ-002
-**Covered Steps:**
-- Task 1 Step 2
-**Satisfaction Rule:** any_of
-**Notes:** Any listed evidence can satisfy the rule.
+    ### Evidence Requirement 2
+    **Evidence Requirement ID:** evidence-2
+    **Kind:** repo
+    **Requirement IDs:**
+    - REQ-002
+    **Covered Steps:**
+    - Task 1 Step 2
+    **Satisfaction Rule:** any_of
+    **Notes:** Any listed evidence can satisfy the rule.
 
-### Evidence Requirement 3
-**Evidence Requirement ID:** evidence-3
-**Kind:** repo
-**Requirement IDs:**
-- REQ-001
-- REQ-002
-**Covered Steps:**
-- Task 1 Step 1
-- Task 1 Step 2
-**Satisfaction Rule:** per_step
-**Notes:** Each covered step needs its own matching evidence.
+    ### Evidence Requirement 3
+    **Evidence Requirement ID:** evidence-3
+    **Kind:** repo
+    **Requirement IDs:**
+    - REQ-001
+    - REQ-002
+    **Covered Steps:**
+    - Task 1 Step 1
+    - Task 1 Step 2
+    **Satisfaction Rule:** per_step
+    **Notes:** Each covered step needs its own matching evidence.
 
-**Retry Budget:** 2
-**Pivot Threshold:** 1
-**Reset Policy:** adaptive
-**Generated By:** featureforge:executing-plans
-**Generated At:** 2026-03-25T12:00:00Z
-**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#,
-                plan_fingerprint = plan_fingerprint,
-                spec_fingerprint = spec_fingerprint,
-            )
-        }
-        ContractArtifactFixture::EmptyScope => {
-            let plan_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable"),
-            );
-            let spec_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable"),
-            );
-            format!(
-                r#"# Execution Contract
+    **Retry Budget:** 2
+    **Pivot Threshold:** 1
+    **Reset Policy:** adaptive
+    **Generated By:** featureforge:executing-plans
+    **Generated At:** 2026-03-25T12:00:00Z
+    **Contract Fingerprint:** __CONTRACT_FINGERPRINT__
+    ",
+                )
+            }
+            ContractArtifactFixture::EmptyScope => {
+                let plan_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(PLAN_REL))
+                        .expect_or_abort("plan should be readable"),
+                );
+                let spec_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(SPEC_REL))
+                        .expect_or_abort("spec should be readable"),
+                );
+                format!(
+                    r"# Execution Contract
 
-**Contract Version:** 1
-**Authoritative Sequence:** 18
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Spec Path:** `{SPEC_REL}`
-**Source Spec Revision:** 2
-**Source Spec Fingerprint:** `{spec_fingerprint}`
-**Source Task Packet Fingerprints:**
-- `{packet_fingerprint}`
-**Chunk ID:** chunk-empty-scope
-**Chunking Strategy:** single_chunk
-**Covered Steps:**
-[]
-**Requirement IDs:**
- - REQ-001
-**Criteria:**
-### Criterion 1
-**Criterion ID:** criterion-1
-**Title:** Preserve provenance
-**Description:** Criterion remains present while scope is empty.
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Verifier Types:**
-- spec_compliance
-**Threshold:** all
-**Notes:** Scope is intentionally empty for operational-empty coverage.
-**Non Goals:**
-- none
+    **Contract Version:** 1
+    **Authoritative Sequence:** 18
+    **Source Plan Path:** `{PLAN_REL}`
+    **Source Plan Revision:** 1
+    **Source Plan Fingerprint:** `{plan_fingerprint}`
+    **Source Spec Path:** `{SPEC_REL}`
+    **Source Spec Revision:** 2
+    **Source Spec Fingerprint:** `{spec_fingerprint}`
+    **Source Task Packet Fingerprints:**
+    - `{packet_fingerprint}`
+    **Chunk ID:** chunk-empty-scope
+    **Chunking Strategy:** single_chunk
+    **Covered Steps:**
+    []
+    **Requirement IDs:**
+     - REQ-001
+    **Criteria:**
+    ### Criterion 1
+    **Criterion ID:** criterion-1
+    **Title:** Preserve provenance
+    **Description:** Criterion remains present while scope is empty.
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Verifier Types:**
+    - spec_compliance
+    **Threshold:** all
+    **Notes:** Scope is intentionally empty for operational-empty coverage.
+    **Non Goals:**
+    - none
 
-**Verifiers:**
-- spec_compliance
+    **Verifiers:**
+    - spec_compliance
 
-**Evidence Requirements:**
-### Evidence Requirement 1
-**Evidence Requirement ID:** evidence-1
-**Kind:** repo
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Satisfaction Rule:** all_of
-**Notes:** Supported rule while scope remains empty.
+    **Evidence Requirements:**
+    ### Evidence Requirement 1
+    **Evidence Requirement ID:** evidence-1
+    **Kind:** repo
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Satisfaction Rule:** all_of
+    **Notes:** Supported rule while scope remains empty.
 
-**Retry Budget:** 1
-**Pivot Threshold:** 1
-**Reset Policy:** none
-**Generated By:** featureforge:executing-plans
-**Generated At:** 2026-03-25T12:00:00Z
-**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#,
-                plan_fingerprint = plan_fingerprint,
-                spec_fingerprint = spec_fingerprint,
-            )
-        }
-        ContractArtifactFixture::EmptyCriteria => {
-            let plan_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable"),
-            );
-            let spec_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable"),
-            );
-            format!(
-                r#"# Execution Contract
+    **Retry Budget:** 1
+    **Pivot Threshold:** 1
+    **Reset Policy:** none
+    **Generated By:** featureforge:executing-plans
+    **Generated At:** 2026-03-25T12:00:00Z
+    **Contract Fingerprint:** __CONTRACT_FINGERPRINT__
+    ",
+                )
+            }
+            ContractArtifactFixture::EmptyCriteria => {
+                let plan_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(PLAN_REL))
+                        .expect_or_abort("plan should be readable"),
+                );
+                let spec_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(SPEC_REL))
+                        .expect_or_abort("spec should be readable"),
+                );
+                format!(
+                    r"# Execution Contract
 
-**Contract Version:** 1
-**Authoritative Sequence:** 18
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Spec Path:** `{SPEC_REL}`
-**Source Spec Revision:** 2
-**Source Spec Fingerprint:** `{spec_fingerprint}`
-**Source Task Packet Fingerprints:**
-- `{packet_fingerprint}`
-**Chunk ID:** chunk-empty-criteria
-**Chunking Strategy:** single_chunk
-**Covered Steps:**
-- Task 1 Step 1
-**Requirement IDs:**
-- REQ-001
-**Criteria:**
-[]
-**Non Goals:**
-- none
+    **Contract Version:** 1
+    **Authoritative Sequence:** 18
+    **Source Plan Path:** `{PLAN_REL}`
+    **Source Plan Revision:** 1
+    **Source Plan Fingerprint:** `{plan_fingerprint}`
+    **Source Spec Path:** `{SPEC_REL}`
+    **Source Spec Revision:** 2
+    **Source Spec Fingerprint:** `{spec_fingerprint}`
+    **Source Task Packet Fingerprints:**
+    - `{packet_fingerprint}`
+    **Chunk ID:** chunk-empty-criteria
+    **Chunking Strategy:** single_chunk
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Requirement IDs:**
+    - REQ-001
+    **Criteria:**
+    []
+    **Non Goals:**
+    - none
 
-**Verifiers:**
-- spec_compliance
+    **Verifiers:**
+    - spec_compliance
 
-**Evidence Requirements:**
-### Evidence Requirement 1
-**Evidence Requirement ID:** evidence-1
-**Kind:** repo
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Satisfaction Rule:** all_of
-**Notes:** Criteria are intentionally empty.
+    **Evidence Requirements:**
+    ### Evidence Requirement 1
+    **Evidence Requirement ID:** evidence-1
+    **Kind:** repo
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Satisfaction Rule:** all_of
+    **Notes:** Criteria are intentionally empty.
 
-**Retry Budget:** 1
-**Pivot Threshold:** 1
-**Reset Policy:** none
-**Generated By:** featureforge:executing-plans
-**Generated At:** 2026-03-25T12:00:00Z
-**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#,
-                plan_fingerprint = plan_fingerprint,
-                spec_fingerprint = spec_fingerprint,
-            )
-        }
-        ContractArtifactFixture::EmptyVerifiers => {
-            let plan_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable"),
-            );
-            let spec_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable"),
-            );
-            format!(
-                r#"# Execution Contract
+    **Retry Budget:** 1
+    **Pivot Threshold:** 1
+    **Reset Policy:** none
+    **Generated By:** featureforge:executing-plans
+    **Generated At:** 2026-03-25T12:00:00Z
+    **Contract Fingerprint:** __CONTRACT_FINGERPRINT__
+    ",
+                )
+            }
+            ContractArtifactFixture::EmptyVerifiers => {
+                let plan_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(PLAN_REL))
+                        .expect_or_abort("plan should be readable"),
+                );
+                let spec_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(SPEC_REL))
+                        .expect_or_abort("spec should be readable"),
+                );
+                format!(
+                    r"# Execution Contract
 
-**Contract Version:** 1
-**Authoritative Sequence:** 18
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Spec Path:** `{SPEC_REL}`
-**Source Spec Revision:** 2
-**Source Spec Fingerprint:** `{spec_fingerprint}`
-**Source Task Packet Fingerprints:**
-- `{packet_fingerprint}`
-**Chunk ID:** chunk-empty-verifiers
-**Chunking Strategy:** single_chunk
-**Covered Steps:**
-- Task 1 Step 1
-**Requirement IDs:**
-- REQ-001
-**Criteria:**
-### Criterion 1
-**Criterion ID:** criterion-1
-**Title:** Preserve provenance
-**Description:** Verifier declarations are intentionally empty.
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Verifier Types:**
-- spec_compliance
-**Threshold:** all
-**Notes:** Verifier declarations are intentionally empty.
-**Non Goals:**
-- none
+    **Contract Version:** 1
+    **Authoritative Sequence:** 18
+    **Source Plan Path:** `{PLAN_REL}`
+    **Source Plan Revision:** 1
+    **Source Plan Fingerprint:** `{plan_fingerprint}`
+    **Source Spec Path:** `{SPEC_REL}`
+    **Source Spec Revision:** 2
+    **Source Spec Fingerprint:** `{spec_fingerprint}`
+    **Source Task Packet Fingerprints:**
+    - `{packet_fingerprint}`
+    **Chunk ID:** chunk-empty-verifiers
+    **Chunking Strategy:** single_chunk
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Requirement IDs:**
+    - REQ-001
+    **Criteria:**
+    ### Criterion 1
+    **Criterion ID:** criterion-1
+    **Title:** Preserve provenance
+    **Description:** Verifier declarations are intentionally empty.
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Verifier Types:**
+    - spec_compliance
+    **Threshold:** all
+    **Notes:** Verifier declarations are intentionally empty.
+    **Non Goals:**
+    - none
 
-**Verifiers:**
-[]
+    **Verifiers:**
+    []
 
-**Evidence Requirements:**
-### Evidence Requirement 1
-**Evidence Requirement ID:** evidence-1
-**Kind:** repo
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Satisfaction Rule:** all_of
-**Notes:** Verifier declarations are intentionally empty.
+    **Evidence Requirements:**
+    ### Evidence Requirement 1
+    **Evidence Requirement ID:** evidence-1
+    **Kind:** repo
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Satisfaction Rule:** all_of
+    **Notes:** Verifier declarations are intentionally empty.
 
-**Retry Budget:** 1
-**Pivot Threshold:** 1
-**Reset Policy:** none
-**Generated By:** featureforge:executing-plans
-**Generated At:** 2026-03-25T12:00:00Z
-**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#,
-                plan_fingerprint = plan_fingerprint,
-                spec_fingerprint = spec_fingerprint,
-            )
-        }
-        ContractArtifactFixture::UnsupportedSatisfactionRule => {
-            let plan_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable"),
-            );
-            let spec_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable"),
-            );
-            format!(
-                r#"# Execution Contract
+    **Retry Budget:** 1
+    **Pivot Threshold:** 1
+    **Reset Policy:** none
+    **Generated By:** featureforge:executing-plans
+    **Generated At:** 2026-03-25T12:00:00Z
+    **Contract Fingerprint:** __CONTRACT_FINGERPRINT__
+    ",
+                )
+            }
+            ContractArtifactFixture::UnsupportedSatisfactionRule => {
+                let plan_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(PLAN_REL))
+                        .expect_or_abort("plan should be readable"),
+                );
+                let spec_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(SPEC_REL))
+                        .expect_or_abort("spec should be readable"),
+                );
+                format!(
+                    r"# Execution Contract
 
-**Contract Version:** 1
-**Authoritative Sequence:** 18
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Spec Path:** `{SPEC_REL}`
-**Source Spec Revision:** 2
-**Source Spec Fingerprint:** `{spec_fingerprint}`
-**Source Task Packet Fingerprints:**
-- `{packet_fingerprint}`
-**Chunk ID:** chunk-unsupported-rule
-**Chunking Strategy:** single_chunk
-**Covered Steps:**
-- Task 1 Step 1
-**Requirement IDs:**
-- REQ-001
-**Criteria:**
-### Criterion 1
-**Criterion ID:** criterion-1
-**Title:** Preserve provenance
-**Description:** Rule vocabulary is validated directly.
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Verifier Types:**
-- spec_compliance
-**Threshold:** all
-**Notes:** Rule vocabulary is validated directly.
-**Non Goals:**
-- none
+    **Contract Version:** 1
+    **Authoritative Sequence:** 18
+    **Source Plan Path:** `{PLAN_REL}`
+    **Source Plan Revision:** 1
+    **Source Plan Fingerprint:** `{plan_fingerprint}`
+    **Source Spec Path:** `{SPEC_REL}`
+    **Source Spec Revision:** 2
+    **Source Spec Fingerprint:** `{spec_fingerprint}`
+    **Source Task Packet Fingerprints:**
+    - `{packet_fingerprint}`
+    **Chunk ID:** chunk-unsupported-rule
+    **Chunking Strategy:** single_chunk
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Requirement IDs:**
+    - REQ-001
+    **Criteria:**
+    ### Criterion 1
+    **Criterion ID:** criterion-1
+    **Title:** Preserve provenance
+    **Description:** Rule vocabulary is validated directly.
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Verifier Types:**
+    - spec_compliance
+    **Threshold:** all
+    **Notes:** Rule vocabulary is validated directly.
+    **Non Goals:**
+    - none
 
-**Verifiers:**
-- spec_compliance
+    **Verifiers:**
+    - spec_compliance
 
-**Evidence Requirements:**
-### Evidence Requirement 1
-**Evidence Requirement ID:** evidence-unsupported
-**Kind:** repo
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Satisfaction Rule:** maybe_one
-**Notes:** Unsupported on purpose.
+    **Evidence Requirements:**
+    ### Evidence Requirement 1
+    **Evidence Requirement ID:** evidence-unsupported
+    **Kind:** repo
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Satisfaction Rule:** maybe_one
+    **Notes:** Unsupported on purpose.
 
-**Retry Budget:** 1
-**Pivot Threshold:** 1
-**Reset Policy:** none
-**Generated By:** featureforge:executing-plans
-**Generated At:** 2026-03-25T12:00:00Z
-**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#,
-                plan_fingerprint = plan_fingerprint,
-                spec_fingerprint = spec_fingerprint,
-            )
-        }
-        ContractArtifactFixture::EmptyEvidenceRequirements => {
-            let plan_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable"),
-            );
-            let spec_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable"),
-            );
-            format!(
-                r#"# Execution Contract
+    **Retry Budget:** 1
+    **Pivot Threshold:** 1
+    **Reset Policy:** none
+    **Generated By:** featureforge:executing-plans
+    **Generated At:** 2026-03-25T12:00:00Z
+    **Contract Fingerprint:** __CONTRACT_FINGERPRINT__
+    ",
+                )
+            }
+            ContractArtifactFixture::EmptyEvidenceRequirements => {
+                let plan_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(PLAN_REL))
+                        .expect_or_abort("plan should be readable"),
+                );
+                let spec_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(SPEC_REL))
+                        .expect_or_abort("spec should be readable"),
+                );
+                format!(
+                    r"# Execution Contract
 
-**Contract Version:** 1
-**Authoritative Sequence:** 17
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Spec Path:** `{SPEC_REL}`
-**Source Spec Revision:** 2
-**Source Spec Fingerprint:** `{spec_fingerprint}`
-**Source Task Packet Fingerprints:**
-- `{packet_fingerprint}`
-**Chunk ID:** chunk-empty-evidence
-**Chunking Strategy:** single_chunk
-**Covered Steps:**
-- Task 1 Step 1
-**Requirement IDs:**
-- REQ-001
-**Criteria:**
-### Criterion 1
-**Criterion ID:** criterion-1
-**Title:** Preserve provenance
-**Description:** Contract remains valid with no extra evidence requirements.
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Verifier Types:**
-- spec_compliance
-**Threshold:** all
-**Notes:** Explicit empty-list handling is required.
+    **Contract Version:** 1
+    **Authoritative Sequence:** 17
+    **Source Plan Path:** `{PLAN_REL}`
+    **Source Plan Revision:** 1
+    **Source Plan Fingerprint:** `{plan_fingerprint}`
+    **Source Spec Path:** `{SPEC_REL}`
+    **Source Spec Revision:** 2
+    **Source Spec Fingerprint:** `{spec_fingerprint}`
+    **Source Task Packet Fingerprints:**
+    - `{packet_fingerprint}`
+    **Chunk ID:** chunk-empty-evidence
+    **Chunking Strategy:** single_chunk
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Requirement IDs:**
+    - REQ-001
+    **Criteria:**
+    ### Criterion 1
+    **Criterion ID:** criterion-1
+    **Title:** Preserve provenance
+    **Description:** Contract remains valid with no extra evidence requirements.
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Verifier Types:**
+    - spec_compliance
+    **Threshold:** all
+    **Notes:** Explicit empty-list handling is required.
 
-**Non Goals:**
-- none
+    **Non Goals:**
+    - none
 
-**Verifiers:**
-- spec_compliance
+    **Verifiers:**
+    - spec_compliance
 
-**Evidence Requirements:**
-[]
+    **Evidence Requirements:**
+    []
 
-**Retry Budget:** 2
-**Pivot Threshold:** 1
-**Reset Policy:** adaptive
-**Generated By:** featureforge:executing-plans
-**Generated At:** 2026-03-25T12:00:00Z
-**Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#,
-                plan_fingerprint = plan_fingerprint,
-                spec_fingerprint = spec_fingerprint,
-            )
-        }
-    };
+    **Retry Budget:** 2
+    **Pivot Threshold:** 1
+    **Reset Policy:** adaptive
+    **Generated By:** featureforge:executing-plans
+    **Generated At:** 2026-03-25T12:00:00Z
+    **Contract Fingerprint:** __CONTRACT_FINGERPRINT__
+    ",
+                )
+            }
+        };
 
-    let contract_fingerprint = sha256_hex(&body.replace("__CONTRACT_FINGERPRINT__", ""));
-    let content = body.replace("__CONTRACT_FINGERPRINT__", &contract_fingerprint);
-    write_file(&path, &content);
-    path
+        let contract_fingerprint = sha256_hex(&body.replace("__CONTRACT_FINGERPRINT__", ""));
+        let content = body.replace("__CONTRACT_FINGERPRINT__", &contract_fingerprint);
+        write_file(&path, &content);
+        path
+    }
 }
 
+#[derive(Clone, Copy)]
 enum EvaluationArtifactFixture {
     Valid,
     UnsupportedVersion,
@@ -688,122 +698,123 @@ fn write_evaluation_artifact(
     packet_fingerprint: &str,
     fixture: EvaluationArtifactFixture,
 ) -> PathBuf {
-    let path = state_dir.join(match fixture {
-        EvaluationArtifactFixture::Valid => "artifacts/valid-evaluation.md",
-        EvaluationArtifactFixture::UnsupportedVersion => "artifacts/invalid-evaluation.md",
-    });
-    let body = match fixture {
-        EvaluationArtifactFixture::Valid => {
-            let plan_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable"),
-            );
-            let evidence_ref_fingerprint = sha256_hex("valid evaluation evidence ref");
-            format!(
-                r#"# Evaluation Report
+    {
+        let path = state_dir.join(match fixture {
+            EvaluationArtifactFixture::Valid => "artifacts/valid-evaluation.md",
+            EvaluationArtifactFixture::UnsupportedVersion => "artifacts/invalid-evaluation.md",
+        });
+        let body = match fixture {
+            EvaluationArtifactFixture::Valid => {
+                let plan_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(PLAN_REL))
+                        .expect_or_abort("plan should be readable"),
+                );
+                let evidence_ref_fingerprint = sha256_hex("valid evaluation evidence ref");
+                format!(
+                    r"# Evaluation Report
 
-**Report Version:** 1
-**Authoritative Sequence:** 19
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Contract Fingerprint:** `{contract_fingerprint}`
-**Evaluator Kind:** spec_compliance
-**Verdict:** pass
-**Criterion Results:**
-### Criterion Result 1
-**Criterion ID:** criterion-1
-**Status:** pass
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Finding:** Provenance fields are present.
-**Evidence Refs:**
-- `{evidence_ref_fingerprint}`
-**Severity:** low
+    **Report Version:** 1
+    **Authoritative Sequence:** 19
+    **Source Plan Path:** `{PLAN_REL}`
+    **Source Plan Revision:** 1
+    **Source Plan Fingerprint:** `{plan_fingerprint}`
+    **Source Contract Fingerprint:** `{contract_fingerprint}`
+    **Evaluator Kind:** spec_compliance
+    **Verdict:** pass
+    **Criterion Results:**
+    ### Criterion Result 1
+    **Criterion ID:** criterion-1
+    **Status:** pass
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Finding:** Provenance fields are present.
+    **Evidence Refs:**
+    - `{evidence_ref_fingerprint}`
+    **Severity:** low
 
-**Affected Steps:**
-[]
-**Evidence Refs:**
-### Evidence Ref 1
-**Evidence Ref ID:** evidence-ref-1
-**Kind:** artifact_ref
-**Source:** artifact:{packet_fingerprint}
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Evidence Requirement IDs:**
-[]
-**Summary:** The report points at a durable artifact reference.
+    **Affected Steps:**
+    []
+    **Evidence Refs:**
+    ### Evidence Ref 1
+    **Evidence Ref ID:** evidence-ref-1
+    **Kind:** artifact_ref
+    **Source:** artifact:{packet_fingerprint}
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Evidence Requirement IDs:**
+    []
+    **Summary:** The report points at a durable artifact reference.
 
-**Recommended Action:** continue
-**Summary:** The evaluation remains within the active contract.
-**Generated By:** featureforge:spec_compliance
-**Generated At:** 2026-03-25T12:00:00Z
-**Report Fingerprint:** __REPORT_FINGERPRINT__
-"#,
-                plan_fingerprint = plan_fingerprint,
-                evidence_ref_fingerprint = evidence_ref_fingerprint,
-            )
-        }
-        EvaluationArtifactFixture::UnsupportedVersion => {
-            let plan_fingerprint = sha256_hex(
-                &fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable"),
-            );
-            format!(
-                r#"# Evaluation Report
+    **Recommended Action:** continue
+    **Summary:** The evaluation remains within the active contract.
+    **Generated By:** featureforge:spec_compliance
+    **Generated At:** 2026-03-25T12:00:00Z
+    **Report Fingerprint:** __REPORT_FINGERPRINT__
+    ",
+                )
+            }
+            EvaluationArtifactFixture::UnsupportedVersion => {
+                let plan_fingerprint = sha256_hex(
+                    &fs::read_to_string(repo.join(PLAN_REL))
+                        .expect_or_abort("plan should be readable"),
+                );
+                format!(
+                    r"# Evaluation Report
 
-**Report Version:** 99
-**Authoritative Sequence:** 20
-**Source Plan Path:** `{PLAN_REL}`
-**Source Plan Revision:** 1
-**Source Plan Fingerprint:** `{plan_fingerprint}`
-**Source Contract Fingerprint:** `{contract_fingerprint}`
-**Evaluator Kind:** spec_compliance
-**Verdict:** pass
-**Criterion Results:**
-### Criterion Result 1
-**Criterion ID:** criterion-1
-**Status:** pass
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Finding:** Unsupported version on purpose.
-**Evidence Refs:**
-- missing-source
-**Severity:** medium
+    **Report Version:** 99
+    **Authoritative Sequence:** 20
+    **Source Plan Path:** `{PLAN_REL}`
+    **Source Plan Revision:** 1
+    **Source Plan Fingerprint:** `{plan_fingerprint}`
+    **Source Contract Fingerprint:** `{contract_fingerprint}`
+    **Evaluator Kind:** spec_compliance
+    **Verdict:** pass
+    **Criterion Results:**
+    ### Criterion Result 1
+    **Criterion ID:** criterion-1
+    **Status:** pass
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Finding:** Unsupported version on purpose.
+    **Evidence Refs:**
+    - missing-source
+    **Severity:** medium
 
-**Affected Steps:**
-- Task 1 Step 1
-**Evidence Refs:**
-### Evidence Ref 1
-**Evidence Ref ID:** evidence-ref-1
-**Kind:** artifact_ref
-**Requirement IDs:**
-- REQ-001
-**Covered Steps:**
-- Task 1 Step 1
-**Evidence Requirement IDs:**
-- evidence-1
-**Summary:** Missing source and version mismatch are deliberate.
+    **Affected Steps:**
+    - Task 1 Step 1
+    **Evidence Refs:**
+    ### Evidence Ref 1
+    **Evidence Ref ID:** evidence-ref-1
+    **Kind:** artifact_ref
+    **Requirement IDs:**
+    - REQ-001
+    **Covered Steps:**
+    - Task 1 Step 1
+    **Evidence Requirement IDs:**
+    - evidence-1
+    **Summary:** Missing source and version mismatch are deliberate.
 
-**Recommended Action:** continue
-**Summary:** The invalid fixture should fail closed.
-**Generated By:** featureforge:spec_compliance
-**Generated At:** 2026-03-25T12:00:00Z
-**Report Fingerprint:** __REPORT_FINGERPRINT__
-"#,
-                plan_fingerprint = plan_fingerprint,
-            )
-        }
-    };
+    **Recommended Action:** continue
+    **Summary:** The invalid fixture should fail closed.
+    **Generated By:** featureforge:spec_compliance
+    **Generated At:** 2026-03-25T12:00:00Z
+    **Report Fingerprint:** __REPORT_FINGERPRINT__
+    ",
+                )
+            }
+        };
 
-    let report_fingerprint = sha256_hex(&body.replace("__REPORT_FINGERPRINT__", ""));
-    let content = body.replace("__REPORT_FINGERPRINT__", &report_fingerprint);
-    write_file(&path, &content);
-    path
+        let report_fingerprint = sha256_hex(&body.replace("__REPORT_FINGERPRINT__", ""));
+        let content = body.replace("__REPORT_FINGERPRINT__", &report_fingerprint);
+        write_file(&path, &content);
+        path
+    }
 }
 
 fn write_handoff_artifact(
@@ -819,7 +830,7 @@ fn write_handoff_artifact(
     });
     let body = if valid {
         format!(
-            r#"# Execution Handoff
+            r"# Execution Handoff
 
 **Handoff Version:** 1
 **Authoritative Sequence:** 21
@@ -846,11 +857,11 @@ fn write_handoff_artifact(
 **Generated By:** featureforge:executing-plans
 **Generated At:** 2026-03-25T12:00:00Z
 **Handoff Fingerprint:** __HANDOFF_FINGERPRINT__
-"#
+"
         )
     } else {
         format!(
-            r#"# Execution Handoff
+            r"# Execution Handoff
 
 **Handoff Version:** 1
 **Authoritative Sequence:** 22
@@ -876,7 +887,7 @@ fn write_handoff_artifact(
 **Generated By:** featureforge:executing-plans
 **Generated At:** 2026-03-25T12:00:00Z
 **Handoff Fingerprint:** __HANDOFF_FINGERPRINT__
-"#
+"
         )
     };
 
@@ -902,7 +913,7 @@ fn write_evidence_artifact(state_dir: &Path, repo: &Path, valid: bool) -> PathBu
     let worktree_fingerprint = sha256_hex(&format!("{head_sha}:{captured_content_fingerprint}"));
     let body = if valid {
         format!(
-            r#"# Evidence Artifact
+            r"# Evidence Artifact
 
 **Evidence Artifact Version:** 1
 **Evidence Artifact Fingerprint:** __EVIDENCE_ARTIFACT_FINGERPRINT__
@@ -918,11 +929,11 @@ fn write_evidence_artifact(state_dir: &Path, repo: &Path, valid: bool) -> PathBu
 ## Captured Content
 
 {captured_content}
-"#
+"
         )
     } else {
         format!(
-            r#"# Evidence Artifact
+            r"# Evidence Artifact
 
 **Evidence Artifact Version:** 99
 **Evidence Artifact Fingerprint:** __EVIDENCE_ARTIFACT_FINGERPRINT__
@@ -938,7 +949,7 @@ fn write_evidence_artifact(state_dir: &Path, repo: &Path, valid: bool) -> PathBu
 ## Captured Content
 
 {captured_content}
-"#
+"
         )
     };
 
@@ -969,9 +980,9 @@ fn contract_parser_preserves_provenance_sequence_and_supported_satisfaction_rule
         &packet_fingerprint,
         ContractArtifactFixture::Valid,
     );
-    let contract =
-        read_execution_contract(&contract_path).expect("valid contract artifact should parse");
-    let json = serde_json::to_value(contract).expect("contract should be serializable");
+    let contract = read_execution_contract(&contract_path)
+        .expect_or_abort("valid contract artifact should parse");
+    let json = serde_json::to_value(contract).expect_or_abort("contract should be serializable");
 
     assert_eq!(json["authoritative_sequence"], Value::from(17));
     assert_eq!(json["source_spec_path"], Value::String(SPEC_REL.to_owned()));
@@ -983,12 +994,12 @@ fn contract_parser_preserves_provenance_sequence_and_supported_satisfaction_rule
 
     let rules = json["evidence_requirements"]
         .as_array()
-        .expect("evidence_requirements should be an array")
+        .expect_or_abort("evidence_requirements should be an array")
         .iter()
         .map(|entry| {
             entry["satisfaction_rule"]
                 .as_str()
-                .expect("satisfaction_rule should serialize as string")
+                .expect_or_abort("satisfaction_rule should serialize as string")
         })
         .collect::<Vec<_>>();
     assert_eq!(rules, vec!["all_of", "any_of", "per_step"]);
@@ -1006,8 +1017,8 @@ fn contract_parser_rejects_operationally_empty_scope() {
         &packet_fingerprint,
         ContractArtifactFixture::EmptyScope,
     );
-    let error =
-        read_execution_contract(&contract_path).expect_err("empty-scope contract should fail");
+    let error = read_execution_contract(&contract_path)
+        .expect_err_or_abort("empty-scope contract should fail");
     assert!(
         error.message().contains("empty scope"),
         "operationally empty scope should be rejected explicitly"
@@ -1026,8 +1037,8 @@ fn contract_parser_rejects_operationally_empty_criteria() {
         &packet_fingerprint,
         ContractArtifactFixture::EmptyCriteria,
     );
-    let error =
-        read_execution_contract(&contract_path).expect_err("empty-criteria contract should fail");
+    let error = read_execution_contract(&contract_path)
+        .expect_err_or_abort("empty-criteria contract should fail");
     assert!(
         error.message().contains("empty criteria"),
         "operationally empty criteria should be rejected explicitly"
@@ -1046,8 +1057,8 @@ fn contract_parser_rejects_operationally_empty_verifiers() {
         &packet_fingerprint,
         ContractArtifactFixture::EmptyVerifiers,
     );
-    let error =
-        read_execution_contract(&contract_path).expect_err("empty-verifiers contract should fail");
+    let error = read_execution_contract(&contract_path)
+        .expect_err_or_abort("empty-verifiers contract should fail");
     assert!(
         error.message().contains("empty verifier"),
         "operationally empty verifier declarations should be rejected explicitly"
@@ -1069,7 +1080,7 @@ fn contract_parser_rejects_unsupported_top_level_verifier_kind() {
     rewrite_contract_verifiers(&contract_path, &["spec_compliance", "invented_evaluator"]);
 
     let error = read_execution_contract(&contract_path)
-        .expect_err("unsupported verifier kind should fail parser validation");
+        .expect_err_or_abort("unsupported verifier kind should fail parser validation");
     assert!(
         error.message().contains("unsupported evaluator"),
         "unsupported top-level verifiers should fail closed with an explicit evaluator-kind error"
@@ -1091,7 +1102,7 @@ fn contract_parser_rejects_criterion_verifier_kind_not_declared_top_level() {
     rewrite_contract_verifiers(&contract_path, &["code_quality"]);
 
     let error = read_execution_contract(&contract_path)
-        .expect_err("undeclared criterion verifier kind should fail parser validation");
+        .expect_err_or_abort("undeclared criterion verifier kind should fail parser validation");
     assert!(
         error.message().contains("undeclared"),
         "criterion verifier kinds not declared in top-level verifiers should fail closed"
@@ -1116,7 +1127,7 @@ fn contract_parser_rejects_criterion_with_multiple_verifier_owners() {
     );
 
     let error = read_execution_contract(&contract_path)
-        .expect_err("shared criterion verifier ownership should fail parser validation");
+        .expect_err_or_abort("shared criterion verifier ownership should fail parser validation");
     assert!(
         error
             .message()
@@ -1139,8 +1150,9 @@ fn contract_parser_rejects_criterion_with_empty_verifier_owners() {
     );
     rewrite_first_contract_criterion_verifier_types(&contract_path, &[]);
 
-    let error = read_execution_contract(&contract_path)
-        .expect_err("ownerless criterion verifier ownership should fail parser validation");
+    let error = read_execution_contract(&contract_path).expect_err_or_abort(
+        "ownerless criterion verifier ownership should fail parser validation",
+    );
     assert!(
         error
             .message()
@@ -1162,8 +1174,8 @@ fn contract_parser_preserves_explicit_empty_evidence_requirements_list() {
         ContractArtifactFixture::EmptyEvidenceRequirements,
     );
     let contract = read_execution_contract(&contract_path)
-        .expect("contract with explicit empty evidence_requirements should parse");
-    let json = serde_json::to_value(contract).expect("contract should be serializable");
+        .expect_or_abort("contract with explicit empty evidence_requirements should parse");
+    let json = serde_json::to_value(contract).expect_or_abort("contract should be serializable");
 
     assert_eq!(json["evidence_requirements"], json!([]));
 }
@@ -1181,7 +1193,7 @@ fn contract_parser_rejects_unsupported_satisfaction_rule_with_reason_mapping() {
         ContractArtifactFixture::UnsupportedSatisfactionRule,
     );
     let error = read_execution_contract(&contract_path)
-        .expect_err("unsupported satisfaction_rule should fail parser validation");
+        .expect_err_or_abort("unsupported satisfaction_rule should fail parser validation");
 
     assert!(
         error
@@ -1211,9 +1223,9 @@ fn evaluation_parser_preserves_authoritative_sequence_and_explicit_empty_lists()
         &packet_fingerprint,
         EvaluationArtifactFixture::Valid,
     );
-    let report =
-        read_evaluation_report(&report_path).expect("valid evaluation artifact should parse");
-    let json = serde_json::to_value(report).expect("evaluation should be serializable");
+    let report = read_evaluation_report(&report_path)
+        .expect_or_abort("valid evaluation artifact should parse");
+    let json = serde_json::to_value(report).expect_or_abort("evaluation should be serializable");
 
     assert_eq!(json["authoritative_sequence"], Value::from(19));
     assert_eq!(json["affected_steps"], json!([]));
@@ -1244,7 +1256,7 @@ fn evaluation_parser_rejects_unsupported_report_version() {
         EvaluationArtifactFixture::UnsupportedVersion,
     );
     let error = read_evaluation_report(&report_path)
-        .expect_err("unsupported report_version should fail parser validation");
+        .expect_err_or_abort("unsupported report_version should fail parser validation");
 
     assert!(
         error.message().contains("report_version"),
@@ -1266,8 +1278,9 @@ fn handoff_parser_preserves_authoritative_sequence_and_explicit_empty_lists() {
     );
     let contract_fingerprint = markdown_field(&contract_path, "Contract Fingerprint");
     let handoff_path = write_handoff_artifact(state, repo, &contract_fingerprint, true);
-    let handoff = read_execution_handoff(&handoff_path).expect("valid handoff should parse");
-    let json = serde_json::to_value(handoff).expect("handoff should be serializable");
+    let handoff =
+        read_execution_handoff(&handoff_path).expect_or_abort("valid handoff should parse");
+    let json = serde_json::to_value(handoff).expect_or_abort("handoff should be serializable");
 
     assert_eq!(json["authoritative_sequence"], Value::from(21));
     assert_eq!(json["open_criteria"], json!([]));
@@ -1295,7 +1308,7 @@ fn handoff_parser_rejects_missing_concrete_next_action() {
     let contract_fingerprint = markdown_field(&contract_path, "Contract Fingerprint");
     let handoff_path = write_handoff_artifact(state, repo, &contract_fingerprint, false);
     let error = read_execution_handoff(&handoff_path)
-        .expect_err("handoff with blank next_action should fail parser validation");
+        .expect_err_or_abort("handoff with blank next_action should fail parser validation");
 
     assert!(
         error.message().contains("next action"),
@@ -1316,9 +1329,9 @@ fn evidence_artifact_parser_preserves_repo_state_traceability_fields() {
         ContractArtifactFixture::Valid,
     );
     let evidence_path = write_evidence_artifact(state, repo, true);
-    let evidence =
-        read_evidence_artifact(&evidence_path).expect("valid evidence artifact should parse");
-    let json = serde_json::to_value(evidence).expect("evidence should be serializable");
+    let evidence = read_evidence_artifact(&evidence_path)
+        .expect_or_abort("valid evidence artifact should parse");
+    let json = serde_json::to_value(evidence).expect_or_abort("evidence should be serializable");
 
     assert_eq!(json["evidence_artifact_version"], Value::from(1));
     assert_eq!(
@@ -1332,14 +1345,14 @@ fn evidence_artifact_parser_preserves_repo_state_traceability_fields() {
     assert!(
         json["repo_state_baseline_head_sha"]
             .as_str()
-            .expect("head sha should be a string")
+            .expect_or_abort("head sha should be a string")
             .len()
             >= 40
     );
     assert!(
         json["repo_state_baseline_worktree_fingerprint"]
             .as_str()
-            .expect("worktree fingerprint should be a string")
+            .expect_or_abort("worktree fingerprint should be a string")
             .len()
             >= 64
     );
@@ -1359,7 +1372,7 @@ fn evidence_artifact_parser_rejects_unsupported_version() {
     );
     let evidence_path = write_evidence_artifact(state, repo, false);
     let error = read_evidence_artifact(&evidence_path)
-        .expect_err("unsupported evidence_artifact_version should fail parser validation");
+        .expect_err_or_abort("unsupported evidence_artifact_version should fail parser validation");
 
     assert!(
         error.message().contains("evidence_artifact_version"),
@@ -1380,7 +1393,7 @@ fn execution_evidence_parser_preserves_harness_provenance_fields_when_present() 
     write_file(
         &evidence_path,
         &format!(
-            r#"# Execution Evidence: execution-harness
+            r"# Execution Evidence: execution-harness
 
 **Plan Path:** {PLAN_REL}
 **Plan Revision:** 1
@@ -1402,16 +1415,16 @@ fn execution_evidence_parser_preserves_harness_provenance_fields_when_present() 
 **Source Handoff Fingerprint:** `handoff-fingerprint-21`
 **Repo State Baseline Head SHA:** {head_sha}
 **Repo State Baseline Worktree Fingerprint:** {worktree_fingerprint}
-"#
+"
         ),
     );
 
     let evidence =
-        read_execution_evidence(&evidence_path).expect("execution evidence should parse");
+        read_execution_evidence(&evidence_path).expect_or_abort("execution evidence should parse");
     let step = evidence
         .steps
         .first()
-        .expect("execution evidence should contain one step");
+        .expect_or_abort("execution evidence should contain one step");
 
     assert_eq!(
         step.source_contract_path.as_deref(),
@@ -1452,7 +1465,7 @@ fn task_packet_helper_builds_harness_contract_provenance_for_matching_packets() 
     let expected_fingerprint = packet.packet_fingerprint.clone();
 
     let provenance = build_harness_contract_provenance(&[packet])
-        .expect("matching packet provenance should build for harness contracts");
+        .expect_or_abort("matching packet provenance should build for harness contracts");
 
     assert_eq!(provenance.source_plan_path, PLAN_REL);
     assert_eq!(provenance.source_spec_path, SPEC_REL);
@@ -1471,7 +1484,7 @@ fn task_packet_helper_rejects_mismatched_plan_or_spec_provenance() {
     mismatched.source_spec_revision += 1;
 
     let error = build_harness_contract_provenance(&[first, mismatched])
-        .expect_err("mismatched packet provenance should fail closed");
+        .expect_err_or_abort("mismatched packet provenance should fail closed");
 
     assert!(
         error.message().contains("task packet provenance"),
@@ -1482,10 +1495,10 @@ fn task_packet_helper_rejects_mismatched_plan_or_spec_provenance() {
 #[test]
 fn telemetry_counters_default_serialization_matches_exact_counter_key_vocabulary() {
     let counters_json = serde_json::to_value(HarnessTelemetryCounters::default())
-        .expect("HarnessTelemetryCounters should serialize");
+        .expect_or_abort("HarnessTelemetryCounters should serialize");
     let counter_object = counters_json
         .as_object()
-        .expect("HarnessTelemetryCounters should serialize to a JSON object");
+        .expect_or_abort("HarnessTelemetryCounters should serialize to a JSON object");
 
     let mut serialized_keys: Vec<String> = counter_object.keys().cloned().collect();
     serialized_keys.sort_unstable();
@@ -1520,7 +1533,7 @@ fn worktree_lease_contract_exposes_closed_lifecycle_vocabulary() {
     );
     assert_eq!(
         serde_json::to_value(WorktreeLeaseState::ReviewPassedPendingReconcile)
-            .expect("lease state should serialize"),
+            .expect_or_abort("lease state should serialize"),
         Value::String(String::from("review_passed_pending_reconcile"))
     );
 }
@@ -1702,7 +1715,7 @@ fn downgrade_record_contract_rejects_missing_blocking_evidence_summary() {
     };
 
     let error = validate_execution_topology_downgrade_record(&downgrade)
-        .expect_err("downgrade records missing blocking evidence summary should fail");
+        .expect_err_or_abort("downgrade records missing blocking evidence summary should fail");
     assert!(
         error.message.contains("blocking_evidence.summary"),
         "structured evidence validation should surface the missing summary field"
@@ -1742,7 +1755,7 @@ fn downgrade_record_contract_rejects_empty_changed_or_blocked_stage() {
     };
 
     let error = validate_execution_topology_downgrade_record(&downgrade)
-        .expect_err("downgrade records missing changed_or_blocked_stage should fail");
+        .expect_err_or_abort("downgrade records missing changed_or_blocked_stage should fail");
     assert!(
         error
             .message
@@ -1784,7 +1797,7 @@ fn downgrade_record_contract_rejects_empty_expected_response() {
     };
 
     let error = validate_execution_topology_downgrade_record(&downgrade)
-        .expect_err("downgrade records missing expected_response should fail");
+        .expect_err_or_abort("downgrade records missing expected_response should fail");
     assert!(
         error.message.contains("operator_impact.expected_response"),
         "structured operator-impact validation should surface the missing response field"

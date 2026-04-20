@@ -19,8 +19,10 @@ pub fn assert_generated_agent_docs_current(root: &Path) {
 fn assert_generated_skill_docs_current_structural(root: &Path) {
     let skills_dir = root.join("skills");
     let mut template_paths = fs::read_dir(&skills_dir)
-        .unwrap_or_else(|error| panic!("{} should be readable: {error}", skills_dir.display()))
-        .filter_map(|entry| entry.ok())
+        .unwrap_or_else(|error| {
+            featureforge::abort!("{} should be readable: {error}", skills_dir.display())
+        })
+        .filter_map(Result::ok)
         .filter(|entry| {
             entry
                 .file_type()
@@ -85,7 +87,7 @@ fn assert_generator_check_current(root: &Path, script: &str, display_command: &s
         match command.output() {
             Ok(output) => Some((candidate, output)),
             Err(error) if error.kind() == ErrorKind::NotFound => None,
-            Err(error) => panic!(
+            Err(error) => featureforge::abort!(
                 "{display_command} should be runnable from {}: {error}",
                 root.display()
             ),
@@ -93,7 +95,7 @@ fn assert_generator_check_current(root: &Path, script: &str, display_command: &s
     });
 
     let Some((runtime, output)) = runtime else {
-        panic!(
+        featureforge::abort!(
             "{display_command} requires a JS runtime (`node` or `nodejs`) on PATH for generator contract verification."
         );
     };
@@ -227,7 +229,7 @@ fn insert_generated_header(content: &str) -> String {
     let frontmatter_end = content
         .find("\n---\n")
         .and_then(|index| (index >= 4).then_some(index))
-        .unwrap_or_else(|| panic!("Failed to locate closing frontmatter delimiter."));
+        .unwrap_or_else(|| featureforge::abort!("Failed to locate closing frontmatter delimiter."));
     let prefix = &content[..frontmatter_end + 5];
     let suffix = content[frontmatter_end + 5..].trim_start_matches('\n');
     format!("{prefix}{header}\n\n{suffix}")
@@ -250,7 +252,7 @@ fn parse_agent_source(path: &Path, raw: &str) -> AgentSource {
         .find("\n---\n")
         .and_then(|index| (index >= 4).then_some(index))
         .unwrap_or_else(|| {
-            panic!(
+            featureforge::abort!(
                 "Failed to locate closing frontmatter delimiter in {}.",
                 path.display()
             )
@@ -264,29 +266,34 @@ fn parse_agent_source(path: &Path, raw: &str) -> AgentSource {
         .find_map(|line| line.strip_prefix("name:"))
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| panic!("Missing name in {} frontmatter.", path.display()))
+        .unwrap_or_else(|| featureforge::abort!("Missing name in {} frontmatter.", path.display()))
         .to_owned();
-    let description = if let Some(block_start) = frontmatter.find("\ndescription: |\n") {
-        let description_lines = frontmatter[block_start + "\ndescription: |\n".len()..]
-            .lines()
-            .take_while(|line| line.starts_with(' ') || line.starts_with('\t'))
-            .map(|line| line.trim_start().to_owned())
-            .collect::<Vec<_>>();
-        assert!(
-            !description_lines.is_empty(),
-            "Missing description in {} frontmatter.",
-            path.display()
-        );
-        description_lines.join("\n")
-    } else {
-        frontmatter
-            .lines()
-            .find_map(|line| line.strip_prefix("description:"))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| panic!("Missing description in {} frontmatter.", path.display()))
-            .to_owned()
-    };
+    let description = frontmatter.find("\ndescription: |\n").map_or_else(
+        || {
+            frontmatter
+                .lines()
+                .find_map(|line| line.strip_prefix("description:"))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| {
+                    featureforge::abort!("Missing description in {} frontmatter.", path.display())
+                })
+                .to_owned()
+        },
+        |block_start| {
+            let description_lines = frontmatter[block_start + "\ndescription: |\n".len()..]
+                .lines()
+                .take_while(|line| line.starts_with(' ') || line.starts_with('\t'))
+                .map(|line| line.trim_start().to_owned())
+                .collect::<Vec<_>>();
+            assert!(
+                !description_lines.is_empty(),
+                "Missing description in {} frontmatter.",
+                path.display()
+            );
+            description_lines.join("\n")
+        },
+    );
     AgentSource {
         name,
         description,
@@ -345,7 +352,9 @@ fn insert_markdown_header(content: &str) -> String {
         .find("\n---\n")
         .and_then(|index| (index >= 4).then_some(index))
         .unwrap_or_else(|| {
-            panic!("Failed to locate closing frontmatter delimiter in generated markdown agent.")
+            featureforge::abort!(
+                "Failed to locate closing frontmatter delimiter in generated markdown agent."
+            )
         });
     let prefix = &content[..frontmatter_end + 5];
     let suffix = content[frontmatter_end + 5..].trim_start_matches('\n');
@@ -364,8 +373,9 @@ fn escape_toml_multiline_basic_string(value: &str) -> String {
 }
 
 fn read_utf8(path: &Path) -> String {
-    fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()))
+    fs::read_to_string(path).unwrap_or_else(|error| {
+        featureforge::abort!("{} should be readable: {error}", path.display())
+    })
 }
 
 fn relative_display(root: &Path, path: &Path) -> String {

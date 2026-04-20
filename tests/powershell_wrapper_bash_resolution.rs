@@ -1,3 +1,5 @@
+//! Powershell wrapper bash resolution integration/benchmark crate.
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::path::PathBuf;
 
 fn repo_root() -> PathBuf {
@@ -13,7 +15,7 @@ fn standalone_runtime_has_no_shell_compat_launchers() {
             continue;
         }
         let entries = std::fs::read_dir(&dir)
-            .expect("compat dir should be readable")
+            .expect_or_abort("compat dir should be readable")
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
         assert!(
@@ -22,7 +24,7 @@ fn standalone_runtime_has_no_shell_compat_launchers() {
         );
     }
     let bin_entries = std::fs::read_dir(root.join("bin"))
-        .expect("bin dir should be readable")
+        .expect_or_abort("bin dir should be readable")
         .filter_map(Result::ok)
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| name.ends_with("runtime-common.sh") || name.ends_with("pwsh-common.ps1"))

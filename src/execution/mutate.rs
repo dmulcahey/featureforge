@@ -97,105 +97,163 @@ use crate::paths::{
 };
 
 #[derive(Debug, Clone, Serialize)]
+/// Runtime struct.
 pub struct CloseCurrentTaskOutput {
+    /// Runtime field.
     pub action: String,
+    /// Runtime field.
     pub task_number: u32,
+    /// Runtime field.
     pub dispatch_validation_action: String,
+    /// Runtime field.
     pub closure_action: String,
+    /// Runtime field.
     pub task_closure_status: String,
+    /// Runtime field.
     pub superseded_task_closure_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub closure_record_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub required_follow_up: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub blocking_scope: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub blocking_task: Option<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// Runtime field.
     pub blocking_reason_codes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub authoritative_next_action: Option<String>,
+    /// Runtime field.
     pub trace_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+/// Runtime struct.
 pub struct RecordBranchClosureOutput {
+    /// Runtime field.
     pub action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub branch_closure_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub rederive_via_workflow_operator: Option<bool>,
+    /// Runtime field.
     pub superseded_branch_closure_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub required_follow_up: Option<String>,
+    /// Runtime field.
     pub trace_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+/// Runtime struct.
 pub struct AdvanceLateStageOutput {
+    /// Runtime field.
     pub action: String,
+    /// Runtime field.
     pub stage_path: String,
+    /// Runtime field.
     pub delegated_primitive: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub branch_closure_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub dispatch_id: Option<String>,
+    /// Runtime field.
     pub result: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub required_follow_up: Option<String>,
+    /// Runtime field.
     pub trace_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+/// Runtime struct.
 pub struct RecordQaOutput {
+    /// Runtime field.
     pub action: String,
+    /// Runtime field.
     pub branch_closure_id: String,
+    /// Runtime field.
     pub result: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub rederive_via_workflow_operator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub required_follow_up: Option<String>,
+    /// Runtime field.
     pub trace_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+/// Runtime struct.
 pub struct TransferOutput {
+    /// Runtime field.
     pub action: String,
+    /// Runtime field.
     pub scope: String,
+    /// Runtime field.
     pub to: String,
+    /// Runtime field.
     pub reason: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub record_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub rederive_via_workflow_operator: Option<bool>,
+    /// Runtime field.
     pub trace_summary: String,
 }
 
+#[derive(Clone, Copy)]
 struct CurrentFinalReviewAuthorityCheck<'a> {
     branch_closure_id: &'a str,
     dispatch_id: &'a str,
@@ -277,7 +335,7 @@ fn open_step_state_record(
     }
 }
 
-fn next_action_kind_label(kind: &NextActionKind) -> &'static str {
+const fn next_action_kind_label(kind: &NextActionKind) -> &'static str {
     match kind {
         NextActionKind::Begin => "begin",
         NextActionKind::Resume => "resume",
@@ -327,362 +385,375 @@ fn begin_failure_class_from_blocking_reason_codes(reason_codes: &[String]) -> Fa
     FailureClass::InvalidStepTransition
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn begin(
     runtime: &ExecutionRuntime,
     args: &BeginArgs,
 ) -> Result<PlanExecutionStatus, JsonFailure> {
-    let request = normalize_begin_request(args);
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let mut context = load_execution_context_for_mutation(runtime, &args.plan)?;
-    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
-    materialize_legacy_open_step_state_if_needed(runtime, &context)?;
-    context = load_execution_context_for_mutation(runtime, &args.plan)?;
-    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
-    require_preflight_acceptance(&context)?;
-    let mut authoritative_state =
-        Some(load_or_initialize_authoritative_transition_state(&context)?);
-    enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Begin)?;
-    enforce_active_contract_scope(
-        authoritative_state.as_ref(),
-        StepCommand::Begin,
-        request.task,
-        request.step,
-    )?;
-    let begin_status = status_from_context_with_shared_routing(runtime, &context, false)?;
-    let task_review_dispatch_id = current_task_review_dispatch_id_for_status(
-        &context,
-        &begin_status,
-        load_status_authoritative_overlay_checked(&context)?.as_ref(),
-    );
-    let shared_next_action_decision = compute_next_action_decision_with_inputs(
-        &context,
-        &begin_status,
-        &context.plan_rel,
-        false,
-        task_review_dispatch_id.as_deref(),
-        None,
-        false,
-    );
-
-    let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
-        JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "Requested task/step does not exist in the approved plan.",
-        )
-    })?;
-    if context.steps[step_index].checked {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "begin may not target a completed step.",
-        ));
-    }
-
-    match context.plan_document.execution_mode.as_str() {
-        "none" => match request.execution_mode.as_deref() {
-            Some("featureforge:executing-plans" | "featureforge:subagent-driven-development") => {
-                context.plan_document.execution_mode = request.execution_mode.unwrap();
-            }
-            _ => {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidExecutionMode,
-                    "The first begin for a plan revision must supply a valid execution mode.",
-                ));
-            }
-        },
-        existing_mode => {
-            if request
-                .execution_mode
-                .as_deref()
-                .is_some_and(|candidate| candidate != existing_mode)
-            {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidExecutionMode,
-                    "begin may not change the persisted execution mode.",
-                ));
-            }
-        }
-    }
-
-    let decision = shared_next_action_decision.ok_or_else(|| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "begin failed closed because the runtime could not derive an authoritative shared next-action decision for `{}`.",
-                args.plan.display()
-            ),
-        )
-    })?;
-    let begin_allowed = matches!(
-        decision.kind,
-        NextActionKind::Begin | NextActionKind::Resume
-    ) && decision.task_number == Some(request.task)
-        && decision.step_number == Some(request.step);
-    if !begin_allowed {
-        let blocking_task = decision
-            .blocking_task
-            .map_or_else(|| String::from("none"), |value| value.to_string());
-        let blocking_reason_codes = if decision.blocking_reason_codes.is_empty() {
-            String::from("none")
-        } else {
-            decision.blocking_reason_codes.join(", ")
-        };
-        let failure_class =
-            begin_failure_class_from_blocking_reason_codes(&decision.blocking_reason_codes);
-        return Err(JsonFailure::new(
-            failure_class,
-            format!(
-                "begin failed closed because the next legal action is `{}` (phase_detail `{}`; task {:?}; step {:?}; blocking_task {}; reason_codes [{}]).",
-                next_action_kind_label(&decision.kind),
-                decision.phase_detail,
-                decision.task_number,
-                decision.step_number,
-                blocking_task,
-                blocking_reason_codes,
-            ),
-        ));
-    }
-
-    if let Some(active) = context
-        .steps
-        .iter()
-        .find(|step| step.note_state == Some(crate::execution::state::NoteState::Active))
     {
-        if active.task_number == request.task && active.step_number == request.step {
-            let consumed_execution_reentry_follow_up =
-                consume_execution_reentry_repair_follow_up(authoritative_state.as_mut())?;
-            if consumed_execution_reentry_follow_up
-                && let Some(authoritative_state) = authoritative_state.as_mut()
-            {
-                authoritative_state.persist_if_dirty_with_failpoint(None)?;
-                let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
-                return status_with_shared_routing_or_context(runtime, &args.plan, &reloaded);
-            }
-            return status_with_shared_routing_or_context(runtime, &args.plan, &context);
-        }
-        return Err(JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "A different step is already active.",
-        ));
-    }
-    let blocked_step = context
-        .steps
-        .iter()
-        .find(|step| step.note_state == Some(crate::execution::state::NoteState::Blocked));
-    let resuming_blocked_same_step = blocked_step.is_some_and(|blocked| {
-        blocked.task_number == request.task && blocked.step_number == request.step
-    });
-    if blocked_step.is_some() && !resuming_blocked_same_step {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "begin may not bypass existing blocked work.",
-        ));
-    }
-    if let Some(interrupted_step_index) = context
-        .steps
-        .iter()
-        .position(|step| step.note_state == Some(crate::execution::state::NoteState::Interrupted))
-    {
-        let interrupted_task = context.steps[interrupted_step_index].task_number;
-        let interrupted_step = context.steps[interrupted_step_index].step_number;
-        if interrupted_task != request.task || interrupted_step != request.step {
-            let interrupted_is_earlier = interrupted_task < request.task
-                || (interrupted_task == request.task && interrupted_step < request.step);
-            if interrupted_is_earlier {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidStepTransition,
-                    "Interrupted work must resume on the same step.",
-                ));
-            }
-            // A later parked marker cannot mask an earlier stale-boundary reopen/begin target.
-            context.steps[interrupted_step_index].note_state = None;
-            context.steps[interrupted_step_index].note_summary.clear();
-        }
-    }
-
-    context.steps[step_index].note_state = Some(crate::execution::state::NoteState::Active);
-    context.steps[step_index].note_summary = truncate_summary(&require_normalized_text(
-        &context.steps[step_index].title,
-        FailureClass::InvalidCommandInput,
-        "Execution note summaries may not be blank after whitespace normalization.",
-    )?);
-    if let Some(authoritative_state) = authoritative_state.as_mut() {
-        authoritative_state.record_open_step_state(open_step_state_record(
-            &context,
+        let request = normalize_begin_request(args);
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let mut context = load_execution_context_for_mutation(runtime, &args.plan)?;
+        validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+        materialize_legacy_open_step_state_if_needed(runtime, &context)?;
+        context = load_execution_context_for_mutation(runtime, &args.plan)?;
+        validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+        require_preflight_acceptance(&context)?;
+        let mut authoritative_state =
+            Some(load_or_initialize_authoritative_transition_state(&context)?);
+        enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Begin)?;
+        enforce_active_contract_scope(
+            authoritative_state.as_ref(),
+            StepCommand::Begin,
             request.task,
             request.step,
-            crate::execution::state::NoteState::Active,
-            &context.steps[step_index].note_summary,
-        ))?;
-        authoritative_state.ensure_initial_dispatch_strategy_checkpoint(
+        )?;
+        let begin_status = status_from_context_with_shared_routing(runtime, &context, false)?;
+        let task_review_dispatch_id = current_task_review_dispatch_id_for_status(
             &context,
-            &context.plan_document.execution_mode,
-        )?;
-        consume_execution_reentry_repair_follow_up(Some(authoritative_state))?;
-    }
+            &begin_status,
+            load_status_authoritative_overlay_checked(&context)?.as_ref(),
+        );
+        let shared_next_action_decision = compute_next_action_decision_with_inputs(
+            &context,
+            &begin_status,
+            &context.plan_rel,
+            false,
+            task_review_dispatch_id.as_deref(),
+            None,
+            false,
+        );
 
-    let rendered_plan = render_plan_source(
-        &context.plan_source,
-        &context.plan_document.execution_mode,
-        &context.steps,
-    );
-    write_atomic(&context.plan_abs, &rendered_plan)?;
-    if let Some(authoritative_state) = authoritative_state.as_ref() {
-        persist_authoritative_state_with_rollback(
-            authoritative_state,
-            &context.plan_abs,
+        let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "Requested task/step does not exist in the approved plan.",
+            )
+        })?;
+        if context.steps[step_index].checked {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "begin may not target a completed step.",
+            ));
+        }
+
+        match context.plan_document.execution_mode.as_str() {
+            "none" => match request.execution_mode.as_deref() {
+                Some(
+                    mode @ ("featureforge:executing-plans"
+                    | "featureforge:subagent-driven-development"),
+                ) => {
+                    context.plan_document.execution_mode.clear();
+                    context.plan_document.execution_mode.push_str(mode);
+                }
+                _ => {
+                    return Err(JsonFailure::new(
+                        FailureClass::InvalidExecutionMode,
+                        "The first begin for a plan revision must supply a valid execution mode.",
+                    ));
+                }
+            },
+            existing_mode => {
+                if request
+                    .execution_mode
+                    .as_deref()
+                    .is_some_and(|candidate| candidate != existing_mode)
+                {
+                    return Err(JsonFailure::new(
+                        FailureClass::InvalidExecutionMode,
+                        "begin may not change the persisted execution mode.",
+                    ));
+                }
+            }
+        }
+
+        let decision = shared_next_action_decision.ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "begin failed closed because the runtime could not derive an authoritative shared next-action decision for `{}`.",
+                    args.plan.display()
+                ),
+            )
+        })?;
+        let begin_allowed = matches!(
+            decision.kind,
+            NextActionKind::Begin | NextActionKind::Resume
+        ) && decision.task_number == Some(request.task)
+            && decision.step_number == Some(request.step);
+        if !begin_allowed {
+            let blocking_task = decision
+                .blocking_task
+                .map_or_else(|| String::from("none"), |value| value.to_string());
+            let blocking_reason_codes = if decision.blocking_reason_codes.is_empty() {
+                String::from("none")
+            } else {
+                decision.blocking_reason_codes.join(", ")
+            };
+            let failure_class =
+                begin_failure_class_from_blocking_reason_codes(&decision.blocking_reason_codes);
+            return Err(JsonFailure::new(
+                failure_class,
+                format!(
+                    "begin failed closed because the next legal action is `{}` (phase_detail `{}`; task {:?}; step {:?}; blocking_task {}; reason_codes [{}]).",
+                    next_action_kind_label(&decision.kind),
+                    decision.phase_detail,
+                    decision.task_number,
+                    decision.step_number,
+                    blocking_task,
+                    blocking_reason_codes,
+                ),
+            ));
+        }
+
+        if let Some(active) = context
+            .steps
+            .iter()
+            .find(|step| step.note_state == Some(crate::execution::state::NoteState::Active))
+        {
+            if active.task_number == request.task && active.step_number == request.step {
+                let consumed_execution_reentry_follow_up =
+                    consume_execution_reentry_repair_follow_up(authoritative_state.as_mut())?;
+                if consumed_execution_reentry_follow_up
+                    && let Some(authoritative_state) = authoritative_state.as_mut()
+                {
+                    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+                    let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
+                    return status_with_shared_routing_or_context(runtime, &args.plan, &reloaded);
+                }
+                return status_with_shared_routing_or_context(runtime, &args.plan, &context);
+            }
+            return Err(JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "A different step is already active.",
+            ));
+        }
+        let blocked_step = context
+            .steps
+            .iter()
+            .find(|step| step.note_state == Some(crate::execution::state::NoteState::Blocked));
+        let resuming_blocked_same_step = blocked_step.is_some_and(|blocked| {
+            blocked.task_number == request.task && blocked.step_number == request.step
+        });
+        if blocked_step.is_some() && !resuming_blocked_same_step {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "begin may not bypass existing blocked work.",
+            ));
+        }
+        if let Some(interrupted_step_index) = context.steps.iter().position(|step| {
+            step.note_state == Some(crate::execution::state::NoteState::Interrupted)
+        }) {
+            let interrupted_task = context.steps[interrupted_step_index].task_number;
+            let interrupted_step = context.steps[interrupted_step_index].step_number;
+            if interrupted_task != request.task || interrupted_step != request.step {
+                let interrupted_is_earlier = interrupted_task < request.task
+                    || (interrupted_task == request.task && interrupted_step < request.step);
+                if interrupted_is_earlier {
+                    return Err(JsonFailure::new(
+                        FailureClass::InvalidStepTransition,
+                        "Interrupted work must resume on the same step.",
+                    ));
+                }
+                // A later parked marker cannot mask an earlier stale-boundary reopen/begin target.
+                context.steps[interrupted_step_index].note_state = None;
+                context.steps[interrupted_step_index].note_summary.clear();
+            }
+        }
+
+        context.steps[step_index].note_state = Some(crate::execution::state::NoteState::Active);
+        context.steps[step_index].note_summary = truncate_summary(&require_normalized_text(
+            &context.steps[step_index].title,
+            FailureClass::InvalidCommandInput,
+            "Execution note summaries may not be blank after whitespace normalization.",
+        )?);
+        if let Some(authoritative_state) = authoritative_state.as_mut() {
+            authoritative_state.record_open_step_state(open_step_state_record(
+                &context,
+                request.task,
+                request.step,
+                crate::execution::state::NoteState::Active,
+                &context.steps[step_index].note_summary,
+            ))?;
+            authoritative_state.ensure_initial_dispatch_strategy_checkpoint(
+                &context,
+                &context.plan_document.execution_mode,
+            )?;
+            consume_execution_reentry_repair_follow_up(Some(authoritative_state))?;
+        }
+
+        let rendered_plan = render_plan_source(
             &context.plan_source,
-            &context.evidence_abs,
-            context.evidence.source.as_deref(),
-            "begin_after_plan_write_before_authoritative_state_publish",
-        )?;
+            &context.plan_document.execution_mode,
+            &context.steps,
+        );
+        write_atomic(&context.plan_abs, &rendered_plan)?;
+        if let Some(authoritative_state) = authoritative_state.as_ref() {
+            persist_authoritative_state_with_rollback(
+                authoritative_state,
+                &context.plan_abs,
+                &context.plan_source,
+                &context.evidence_abs,
+                context.evidence.source.as_deref(),
+                "begin_after_plan_write_before_authoritative_state_publish",
+            )?;
+        }
+        let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
+        status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
     }
-    let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
-    status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn complete(
     runtime: &ExecutionRuntime,
     args: &CompleteArgs,
 ) -> Result<PlanExecutionStatus, JsonFailure> {
-    let request = normalize_complete_request(args)?;
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let mut context = load_execution_context_for_mutation(runtime, &args.plan)?;
-    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
-    materialize_legacy_open_step_state_if_needed(runtime, &context)?;
-    context = load_execution_context_for_mutation(runtime, &args.plan)?;
-    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
-    normalize_or_seed_source(&request.source, &mut context.plan_document.execution_mode)?;
-    let mut authoritative_state =
-        Some(load_or_initialize_authoritative_transition_state(&context)?);
-    enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Complete)?;
-    enforce_active_contract_scope(
-        authoritative_state.as_ref(),
-        StepCommand::Complete,
-        request.task,
-        request.step,
-    )?;
-    let provenance = authoritative_state
-        .as_ref()
-        .map(|state| state.evidence_provenance())
-        .unwrap_or_default();
+    {
+        let request = normalize_complete_request(args)?;
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let mut context = load_execution_context_for_mutation(runtime, &args.plan)?;
+        validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+        materialize_legacy_open_step_state_if_needed(runtime, &context)?;
+        context = load_execution_context_for_mutation(runtime, &args.plan)?;
+        validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+        normalize_or_seed_source(&request.source, &mut context.plan_document.execution_mode)?;
+        let mut authoritative_state =
+            Some(load_or_initialize_authoritative_transition_state(&context)?);
+        enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Complete)?;
+        enforce_active_contract_scope(
+            authoritative_state.as_ref(),
+            StepCommand::Complete,
+            request.task,
+            request.step,
+        )?;
+        let provenance = authoritative_state
+            .as_ref()
+            .map(AuthoritativeTransitionState::evidence_provenance)
+            .unwrap_or_default();
 
-    let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
-        JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "Requested task/step does not exist in the approved plan.",
-        )
-    })?;
-    if context.steps[step_index].note_state != Some(crate::execution::state::NoteState::Active) {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "complete may target only the current active step.",
-        ));
-    }
-    if context.steps[step_index].checked {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "complete may not directly refresh an already checked step.",
-        ));
-    }
+        let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "Requested task/step does not exist in the approved plan.",
+            )
+        })?;
+        if context.steps[step_index].note_state != Some(crate::execution::state::NoteState::Active)
+        {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "complete may target only the current active step.",
+            ));
+        }
+        if context.steps[step_index].checked {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "complete may not directly refresh an already checked step.",
+            ));
+        }
 
-    let files = if request.files.is_empty() {
-        default_files_for_task(&context, request.task)
-    } else {
-        canonicalize_files(&request.files)?
-    };
-    let files = canonicalize_repo_visible_paths(&context.runtime.repo_root, &files)?;
-    let file_proofs = files
-        .iter()
-        .map(|path| FileProof {
-            path: path.clone(),
-            proof: current_file_proof(&context.runtime.repo_root, path),
-        })
-        .collect::<Vec<_>>();
+        let files = if request.files.is_empty() {
+            default_files_for_task(&context, request.task)
+        } else {
+            canonicalize_files(&request.files)?
+        };
+        let files = canonicalize_repo_visible_paths(&context.runtime.repo_root, &files)?;
+        let file_proofs = files
+            .iter()
+            .map(|path| FileProof {
+                path: path.clone(),
+                proof: current_file_proof(&context.runtime.repo_root, path),
+            })
+            .collect::<Vec<_>>();
 
-    context.steps[step_index].checked = true;
-    context.steps[step_index].note_state = None;
-    context.steps[step_index].note_summary.clear();
-    if let Some(authoritative_state) = authoritative_state.as_mut() {
-        authoritative_state.clear_open_step_state()?;
-    }
+        context.steps[step_index].checked = true;
+        context.steps[step_index].note_state = None;
+        context.steps[step_index].note_summary.clear();
+        if let Some(authoritative_state) = authoritative_state.as_mut() {
+            authoritative_state.clear_open_step_state()?;
+        }
 
-    let contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
-    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
-    let packet_fingerprint = compute_packet_fingerprint(PacketFingerprintInput {
-        plan_path: &context.plan_rel,
-        plan_revision: context.plan_document.plan_revision,
-        plan_fingerprint: &contract_plan_fingerprint,
-        source_spec_path: &context.plan_document.source_spec_path,
-        source_spec_revision: context.plan_document.source_spec_revision,
-        source_spec_fingerprint: &source_spec_fingerprint,
-        task: request.task,
-        step: request.step,
-    });
-    let recorded_at = Timestamp::now().to_string();
-    let head_sha = context.current_head_sha()?;
-    let new_attempt = EvidenceAttempt {
-        task_number: request.task,
-        step_number: request.step,
-        attempt_number: next_attempt_number(&context.evidence, request.task, request.step),
-        status: String::from("Completed"),
-        recorded_at,
-        execution_source: request.source.clone(),
-        claim: request.claim,
-        files: files.clone(),
-        file_proofs,
-        verify_command: request.verify_command,
-        verification_summary: request.verification_summary,
-        invalidation_reason: String::from("N/A"),
-        packet_fingerprint: Some(packet_fingerprint),
-        head_sha: Some(head_sha.clone()),
-        base_sha: Some(head_sha),
-        source_contract_path: provenance.source_contract_path,
-        source_contract_fingerprint: provenance.source_contract_fingerprint,
-        source_evaluation_report_fingerprint: provenance.source_evaluation_report_fingerprint,
-        evaluator_verdict: provenance.evaluator_verdict,
-        failing_criterion_ids: provenance.failing_criterion_ids,
-        source_handoff_fingerprint: provenance.source_handoff_fingerprint,
-        repo_state_baseline_head_sha: provenance.repo_state_baseline_head_sha,
-        repo_state_baseline_worktree_fingerprint: provenance
-            .repo_state_baseline_worktree_fingerprint,
-    };
+        let contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
+        let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+        let packet_fingerprint = compute_packet_fingerprint(PacketFingerprintInput {
+            plan_path: &context.plan_rel,
+            plan_revision: context.plan_document.plan_revision,
+            plan_fingerprint: &contract_plan_fingerprint,
+            source_spec_path: &context.plan_document.source_spec_path,
+            source_spec_revision: context.plan_document.source_spec_revision,
+            source_spec_fingerprint: &source_spec_fingerprint,
+            task: request.task,
+            step: request.step,
+        });
+        let recorded_at = Timestamp::now().to_string();
+        let head_sha = context.current_head_sha()?;
+        let new_attempt = EvidenceAttempt {
+            task_number: request.task,
+            step_number: request.step,
+            attempt_number: next_attempt_number(&context.evidence, request.task, request.step),
+            status: String::from("Completed"),
+            recorded_at,
+            execution_source: request.source.clone(),
+            claim: request.claim,
+            files,
+            file_proofs,
+            verify_command: request.verify_command,
+            verification_summary: request.verification_summary,
+            invalidation_reason: String::from("N/A"),
+            packet_fingerprint: Some(packet_fingerprint),
+            head_sha: Some(head_sha.clone()),
+            base_sha: Some(head_sha),
+            source_contract_path: provenance.source_contract_path,
+            source_contract_fingerprint: provenance.source_contract_fingerprint,
+            source_evaluation_report_fingerprint: provenance.source_evaluation_report_fingerprint,
+            evaluator_verdict: provenance.evaluator_verdict,
+            failing_criterion_ids: provenance.failing_criterion_ids,
+            source_handoff_fingerprint: provenance.source_handoff_fingerprint,
+            repo_state_baseline_head_sha: provenance.repo_state_baseline_head_sha,
+            repo_state_baseline_worktree_fingerprint: provenance
+                .repo_state_baseline_worktree_fingerprint,
+        };
 
-    context.evidence.attempts.push(new_attempt);
-    context.evidence.format = crate::execution::state::EvidenceFormat::V2;
+        context.evidence.attempts.push(new_attempt);
+        context.evidence.format = crate::execution::state::EvidenceFormat::V2;
 
-    let rendered_plan = render_plan_source(
-        &context.plan_source,
-        &context.plan_document.execution_mode,
-        &context.steps,
-    );
-    let plan_fingerprint = sha256_hex(rendered_plan.as_bytes());
-    let rendered_evidence =
-        render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
-    let _ = consume_execution_reentry_repair_follow_up(authoritative_state.as_mut())?;
+        let rendered_plan = render_plan_source(
+            &context.plan_source,
+            &context.plan_document.execution_mode,
+            &context.steps,
+        );
+        let plan_fingerprint = sha256_hex(rendered_plan.as_bytes());
+        let rendered_evidence =
+            render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
+        let _ = consume_execution_reentry_repair_follow_up(authoritative_state.as_mut())?;
 
-    write_plan_and_evidence_with_rollback(
-        &context.plan_abs,
-        &context.plan_source,
-        &rendered_plan,
-        &context.evidence_abs,
-        context.evidence.source.as_deref(),
-        &rendered_evidence,
-        "complete_after_plan_write",
-    )?;
-    if let Some(authoritative_state) = authoritative_state.as_ref() {
-        persist_authoritative_state_with_rollback(
-            authoritative_state,
+        write_plan_and_evidence_with_rollback(
             &context.plan_abs,
             &context.plan_source,
+            &rendered_plan,
             &context.evidence_abs,
             context.evidence.source.as_deref(),
-            "complete_after_plan_and_evidence_write_before_authoritative_state_publish",
+            &rendered_evidence,
+            "complete_after_plan_write",
         )?;
+        if let Some(authoritative_state) = authoritative_state.as_ref() {
+            persist_authoritative_state_with_rollback(
+                authoritative_state,
+                &context.plan_abs,
+                &context.plan_source,
+                &context.evidence_abs,
+                context.evidence.source.as_deref(),
+                "complete_after_plan_and_evidence_write_before_authoritative_state_publish",
+            )?;
+        }
+        let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
+        status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
     }
-    let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
-    status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn note(
     runtime: &ExecutionRuntime,
     args: &NoteArgs,
@@ -756,120 +827,128 @@ pub fn note(
     status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn reopen(
     runtime: &ExecutionRuntime,
     args: &ReopenArgs,
 ) -> Result<PlanExecutionStatus, JsonFailure> {
-    let request = normalize_reopen_request(args)?;
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let mut context = load_execution_context_for_mutation(runtime, &args.plan)?;
-    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
-    materialize_legacy_open_step_state_if_needed(runtime, &context)?;
-    context = load_execution_context_for_mutation(runtime, &args.plan)?;
-    validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
-    normalize_or_seed_source(&request.source, &mut context.plan_document.execution_mode)?;
-    let mut authoritative_state =
-        Some(load_or_initialize_authoritative_transition_state(&context)?);
-    enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Reopen)?;
-    enforce_active_contract_scope(
-        authoritative_state.as_ref(),
-        StepCommand::Reopen,
-        request.task,
-        request.step,
-    )?;
-
-    let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
-        JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "Requested task/step does not exist in the approved plan.",
-        )
-    })?;
-    if let Some(existing_interrupted_index) = context
-        .steps
-        .iter()
-        .position(|step| step.note_state == Some(crate::execution::state::NoteState::Interrupted))
     {
-        let existing_task = context.steps[existing_interrupted_index].task_number;
-        let existing_step = context.steps[existing_interrupted_index].step_number;
-        if existing_task == request.task && existing_step == request.step {
-            return status_with_shared_routing_or_context(runtime, &args.plan, &context);
-        }
-        let existing_is_earlier = existing_task < request.task
-            || (existing_task == request.task && existing_step < request.step);
-        if existing_is_earlier {
-            return Err(JsonFailure::new(
-                FailureClass::InvalidStepTransition,
-                "reopen may not create a second parked interrupted step while one already exists.",
-            ));
-        }
-        // Clear a later parked marker before reopening an earlier stale-boundary target.
-        context.steps[existing_interrupted_index].note_state = None;
-        context.steps[existing_interrupted_index]
-            .note_summary
-            .clear();
-    }
-    if !context.steps[step_index].checked {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidStepTransition,
-            "reopen may target only a completed step.",
-        ));
-    }
-
-    invalidate_latest_completed_attempt(&mut context, request.task, request.step, &request.reason)?;
-    context.steps[step_index].checked = false;
-    context.steps[step_index].note_state = Some(crate::execution::state::NoteState::Interrupted);
-    context.steps[step_index].note_summary = truncate_summary(&request.reason);
-    context.evidence.format = crate::execution::state::EvidenceFormat::V2;
-    if let Some(authoritative_state) = authoritative_state.as_mut() {
-        authoritative_state.record_open_step_state(open_step_state_record(
-            &context,
+        let request = normalize_reopen_request(args)?;
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let mut context = load_execution_context_for_mutation(runtime, &args.plan)?;
+        validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+        materialize_legacy_open_step_state_if_needed(runtime, &context)?;
+        context = load_execution_context_for_mutation(runtime, &args.plan)?;
+        validate_expected_fingerprint(&context, &request.expect_execution_fingerprint)?;
+        normalize_or_seed_source(&request.source, &mut context.plan_document.execution_mode)?;
+        let mut authoritative_state =
+            Some(load_or_initialize_authoritative_transition_state(&context)?);
+        enforce_authoritative_phase(authoritative_state.as_ref(), StepCommand::Reopen)?;
+        enforce_active_contract_scope(
+            authoritative_state.as_ref(),
+            StepCommand::Reopen,
             request.task,
             request.step,
-            crate::execution::state::NoteState::Interrupted,
-            &context.steps[step_index].note_summary,
-        ))?;
-        authoritative_state.stale_reopen_provenance()?;
-        authoritative_state.record_reopen_strategy_checkpoint(
-            &context,
-            &context.plan_document.execution_mode,
+        )?;
+
+        let step_index = step_index(&context, request.task, request.step).ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "Requested task/step does not exist in the approved plan.",
+            )
+        })?;
+        if let Some(existing_interrupted_index) = context.steps.iter().position(|step| {
+            step.note_state == Some(crate::execution::state::NoteState::Interrupted)
+        }) {
+            let existing_task = context.steps[existing_interrupted_index].task_number;
+            let existing_step = context.steps[existing_interrupted_index].step_number;
+            if existing_task == request.task && existing_step == request.step {
+                return status_with_shared_routing_or_context(runtime, &args.plan, &context);
+            }
+            let existing_is_earlier = existing_task < request.task
+                || (existing_task == request.task && existing_step < request.step);
+            if existing_is_earlier {
+                return Err(JsonFailure::new(
+                    FailureClass::InvalidStepTransition,
+                    "reopen may not create a second parked interrupted step while one already exists.",
+                ));
+            }
+            // Clear a later parked marker before reopening an earlier stale-boundary target.
+            context.steps[existing_interrupted_index].note_state = None;
+            context.steps[existing_interrupted_index]
+                .note_summary
+                .clear();
+        }
+        if !context.steps[step_index].checked {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidStepTransition,
+                "reopen may target only a completed step.",
+            ));
+        }
+
+        invalidate_latest_completed_attempt(
+            &mut context,
             request.task,
             request.step,
             &request.reason,
-        )?;
-        consume_execution_reentry_repair_follow_up(Some(authoritative_state))?;
-    }
+        );
+        context.steps[step_index].checked = false;
+        context.steps[step_index].note_state =
+            Some(crate::execution::state::NoteState::Interrupted);
+        context.steps[step_index].note_summary = truncate_summary(&request.reason);
+        context.evidence.format = crate::execution::state::EvidenceFormat::V2;
+        if let Some(authoritative_state) = authoritative_state.as_mut() {
+            authoritative_state.record_open_step_state(open_step_state_record(
+                &context,
+                request.task,
+                request.step,
+                crate::execution::state::NoteState::Interrupted,
+                &context.steps[step_index].note_summary,
+            ))?;
+            authoritative_state.stale_reopen_provenance()?;
+            authoritative_state.record_reopen_strategy_checkpoint(
+                &context,
+                &context.plan_document.execution_mode,
+                request.task,
+                request.step,
+                &request.reason,
+            )?;
+            consume_execution_reentry_repair_follow_up(Some(authoritative_state))?;
+        }
 
-    let rendered_plan = render_plan_source(
-        &context.plan_source,
-        &context.plan_document.execution_mode,
-        &context.steps,
-    );
-    let plan_fingerprint = sha256_hex(rendered_plan.as_bytes());
-    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
-    let rendered_evidence =
-        render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
-    write_plan_and_evidence_with_rollback(
-        &context.plan_abs,
-        &context.plan_source,
-        &rendered_plan,
-        &context.evidence_abs,
-        context.evidence.source.as_deref(),
-        &rendered_evidence,
-        "reopen_after_plan_write",
-    )?;
-    if let Some(authoritative_state) = authoritative_state.as_ref() {
-        persist_authoritative_state_with_rollback(
-            authoritative_state,
+        let rendered_plan = render_plan_source(
+            &context.plan_source,
+            &context.plan_document.execution_mode,
+            &context.steps,
+        );
+        let plan_fingerprint = sha256_hex(rendered_plan.as_bytes());
+        let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+        let rendered_evidence =
+            render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
+        write_plan_and_evidence_with_rollback(
             &context.plan_abs,
             &context.plan_source,
+            &rendered_plan,
             &context.evidence_abs,
             context.evidence.source.as_deref(),
-            "reopen_after_plan_and_evidence_write_before_authoritative_state_publish",
+            &rendered_evidence,
+            "reopen_after_plan_write",
         )?;
-    }
+        if let Some(authoritative_state) = authoritative_state.as_ref() {
+            persist_authoritative_state_with_rollback(
+                authoritative_state,
+                &context.plan_abs,
+                &context.plan_source,
+                &context.evidence_abs,
+                context.evidence.source.as_deref(),
+                "reopen_after_plan_and_evidence_write_before_authoritative_state_publish",
+            )?;
+        }
 
-    let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
-    status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
+        let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
+        status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
+    }
 }
 
 fn normalize_or_seed_source(source: &str, execution_mode: &mut String) -> Result<(), JsonFailure> {
@@ -883,12 +962,15 @@ fn normalize_or_seed_source(source: &str, execution_mode: &mut String) -> Result
         }
     }
     if execution_mode == "none" {
-        *execution_mode = source.to_owned();
+        execution_mode.clear();
+        execution_mode.push_str(source);
         return Ok(());
     }
     normalize_source(source, execution_mode)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn transfer(runtime: &ExecutionRuntime, args: &TransferArgs) -> Result<Value, JsonFailure> {
     let request = normalize_transfer_request(args)?;
     match request.mode {
@@ -989,7 +1071,7 @@ fn transfer_repair_step(
         ));
     }
 
-    invalidate_latest_completed_attempt(&mut context, repair_task, repair_step, reason)?;
+    invalidate_latest_completed_attempt(&mut context, repair_task, repair_step, reason);
     context.steps[repair_index].checked = false;
     context.steps[repair_index].note_state = None;
     context.steps[repair_index].note_summary.clear();
@@ -1072,7 +1154,7 @@ fn status_with_shared_routing_or_context(
                 || (malformed_preflight_seed_failure
                     && load_authoritative_transition_state(fallback_context)?
                         .as_ref()
-                        .and_then(|state| state.execution_run_id_opt())
+                        .and_then(AuthoritativeTransitionState::execution_run_id_opt)
                         .is_some())
                 || exact_command_derivation_failure
             {
@@ -1090,558 +1172,291 @@ fn record_workflow_transfer(
     to: &str,
     reason: &str,
 ) -> Result<TransferOutput, JsonFailure> {
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let mut context = load_execution_context_for_mutation(runtime, plan)?;
-    materialize_legacy_open_step_state_if_needed(runtime, &context)?;
-    context = load_execution_context_for_mutation(runtime, plan)?;
-    let mut authoritative_state = load_authoritative_transition_state(&context)?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "transfer requires authoritative harness state.",
-        ));
-    };
-    let status = status_with_shared_routing_or_context(runtime, plan, &context)?;
-    let operator = current_workflow_operator(runtime, plan, false)?;
-    let head_sha = current_head_sha(&runtime.repo_root)?;
-    let decision_scope = shared_handoff_decision_scope(
-        status.active_task,
-        status.blocking_task,
-        status.resume_task,
-        status.handoff_required,
-        Some(status.harness_phase),
-    );
-    let identity = WorkflowTransferRecordIdentity {
-        repo_slug: &runtime.repo_slug,
-        safe_branch: &runtime.safe_branch,
-        plan_path: &context.plan_rel,
-        branch_name: &runtime.branch_name,
-        head_sha: &head_sha,
-        decision_reason_codes: &status.reason_codes,
-        decision_scope,
-    };
-    let input = WorkflowTransferRecordInput { scope, to, reason };
-    let operator_routes_handoff = operator.phase_detail == "handoff_recording_required"
-        && matches!(operator.phase.as_str(), "handoff_required" | "executing");
-    if !operator_routes_handoff {
-        return Ok(TransferOutput {
-            action: String::from("blocked"),
-            scope: scope.to_owned(),
-            to: to.to_owned(),
-            reason: reason.to_owned(),
-            record_path: None,
-            code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(plan, false)),
-            rederive_via_workflow_operator: Some(true),
-            trace_summary: String::from(
-                "transfer failed closed because workflow/operator does not currently route to handoff recording.",
-            ),
-        });
-    }
-    if decision_scope.is_some_and(|expected_scope| scope != expected_scope) {
-        return Ok(TransferOutput {
-            action: String::from("blocked"),
-            scope: scope.to_owned(),
-            to: to.to_owned(),
-            reason: reason.to_owned(),
-            record_path: None,
-            code: None,
-            recommended_command: decision_scope.map(|expected_scope| {
-                format!(
-                    "featureforge plan execution transfer --plan {} --scope {expected_scope} --to <owner> --reason <reason>",
-                    context.plan_rel
-                )
-            }),
-            rederive_via_workflow_operator: None,
-            trace_summary: String::from(
-                "transfer failed closed because the requested scope does not satisfy the current handoff decision scope.",
-            ),
-        });
-    }
-
-    if let Some(existing_record) =
-        latest_matching_workflow_transfer_request_record(&runtime.state_dir, identity, input)
-    {
-        let existing_source = fs::read_to_string(&existing_record).map_err(|error| {
-            JsonFailure::new(
-                FailureClass::PartialAuthoritativeMutation,
-                format!(
-                    "Could not read existing workflow transfer record {}: {error}",
-                    existing_record.display()
-                ),
-            )
-        })?;
-        let existing_fingerprint = sha256_hex(existing_source.as_bytes());
-        authoritative_state.record_runtime_handoff_checkpoint(
-            &existing_record.display().to_string(),
-            &existing_fingerprint,
-        )?;
-        authoritative_state.persist_if_dirty_with_failpoint(None)?;
-        return Ok(TransferOutput {
-            action: String::from("already_current"),
-            scope: scope.to_owned(),
-            to: to.to_owned(),
-            reason: reason.to_owned(),
-            record_path: Some(existing_record.display().to_string()),
-            code: None,
-            recommended_command: None,
-            rederive_via_workflow_operator: None,
-            trace_summary: String::from(
-                "The current handoff decision already has an equivalent recorded workflow transfer checkpoint.",
-            ),
-        });
-    }
-
-    if current_workflow_transfer_record_exists(&runtime.state_dir, identity) {
-        return Ok(TransferOutput {
-            action: String::from("blocked"),
-            scope: scope.to_owned(),
-            to: to.to_owned(),
-            reason: reason.to_owned(),
-            record_path: None,
-            code: None,
-            recommended_command: None,
-            rederive_via_workflow_operator: None,
-            trace_summary: String::from(
-                "A different workflow transfer checkpoint is already current for this handoff decision.",
-            ),
-        });
-    }
-
-    let (record_path, record_fingerprint) =
-        write_workflow_transfer_record(&runtime.state_dir, identity, input)?;
-    authoritative_state.record_runtime_handoff_checkpoint(
-        &record_path.display().to_string(),
-        &record_fingerprint,
-    )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
-
-    Ok(TransferOutput {
-        action: String::from("recorded"),
-        scope: scope.to_owned(),
-        to: to.to_owned(),
-        reason: reason.to_owned(),
-        record_path: Some(record_path.display().to_string()),
-        code: None,
-        recommended_command: None,
-        rederive_via_workflow_operator: None,
-        trace_summary: String::from(
-            "Recorded a runtime-owned workflow transfer checkpoint and cleared the current handoff override.",
-        ),
-    })
-}
-
-pub fn close_current_task(
-    runtime: &ExecutionRuntime,
-    args: &CloseCurrentTaskArgs,
-) -> Result<CloseCurrentTaskOutput, JsonFailure> {
-    let initial_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    let authoritative_execution_run_id = load_authoritative_transition_state(&initial_context)?
-        .as_ref()
-        .and_then(|state| state.execution_run_id_opt());
-    let status = status_with_shared_routing_or_context(runtime, &args.plan, &initial_context)?;
-    let execution_run_id = authoritative_execution_run_id
-        .or_else(|| status.execution_run_id.as_ref().map(|value| value.0.clone()))
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                "close-current-task requires an active execution run identity from authoritative transition state or preflight seed state.",
-            )
-        })?;
-    let verification_result = args.verification_result.as_str();
-    let initial_reviewed_state_id = current_task_reviewed_state_id(&initial_context, args.task)?;
-    let initial_closure_record_id = current_task_closure_record_id(&initial_context, args.task)?;
-    let candidate_dispatch_id = current_review_dispatch_id_candidate(
-        &initial_context,
-        ReviewDispatchScopeArg::Task,
-        Some(args.task),
-        args.dispatch_id.as_deref(),
-    )?;
-    let closure_baseline_repair_candidate =
-        task_closure_baseline_repair_candidate(&initial_context, &status, args.task)?;
-    let projection_refresh_only_candidate = closure_baseline_repair_candidate
-        .as_ref()
-        .is_some_and(|candidate| candidate.projection_refresh_only);
-    if let Some(dispatch_id) = candidate_dispatch_id.as_deref() {
-        ensure_task_dispatch_id_matches(&initial_context, args.task, dispatch_id)?;
-        match task_dispatch_reviewed_state_status(
-            &initial_context,
-            args.task,
-            &initial_reviewed_state_id,
-        )? {
-            TaskDispatchReviewedStateStatus::Current => {}
-            TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
-                return Ok(blocked_close_current_task_output(
-                    BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "blocked",
-                        task_closure_status: "not_current",
-                        closure_record_id: None,
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("request_external_review")),
-                        trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
-                    },
-                ));
-            }
-            TaskDispatchReviewedStateStatus::StaleReviewedState => {
-                return Ok(blocked_close_current_task_output(
-                    BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "blocked",
-                        task_closure_status: "not_current",
-                        closure_record_id: None,
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
-                        trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
-                    },
-                ));
-            }
-        }
-        let mut authoritative_state = load_authoritative_transition_state(&initial_context)?;
-        let Some(authoritative_state) = authoritative_state.as_mut() else {
-            return Err(JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                "close-current-task requires authoritative harness state.",
-            ));
-        };
-        if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
-            && current_record.closure_record_id == initial_closure_record_id
-            && current_record.dispatch_id == dispatch_id
-        {
-            let (review_summary_hash, verification_summary_hash) =
-                close_current_task_summary_hashes(args)?;
-            if current_record.review_result == args.review_result.as_str()
-                && current_record.review_summary_hash == review_summary_hash.as_str()
-                && current_record.verification_result == verification_result
-                && current_record.verification_summary_hash == verification_summary_hash.as_str()
-            {
-                if !projection_refresh_only_candidate {
-                    return Ok(CloseCurrentTaskOutput {
-                        action: String::from("already_current"),
-                        task_number: args.task,
-                        dispatch_validation_action: String::from("validated"),
-                        closure_action: String::from("already_current"),
-                        task_closure_status: String::from("current"),
-                        superseded_task_closure_ids: Vec::new(),
-                        closure_record_id: Some(initial_closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: None,
-                        blocking_scope: None,
-                        blocking_task: None,
-                        blocking_reason_codes: Vec::new(),
-                        authoritative_next_action: None,
-                        trace_summary: String::from(
-                            "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
-                        ),
-                    });
-                }
-            } else if !projection_refresh_only_candidate {
-                return Ok(blocked_close_current_task_output(
-                    BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "validated",
-                        task_closure_status: "current",
-                        closure_record_id: Some(initial_closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
-                        trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
-                    },
-                ));
-            }
-        }
-        if authoritative_state
-            .task_closure_negative_result(args.task)
-            .is_some_and(|negative_record| {
-                task_closure_negative_result_blocks_current_reviewed_state(
-                    negative_record.reviewed_state_id.as_str(),
-                    Some(initial_reviewed_state_id.as_str()),
-                )
-            })
-        {
-            let operator = current_workflow_operator(runtime, &args.plan, true)?;
-            let (required_follow_up, recommended_command) =
-                close_current_task_follow_up_and_command(&operator);
-            return Ok(with_close_current_task_operator_blocker_metadata(
-                blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                    task_number: args.task,
-                    dispatch_validation_action: "validated",
-                    task_closure_status: "not_current",
-                    closure_record_id: None,
-                    code: None,
-                    recommended_command,
-                    rederive_via_workflow_operator: None,
-                    required_follow_up,
-                    trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
-                }),
-                &operator,
-            ));
-        }
-    }
-    let mut summary_hashes = candidate_dispatch_id
-        .is_none()
-        .then(|| close_current_task_summary_hashes(args))
-        .transpose()?;
-    let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
-        dispatch_id
-    } else {
-        ensure_current_review_dispatch_id(
-            &initial_context,
-            ReviewDispatchScopeArg::Task,
-            Some(args.task),
-            args.dispatch_id.as_deref(),
-        )?
-    };
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    ensure_task_dispatch_id_matches(&context, args.task, &dispatch_id)?;
-    let operator = current_workflow_operator(runtime, &args.plan, true)?;
-    let strategy_checkpoint_fingerprint =
-        authoritative_strategy_checkpoint_fingerprint_checked(&context)?.ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                "close-current-task requires authoritative strategy checkpoint provenance.",
-            )
-        })?;
-    let reviewed_state_id = current_task_reviewed_state_id(&context, args.task)?;
-    let contract_identity = current_task_contract_identity(&context, args.task);
-    let closure_record_id = current_task_closure_record_id(&context, args.task)?;
-    match task_dispatch_reviewed_state_status(&context, args.task, &reviewed_state_id)? {
-        TaskDispatchReviewedStateStatus::Current => {}
-        TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
-            return Ok(with_close_current_task_operator_blocker_metadata(
-                blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                    task_number: args.task,
-                    dispatch_validation_action: "blocked",
-                    task_closure_status: "not_current",
-                    closure_record_id: None,
-                    code: None,
-                    recommended_command: None,
-                    rederive_via_workflow_operator: None,
-                    required_follow_up: Some(String::from("request_external_review")),
-                    trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
-                }),
-                &operator,
-            ));
-        }
-        TaskDispatchReviewedStateStatus::StaleReviewedState => {
-            return Ok(with_close_current_task_operator_blocker_metadata(
-                blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                    task_number: args.task,
-                    dispatch_validation_action: "blocked",
-                    task_closure_status: "not_current",
-                    closure_record_id: None,
-                    code: None,
-                    recommended_command: None,
-                    rederive_via_workflow_operator: None,
-                    required_follow_up: Some(String::from("execution_reentry")),
-                    trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
-                }),
-                &operator,
-            ));
-        }
-    }
-    if summary_hashes.is_none() {
-        summary_hashes = Some(close_current_task_summary_hashes(args)?);
-    }
-    let (review_summary_hash, verification_summary_hash) = summary_hashes
-        .as_ref()
-        .expect("summary hashes should exist after summary validation");
     {
         let _write_authority = claim_step_write_authority(runtime)?;
+        let mut context = load_execution_context_for_mutation(runtime, plan)?;
+        materialize_legacy_open_step_state_if_needed(runtime, &context)?;
+        context = load_execution_context_for_mutation(runtime, plan)?;
         let mut authoritative_state = load_authoritative_transition_state(&context)?;
         let Some(authoritative_state) = authoritative_state.as_mut() else {
             return Err(JsonFailure::new(
                 FailureClass::ExecutionStateNotReady,
-                "close-current-task requires authoritative harness state.",
+                "transfer requires authoritative harness state.",
             ));
         };
-        if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
-            && current_record.closure_record_id == closure_record_id
-            && current_record.dispatch_id == dispatch_id
-        {
-            if current_record.review_result == args.review_result.as_str()
-                && current_record.review_summary_hash == review_summary_hash.as_str()
-                && current_record.verification_result == verification_result
-                && current_record.verification_summary_hash == verification_summary_hash.as_str()
-            {
-                if !projection_refresh_only_candidate {
-                    return Ok(CloseCurrentTaskOutput {
-                        action: String::from("already_current"),
-                        task_number: args.task,
-                        dispatch_validation_action: String::from("validated"),
-                        closure_action: String::from("already_current"),
-                        task_closure_status: String::from("current"),
-                        superseded_task_closure_ids: Vec::new(),
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: None,
-                        blocking_scope: None,
-                        blocking_task: None,
-                        blocking_reason_codes: Vec::new(),
-                        authoritative_next_action: None,
-                        trace_summary: String::from(
-                            "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
-                        ),
-                    });
-                }
-            } else if !projection_refresh_only_candidate {
-                return Ok(with_close_current_task_operator_blocker_metadata(
-                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "validated",
-                        task_closure_status: "current",
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
-                        trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
-                    }),
-                    &operator,
-                ));
-            }
+        let status = status_with_shared_routing_or_context(runtime, plan, &context)?;
+        let operator = current_workflow_operator(runtime, plan, false)?;
+        let head_sha = current_head_sha(&runtime.repo_root)?;
+        let decision_scope = shared_handoff_decision_scope(
+            status.active_task,
+            status.blocking_task,
+            status.resume_task,
+            status.handoff_required,
+            Some(status.harness_phase),
+        );
+        let identity = WorkflowTransferRecordIdentity {
+            repo_slug: &runtime.repo_slug,
+            safe_branch: &runtime.safe_branch,
+            plan_path: &context.plan_rel,
+            branch_name: &runtime.branch_name,
+            head_sha: &head_sha,
+            decision_reason_codes: &status.reason_codes,
+            decision_scope,
+        };
+        let input = WorkflowTransferRecordInput { scope, to, reason };
+        let operator_routes_handoff = operator.phase_detail == "handoff_recording_required"
+            && matches!(operator.phase.as_str(), "handoff_required" | "executing");
+        if !operator_routes_handoff {
+            return Ok(TransferOutput {
+                action: String::from("blocked"),
+                scope: scope.to_owned(),
+                to: to.to_owned(),
+                reason: reason.to_owned(),
+                record_path: None,
+                code: Some(String::from("out_of_phase_requery_required")),
+                recommended_command: Some(recommended_operator_command(plan, false)),
+                rederive_via_workflow_operator: Some(true),
+                trace_summary: String::from(
+                    "transfer failed closed because workflow/operator does not currently route to handoff recording.",
+                ),
+            });
         }
-        if authoritative_state
-            .task_closure_negative_result(args.task)
-            .is_some_and(|negative_record| {
-                task_closure_negative_result_blocks_current_reviewed_state(
-                    negative_record.reviewed_state_id.as_str(),
-                    Some(reviewed_state_id.as_str()),
-                )
-            })
-        {
-            let operator = current_workflow_operator(runtime, &args.plan, true)?;
-            let (required_follow_up, recommended_command) =
-                close_current_task_follow_up_and_command(&operator);
-            return Ok(with_close_current_task_operator_blocker_metadata(
-                blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                    task_number: args.task,
-                    dispatch_validation_action: "validated",
-                    task_closure_status: "not_current",
-                    closure_record_id: None,
-                    code: None,
-                    recommended_command,
-                    rederive_via_workflow_operator: None,
-                    required_follow_up,
-                    trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
+        if decision_scope.is_some_and(|expected_scope| scope != expected_scope) {
+            return Ok(TransferOutput {
+                action: String::from("blocked"),
+                scope: scope.to_owned(),
+                to: to.to_owned(),
+                reason: reason.to_owned(),
+                record_path: None,
+                code: None,
+                recommended_command: decision_scope.map(|expected_scope| {
+                    format!(
+                        "featureforge plan execution transfer --plan {} --scope {expected_scope} --to <owner> --reason <reason>",
+                        context.plan_rel
+                    )
                 }),
-                &operator,
-            ));
+                rederive_via_workflow_operator: None,
+                trace_summary: String::from(
+                    "transfer failed closed because the requested scope does not satisfy the current handoff decision scope.",
+                ),
+            });
         }
-    }
-    match close_current_task_outcome_class(args.review_result, args.verification_result) {
-        CloseCurrentTaskOutcomeClass::Positive => {
-            let effective_reviewed_surface_paths =
-                current_task_effective_reviewed_surface_paths(&context, args.task)?;
-            refresh_task_closure_projections_with_context(
-                runtime,
-                &context,
-                TaskClosureReceiptRefresh {
-                    execution_run_id: &execution_run_id,
-                    strategy_checkpoint_fingerprint: &strategy_checkpoint_fingerprint,
-                    active_contract_fingerprint: None,
-                    task: args.task,
-                    claim_write_authority: true,
-                },
+
+        if let Some(existing_record) =
+            latest_matching_workflow_transfer_request_record(&runtime.state_dir, identity, input)
+        {
+            let existing_source = fs::read_to_string(&existing_record).map_err(|error| {
+                JsonFailure::new(
+                    FailureClass::PartialAuthoritativeMutation,
+                    format!(
+                        "Could not read existing workflow transfer record {}: {error}",
+                        existing_record.display()
+                    ),
+                )
+            })?;
+            let existing_fingerprint = sha256_hex(existing_source.as_bytes());
+            authoritative_state.record_runtime_handoff_checkpoint(
+                &existing_record.display().to_string(),
+                &existing_fingerprint,
             )?;
-            let _write_authority = claim_step_write_authority(runtime)?;
-            let mut authoritative_state = load_authoritative_transition_state(&context)?;
+            authoritative_state.persist_if_dirty_with_failpoint(None)?;
+            return Ok(TransferOutput {
+                action: String::from("already_current"),
+                scope: scope.to_owned(),
+                to: to.to_owned(),
+                reason: reason.to_owned(),
+                record_path: Some(existing_record.display().to_string()),
+                code: None,
+                recommended_command: None,
+                rederive_via_workflow_operator: None,
+                trace_summary: String::from(
+                    "The current handoff decision already has an equivalent recorded workflow transfer checkpoint.",
+                ),
+            });
+        }
+
+        if current_workflow_transfer_record_exists(&runtime.state_dir, identity) {
+            return Ok(TransferOutput {
+                action: String::from("blocked"),
+                scope: scope.to_owned(),
+                to: to.to_owned(),
+                reason: reason.to_owned(),
+                record_path: None,
+                code: None,
+                recommended_command: None,
+                rederive_via_workflow_operator: None,
+                trace_summary: String::from(
+                    "A different workflow transfer checkpoint is already current for this handoff decision.",
+                ),
+            });
+        }
+
+        let (record_path, record_fingerprint) =
+            write_workflow_transfer_record(&runtime.state_dir, identity, input)?;
+        authoritative_state.record_runtime_handoff_checkpoint(
+            &record_path.display().to_string(),
+            &record_fingerprint,
+        )?;
+        authoritative_state.persist_if_dirty_with_failpoint(None)?;
+
+        Ok(TransferOutput {
+            action: String::from("recorded"),
+            scope: scope.to_owned(),
+            to: to.to_owned(),
+            reason: reason.to_owned(),
+            record_path: Some(record_path.display().to_string()),
+            code: None,
+            recommended_command: None,
+            rederive_via_workflow_operator: None,
+            trace_summary: String::from(
+                "Recorded a runtime-owned workflow transfer checkpoint and cleared the current handoff override.",
+            ),
+        })
+    }
+}
+
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
+pub fn close_current_task(
+    runtime: &ExecutionRuntime,
+    args: &CloseCurrentTaskArgs,
+) -> Result<CloseCurrentTaskOutput, JsonFailure> {
+    {
+        let initial_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        let authoritative_execution_run_id = load_authoritative_transition_state(&initial_context)?
+            .as_ref()
+            .and_then(AuthoritativeTransitionState::execution_run_id_opt);
+        let status = status_with_shared_routing_or_context(runtime, &args.plan, &initial_context)?;
+        let execution_run_id = authoritative_execution_run_id
+            .or_else(|| status.execution_run_id.as_ref().map(|value| value.0.clone()))
+            .ok_or_else(|| {
+                JsonFailure::new(
+                    FailureClass::ExecutionStateNotReady,
+                    "close-current-task requires an active execution run identity from authoritative transition state or preflight seed state.",
+                )
+            })?;
+        let verification_result = args.verification_result.as_str();
+        let initial_reviewed_state_id =
+            current_task_reviewed_state_id(&initial_context, args.task)?;
+        let initial_closure_record_id =
+            current_task_closure_record_id(&initial_context, args.task)?;
+        let candidate_dispatch_id = current_review_dispatch_id_candidate(
+            &initial_context,
+            ReviewDispatchScopeArg::Task,
+            Some(args.task),
+            args.dispatch_id.as_deref(),
+        )?;
+        let closure_baseline_repair_candidate =
+            task_closure_baseline_repair_candidate(&initial_context, &status, args.task)?;
+        let projection_refresh_only_candidate = closure_baseline_repair_candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.projection_refresh_only);
+        if let Some(dispatch_id) = candidate_dispatch_id.as_deref() {
+            ensure_task_dispatch_id_matches(&initial_context, args.task, dispatch_id)?;
+            match task_dispatch_reviewed_state_status(
+                &initial_context,
+                args.task,
+                &initial_reviewed_state_id,
+            )? {
+                TaskDispatchReviewedStateStatus::Current => {}
+                TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
+                    return Ok(blocked_close_current_task_output(
+                        BlockedCloseCurrentTaskOutputContext {
+                            task_number: args.task,
+                            dispatch_validation_action: "blocked",
+                            task_closure_status: "not_current",
+                            closure_record_id: None,
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: Some(String::from("request_external_review")),
+                            trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
+                        },
+                    ));
+                }
+                TaskDispatchReviewedStateStatus::StaleReviewedState => {
+                    return Ok(blocked_close_current_task_output(
+                        BlockedCloseCurrentTaskOutputContext {
+                            task_number: args.task,
+                            dispatch_validation_action: "blocked",
+                            task_closure_status: "not_current",
+                            closure_record_id: None,
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: Some(String::from("execution_reentry")),
+                            trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
+                        },
+                    ));
+                }
+            }
+            let mut authoritative_state = load_authoritative_transition_state(&initial_context)?;
             let Some(authoritative_state) = authoritative_state.as_mut() else {
                 return Err(JsonFailure::new(
                     FailureClass::ExecutionStateNotReady,
                     "close-current-task requires authoritative harness state.",
                 ));
             };
-            let locked_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-            ensure_task_dispatch_id_matches(&locked_context, args.task, &dispatch_id)?;
             if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
-                && current_record.closure_record_id == closure_record_id
+                && current_record.closure_record_id == initial_closure_record_id
                 && current_record.dispatch_id == dispatch_id
             {
-                if current_record.review_result == "pass"
-                    && current_record.verification_result == "pass"
-                {
-                    return Ok(CloseCurrentTaskOutput {
-                        action: String::from("already_current"),
-                        task_number: args.task,
-                        dispatch_validation_action: String::from("validated"),
-                        closure_action: String::from("already_current"),
-                        task_closure_status: String::from("current"),
-                        superseded_task_closure_ids: Vec::new(),
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: None,
-                        blocking_scope: None,
-                        blocking_task: None,
-                        blocking_reason_codes: Vec::new(),
-                        authoritative_next_action: None,
-                        trace_summary: String::from(
-                            "Current task closure is already current for this dispatch lineage; refreshed receipt projections from the existing closure baseline.",
-                        ),
-                    });
-                }
+                let (review_summary_hash, verification_summary_hash) =
+                    close_current_task_summary_hashes(args)?;
                 if current_record.review_result == args.review_result.as_str()
                     && current_record.review_summary_hash == review_summary_hash.as_str()
                     && current_record.verification_result == verification_result
                     && current_record.verification_summary_hash
                         == verification_summary_hash.as_str()
                 {
-                    return Ok(CloseCurrentTaskOutput {
-                        action: String::from("already_current"),
-                        task_number: args.task,
-                        dispatch_validation_action: String::from("validated"),
-                        closure_action: String::from("already_current"),
-                        task_closure_status: String::from("current"),
-                        superseded_task_closure_ids: Vec::new(),
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: None,
-                        blocking_scope: None,
-                        blocking_task: None,
-                        blocking_reason_codes: Vec::new(),
-                        authoritative_next_action: None,
-                        trace_summary: String::from(
-                            "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
-                        ),
-                    });
+                    if !projection_refresh_only_candidate {
+                        return Ok(CloseCurrentTaskOutput {
+                            action: String::from("already_current"),
+                            task_number: args.task,
+                            dispatch_validation_action: String::from("validated"),
+                            closure_action: String::from("already_current"),
+                            task_closure_status: String::from("current"),
+                            superseded_task_closure_ids: Vec::new(),
+                            closure_record_id: Some(initial_closure_record_id),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: None,
+                            blocking_scope: None,
+                            blocking_task: None,
+                            blocking_reason_codes: Vec::new(),
+                            authoritative_next_action: None,
+                            trace_summary: String::from(
+                                "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                            ),
+                        });
+                    }
+                } else if !projection_refresh_only_candidate {
+                    return Ok(blocked_close_current_task_output(
+                        BlockedCloseCurrentTaskOutputContext {
+                            task_number: args.task,
+                            dispatch_validation_action: "validated",
+                            task_closure_status: "current",
+                            closure_record_id: Some(initial_closure_record_id),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: Some(String::from("execution_reentry")),
+                            trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
+                        },
+                    ));
                 }
-                return Ok(with_close_current_task_operator_blocker_metadata(
-                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "validated",
-                        task_closure_status: "current",
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
-                        trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
-                    }),
-                    &operator,
-                ));
             }
             if authoritative_state
                 .task_closure_negative_result(args.task)
                 .is_some_and(|negative_record| {
                     task_closure_negative_result_blocks_current_reviewed_state(
                         negative_record.reviewed_state_id.as_str(),
-                        Some(reviewed_state_id.as_str()),
+                        Some(initial_reviewed_state_id.as_str()),
                     )
                 })
             {
+                let operator = current_workflow_operator(runtime, &args.plan, true)?;
                 let (required_follow_up, recommended_command) =
                     close_current_task_follow_up_and_command(&operator);
                 return Ok(with_close_current_task_operator_blocker_metadata(
@@ -1659,60 +1474,79 @@ pub fn close_current_task(
                     &operator,
                 ));
             }
-            let superseded_task_closure_records = superseded_task_closure_records(
-                authoritative_state,
-                args.task,
-                &closure_record_id,
-                &effective_reviewed_surface_paths,
-            );
-            let superseded_task_closure_ids = superseded_task_closure_records
-                .iter()
-                .map(|record| record.closure_record_id.clone())
-                .collect::<Vec<_>>();
-            let superseded_tasks = superseded_task_closure_records
-                .iter()
-                .map(|record| record.task)
-                .collect::<Vec<_>>();
-            materialize_current_task_closure_from_close_inputs(
-                authoritative_state,
-                CurrentTaskClosureMaterialization {
-                    task: args.task,
-                    dispatch_id: &dispatch_id,
-                    closure_record_id: &closure_record_id,
-                    execution_run_id: &execution_run_id,
-                    reviewed_state_id: &reviewed_state_id,
-                    contract_identity: &contract_identity,
-                    effective_reviewed_surface_paths: &effective_reviewed_surface_paths,
-                    review_result: args.review_result.as_str(),
-                    review_summary_hash,
-                    verification_result,
-                    verification_summary_hash,
-                    superseded_tasks: &superseded_tasks,
-                    superseded_task_closure_ids: &superseded_task_closure_ids,
-                },
-            )?;
-            Ok(CloseCurrentTaskOutput {
-                action: String::from("recorded"),
-                task_number: args.task,
-                dispatch_validation_action: String::from("validated"),
-                closure_action: String::from("recorded"),
-                task_closure_status: String::from("current"),
-                superseded_task_closure_ids,
-                closure_record_id: Some(closure_record_id),
-                code: None,
-                recommended_command: None,
-                rederive_via_workflow_operator: None,
-                required_follow_up: None,
-                blocking_scope: None,
-                blocking_task: None,
-                blocking_reason_codes: Vec::new(),
-                authoritative_next_action: None,
-                trace_summary: String::from(
-                    "Validated task review dispatch lineage and refreshed authoritative task review and verification receipts.",
-                ),
-            })
         }
-        CloseCurrentTaskOutcomeClass::Negative => {
+        let mut summary_hashes = candidate_dispatch_id
+            .is_none()
+            .then(|| close_current_task_summary_hashes(args))
+            .transpose()?;
+        let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
+            dispatch_id
+        } else {
+            ensure_current_review_dispatch_id(
+                &initial_context,
+                ReviewDispatchScopeArg::Task,
+                Some(args.task),
+                args.dispatch_id.as_deref(),
+            )?
+        };
+        let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        ensure_task_dispatch_id_matches(&context, args.task, &dispatch_id)?;
+        let operator = current_workflow_operator(runtime, &args.plan, true)?;
+        let strategy_checkpoint_fingerprint =
+            authoritative_strategy_checkpoint_fingerprint_checked(&context)?.ok_or_else(|| {
+                JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    "close-current-task requires authoritative strategy checkpoint provenance.",
+                )
+            })?;
+        let reviewed_state_id = current_task_reviewed_state_id(&context, args.task)?;
+        let contract_identity = current_task_contract_identity(&context, args.task);
+        let closure_record_id = current_task_closure_record_id(&context, args.task)?;
+        match task_dispatch_reviewed_state_status(&context, args.task, &reviewed_state_id)? {
+            TaskDispatchReviewedStateStatus::Current => {}
+            TaskDispatchReviewedStateStatus::MissingReviewedStateBinding => {
+                return Ok(with_close_current_task_operator_blocker_metadata(
+                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                        task_number: args.task,
+                        dispatch_validation_action: "blocked",
+                        task_closure_status: "not_current",
+                        closure_record_id: None,
+                        code: None,
+                        recommended_command: None,
+                        rederive_via_workflow_operator: None,
+                        required_follow_up: Some(String::from("request_external_review")),
+                        trace_summary: "close-current-task failed closed because the current task review dispatch lineage does not bind a current reviewed state.",
+                    }),
+                    &operator,
+                ));
+            }
+            TaskDispatchReviewedStateStatus::StaleReviewedState => {
+                return Ok(with_close_current_task_operator_blocker_metadata(
+                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                        task_number: args.task,
+                        dispatch_validation_action: "blocked",
+                        task_closure_status: "not_current",
+                        closure_record_id: None,
+                        code: None,
+                        recommended_command: None,
+                        rederive_via_workflow_operator: None,
+                        required_follow_up: Some(String::from("execution_reentry")),
+                        trace_summary: "close-current-task failed closed because tracked workspace state changed after the current task review dispatch was recorded.",
+                    }),
+                    &operator,
+                ));
+            }
+        }
+        if summary_hashes.is_none() {
+            summary_hashes = Some(close_current_task_summary_hashes(args)?);
+        }
+        let Some((review_summary_hash, verification_summary_hash)) = summary_hashes.as_ref() else {
+            return Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                "close-current-task failed closed because summary hashes were unavailable after validation.",
+            ));
+        };
+        {
             let _write_authority = claim_step_write_authority(runtime)?;
             let mut authoritative_state = load_authoritative_transition_state(&context)?;
             let Some(authoritative_state) = authoritative_state.as_mut() else {
@@ -1721,26 +1555,54 @@ pub fn close_current_task(
                     "close-current-task requires authoritative harness state.",
                 ));
             };
-            let locked_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-            ensure_task_dispatch_id_matches(&locked_context, args.task, &dispatch_id)?;
             if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
                 && current_record.closure_record_id == closure_record_id
                 && current_record.dispatch_id == dispatch_id
             {
-                return Ok(with_close_current_task_operator_blocker_metadata(
-                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "validated",
-                        task_closure_status: "current",
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
-                        trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
-                    }),
-                    &operator,
-                ));
+                if current_record.review_result == args.review_result.as_str()
+                    && current_record.review_summary_hash == review_summary_hash.as_str()
+                    && current_record.verification_result == verification_result
+                    && current_record.verification_summary_hash
+                        == verification_summary_hash.as_str()
+                {
+                    if !projection_refresh_only_candidate {
+                        return Ok(CloseCurrentTaskOutput {
+                            action: String::from("already_current"),
+                            task_number: args.task,
+                            dispatch_validation_action: String::from("validated"),
+                            closure_action: String::from("already_current"),
+                            task_closure_status: String::from("current"),
+                            superseded_task_closure_ids: Vec::new(),
+                            closure_record_id: Some(closure_record_id),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: None,
+                            blocking_scope: None,
+                            blocking_task: None,
+                            blocking_reason_codes: Vec::new(),
+                            authoritative_next_action: None,
+                            trace_summary: String::from(
+                                "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                            ),
+                        });
+                    }
+                } else if !projection_refresh_only_candidate {
+                    return Ok(with_close_current_task_operator_blocker_metadata(
+                        blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                            task_number: args.task,
+                            dispatch_validation_action: "validated",
+                            task_closure_status: "current",
+                            closure_record_id: Some(closure_record_id),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: Some(String::from("execution_reentry")),
+                            trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
+                        }),
+                        &operator,
+                    ));
+                }
             }
             if authoritative_state
                 .task_closure_negative_result(args.task)
@@ -1751,6 +1613,9 @@ pub fn close_current_task(
                     )
                 })
             {
+                let operator = current_workflow_operator(runtime, &args.plan, true)?;
+                let (required_follow_up, recommended_command) =
+                    close_current_task_follow_up_and_command(&operator);
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
                         task_number: args.task,
@@ -1758,7 +1623,271 @@ pub fn close_current_task(
                         task_closure_status: "not_current",
                         closure_record_id: None,
                         code: None,
-                        recommended_command: operator.recommended_command.clone(),
+                        recommended_command,
+                        rederive_via_workflow_operator: None,
+                        required_follow_up,
+                        trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
+                    }),
+                    &operator,
+                ));
+            }
+        }
+        match close_current_task_outcome_class(args.review_result, args.verification_result) {
+            CloseCurrentTaskOutcomeClass::Positive => {
+                let effective_reviewed_surface_paths =
+                    current_task_effective_reviewed_surface_paths(&context, args.task)?;
+                refresh_task_closure_projections_with_context(
+                    runtime,
+                    &context,
+                    TaskClosureReceiptRefresh {
+                        execution_run_id: &execution_run_id,
+                        strategy_checkpoint_fingerprint: &strategy_checkpoint_fingerprint,
+                        active_contract_fingerprint: None,
+                        task: args.task,
+                        claim_write_authority: true,
+                    },
+                )?;
+                let _write_authority = claim_step_write_authority(runtime)?;
+                let mut authoritative_state = load_authoritative_transition_state(&context)?;
+                let Some(authoritative_state) = authoritative_state.as_mut() else {
+                    return Err(JsonFailure::new(
+                        FailureClass::ExecutionStateNotReady,
+                        "close-current-task requires authoritative harness state.",
+                    ));
+                };
+                let locked_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+                ensure_task_dispatch_id_matches(&locked_context, args.task, &dispatch_id)?;
+                if let Some(current_record) =
+                    authoritative_state.current_task_closure_result(args.task)
+                    && current_record.closure_record_id == closure_record_id
+                    && current_record.dispatch_id == dispatch_id
+                {
+                    if current_record.review_result == "pass"
+                        && current_record.verification_result == "pass"
+                    {
+                        return Ok(CloseCurrentTaskOutput {
+                            action: String::from("already_current"),
+                            task_number: args.task,
+                            dispatch_validation_action: String::from("validated"),
+                            closure_action: String::from("already_current"),
+                            task_closure_status: String::from("current"),
+                            superseded_task_closure_ids: Vec::new(),
+                            closure_record_id: Some(closure_record_id),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: None,
+                            blocking_scope: None,
+                            blocking_task: None,
+                            blocking_reason_codes: Vec::new(),
+                            authoritative_next_action: None,
+                            trace_summary: String::from(
+                                "Current task closure is already current for this dispatch lineage; refreshed receipt projections from the existing closure baseline.",
+                            ),
+                        });
+                    }
+                    if current_record.review_result == args.review_result.as_str()
+                        && current_record.review_summary_hash == review_summary_hash.as_str()
+                        && current_record.verification_result == verification_result
+                        && current_record.verification_summary_hash
+                            == verification_summary_hash.as_str()
+                    {
+                        return Ok(CloseCurrentTaskOutput {
+                            action: String::from("already_current"),
+                            task_number: args.task,
+                            dispatch_validation_action: String::from("validated"),
+                            closure_action: String::from("already_current"),
+                            task_closure_status: String::from("current"),
+                            superseded_task_closure_ids: Vec::new(),
+                            closure_record_id: Some(closure_record_id),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: None,
+                            blocking_scope: None,
+                            blocking_task: None,
+                            blocking_reason_codes: Vec::new(),
+                            authoritative_next_action: None,
+                            trace_summary: String::from(
+                                "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                            ),
+                        });
+                    }
+                    return Ok(with_close_current_task_operator_blocker_metadata(
+                        blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                            task_number: args.task,
+                            dispatch_validation_action: "validated",
+                            task_closure_status: "current",
+                            closure_record_id: Some(closure_record_id),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: Some(String::from("execution_reentry")),
+                            trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
+                        }),
+                        &operator,
+                    ));
+                }
+                if authoritative_state
+                    .task_closure_negative_result(args.task)
+                    .is_some_and(|negative_record| {
+                        task_closure_negative_result_blocks_current_reviewed_state(
+                            negative_record.reviewed_state_id.as_str(),
+                            Some(reviewed_state_id.as_str()),
+                        )
+                    })
+                {
+                    let (required_follow_up, recommended_command) =
+                        close_current_task_follow_up_and_command(&operator);
+                    return Ok(with_close_current_task_operator_blocker_metadata(
+                        blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                            task_number: args.task,
+                            dispatch_validation_action: "validated",
+                            task_closure_status: "not_current",
+                            closure_record_id: None,
+                            code: None,
+                            recommended_command,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up,
+                            trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
+                        }),
+                        &operator,
+                    ));
+                }
+                let superseded_task_closure_records = superseded_task_closure_records(
+                    authoritative_state,
+                    args.task,
+                    &closure_record_id,
+                    &effective_reviewed_surface_paths,
+                );
+                let superseded_task_closure_ids = superseded_task_closure_records
+                    .iter()
+                    .map(|record| record.closure_record_id.clone())
+                    .collect::<Vec<_>>();
+                let superseded_tasks = superseded_task_closure_records
+                    .iter()
+                    .map(|record| record.task)
+                    .collect::<Vec<_>>();
+                materialize_current_task_closure_from_close_inputs(
+                    authoritative_state,
+                    CurrentTaskClosureMaterialization {
+                        task: args.task,
+                        dispatch_id: &dispatch_id,
+                        closure_record_id: &closure_record_id,
+                        execution_run_id: &execution_run_id,
+                        reviewed_state_id: &reviewed_state_id,
+                        contract_identity: &contract_identity,
+                        effective_reviewed_surface_paths: &effective_reviewed_surface_paths,
+                        review_result: args.review_result.as_str(),
+                        review_summary_hash,
+                        verification_result,
+                        verification_summary_hash,
+                        superseded_tasks: &superseded_tasks,
+                        superseded_task_closure_ids: &superseded_task_closure_ids,
+                    },
+                )?;
+                Ok(CloseCurrentTaskOutput {
+                    action: String::from("recorded"),
+                    task_number: args.task,
+                    dispatch_validation_action: String::from("validated"),
+                    closure_action: String::from("recorded"),
+                    task_closure_status: String::from("current"),
+                    superseded_task_closure_ids,
+                    closure_record_id: Some(closure_record_id),
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    required_follow_up: None,
+                    blocking_scope: None,
+                    blocking_task: None,
+                    blocking_reason_codes: Vec::new(),
+                    authoritative_next_action: None,
+                    trace_summary: String::from(
+                        "Validated task review dispatch lineage and refreshed authoritative task review and verification receipts.",
+                    ),
+                })
+            }
+            CloseCurrentTaskOutcomeClass::Negative => {
+                let _write_authority = claim_step_write_authority(runtime)?;
+                let mut authoritative_state = load_authoritative_transition_state(&context)?;
+                let Some(authoritative_state) = authoritative_state.as_mut() else {
+                    return Err(JsonFailure::new(
+                        FailureClass::ExecutionStateNotReady,
+                        "close-current-task requires authoritative harness state.",
+                    ));
+                };
+                let locked_context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+                ensure_task_dispatch_id_matches(&locked_context, args.task, &dispatch_id)?;
+                if let Some(current_record) =
+                    authoritative_state.current_task_closure_result(args.task)
+                    && current_record.closure_record_id == closure_record_id
+                    && current_record.dispatch_id == dispatch_id
+                {
+                    return Ok(with_close_current_task_operator_blocker_metadata(
+                        blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                            task_number: args.task,
+                            dispatch_validation_action: "validated",
+                            task_closure_status: "current",
+                            closure_record_id: Some(closure_record_id),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: Some(String::from("execution_reentry")),
+                            trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
+                        }),
+                        &operator,
+                    ));
+                }
+                if authoritative_state
+                    .task_closure_negative_result(args.task)
+                    .is_some_and(|negative_record| {
+                        task_closure_negative_result_blocks_current_reviewed_state(
+                            negative_record.reviewed_state_id.as_str(),
+                            Some(reviewed_state_id.as_str()),
+                        )
+                    })
+                {
+                    return Ok(with_close_current_task_operator_blocker_metadata(
+                        blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                            task_number: args.task,
+                            dispatch_validation_action: "validated",
+                            task_closure_status: "not_current",
+                            closure_record_id: None,
+                            code: None,
+                            recommended_command: operator.recommended_command.clone(),
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: negative_result_required_follow_up(
+                                runtime,
+                                &args.plan,
+                                &operator,
+                                Some(authoritative_state),
+                            ),
+                            trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
+                        }),
+                        &operator,
+                    ));
+                }
+                record_negative_task_closure(
+                    authoritative_state,
+                    &NegativeTaskClosureWrite {
+                        task: args.task,
+                        dispatch_id: &dispatch_id,
+                        reviewed_state_id: &reviewed_state_id,
+                        contract_identity: &contract_identity,
+                        review_result: args.review_result.as_str(),
+                        review_summary_hash,
+                        verification_result,
+                        verification_summary_hash,
+                    },
+                )?;
+                Ok(with_close_current_task_operator_blocker_metadata(
+                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                        task_number: args.task,
+                        dispatch_validation_action: "validated",
+                        task_closure_status: "not_current",
+                        closure_record_id: None,
+                        code: None,
+                        recommended_command: close_current_task_follow_up_and_command(&operator).1,
                         rederive_via_workflow_operator: None,
                         required_follow_up: negative_result_required_follow_up(
                             runtime,
@@ -1766,57 +1895,25 @@ pub fn close_current_task(
                             &operator,
                             Some(authoritative_state),
                         ),
-                        trace_summary: "close-current-task failed closed because a negative task outcome is already authoritative for this still-current reviewed state and dispatch lineage.",
+                        trace_summary: "Task closure remained blocked because the supplied review or verification outcome was not passing.",
                     }),
                     &operator,
-                ));
+                ))
             }
-            record_negative_task_closure(
-                authoritative_state,
-                NegativeTaskClosureWrite {
-                    task: args.task,
-                    dispatch_id: &dispatch_id,
-                    reviewed_state_id: &reviewed_state_id,
-                    contract_identity: &contract_identity,
-                    review_result: args.review_result.as_str(),
-                    review_summary_hash,
-                    verification_result,
-                    verification_summary_hash,
-                },
-            )?;
-            Ok(with_close_current_task_operator_blocker_metadata(
-                blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+            CloseCurrentTaskOutcomeClass::Invalid => Ok(blocked_close_current_task_output(
+                BlockedCloseCurrentTaskOutputContext {
                     task_number: args.task,
                     dispatch_validation_action: "validated",
                     task_closure_status: "not_current",
                     closure_record_id: None,
                     code: None,
-                    recommended_command: close_current_task_follow_up_and_command(&operator).1,
+                    recommended_command: None,
                     rederive_via_workflow_operator: None,
-                    required_follow_up: negative_result_required_follow_up(
-                        runtime,
-                        &args.plan,
-                        &operator,
-                        Some(authoritative_state),
-                    ),
-                    trace_summary: "Task closure remained blocked because the supplied review or verification outcome was not passing.",
-                }),
-                &operator,
-            ))
+                    required_follow_up: Some(String::from("run_verification")),
+                    trace_summary: "close-current-task failed closed because a passing task review requires verification before closure recording can continue.",
+                },
+            )),
         }
-        CloseCurrentTaskOutcomeClass::Invalid => Ok(blocked_close_current_task_output(
-            BlockedCloseCurrentTaskOutputContext {
-                task_number: args.task,
-                dispatch_validation_action: "validated",
-                task_closure_status: "not_current",
-                closure_record_id: None,
-                code: None,
-                recommended_command: None,
-                rederive_via_workflow_operator: None,
-                required_follow_up: Some(String::from("run_verification")),
-                trace_summary: "close-current-task failed closed because a passing task review requires verification before closure recording can continue.",
-            },
-        )),
     }
 }
 
@@ -1827,7 +1924,7 @@ enum CloseCurrentTaskOutcomeClass {
     Invalid,
 }
 
-fn close_current_task_outcome_class(
+const fn close_current_task_outcome_class(
     review_result: ReviewOutcomeArg,
     verification_result: VerificationOutcomeArg,
 ) -> CloseCurrentTaskOutcomeClass {
@@ -1844,58 +1941,61 @@ fn close_current_task_outcome_class(
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_branch_closure(
     runtime: &ExecutionRuntime,
     args: &RecordBranchClosureArgs,
 ) -> Result<RecordBranchClosureOutput, JsonFailure> {
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    require_preflight_acceptance(&context)?;
-    let operator = current_workflow_operator(runtime, &args.plan, false)?;
-    let overlay = load_status_authoritative_overlay_checked(&context)?;
-    let mut reviewed_state = current_branch_reviewed_state(&context)?;
-    if let Some(blocked_output) =
-        blocked_branch_closure_output_for_invalid_current_task_closure(&context)?
     {
-        return Ok(blocked_output);
-    }
-    let mut authoritative_state = load_authoritative_transition_state(&context)?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "record-branch-closure requires authoritative harness state.",
-        ));
-    };
-    if let Some(output) = branch_closure_already_current_empty_lineage_exemption_output(
-        &context,
-        authoritative_state,
-        &reviewed_state,
-    )? {
-        return Ok(output);
-    }
-    let branch_closure_recording_ready = operator.phase == "document_release_pending"
-        && operator.phase_detail == "branch_closure_recording_required_for_release_readiness";
-    if !branch_closure_recording_ready {
-        if operator_requires_review_state_repair(&operator) {
-            return Ok(RecordBranchClosureOutput {
-                action: String::from("blocked"),
-                branch_closure_id: None,
-                code: None,
-                recommended_command: None,
-                rederive_via_workflow_operator: None,
-                superseded_branch_closure_ids: Vec::new(),
-                required_follow_up: Some(String::from("repair_review_state")),
-                trace_summary: String::from(
-                    "record-branch-closure failed closed because workflow/operator requires review-state repair before branch-closure recording can proceed.",
-                ),
-            });
-        } else if operator.review_state_status == "clean" {
-            return Ok(shared_out_of_phase_record_branch_closure_output(
-                &args.plan,
-                current_authoritative_branch_closure_id(&context)?,
-                "record-branch-closure failed closed because the current phase must be re-derived through workflow/operator before branch-closure recording can proceed.",
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        require_preflight_acceptance(&context)?;
+        let operator = current_workflow_operator(runtime, &args.plan, false)?;
+        let overlay = load_status_authoritative_overlay_checked(&context)?;
+        let mut reviewed_state = current_branch_reviewed_state(&context)?;
+        if let Some(blocked_output) =
+            blocked_branch_closure_output_for_invalid_current_task_closure(&context)?
+        {
+            return Ok(blocked_output);
+        }
+        let mut authoritative_state = load_authoritative_transition_state(&context)?;
+        let Some(authoritative_state) = authoritative_state.as_mut() else {
+            return Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                "record-branch-closure requires authoritative harness state.",
             ));
-        } else {
+        };
+        if let Some(output) = branch_closure_already_current_empty_lineage_exemption_output(
+            &context,
+            authoritative_state,
+            &reviewed_state,
+        )? {
+            return Ok(output);
+        }
+        let branch_closure_recording_ready = operator.phase == "document_release_pending"
+            && operator.phase_detail == "branch_closure_recording_required_for_release_readiness";
+        if !branch_closure_recording_ready {
+            if operator_requires_review_state_repair(&operator) {
+                return Ok(RecordBranchClosureOutput {
+                    action: String::from("blocked"),
+                    branch_closure_id: None,
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    superseded_branch_closure_ids: Vec::new(),
+                    required_follow_up: Some(String::from("repair_review_state")),
+                    trace_summary: String::from(
+                        "record-branch-closure failed closed because workflow/operator requires review-state repair before branch-closure recording can proceed.",
+                    ),
+                });
+            } else if operator.review_state_status == "clean" {
+                return Ok(shared_out_of_phase_record_branch_closure_output(
+                    &args.plan,
+                    current_authoritative_branch_closure_id(&context),
+                    "record-branch-closure failed closed because the current phase must be re-derived through workflow/operator before branch-closure recording can proceed.",
+                ));
+            }
             return Ok(RecordBranchClosureOutput {
                 action: String::from("blocked"),
                 branch_closure_id: None,
@@ -1909,22 +2009,54 @@ pub fn record_branch_closure(
                 ),
             });
         }
-    }
-    let rerecording_assessment = branch_closure_rerecording_assessment(&context)?;
-    let changed_paths = rerecording_assessment.changed_paths.clone();
-    if !changed_paths.is_empty() {
-        if !rerecording_assessment.supported {
-            let trace_summary = match rerecording_assessment.unsupported_reason {
-                Some(BranchRerecordingUnsupportedReason::MissingTaskClosureBaseline) => {
-                    "record-branch-closure failed closed because no still-current task-closure baseline remains for authoritative branch re-recording."
-                }
-                Some(BranchRerecordingUnsupportedReason::LateStageSurfaceNotDeclared) => {
-                    "record-branch-closure failed closed because the approved plan does not declare Late-Stage Surface metadata, so post-closure repo drift cannot be classified as trusted late-stage-only."
-                }
-                Some(BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface) | None => {
-                    "record-branch-closure failed closed because branch drift escaped the trusted Late-Stage Surface."
-                }
-            };
+        let rerecording_assessment = branch_closure_rerecording_assessment(&context)?;
+        let changed_paths = rerecording_assessment.changed_paths.clone();
+        if !changed_paths.is_empty() {
+            if !rerecording_assessment.supported {
+                let trace_summary = match rerecording_assessment.unsupported_reason {
+                    Some(BranchRerecordingUnsupportedReason::MissingTaskClosureBaseline) => {
+                        "record-branch-closure failed closed because no still-current task-closure baseline remains for authoritative branch re-recording."
+                    }
+                    Some(BranchRerecordingUnsupportedReason::LateStageSurfaceNotDeclared) => {
+                        "record-branch-closure failed closed because the approved plan does not declare Late-Stage Surface metadata, so post-closure repo drift cannot be classified as trusted late-stage-only."
+                    }
+                    Some(BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface)
+                    | None => {
+                        "record-branch-closure failed closed because branch drift escaped the trusted Late-Stage Surface."
+                    }
+                };
+                return Ok(RecordBranchClosureOutput {
+                    action: String::from("blocked"),
+                    branch_closure_id: None,
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    superseded_branch_closure_ids: Vec::new(),
+                    required_follow_up: Some(String::from("repair_review_state")),
+                    trace_summary: trace_summary.to_owned(),
+                });
+            }
+            let late_stage_surface = rerecording_assessment.late_stage_surface.as_slice();
+            reviewed_state.provenance_basis =
+                String::from("task_closure_lineage_plus_late_stage_surface_exemption");
+            reviewed_state.source_task_closure_ids = shared_branch_source_task_closure_ids(
+                &current_branch_task_closure_records(&context)?,
+                Some(late_stage_surface),
+            );
+            if reviewed_state.source_task_closure_ids.is_empty() {
+                reviewed_state.effective_reviewed_branch_surface =
+                    late_stage_surface_only_branch_surface(&changed_paths);
+            }
+        }
+        if let Some(output) =
+            branch_closure_already_current_output(&context, authoritative_state, &reviewed_state)?
+        {
+            return Ok(output);
+        }
+        if reviewed_state.source_task_closure_ids.is_empty()
+            && reviewed_state.provenance_basis
+                != "task_closure_lineage_plus_late_stage_surface_exemption"
+        {
             return Ok(RecordBranchClosureOutput {
                 action: String::from("blocked"),
                 branch_closure_id: None,
@@ -1933,110 +2065,82 @@ pub fn record_branch_closure(
                 rederive_via_workflow_operator: None,
                 superseded_branch_closure_ids: Vec::new(),
                 required_follow_up: Some(String::from("repair_review_state")),
-                trace_summary: trace_summary.to_owned(),
+                trace_summary: String::from(
+                    "record-branch-closure failed closed because no authoritative still-current task-closure provenance remains for the requested branch surface.",
+                ),
             });
         }
-        let late_stage_surface = rerecording_assessment.late_stage_surface.as_slice();
-        reviewed_state.provenance_basis =
-            String::from("task_closure_lineage_plus_late_stage_surface_exemption");
-        reviewed_state.source_task_closure_ids = shared_branch_source_task_closure_ids(
-            &current_branch_task_closure_records(&context)?,
-            Some(late_stage_surface),
+        let base_branch_closure_id =
+            deterministic_branch_closure_record_id(&context, &reviewed_state);
+        let branch_closure_id =
+            authoritative_state.next_available_branch_closure_record_id(&base_branch_closure_id);
+        let superseded_branch_closure_ids = superseded_branch_closure_ids_from_previous_current(
+            overlay.as_ref(),
+            &branch_closure_id,
         );
-        if reviewed_state.source_task_closure_ids.is_empty() {
-            reviewed_state.effective_reviewed_branch_surface =
-                late_stage_surface_only_branch_surface(&changed_paths);
-        }
-    }
-    if let Some(output) =
-        branch_closure_already_current_output(&context, authoritative_state, &reviewed_state)?
-    {
-        return Ok(output);
-    }
-    if reviewed_state.source_task_closure_ids.is_empty()
-        && reviewed_state.provenance_basis
-            != "task_closure_lineage_plus_late_stage_surface_exemption"
-    {
-        return Ok(RecordBranchClosureOutput {
-            action: String::from("blocked"),
-            branch_closure_id: None,
+        let branch_closure_source = render_branch_closure_artifact(
+            &context,
+            &branch_closure_id,
+            BranchClosureProjectionInput {
+                contract_identity: &reviewed_state.contract_identity,
+                base_branch: &reviewed_state.base_branch,
+                reviewed_state_id: &reviewed_state.reviewed_state_id,
+                effective_reviewed_branch_surface: &reviewed_state
+                    .effective_reviewed_branch_surface,
+                source_task_closure_ids: &reviewed_state.source_task_closure_ids,
+                provenance_basis: &reviewed_state.provenance_basis,
+                superseded_branch_closure_ids: &superseded_branch_closure_ids,
+            },
+        )?;
+        let branch_closure_fingerprint = sha256_hex(branch_closure_source.as_bytes());
+        record_current_branch_closure(
+            authoritative_state,
+            &BranchClosureWrite {
+                branch_closure_id: &branch_closure_id,
+                source_plan_path: &context.plan_rel,
+                source_plan_revision: context.plan_document.plan_revision,
+                repo_slug: &context.runtime.repo_slug,
+                branch_name: &context.runtime.branch_name,
+                base_branch: &reviewed_state.base_branch,
+                reviewed_state_id: &reviewed_state.reviewed_state_id,
+                contract_identity: &reviewed_state.contract_identity,
+                effective_reviewed_branch_surface: &reviewed_state
+                    .effective_reviewed_branch_surface,
+                source_task_closure_ids: &reviewed_state.source_task_closure_ids,
+                provenance_basis: &reviewed_state.provenance_basis,
+                closure_status: "current",
+                superseded_branch_closure_ids: &superseded_branch_closure_ids,
+                branch_closure_fingerprint: Some(&branch_closure_fingerprint),
+            },
+        )?;
+        let published_branch_closure_fingerprint =
+            publish_authoritative_artifact(runtime, "branch-closure", &branch_closure_source)?;
+        debug_assert_eq!(
+            published_branch_closure_fingerprint,
+            branch_closure_fingerprint
+        );
+        write_project_artifact(
+            runtime,
+            &format!("branch-closure-{}.md", &branch_closure_id),
+            &branch_closure_source,
+        )?;
+        Ok(RecordBranchClosureOutput {
+            action: String::from("recorded"),
+            branch_closure_id: Some(branch_closure_id),
             code: None,
             recommended_command: None,
             rederive_via_workflow_operator: None,
-            superseded_branch_closure_ids: Vec::new(),
-            required_follow_up: Some(String::from("repair_review_state")),
+            superseded_branch_closure_ids,
+            required_follow_up: None,
             trace_summary: String::from(
-                "record-branch-closure failed closed because no authoritative still-current task-closure provenance remains for the requested branch surface.",
+                "Recorded a current branch closure for the still-current reviewed branch state.",
             ),
-        });
+        })
     }
-    let base_branch_closure_id = deterministic_branch_closure_record_id(&context, &reviewed_state);
-    let branch_closure_id =
-        authoritative_state.next_available_branch_closure_record_id(&base_branch_closure_id);
-    let superseded_branch_closure_ids =
-        superseded_branch_closure_ids_from_previous_current(overlay.as_ref(), &branch_closure_id);
-    let branch_closure_source = render_branch_closure_artifact(
-        &context,
-        &branch_closure_id,
-        BranchClosureProjectionInput {
-            contract_identity: &reviewed_state.contract_identity,
-            base_branch: &reviewed_state.base_branch,
-            reviewed_state_id: &reviewed_state.reviewed_state_id,
-            effective_reviewed_branch_surface: &reviewed_state.effective_reviewed_branch_surface,
-            source_task_closure_ids: &reviewed_state.source_task_closure_ids,
-            provenance_basis: &reviewed_state.provenance_basis,
-            superseded_branch_closure_ids: &superseded_branch_closure_ids,
-        },
-    )?;
-    let branch_closure_fingerprint = sha256_hex(branch_closure_source.as_bytes());
-    record_current_branch_closure(
-        authoritative_state,
-        BranchClosureWrite {
-            branch_closure_id: &branch_closure_id,
-            source_plan_path: &context.plan_rel,
-            source_plan_revision: context.plan_document.plan_revision,
-            repo_slug: &context.runtime.repo_slug,
-            branch_name: &context.runtime.branch_name,
-            base_branch: &reviewed_state.base_branch,
-            reviewed_state_id: &reviewed_state.reviewed_state_id,
-            contract_identity: &reviewed_state.contract_identity,
-            effective_reviewed_branch_surface: &reviewed_state.effective_reviewed_branch_surface,
-            source_task_closure_ids: &reviewed_state.source_task_closure_ids,
-            provenance_basis: &reviewed_state.provenance_basis,
-            closure_status: "current",
-            superseded_branch_closure_ids: &superseded_branch_closure_ids,
-            branch_closure_fingerprint: Some(&branch_closure_fingerprint),
-        },
-    )?;
-    let published_branch_closure_fingerprint =
-        publish_authoritative_artifact(runtime, "branch-closure", &branch_closure_source)?;
-    debug_assert_eq!(
-        published_branch_closure_fingerprint,
-        branch_closure_fingerprint
-    );
-    write_project_artifact(
-        runtime,
-        &format!("branch-closure-{}.md", &branch_closure_id),
-        &branch_closure_source,
-    )?;
-    Ok(RecordBranchClosureOutput {
-        action: String::from("recorded"),
-        branch_closure_id: Some(branch_closure_id),
-        code: None,
-        recommended_command: None,
-        rederive_via_workflow_operator: None,
-        superseded_branch_closure_ids,
-        required_follow_up: None,
-        trace_summary: String::from(
-            "Recorded a current branch closure for the still-current reviewed branch state.",
-        ),
-    })
 }
 
 fn advance_late_stage_result_label(result: Option<AdvanceLateStageResultArg>) -> &'static str {
-    result
-        .map(AdvanceLateStageResultArg::as_str)
-        .unwrap_or("unspecified")
+    result.map_or("unspecified", AdvanceLateStageResultArg::as_str)
 }
 
 fn require_advance_late_stage_summary_file<'a>(
@@ -2053,200 +2157,116 @@ fn require_advance_late_stage_summary_file<'a>(
     })
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn advance_late_stage(
     runtime: &ExecutionRuntime,
     args: &AdvanceLateStageArgs,
 ) -> Result<AdvanceLateStageOutput, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    require_preflight_acceptance(&context)?;
-    let supplied_result_label = advance_late_stage_result_label(args.result);
-    let current_branch_closure = current_authoritative_branch_closure_binding_optional(&context)?;
-    let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
-    let operator_without_external_review = current_workflow_operator(runtime, &args.plan, false);
-    let final_review_recording_requested = args.dispatch_id.is_some()
-        || args.reviewer_source.is_some()
-        || args.reviewer_id.is_some()
-        || (matches!(
-            args.result,
-            Some(AdvanceLateStageResultArg::Pass | AdvanceLateStageResultArg::Fail)
-        ) && operator_without_external_review
-            .as_ref()
-            .ok()
-            .is_some_and(|operator| operator.phase == "final_review_pending"));
-    if final_review_recording_requested {
-        if args.branch_closure_id.is_some() {
-            return Err(JsonFailure::new(
-                FailureClass::InvalidCommandInput,
-                "final_review_branch_closure_id_invalid: final-review advance-late-stage does not accept --branch-closure-id; use the workflow/operator recording_context branch_closure_id.",
-            ));
-        }
-        let reviewer_source = args
-            .reviewer_source
-            .as_deref()
-            .ok_or_else(|| {
-                JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    "reviewer_source_required: final-review advance-late-stage requires --reviewer-source.",
-                )
-            })?;
-        if !shared_reviewer_source_is_valid(reviewer_source) {
-            return Err(JsonFailure::new(
-                FailureClass::InvalidCommandInput,
-                "reviewer_source_invalid: final-review advance-late-stage requires --reviewer-source fresh-context-subagent|cross-model|human-independent-reviewer.",
-            ));
-        }
-        let reviewer_id = args.reviewer_id.as_deref().ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::InvalidCommandInput,
-                "reviewer_id_required: final-review advance-late-stage requires --reviewer-id.",
-            )
-        })?;
-        let result = match args.result {
-            Some(AdvanceLateStageResultArg::Pass) => "pass",
-            Some(AdvanceLateStageResultArg::Fail) => "fail",
-            _ => {
+    {
+        let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        require_preflight_acceptance(&context)?;
+        let supplied_result_label = advance_late_stage_result_label(args.result);
+        let current_branch_closure =
+            current_authoritative_branch_closure_binding_optional(&context);
+        let branch_closure_id = current_authoritative_branch_closure_id_optional(&context);
+        let operator_without_external_review =
+            current_workflow_operator(runtime, &args.plan, false);
+        let final_review_recording_requested = args.dispatch_id.is_some()
+            || args.reviewer_source.is_some()
+            || args.reviewer_id.is_some()
+            || (matches!(
+                args.result,
+                Some(AdvanceLateStageResultArg::Pass | AdvanceLateStageResultArg::Fail)
+            ) && operator_without_external_review
+                .as_ref()
+                .ok()
+                .is_some_and(|operator| operator.phase == "final_review_pending"));
+        if final_review_recording_requested {
+            if args.branch_closure_id.is_some() {
                 return Err(JsonFailure::new(
                     FailureClass::InvalidCommandInput,
-                    "final_review_result_invalid: final-review advance-late-stage requires --result pass|fail.",
+                    "final_review_branch_closure_id_invalid: final-review advance-late-stage does not accept --branch-closure-id; use the workflow/operator recording_context branch_closure_id.",
                 ));
             }
-        };
-        let summary_file = require_advance_late_stage_summary_file(args, "final-review")?;
-        let final_review_recording_ready = |operator: &ExecutionRoutingState| {
-            operator.review_state_status == "clean"
-                && operator.phase == "final_review_pending"
-                && operator.phase_detail == "final_review_recording_ready"
-                && operator
-                    .recording_context
-                    .as_ref()
-                    .and_then(|context| context.branch_closure_id.as_deref())
-                    == branch_closure_id.as_deref()
-        };
-        let candidate_dispatch_id = current_review_dispatch_id_candidate(
-            &context,
-            ReviewDispatchScopeArg::FinalReview,
-            None,
-            args.dispatch_id.as_deref(),
-        )?;
-        let operator = match current_workflow_operator(runtime, &args.plan, true) {
-            Ok(operator) => operator,
-            Err(error) if error.error_class == FailureClass::InstructionParseFailed.as_str() => {
-                return Ok(shared_out_of_phase_advance_late_stage_output(
-                    &args.plan,
-                    AdvanceLateStageOutputContext {
-                        stage_path: "final_review",
-                        delegated_primitive: "record-final-review",
-                        branch_closure_id: branch_closure_id.clone(),
-                        dispatch_id: None,
-                        result,
-                        external_review_result_ready: true,
-                        trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
-                    },
+            let reviewer_source = args
+                .reviewer_source
+                .as_deref()
+                .ok_or_else(|| {
+                    JsonFailure::new(
+                        FailureClass::InvalidCommandInput,
+                        "reviewer_source_required: final-review advance-late-stage requires --reviewer-source.",
+                    )
+                })?;
+            if !shared_reviewer_source_is_valid(reviewer_source) {
+                return Err(JsonFailure::new(
+                    FailureClass::InvalidCommandInput,
+                    "reviewer_source_invalid: final-review advance-late-stage requires --reviewer-source fresh-context-subagent|cross-model|human-independent-reviewer.",
                 ));
             }
-            Err(error) => return Err(error),
-        };
-        let final_review_override_out_of_phase =
-            late_stage_negative_result_override_active(&operator);
-        let dispatch_current_before_record = candidate_dispatch_id
-            .as_deref()
-            .map(|dispatch_id| {
-                ensure_final_review_dispatch_id_matches(&context, dispatch_id).is_ok()
-            })
-            .unwrap_or(false);
-        if operator.review_state_status == "clean"
-            && !final_review_override_out_of_phase
-            && dispatch_current_before_record
-            && let Some(current_branch_closure) = current_branch_closure.as_ref()
-            && let Some(output) = equivalent_current_final_review_rerun(
-                &context,
-                current_branch_closure,
-                EquivalentFinalReviewRerunParams {
-                    stage_path: "final_review",
-                    delegated_primitive: "record-final-review",
-                    dispatch_id: candidate_dispatch_id
-                        .as_deref()
-                        .expect("candidate dispatch id should exist when marked current"),
-                    reviewer_source,
-                    reviewer_id,
-                    result,
-                    summary_file,
-                    required_follow_up: (result == "fail")
-                        .then(|| negative_result_follow_up(&operator))
-                        .flatten(),
-                },
-            )?
-        {
-            return Ok(output);
-        }
-        let allow_fail_recording_while_override_out_of_phase = result == "fail"
-            && final_review_override_out_of_phase
-            && dispatch_current_before_record;
-        if !final_review_recording_ready(&operator)
-            && !allow_fail_recording_while_override_out_of_phase
-        {
-            return Ok(advance_late_stage_follow_up_or_requery_output(
-                &operator,
-                &args.plan,
-                false,
-                AdvanceLateStageOutputContext {
-                    stage_path: "final_review",
-                    delegated_primitive: "record-final-review",
-                    branch_closure_id: branch_closure_id.clone(),
-                    dispatch_id: None,
-                    result,
-                    external_review_result_ready: true,
-                    trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
-                },
-            ));
-        }
-        let summary = read_nonempty_summary_file(summary_file, "summary")?;
-        let normalized_summary_hash = summary_hash(&summary);
-        let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
-            dispatch_id
-        } else {
-            ensure_current_review_dispatch_id(
+            let reviewer_id = args.reviewer_id.as_deref().ok_or_else(|| {
+                JsonFailure::new(
+                    FailureClass::InvalidCommandInput,
+                    "reviewer_id_required: final-review advance-late-stage requires --reviewer-id.",
+                )
+            })?;
+            let result = match args.result {
+                Some(AdvanceLateStageResultArg::Pass) => "pass",
+                Some(AdvanceLateStageResultArg::Fail) => "fail",
+                _ => {
+                    return Err(JsonFailure::new(
+                        FailureClass::InvalidCommandInput,
+                        "final_review_result_invalid: final-review advance-late-stage requires --result pass|fail.",
+                    ));
+                }
+            };
+            let summary_file = require_advance_late_stage_summary_file(args, "final-review")?;
+            let final_review_recording_ready = |operator: &ExecutionRoutingState| {
+                operator.review_state_status == "clean"
+                    && operator.phase == "final_review_pending"
+                    && operator.phase_detail == "final_review_recording_ready"
+                    && operator
+                        .recording_context
+                        .as_ref()
+                        .and_then(|context| context.branch_closure_id.as_deref())
+                        == branch_closure_id.as_deref()
+            };
+            let candidate_dispatch_id = current_review_dispatch_id_candidate(
                 &context,
                 ReviewDispatchScopeArg::FinalReview,
                 None,
                 args.dispatch_id.as_deref(),
-            )?
-        };
-        let _write_authority = claim_step_write_authority(runtime)?;
-        let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-        let current_branch_closure =
-            current_authoritative_branch_closure_binding_optional(&context)?;
-        let branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
-        let dispatch_current =
-            ensure_final_review_dispatch_id_matches(&context, &dispatch_id).is_ok();
-        let operator = match current_workflow_operator(runtime, &args.plan, true) {
-            Ok(operator) => operator,
-            Err(error) if error.error_class == FailureClass::InstructionParseFailed.as_str() => {
-                return Ok(shared_out_of_phase_advance_late_stage_output(
-                    &args.plan,
-                    AdvanceLateStageOutputContext {
-                        stage_path: "final_review",
-                        delegated_primitive: "record-final-review",
-                        branch_closure_id: branch_closure_id.clone(),
-                        dispatch_id: Some(dispatch_id.clone()),
-                        result,
-                        external_review_result_ready: true,
-                        trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
-                    },
-                ));
-            }
-            Err(error) => return Err(error),
-        };
-        let final_review_override_out_of_phase =
-            late_stage_negative_result_override_active(&operator);
-        let allow_fail_recording_while_override_out_of_phase =
-            result == "fail" && final_review_override_out_of_phase && dispatch_current;
-        if (!final_review_recording_ready(&operator)
-            && !allow_fail_recording_while_override_out_of_phase)
-            || !dispatch_current
-        {
+            )?;
+            let operator = match current_workflow_operator(runtime, &args.plan, true) {
+                Ok(operator) => operator,
+                Err(error)
+                    if error.error_class == FailureClass::InstructionParseFailed.as_str() =>
+                {
+                    return Ok(shared_out_of_phase_advance_late_stage_output(
+                        &args.plan,
+                        AdvanceLateStageOutputContext {
+                            stage_path: "final_review",
+                            delegated_primitive: "record-final-review",
+                            branch_closure_id: branch_closure_id.clone(),
+                            dispatch_id: None,
+                            result,
+                            external_review_result_ready: true,
+                            trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                        },
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
+            let final_review_override_out_of_phase =
+                late_stage_negative_result_override_active(&operator);
+            let dispatch_current_before_record =
+                candidate_dispatch_id.as_deref().is_some_and(|dispatch_id| {
+                    ensure_final_review_dispatch_id_matches(&context, dispatch_id).is_ok()
+                });
             if operator.review_state_status == "clean"
                 && !final_review_override_out_of_phase
+                && dispatch_current_before_record
+                && let Some(candidate_dispatch_id) = candidate_dispatch_id.as_deref()
                 && let Some(current_branch_closure) = current_branch_closure.as_ref()
                 && let Some(output) = equivalent_current_final_review_rerun(
                     &context,
@@ -2254,7 +2274,7 @@ pub fn advance_late_stage(
                     EquivalentFinalReviewRerunParams {
                         stage_path: "final_review",
                         delegated_primitive: "record-final-review",
-                        dispatch_id: &dispatch_id,
+                        dispatch_id: candidate_dispatch_id,
                         reviewer_source,
                         reviewer_id,
                         result,
@@ -2267,116 +2287,206 @@ pub fn advance_late_stage(
             {
                 return Ok(output);
             }
-            return Ok(advance_late_stage_follow_up_or_requery_output(
-                &operator,
-                &args.plan,
-                dispatch_current,
-                AdvanceLateStageOutputContext {
-                    stage_path: "final_review",
-                    delegated_primitive: "record-final-review",
-                    branch_closure_id: branch_closure_id.clone(),
-                    dispatch_id: Some(dispatch_id.clone()),
-                    result,
-                    external_review_result_ready: true,
-                    trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
-                },
-            ));
-        }
-        let current_branch_closure = authoritative_current_branch_closure_binding(
-            &context,
-            "advance-late-stage final-review",
-        )?;
-        let branch_closure_id = current_branch_closure.branch_closure_id.clone();
-        ensure_final_review_dispatch_id_matches(&context, &dispatch_id)?;
-        let reviewed_state_id = current_branch_closure.reviewed_state_id.clone();
-        let browser_qa_required = current_plan_requires_browser_qa(&context);
-        let mut authoritative_state = load_authoritative_transition_state(&context)?;
-        let Some(authoritative_state) = authoritative_state.as_mut() else {
-            return Err(JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                "advance-late-stage requires authoritative harness state.",
-            ));
-        };
-        let final_review_evidence = resolve_final_review_evidence(&context)?;
-        if let (
-            Some(current_branch_closure_id),
-            Some(current_dispatch_id),
-            Some(current_reviewer_source),
-            Some(current_reviewer_id),
-            Some(current_result),
-            Some(current_summary_hash),
-        ) = (
-            authoritative_state.current_final_review_branch_closure_id(),
-            authoritative_state.current_final_review_dispatch_id(),
-            authoritative_state.current_final_review_reviewer_source(),
-            authoritative_state.current_final_review_reviewer_id(),
-            authoritative_state.current_final_review_result(),
-            authoritative_state.current_final_review_summary_hash(),
-        ) && current_branch_closure_id == branch_closure_id
-            && current_dispatch_id == dispatch_id
-        {
-            let equivalent_current_result = current_reviewer_source == reviewer_source
-                && current_reviewer_id == reviewer_id
-                && current_result == result
-                && current_summary_hash == normalized_summary_hash;
-            if equivalent_current_result {
-                if current_final_review_record_is_still_authoritative(
-                    &context,
-                    authoritative_state,
-                    CurrentFinalReviewAuthorityCheck {
-                        branch_closure_id: &branch_closure_id,
-                        dispatch_id: &dispatch_id,
-                        reviewer_source,
-                        reviewer_id,
-                        result,
-                        normalized_summary_hash: &normalized_summary_hash,
-                    },
-                )? {
-                    if result == "fail" && final_review_override_out_of_phase {
-                        return Ok(shared_out_of_phase_advance_late_stage_output(
-                            &args.plan,
-                            AdvanceLateStageOutputContext {
-                                stage_path: "final_review",
-                                delegated_primitive: "record-final-review",
-                                branch_closure_id: Some(branch_closure_id),
-                                dispatch_id: Some(dispatch_id.clone()),
-                                result,
-                                external_review_result_ready: true,
-                                trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
-                            },
-                        ));
-                    }
-                    return Ok(AdvanceLateStageOutput {
-                        action: String::from("already_current"),
-                        stage_path: String::from("final_review"),
-                        delegated_primitive: String::from("record-final-review"),
-                        branch_closure_id: Some(branch_closure_id),
-                        dispatch_id: Some(dispatch_id.clone()),
-                        result: result.to_owned(),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: (result == "fail")
-                            .then(|| negative_result_follow_up(&operator))
-                            .flatten(),
-                        trace_summary: String::from(
-                            "Current branch closure already has an equivalent recorded final-review outcome.",
-                        ),
-                    });
-                }
-                return Ok(shared_out_of_phase_advance_late_stage_output(
+            let allow_fail_recording_while_override_out_of_phase = result == "fail"
+                && final_review_override_out_of_phase
+                && dispatch_current_before_record;
+            if !final_review_recording_ready(&operator)
+                && !allow_fail_recording_while_override_out_of_phase
+            {
+                return Ok(advance_late_stage_follow_up_or_requery_output(
+                    &operator,
                     &args.plan,
+                    false,
                     AdvanceLateStageOutputContext {
                         stage_path: "final_review",
                         delegated_primitive: "record-final-review",
-                        branch_closure_id: Some(branch_closure_id.clone()),
-                        dispatch_id: Some(dispatch_id.clone()),
+                        branch_closure_id: branch_closure_id.clone(),
+                        dispatch_id: None,
                         result,
                         external_review_result_ready: true,
-                        trace_summary: "advance-late-stage failed closed because the current final-review record is no longer authoritative and workflow/operator must re-derive the next safe step.",
+                        trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
                     },
                 ));
+            }
+            let summary = read_nonempty_summary_file(summary_file, "summary")?;
+            let normalized_summary_hash = summary_hash(&summary);
+            let dispatch_id = if let Some(dispatch_id) = candidate_dispatch_id {
+                dispatch_id
             } else {
+                ensure_current_review_dispatch_id(
+                    &context,
+                    ReviewDispatchScopeArg::FinalReview,
+                    None,
+                    args.dispatch_id.as_deref(),
+                )?
+            };
+            let _write_authority = claim_step_write_authority(runtime)?;
+            let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+            let current_branch_closure =
+                current_authoritative_branch_closure_binding_optional(&context);
+            let branch_closure_id = current_authoritative_branch_closure_id_optional(&context);
+            let dispatch_current =
+                ensure_final_review_dispatch_id_matches(&context, &dispatch_id).is_ok();
+            let operator = match current_workflow_operator(runtime, &args.plan, true) {
+                Ok(operator) => operator,
+                Err(error)
+                    if error.error_class == FailureClass::InstructionParseFailed.as_str() =>
+                {
+                    return Ok(shared_out_of_phase_advance_late_stage_output(
+                        &args.plan,
+                        AdvanceLateStageOutputContext {
+                            stage_path: "final_review",
+                            delegated_primitive: "record-final-review",
+                            branch_closure_id,
+                            dispatch_id: Some(dispatch_id),
+                            result,
+                            external_review_result_ready: true,
+                            trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                        },
+                    ));
+                }
+                Err(error) => return Err(error),
+            };
+            let final_review_override_out_of_phase =
+                late_stage_negative_result_override_active(&operator);
+            let allow_fail_recording_while_override_out_of_phase =
+                result == "fail" && final_review_override_out_of_phase && dispatch_current;
+            if (!final_review_recording_ready(&operator)
+                && !allow_fail_recording_while_override_out_of_phase)
+                || !dispatch_current
+            {
+                if operator.review_state_status == "clean"
+                    && !final_review_override_out_of_phase
+                    && let Some(current_branch_closure) = current_branch_closure.as_ref()
+                    && let Some(output) = equivalent_current_final_review_rerun(
+                        &context,
+                        current_branch_closure,
+                        EquivalentFinalReviewRerunParams {
+                            stage_path: "final_review",
+                            delegated_primitive: "record-final-review",
+                            dispatch_id: &dispatch_id,
+                            reviewer_source,
+                            reviewer_id,
+                            result,
+                            summary_file,
+                            required_follow_up: (result == "fail")
+                                .then(|| negative_result_follow_up(&operator))
+                                .flatten(),
+                        },
+                    )?
+                {
+                    return Ok(output);
+                }
+                return Ok(advance_late_stage_follow_up_or_requery_output(
+                    &operator,
+                    &args.plan,
+                    dispatch_current,
+                    AdvanceLateStageOutputContext {
+                        stage_path: "final_review",
+                        delegated_primitive: "record-final-review",
+                        branch_closure_id,
+                        dispatch_id: Some(dispatch_id),
+                        result,
+                        external_review_result_ready: true,
+                        trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                    },
+                ));
+            }
+            let current_branch_closure = authoritative_current_branch_closure_binding(
+                &context,
+                "advance-late-stage final-review",
+            )?;
+            let branch_closure_id = current_branch_closure.branch_closure_id;
+            ensure_final_review_dispatch_id_matches(&context, &dispatch_id)?;
+            let reviewed_state_id = current_branch_closure.reviewed_state_id;
+            let browser_qa_required = current_plan_requires_browser_qa(&context);
+            let mut authoritative_state = load_authoritative_transition_state(&context)?;
+            let Some(authoritative_state) = authoritative_state.as_mut() else {
+                return Err(JsonFailure::new(
+                    FailureClass::ExecutionStateNotReady,
+                    "advance-late-stage requires authoritative harness state.",
+                ));
+            };
+            let final_review_evidence = resolve_final_review_evidence(&context)?;
+            if let (
+                Some(current_branch_closure_id),
+                Some(current_dispatch_id),
+                Some(current_reviewer_source),
+                Some(current_reviewer_id),
+                Some(current_result),
+                Some(current_summary_hash),
+            ) = (
+                authoritative_state.current_final_review_branch_closure_id(),
+                authoritative_state.current_final_review_dispatch_id(),
+                authoritative_state.current_final_review_reviewer_source(),
+                authoritative_state.current_final_review_reviewer_id(),
+                authoritative_state.current_final_review_result(),
+                authoritative_state.current_final_review_summary_hash(),
+            ) && current_branch_closure_id == branch_closure_id
+                && current_dispatch_id == dispatch_id
+            {
+                let equivalent_current_result = current_reviewer_source == reviewer_source
+                    && current_reviewer_id == reviewer_id
+                    && current_result == result
+                    && current_summary_hash == normalized_summary_hash;
+                if equivalent_current_result {
+                    if current_final_review_record_is_still_authoritative(
+                        &context,
+                        authoritative_state,
+                        CurrentFinalReviewAuthorityCheck {
+                            branch_closure_id: &branch_closure_id,
+                            dispatch_id: &dispatch_id,
+                            reviewer_source,
+                            reviewer_id,
+                            result,
+                            normalized_summary_hash: &normalized_summary_hash,
+                        },
+                    )? {
+                        if result == "fail" && final_review_override_out_of_phase {
+                            return Ok(shared_out_of_phase_advance_late_stage_output(
+                                &args.plan,
+                                AdvanceLateStageOutputContext {
+                                    stage_path: "final_review",
+                                    delegated_primitive: "record-final-review",
+                                    branch_closure_id: Some(branch_closure_id),
+                                    dispatch_id: Some(dispatch_id.clone()),
+                                    result,
+                                    external_review_result_ready: true,
+                                    trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before final-review recording can proceed.",
+                                },
+                            ));
+                        }
+                        return Ok(AdvanceLateStageOutput {
+                            action: String::from("already_current"),
+                            stage_path: String::from("final_review"),
+                            delegated_primitive: String::from("record-final-review"),
+                            branch_closure_id: Some(branch_closure_id),
+                            dispatch_id: Some(dispatch_id.clone()),
+                            result: result.to_owned(),
+                            code: None,
+                            recommended_command: None,
+                            rederive_via_workflow_operator: None,
+                            required_follow_up: (result == "fail")
+                                .then(|| negative_result_follow_up(&operator))
+                                .flatten(),
+                            trace_summary: String::from(
+                                "Current branch closure already has an equivalent recorded final-review outcome.",
+                            ),
+                        });
+                    }
+                    return Ok(shared_out_of_phase_advance_late_stage_output(
+                        &args.plan,
+                        AdvanceLateStageOutputContext {
+                            stage_path: "final_review",
+                            delegated_primitive: "record-final-review",
+                            branch_closure_id: Some(branch_closure_id.clone()),
+                            dispatch_id: Some(dispatch_id.clone()),
+                            result,
+                            external_review_result_ready: true,
+                            trace_summary: "advance-late-stage failed closed because the current final-review record is no longer authoritative and workflow/operator must re-derive the next safe step.",
+                        },
+                    ));
+                }
                 return Ok(AdvanceLateStageOutput {
                     action: String::from("blocked"),
                     stage_path: String::from("final_review"),
@@ -2393,400 +2503,405 @@ pub fn advance_late_stage(
                     ),
                 });
             }
+            let rendered_final_review = render_final_review_artifacts(
+                runtime,
+                &context,
+                &branch_closure_id,
+                &reviewed_state_id,
+                &final_review_evidence.base_branch,
+                FinalReviewProjectionInput {
+                    dispatch_id: &dispatch_id,
+                    reviewer_source,
+                    reviewer_id,
+                    result,
+                    deviations_required: final_review_evidence.deviations_required,
+                    summary: &summary,
+                },
+            )?;
+            let final_review_source = rendered_final_review.final_review_source;
+            let final_review_fingerprint = sha256_hex(final_review_source.as_bytes());
+            let release_readiness_record_id = authoritative_state
+                .current_release_readiness_record_id()
+                .ok_or_else(|| {
+                    JsonFailure::new(
+                        FailureClass::ExecutionStateNotReady,
+                        "advance-late-stage final-review requires a current release-readiness record id.",
+                    )
+                })?;
+            persist_final_review_record(
+                authoritative_state,
+                &FinalReviewWrite {
+                    branch_closure_id: &branch_closure_id,
+                    release_readiness_record_id: &release_readiness_record_id,
+                    dispatch_id: &dispatch_id,
+                    reviewer_source,
+                    reviewer_id,
+                    result,
+                    final_review_fingerprint: Some(final_review_fingerprint.as_str()),
+                    deviations_required: Some(final_review_evidence.deviations_required),
+                    browser_qa_required,
+                    source_plan_path: &context.plan_rel,
+                    source_plan_revision: context.plan_document.plan_revision,
+                    repo_slug: &context.runtime.repo_slug,
+                    branch_name: &context.runtime.branch_name,
+                    base_branch: &final_review_evidence.base_branch,
+                    reviewed_state_id: &reviewed_state_id,
+                    summary: &summary,
+                    summary_hash: &normalized_summary_hash,
+                },
+            )?;
+            let published =
+                publish_authoritative_artifact(runtime, "final-review", &final_review_source)?;
+            debug_assert_eq!(published, final_review_fingerprint);
+            let reviewer_artifact_name = rendered_final_review
+                .reviewer_artifact_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    JsonFailure::new(
+                        FailureClass::EvidenceWriteFailed,
+                        "Could not derive final-review reviewer artifact file name.",
+                    )
+                })?;
+            write_project_artifact(
+                runtime,
+                reviewer_artifact_name,
+                &rendered_final_review.reviewer_source_text,
+            )?;
+            write_project_artifact(
+                runtime,
+                &format!(
+                    "featureforge-{}-code-review-{}.md",
+                    runtime.safe_branch,
+                    timestamp_slug()
+                ),
+                &final_review_source,
+            )?;
+            let (
+                code,
+                recommended_command,
+                rederive_via_workflow_operator,
+                required_follow_up,
+                trace_summary,
+            ) = if result == "fail" && final_review_override_out_of_phase {
+                (
+                    Some(String::from("out_of_phase_requery_required")),
+                    Some(recommended_operator_command(&args.plan, true)),
+                    Some(true),
+                    None,
+                    String::from(
+                        "Recorded final-review evidence for the current dispatch lineage; workflow/operator must be requeried to continue from the active override lane.",
+                    ),
+                )
+            } else {
+                (
+                    None,
+                    None,
+                    None,
+                    (result == "fail")
+                        .then(|| negative_result_follow_up(&operator))
+                        .flatten(),
+                    String::from(
+                        "Validated final-review dispatch lineage and recorded final-review evidence from authoritative late-stage state.",
+                    ),
+                )
+            };
+            return Ok(AdvanceLateStageOutput {
+                action: String::from("recorded"),
+                stage_path: String::from("final_review"),
+                delegated_primitive: String::from("record-final-review"),
+                branch_closure_id: Some(branch_closure_id),
+                dispatch_id: Some(dispatch_id.clone()),
+                result: result.to_owned(),
+                code,
+                recommended_command,
+                rederive_via_workflow_operator,
+                required_follow_up,
+                trace_summary,
+            });
         }
-        let rendered_final_review = render_final_review_artifacts(
-            runtime,
-            &context,
-            &branch_closure_id,
-            &reviewed_state_id,
-            &final_review_evidence.base_branch,
-            FinalReviewProjectionInput {
-                dispatch_id: &dispatch_id,
-                reviewer_source,
-                reviewer_id,
-                result,
-                deviations_required: final_review_evidence.deviations_required,
-                summary: &summary,
-            },
-        )?;
-        let final_review_source = rendered_final_review.final_review_source;
-        let final_review_fingerprint = sha256_hex(final_review_source.as_bytes());
-        let release_readiness_record_id = authoritative_state
-            .current_release_readiness_record_id()
-            .ok_or_else(|| {
-                JsonFailure::new(
-                    FailureClass::ExecutionStateNotReady,
-                    "advance-late-stage final-review requires a current release-readiness record id.",
-                )
-            })?;
-        persist_final_review_record(
-            authoritative_state,
-            FinalReviewWrite {
-                branch_closure_id: &branch_closure_id,
-                release_readiness_record_id: &release_readiness_record_id,
-                dispatch_id: &dispatch_id,
-                reviewer_source,
-                reviewer_id,
-                result,
-                final_review_fingerprint: Some(final_review_fingerprint.as_str()),
-                deviations_required: Some(final_review_evidence.deviations_required),
-                browser_qa_required,
-                source_plan_path: &context.plan_rel,
-                source_plan_revision: context.plan_document.plan_revision,
-                repo_slug: &context.runtime.repo_slug,
-                branch_name: &context.runtime.branch_name,
-                base_branch: &final_review_evidence.base_branch,
-                reviewed_state_id: &reviewed_state_id,
-                summary: &summary,
-                summary_hash: &normalized_summary_hash,
-            },
-        )?;
-        let published =
-            publish_authoritative_artifact(runtime, "final-review", &final_review_source)?;
-        debug_assert_eq!(published, final_review_fingerprint);
-        let reviewer_artifact_name = rendered_final_review
-            .reviewer_artifact_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| {
-                JsonFailure::new(
-                    FailureClass::EvidenceWriteFailed,
-                    "Could not derive final-review reviewer artifact file name.",
-                )
-            })?;
-        write_project_artifact(
-            runtime,
-            reviewer_artifact_name,
-            &rendered_final_review.reviewer_source_text,
-        )?;
-        write_project_artifact(
-            runtime,
-            &format!(
-                "featureforge-{}-code-review-{}.md",
-                runtime.safe_branch,
-                timestamp_slug()
-            ),
-            &final_review_source,
-        )?;
-        let (
-            code,
-            recommended_command,
-            rederive_via_workflow_operator,
-            required_follow_up,
-            trace_summary,
-        ) = if result == "fail" && final_review_override_out_of_phase {
-            (
-                Some(String::from("out_of_phase_requery_required")),
-                Some(recommended_operator_command(&args.plan, true)),
-                Some(true),
-                None,
-                String::from(
-                    "Recorded final-review evidence for the current dispatch lineage; workflow/operator must be requeried to continue from the active override lane.",
-                ),
-            )
-        } else {
-            (
-                None,
-                None,
-                None,
-                (result == "fail")
-                    .then(|| negative_result_follow_up(&operator))
-                    .flatten(),
-                String::from(
-                    "Validated final-review dispatch lineage and recorded final-review evidence from authoritative late-stage state.",
-                ),
-            )
-        };
-        return Ok(AdvanceLateStageOutput {
-            action: String::from("recorded"),
-            stage_path: String::from("final_review"),
-            delegated_primitive: String::from("record-final-review"),
-            branch_closure_id: Some(branch_closure_id),
-            dispatch_id: Some(dispatch_id.clone()),
-            result: result.to_owned(),
-            code,
-            recommended_command,
-            rederive_via_workflow_operator,
-            required_follow_up,
-            trace_summary,
-        });
-    }
 
-    if args.branch_closure_id.is_some()
-        || args.reviewer_source.is_some()
-        || args.reviewer_id.is_some()
-    {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidCommandInput,
-            "release_readiness_argument_mismatch: release-readiness advance-late-stage does not accept final-review-only arguments.",
-        ));
-    }
-    let operator = match operator_without_external_review {
-        Ok(operator) => operator,
-        Err(error) if error.error_class == FailureClass::InstructionParseFailed.as_str() => {
-            return Ok(shared_out_of_phase_advance_late_stage_output(
+        if args.branch_closure_id.is_some()
+            || args.reviewer_source.is_some()
+            || args.reviewer_id.is_some()
+        {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "release_readiness_argument_mismatch: release-readiness advance-late-stage does not accept final-review-only arguments.",
+            ));
+        }
+        let operator = match operator_without_external_review {
+            Ok(operator) => operator,
+            Err(error) if error.error_class == FailureClass::InstructionParseFailed.as_str() => {
+                return Ok(shared_out_of_phase_advance_late_stage_output(
+                    &args.plan,
+                    AdvanceLateStageOutputContext {
+                        stage_path: "release_readiness",
+                        delegated_primitive: "record-release-readiness",
+                        branch_closure_id,
+                        dispatch_id: None,
+                        result: supplied_result_label,
+                        external_review_result_ready: false,
+                        trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
+                    },
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        if operator.phase == "document_release_pending"
+            && operator.phase_detail == "branch_closure_recording_required_for_release_readiness"
+        {
+            if args.result.is_some() || args.summary_file.is_some() || args.dispatch_id.is_some() {
+                return Ok(shared_out_of_phase_advance_late_stage_output(
+                    &args.plan,
+                    AdvanceLateStageOutputContext {
+                        stage_path: "release_readiness",
+                        delegated_primitive: "record-release-readiness",
+                        branch_closure_id,
+                        dispatch_id: None,
+                        result: supplied_result_label,
+                        external_review_result_ready: false,
+                        trace_summary: "advance-late-stage failed closed because branch-closure recording is required before release-readiness arguments are valid.",
+                    },
+                ));
+            }
+            let output = record_branch_closure(
+                runtime,
+                &RecordBranchClosureArgs {
+                    plan: args.plan.clone(),
+                },
+            )?;
+            return Ok(AdvanceLateStageOutput {
+                action: output.action,
+                stage_path: String::from("branch_closure"),
+                delegated_primitive: String::from("record-branch-closure"),
+                branch_closure_id: output.branch_closure_id,
+                dispatch_id: None,
+                result: String::from("recorded"),
+                code: output.code,
+                recommended_command: output.recommended_command,
+                rederive_via_workflow_operator: output.rederive_via_workflow_operator,
+                required_follow_up: output.required_follow_up,
+                trace_summary: output.trace_summary,
+            });
+        }
+        if operator.review_state_status == "clean"
+            && operator.phase == "qa_pending"
+            && operator.phase_detail == "qa_recording_required"
+        {
+            let result = match args.result {
+                Some(AdvanceLateStageResultArg::Pass) => ReviewOutcomeArg::Pass,
+                Some(AdvanceLateStageResultArg::Fail) => ReviewOutcomeArg::Fail,
+                _ => {
+                    return Err(JsonFailure::new(
+                        FailureClass::InvalidCommandInput,
+                        "qa_result_invalid: QA advance-late-stage requires --result pass|fail.",
+                    ));
+                }
+            };
+            let summary_file = require_advance_late_stage_summary_file(args, "QA")?;
+            let output = record_qa(
+                runtime,
+                &RecordQaArgs {
+                    plan: args.plan.clone(),
+                    result,
+                    summary_file: summary_file.to_path_buf(),
+                },
+            )?;
+            return Ok(AdvanceLateStageOutput {
+                action: output.action,
+                stage_path: String::from("browser_qa"),
+                delegated_primitive: String::from("record-qa"),
+                branch_closure_id: Some(output.branch_closure_id),
+                dispatch_id: None,
+                result: output.result,
+                code: output.code,
+                recommended_command: output.recommended_command,
+                rederive_via_workflow_operator: output.rederive_via_workflow_operator,
+                required_follow_up: output.required_follow_up,
+                trace_summary: output.trace_summary,
+            });
+        }
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let result = match args.result {
+            Some(AdvanceLateStageResultArg::Ready) => "ready",
+            Some(AdvanceLateStageResultArg::Blocked) => "blocked",
+            _ => {
+                return Err(JsonFailure::new(
+                    FailureClass::InvalidCommandInput,
+                    "release_readiness_result_invalid: release-readiness advance-late-stage requires --result ready|blocked.",
+                ));
+            }
+        };
+        let summary_file = require_advance_late_stage_summary_file(args, "release-readiness")?;
+        let release_route_ready = operator.review_state_status == "clean"
+            && operator.phase == "document_release_pending"
+            && matches!(
+                operator.phase_detail.as_str(),
+                "release_readiness_recording_ready" | "release_blocker_resolution_required"
+            );
+        if !release_route_ready {
+            if operator.review_state_status == "clean"
+                && let Some(current_branch_closure) = current_branch_closure.as_ref()
+                && let Some(output) = equivalent_current_release_readiness_rerun(
+                    &context,
+                    current_branch_closure,
+                    "release_readiness",
+                    "record-release-readiness",
+                    result,
+                    summary_file,
+                )?
+            {
+                return Ok(output);
+            }
+            return Ok(release_readiness_follow_up_or_requery_output(
+                &operator,
                 &args.plan,
                 AdvanceLateStageOutputContext {
                     stage_path: "release_readiness",
                     delegated_primitive: "record-release-readiness",
-                    branch_closure_id: branch_closure_id.clone(),
+                    branch_closure_id,
                     dispatch_id: None,
-                    result: supplied_result_label,
+                    result,
                     external_review_result_ready: false,
                     trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
                 },
             ));
         }
-        Err(error) => return Err(error),
-    };
-    if operator.phase == "document_release_pending"
-        && operator.phase_detail == "branch_closure_recording_required_for_release_readiness"
-    {
-        if args.result.is_some() || args.summary_file.is_some() || args.dispatch_id.is_some() {
-            return Ok(shared_out_of_phase_advance_late_stage_output(
-                &args.plan,
-                AdvanceLateStageOutputContext {
-                    stage_path: "release_readiness",
-                    delegated_primitive: "record-release-readiness",
-                    branch_closure_id: branch_closure_id.clone(),
-                    dispatch_id: None,
-                    result: supplied_result_label,
-                    external_review_result_ready: false,
-                    trace_summary: "advance-late-stage failed closed because branch-closure recording is required before release-readiness arguments are valid.",
-                },
-            ));
-        }
-        let output = record_branch_closure(
-            runtime,
-            &RecordBranchClosureArgs {
-                plan: args.plan.clone(),
-            },
+        let summary = read_nonempty_summary_file(summary_file, "summary")?;
+        let normalized_summary_hash = summary_hash(&summary);
+        let current_branch_closure = authoritative_current_branch_closure_binding(
+            &context,
+            "advance-late-stage release-readiness",
         )?;
-        return Ok(AdvanceLateStageOutput {
-            action: output.action,
-            stage_path: String::from("branch_closure"),
-            delegated_primitive: String::from("record-branch-closure"),
-            branch_closure_id: output.branch_closure_id,
-            dispatch_id: None,
-            result: String::from("recorded"),
-            code: output.code,
-            recommended_command: output.recommended_command,
-            rederive_via_workflow_operator: output.rederive_via_workflow_operator,
-            required_follow_up: output.required_follow_up,
-            trace_summary: output.trace_summary,
-        });
-    }
-    if operator.review_state_status == "clean"
-        && operator.phase == "qa_pending"
-        && operator.phase_detail == "qa_recording_required"
-    {
-        let result = match args.result {
-            Some(AdvanceLateStageResultArg::Pass) => ReviewOutcomeArg::Pass,
-            Some(AdvanceLateStageResultArg::Fail) => ReviewOutcomeArg::Fail,
-            _ => {
-                return Err(JsonFailure::new(
-                    FailureClass::InvalidCommandInput,
-                    "qa_result_invalid: QA advance-late-stage requires --result pass|fail.",
-                ));
-            }
-        };
-        let summary_file = require_advance_late_stage_summary_file(args, "QA")?;
-        let output = record_qa(
-            runtime,
-            &RecordQaArgs {
-                plan: args.plan.clone(),
-                result,
-                summary_file: summary_file.to_path_buf(),
-            },
-        )?;
-        return Ok(AdvanceLateStageOutput {
-            action: output.action,
-            stage_path: String::from("browser_qa"),
-            delegated_primitive: String::from("record-qa"),
-            branch_closure_id: Some(output.branch_closure_id),
-            dispatch_id: None,
-            result: output.result,
-            code: output.code,
-            recommended_command: output.recommended_command,
-            rederive_via_workflow_operator: output.rederive_via_workflow_operator,
-            required_follow_up: output.required_follow_up,
-            trace_summary: output.trace_summary,
-        });
-    }
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let result = match args.result {
-        Some(AdvanceLateStageResultArg::Ready) => "ready",
-        Some(AdvanceLateStageResultArg::Blocked) => "blocked",
-        _ => {
+        let branch_closure_id = current_branch_closure.branch_closure_id.clone();
+        let reviewed_state_id = current_branch_closure.reviewed_state_id;
+        let mut authoritative_state = load_authoritative_transition_state(&context)?;
+        let Some(authoritative_state) = authoritative_state.as_mut() else {
             return Err(JsonFailure::new(
-                FailureClass::InvalidCommandInput,
-                "release_readiness_result_invalid: release-readiness advance-late-stage requires --result ready|blocked.",
+                FailureClass::ExecutionStateNotReady,
+                "advance-late-stage requires authoritative harness state.",
             ));
-        }
-    };
-    let summary_file = require_advance_late_stage_summary_file(args, "release-readiness")?;
-    let release_route_ready = operator.review_state_status == "clean"
-        && operator.phase == "document_release_pending"
-        && matches!(
-            operator.phase_detail.as_str(),
-            "release_readiness_recording_ready" | "release_blocker_resolution_required"
-        );
-    if !release_route_ready {
-        if operator.review_state_status == "clean"
-            && let Some(current_branch_closure) = current_branch_closure.as_ref()
-            && let Some(output) = equivalent_current_release_readiness_rerun(
-                &context,
-                current_branch_closure,
-                "release_readiness",
-                "record-release-readiness",
-                result,
-                summary_file,
-            )?
+        };
+        if let Some(current_record) = authoritative_state
+            .current_release_readiness_record()
+            .filter(|record| record.branch_closure_id == branch_closure_id)
         {
-            return Ok(output);
+            if current_record.result == result
+                && current_record.summary_hash == normalized_summary_hash
+            {
+                return Ok(AdvanceLateStageOutput {
+                    action: String::from("already_current"),
+                    stage_path: String::from("release_readiness"),
+                    delegated_primitive: String::from("record-release-readiness"),
+                    branch_closure_id: Some(branch_closure_id),
+                    dispatch_id: None,
+                    result: result.to_owned(),
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    required_follow_up: (result == "blocked")
+                        .then(|| String::from("resolve_release_blocker")),
+                    trace_summary: String::from(
+                        "Current branch closure already has an equivalent recorded release-readiness outcome.",
+                    ),
+                });
+            }
+            if current_record.result != "blocked" {
+                return Ok(AdvanceLateStageOutput {
+                    action: String::from("blocked"),
+                    stage_path: String::from("release_readiness"),
+                    delegated_primitive: String::from("record-release-readiness"),
+                    branch_closure_id: Some(branch_closure_id),
+                    dispatch_id: None,
+                    result: result.to_owned(),
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    required_follow_up: None,
+                    trace_summary: String::from(
+                        "advance-late-stage failed closed because the current branch closure already has a conflicting recorded release-readiness outcome.",
+                    ),
+                });
+            }
         }
-        return Ok(release_readiness_follow_up_or_requery_output(
-            &operator,
-            &args.plan,
-            AdvanceLateStageOutputContext {
-                stage_path: "release_readiness",
-                delegated_primitive: "record-release-readiness",
-                branch_closure_id: branch_closure_id.clone(),
-                dispatch_id: None,
-                result,
-                external_review_result_ready: false,
-                trace_summary: "advance-late-stage failed closed because the current phase must be re-derived through workflow/operator before release-readiness recording can proceed.",
-            },
-        ));
-    }
-    let summary = read_nonempty_summary_file(summary_file, "summary")?;
-    let normalized_summary_hash = summary_hash(&summary);
-    let current_branch_closure = authoritative_current_branch_closure_binding(
-        &context,
-        "advance-late-stage release-readiness",
-    )?;
-    let branch_closure_id = current_branch_closure.branch_closure_id.clone();
-    let reviewed_state_id = current_branch_closure.reviewed_state_id.clone();
-    let mut authoritative_state = load_authoritative_transition_state(&context)?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "advance-late-stage requires authoritative harness state.",
-        ));
-    };
-    if let Some(current_record) = authoritative_state
-        .current_release_readiness_record()
-        .filter(|record| record.branch_closure_id == branch_closure_id)
-    {
-        if current_record.result == result && current_record.summary_hash == normalized_summary_hash
-        {
-            return Ok(AdvanceLateStageOutput {
-                action: String::from("already_current"),
-                stage_path: String::from("release_readiness"),
-                delegated_primitive: String::from("record-release-readiness"),
-                branch_closure_id: Some(branch_closure_id),
-                dispatch_id: None,
-                result: result.to_owned(),
-                code: None,
-                recommended_command: None,
-                rederive_via_workflow_operator: None,
-                required_follow_up: (result == "blocked")
-                    .then(|| String::from("resolve_release_blocker")),
-                trace_summary: String::from(
-                    "Current branch closure already has an equivalent recorded release-readiness outcome.",
-                ),
-            });
-        }
-        if current_record.result != "blocked" {
-            return Ok(AdvanceLateStageOutput {
-                action: String::from("blocked"),
-                stage_path: String::from("release_readiness"),
-                delegated_primitive: String::from("record-release-readiness"),
-                branch_closure_id: Some(branch_closure_id),
-                dispatch_id: None,
-                result: result.to_owned(),
-                code: None,
-                recommended_command: None,
-                rederive_via_workflow_operator: None,
-                required_follow_up: None,
-                trace_summary: String::from(
-                    "advance-late-stage failed closed because the current branch closure already has a conflicting recorded release-readiness outcome.",
-                ),
-            });
-        }
-    }
-    let base_branch = context.current_release_base_branch().ok_or_else(|| {
-        JsonFailure::new(
-            FailureClass::ReleaseArtifactNotFresh,
-            "advance-late-stage release-readiness requires a resolvable base branch.",
-        )
-    })?;
-    let release_source = render_release_readiness_artifact(
-        &context,
-        &branch_closure_id,
-        &reviewed_state_id,
-        &base_branch,
-        result,
-        &summary,
-    )?;
-    let release_fingerprint = if result == "ready" {
-        Some(sha256_hex(release_source.as_bytes()))
-    } else {
-        None
-    };
-    persist_release_readiness_record(
-        authoritative_state,
-        ReleaseReadinessWrite {
-            branch_closure_id: &branch_closure_id,
-            source_plan_path: &context.plan_rel,
-            source_plan_revision: context.plan_document.plan_revision,
-            repo_slug: &runtime.repo_slug,
-            branch_name: &context.runtime.branch_name,
-            base_branch: &base_branch,
-            reviewed_state_id: &reviewed_state_id,
+        let base_branch = context.current_release_base_branch().ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::ReleaseArtifactNotFresh,
+                "advance-late-stage release-readiness requires a resolvable base branch.",
+            )
+        })?;
+        let release_source = render_release_readiness_artifact(
+            &context,
+            &branch_closure_id,
+            &reviewed_state_id,
+            &base_branch,
             result,
-            release_docs_fingerprint: release_fingerprint.as_deref(),
-            summary: &summary,
-            summary_hash: &normalized_summary_hash,
-            generated_by_identity: "featureforge/release-readiness",
-        },
-    )?;
-    write_project_artifact(
-        runtime,
-        &format!(
-            "featureforge-{}-release-readiness-{}.md",
-            runtime.safe_branch,
-            timestamp_slug()
-        ),
-        &release_source,
-    )?;
-    if let Some(release_docs_fingerprint) = release_fingerprint.as_deref() {
-        let published = publish_authoritative_artifact(runtime, "release-docs", &release_source)?;
-        debug_assert_eq!(published, release_docs_fingerprint);
+            &summary,
+        )?;
+        let release_fingerprint = if result == "ready" {
+            Some(sha256_hex(release_source.as_bytes()))
+        } else {
+            None
+        };
+        persist_release_readiness_record(
+            authoritative_state,
+            &ReleaseReadinessWrite {
+                branch_closure_id: &branch_closure_id,
+                source_plan_path: &context.plan_rel,
+                source_plan_revision: context.plan_document.plan_revision,
+                repo_slug: &runtime.repo_slug,
+                branch_name: &context.runtime.branch_name,
+                base_branch: &base_branch,
+                reviewed_state_id: &reviewed_state_id,
+                result,
+                release_docs_fingerprint: release_fingerprint.as_deref(),
+                summary: &summary,
+                summary_hash: &normalized_summary_hash,
+                generated_by_identity: "featureforge/release-readiness",
+            },
+        )?;
+        write_project_artifact(
+            runtime,
+            &format!(
+                "featureforge-{}-release-readiness-{}.md",
+                runtime.safe_branch,
+                timestamp_slug()
+            ),
+            &release_source,
+        )?;
+        if let Some(release_docs_fingerprint) = release_fingerprint.as_deref() {
+            let published =
+                publish_authoritative_artifact(runtime, "release-docs", &release_source)?;
+            debug_assert_eq!(published, release_docs_fingerprint);
+        }
+        Ok(AdvanceLateStageOutput {
+            action: String::from("recorded"),
+            stage_path: String::from("release_readiness"),
+            delegated_primitive: String::from("record-release-readiness"),
+            branch_closure_id: Some(branch_closure_id),
+            dispatch_id: None,
+            result: result.to_owned(),
+            code: None,
+            recommended_command: None,
+            rederive_via_workflow_operator: None,
+            required_follow_up: (result == "blocked")
+                .then(|| String::from("resolve_release_blocker")),
+            trace_summary: String::from(
+                "Recorded release-readiness late-stage evidence for the current branch closure.",
+            ),
+        })
     }
-    Ok(AdvanceLateStageOutput {
-        action: String::from("recorded"),
-        stage_path: String::from("release_readiness"),
-        delegated_primitive: String::from("record-release-readiness"),
-        branch_closure_id: Some(branch_closure_id),
-        dispatch_id: None,
-        result: result.to_owned(),
-        code: None,
-        recommended_command: None,
-        rederive_via_workflow_operator: None,
-        required_follow_up: (result == "blocked").then(|| String::from("resolve_release_blocker")),
-        trace_summary: String::from(
-            "Recorded release-readiness late-stage evidence for the current branch closure.",
-        ),
-    })
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_release_readiness(
     runtime: &ExecutionRuntime,
     args: &RecordReleaseReadinessArgs,
 ) -> Result<AdvanceLateStageOutput, JsonFailure> {
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    let current_branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
+    let current_branch_closure_id = current_authoritative_branch_closure_id_optional(&context);
     let Some(current_branch_closure_id) = current_branch_closure_id else {
         let params = AdvanceLateStageOutputContext {
             stage_path: "release_readiness",
@@ -2842,12 +2957,14 @@ pub fn record_release_readiness(
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_final_review(
     runtime: &ExecutionRuntime,
     args: &RecordFinalReviewArgs,
 ) -> Result<AdvanceLateStageOutput, JsonFailure> {
     let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    let current_branch_closure_id = current_authoritative_branch_closure_id_optional(&context)?;
+    let current_branch_closure_id = current_authoritative_branch_closure_id_optional(&context);
     if current_branch_closure_id.as_deref() != Some(args.branch_closure_id.as_str()) {
         return Ok(shared_out_of_phase_advance_late_stage_output(
             &args.plan,
@@ -2880,87 +2997,58 @@ pub fn record_final_review(
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_qa(
     runtime: &ExecutionRuntime,
     args: &RecordQaArgs,
 ) -> Result<RecordQaOutput, JsonFailure> {
-    let _write_authority = claim_step_write_authority(runtime)?;
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
-    require_preflight_acceptance(&context)?;
-    let current_branch_closure = current_authoritative_branch_closure_binding_optional(&context)?;
-    let branch_closure_id =
-        current_authoritative_branch_closure_id_optional(&context)?.unwrap_or_default();
-    let provided_summary_hash = optional_summary_hash(&args.summary_file);
-    let operator = current_workflow_operator(runtime, &args.plan, false)?;
-    let mut required_follow_up = blocked_follow_up_for_operator(&operator);
-    if required_follow_up.is_none()
-        && operator.phase == "executing"
-        && operator.phase_detail == "execution_in_progress"
-        && operator.review_state_status == "clean"
-        && operator.current_branch_closure_id.is_none()
-        && operator
-            .blocking_reason_codes
-            .iter()
-            .any(|code| code == "derived_review_state_missing")
     {
-        required_follow_up = Some(String::from("repair_review_state"));
-    }
-    let qa_refresh_reroute_active =
-        shared_finish_requires_test_plan_refresh(Some(&gate_finish_from_context(&context)))
-            || (operator.phase == "qa_pending"
-                && operator.phase_detail == "test_plan_refresh_required");
-    if qa_refresh_reroute_active {
-        return Ok(RecordQaOutput {
-            action: String::from("blocked"),
-            branch_closure_id,
-            result: args.result.as_str().to_owned(),
-            code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan, false)),
-            rederive_via_workflow_operator: Some(true),
-            required_follow_up: None,
-            trace_summary: String::from(
-                "record-qa failed closed because workflow/operator requires a fresh current-branch test plan before QA recording can proceed.",
-            ),
-        });
-    }
-    if required_follow_up.as_deref() == Some("repair_review_state")
-        && operator.phase == "executing"
-        && operator.phase_detail == "execution_reentry_required"
-        && operator.review_state_status == "missing_current_closure"
-        && operator.current_branch_closure_id.is_none()
-    {
-        return Ok(RecordQaOutput {
-            action: String::from("blocked"),
-            branch_closure_id,
-            result: args.result.as_str().to_owned(),
-            code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan, false)),
-            rederive_via_workflow_operator: Some(true),
-            required_follow_up: None,
-            trace_summary: String::from(
-                "record-qa failed closed because workflow/operator must be requeried before QA recording can proceed.",
-            ),
-        });
-    }
-    if required_follow_up.as_deref() == Some("repair_review_state")
-        && operator.review_state_status == "clean"
-    {
-        return Ok(RecordQaOutput {
-            action: String::from("blocked"),
-            branch_closure_id,
-            result: args.result.as_str().to_owned(),
-            code: Some(String::from("out_of_phase_requery_required")),
-            recommended_command: Some(recommended_operator_command(&args.plan, false)),
-            rederive_via_workflow_operator: Some(true),
-            required_follow_up: None,
-            trace_summary: String::from(
-                "record-qa failed closed because workflow/operator must be requeried before QA recording can proceed.",
-            ),
-        });
-    }
-    if operator.review_state_status != "clean" {
-        if operator.review_state_status == "stale_unreviewed"
-            || required_follow_up.as_deref() != Some("repair_review_state")
+        let _write_authority = claim_step_write_authority(runtime)?;
+        let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+        require_preflight_acceptance(&context)?;
+        let current_branch_closure =
+            current_authoritative_branch_closure_binding_optional(&context);
+        let branch_closure_id =
+            current_authoritative_branch_closure_id_optional(&context).unwrap_or_default();
+        let provided_summary_hash = optional_summary_hash(&args.summary_file);
+        let operator = current_workflow_operator(runtime, &args.plan, false)?;
+        let mut required_follow_up = blocked_follow_up_for_operator(&operator);
+        if required_follow_up.is_none()
+            && operator.phase == "executing"
+            && operator.phase_detail == "execution_in_progress"
+            && operator.review_state_status == "clean"
+            && operator.current_branch_closure_id.is_none()
+            && operator
+                .blocking_reason_codes
+                .iter()
+                .any(|code| code == "derived_review_state_missing")
+        {
+            required_follow_up = Some(String::from("repair_review_state"));
+        }
+        let qa_refresh_reroute_active =
+            shared_finish_requires_test_plan_refresh(Some(&gate_finish_from_context(&context)))
+                || (operator.phase == "qa_pending"
+                    && operator.phase_detail == "test_plan_refresh_required");
+        if qa_refresh_reroute_active {
+            return Ok(RecordQaOutput {
+                action: String::from("blocked"),
+                branch_closure_id,
+                result: args.result.as_str().to_owned(),
+                code: Some(String::from("out_of_phase_requery_required")),
+                recommended_command: Some(recommended_operator_command(&args.plan, false)),
+                rederive_via_workflow_operator: Some(true),
+                required_follow_up: None,
+                trace_summary: String::from(
+                    "record-qa failed closed because workflow/operator requires a fresh current-branch test plan before QA recording can proceed.",
+                ),
+            });
+        }
+        if required_follow_up.as_deref() == Some("repair_review_state")
+            && operator.phase == "executing"
+            && operator.phase_detail == "execution_reentry_required"
+            && operator.review_state_status == "missing_current_closure"
+            && operator.current_branch_closure_id.is_none()
         {
             return Ok(RecordQaOutput {
                 action: String::from("blocked"),
@@ -2971,43 +3059,13 @@ pub fn record_qa(
                 rederive_via_workflow_operator: Some(true),
                 required_follow_up: None,
                 trace_summary: String::from(
-                    "record-qa failed closed because the current phase must be re-derived through workflow/operator before QA recording can proceed.",
+                    "record-qa failed closed because workflow/operator must be requeried before QA recording can proceed.",
                 ),
             });
         }
-        return Ok(RecordQaOutput {
-            action: String::from("blocked"),
-            branch_closure_id,
-            result: args.result.as_str().to_owned(),
-            code: None,
-            recommended_command: None,
-            rederive_via_workflow_operator: None,
-            required_follow_up,
-            trace_summary: String::from(
-                "record-qa failed closed because workflow/operator did not expose qa_recording_required for the current branch closure.",
-            ),
-        });
-    }
-    let qa_override_out_of_phase = late_stage_negative_result_override_active(&operator);
-    if operator.phase != "qa_pending" || operator.phase_detail != "qa_recording_required" {
-        let allow_fail_recording_while_override_out_of_phase =
-            args.result == ReviewOutcomeArg::Fail && qa_override_out_of_phase;
-        if !allow_fail_recording_while_override_out_of_phase
-            && equivalent_current_browser_qa_rerun_allowed(&operator, args.result.as_str())
-            && let Some(current_branch_closure) = current_branch_closure.as_ref()
-            && let Some(output) = equivalent_current_browser_qa_rerun(
-                &context,
-                current_branch_closure,
-                args.result.as_str(),
-                &args.summary_file,
-                (args.result == ReviewOutcomeArg::Fail)
-                    .then(|| negative_result_follow_up(&operator))
-                    .flatten(),
-            )?
+        if required_follow_up.as_deref() == Some("repair_review_state")
+            && operator.review_state_status == "clean"
         {
-            return Ok(output);
-        }
-        if !allow_fail_recording_while_override_out_of_phase {
             return Ok(RecordQaOutput {
                 action: String::from("blocked"),
                 branch_closure_id,
@@ -3017,31 +3075,27 @@ pub fn record_qa(
                 rederive_via_workflow_operator: Some(true),
                 required_follow_up: None,
                 trace_summary: String::from(
-                    "record-qa failed closed because the current phase is out of band for QA recording; reroute through workflow/operator.",
+                    "record-qa failed closed because workflow/operator must be requeried before QA recording can proceed.",
                 ),
             });
         }
-    }
-    let current_branch_closure =
-        authoritative_current_branch_closure_binding(&context, "record-qa")?;
-    let branch_closure_id = current_branch_closure.branch_closure_id.clone();
-    let mut authoritative_state = load_authoritative_transition_state(&context)?;
-    let Some(authoritative_state) = authoritative_state.as_mut() else {
-        return Err(JsonFailure::new(
-            FailureClass::ExecutionStateNotReady,
-            "record-qa requires authoritative harness state.",
-        ));
-    };
-    if let (Some(current_qa_branch_closure_id), Some(current_result), Some(current_summary_hash)) = (
-        authoritative_state.current_qa_branch_closure_id(),
-        authoritative_state.current_qa_result(),
-        authoritative_state.current_qa_summary_hash(),
-    ) && current_qa_branch_closure_id == branch_closure_id
-    {
-        let equivalent_current_result = provided_summary_hash.as_deref()
-            == Some(current_summary_hash)
-            && current_result == args.result.as_str();
-        if provided_summary_hash.is_some() && !equivalent_current_result {
+        if operator.review_state_status != "clean" {
+            if operator.review_state_status == "stale_unreviewed"
+                || required_follow_up.as_deref() != Some("repair_review_state")
+            {
+                return Ok(RecordQaOutput {
+                    action: String::from("blocked"),
+                    branch_closure_id,
+                    result: args.result.as_str().to_owned(),
+                    code: Some(String::from("out_of_phase_requery_required")),
+                    recommended_command: Some(recommended_operator_command(&args.plan, false)),
+                    rederive_via_workflow_operator: Some(true),
+                    required_follow_up: None,
+                    trace_summary: String::from(
+                        "record-qa failed closed because the current phase must be re-derived through workflow/operator before QA recording can proceed.",
+                    ),
+                });
+            }
             return Ok(RecordQaOutput {
                 action: String::from("blocked"),
                 branch_closure_id,
@@ -3049,356 +3103,432 @@ pub fn record_qa(
                 code: None,
                 recommended_command: None,
                 rederive_via_workflow_operator: None,
-                required_follow_up: None,
+                required_follow_up,
                 trace_summary: String::from(
-                    "record-qa failed closed because the current branch closure already has a conflicting recorded browser QA outcome.",
+                    "record-qa failed closed because workflow/operator did not expose qa_recording_required for the current branch closure.",
                 ),
             });
         }
-    }
-    let test_plan_path = match current_test_plan_artifact_path(&context) {
-        Ok(path) => Some(path),
-        Err(error)
-            if error.error_class == FailureClass::ExecutionStateNotReady.as_str()
-                || error.error_class == FailureClass::QaArtifactNotFresh.as_str() =>
-        {
-            return Ok(RecordQaOutput {
-                action: String::from("blocked"),
-                branch_closure_id,
-                result: args.result.as_str().to_owned(),
-                code: Some(String::from("out_of_phase_requery_required")),
-                recommended_command: Some(recommended_operator_command(&args.plan, false)),
-                rederive_via_workflow_operator: Some(true),
-                required_follow_up: None,
-                trace_summary: String::from(
-                    "record-qa failed closed because workflow/operator must refresh the current test plan before QA recording can proceed.",
-                ),
-            });
-        }
-        Err(error) => return Err(error),
-    };
-    let summary = read_nonempty_summary_file(&args.summary_file, "summary")?;
-    let summary_hash = qa_summary_hash(&summary);
-    let reviewed_state_id = current_branch_closure.reviewed_state_id.clone();
-    let base_branch = context.current_release_base_branch().ok_or_else(|| {
-        JsonFailure::new(
-            FailureClass::QaArtifactNotFresh,
-            "record-qa requires a resolvable base branch.",
-        )
-    })?;
-    let qa_source = render_qa_artifact(
-        runtime,
-        &context,
-        QaProjectionInput {
-            branch_closure_id: &branch_closure_id,
-            reviewed_state_id: &reviewed_state_id,
-            result: args.result.as_str(),
-            summary: &summary,
-            base_branch: &base_branch,
-            test_plan_path: test_plan_path.as_deref(),
-        },
-    )?;
-    let authoritative_test_plan_write = if let Some(test_plan_path) = test_plan_path.as_deref() {
-        let authoritative_test_plan_source =
-            fs::read_to_string(test_plan_path).map_err(|error| {
-                JsonFailure::new(
-                    FailureClass::EvidenceWriteFailed,
-                    format!(
-                        "Could not read current test-plan artifact {}: {error}",
-                        test_plan_path.display()
+        let qa_override_out_of_phase = late_stage_negative_result_override_active(&operator);
+        if operator.phase != "qa_pending" || operator.phase_detail != "qa_recording_required" {
+            let allow_fail_recording_while_override_out_of_phase =
+                args.result == ReviewOutcomeArg::Fail && qa_override_out_of_phase;
+            if !allow_fail_recording_while_override_out_of_phase
+                && equivalent_current_browser_qa_rerun_allowed(&operator, args.result.as_str())
+                && let Some(current_branch_closure) = current_branch_closure.as_ref()
+                && let Some(output) = equivalent_current_browser_qa_rerun(
+                    &context,
+                    current_branch_closure,
+                    args.result.as_str(),
+                    &args.summary_file,
+                    (args.result == ReviewOutcomeArg::Fail)
+                        .then(|| negative_result_follow_up(&operator))
+                        .flatten(),
+                )?
+            {
+                return Ok(output);
+            }
+            if !allow_fail_recording_while_override_out_of_phase {
+                return Ok(RecordQaOutput {
+                    action: String::from("blocked"),
+                    branch_closure_id,
+                    result: args.result.as_str().to_owned(),
+                    code: Some(String::from("out_of_phase_requery_required")),
+                    recommended_command: Some(recommended_operator_command(&args.plan, false)),
+                    rederive_via_workflow_operator: Some(true),
+                    required_follow_up: None,
+                    trace_summary: String::from(
+                        "record-qa failed closed because the current phase is out of band for QA recording; reroute through workflow/operator.",
                     ),
-                )
-            })?;
-        let authoritative_test_plan_fingerprint =
-            sha256_hex(authoritative_test_plan_source.as_bytes());
-        let authoritative_test_plan_path = harness_authoritative_artifact_path(
+                });
+            }
+        }
+        let current_branch_closure =
+            authoritative_current_branch_closure_binding(&context, "record-qa")?;
+        let branch_closure_id = current_branch_closure.branch_closure_id.clone();
+        let mut authoritative_state = load_authoritative_transition_state(&context)?;
+        let Some(authoritative_state) = authoritative_state.as_mut() else {
+            return Err(JsonFailure::new(
+                FailureClass::ExecutionStateNotReady,
+                "record-qa requires authoritative harness state.",
+            ));
+        };
+        if let (
+            Some(current_qa_branch_closure_id),
+            Some(current_result),
+            Some(current_summary_hash),
+        ) = (
+            authoritative_state.current_qa_branch_closure_id(),
+            authoritative_state.current_qa_result(),
+            authoritative_state.current_qa_summary_hash(),
+        ) && current_qa_branch_closure_id == branch_closure_id
+        {
+            let equivalent_current_result = provided_summary_hash.as_deref()
+                == Some(current_summary_hash)
+                && current_result == args.result.as_str();
+            if provided_summary_hash.is_some() && !equivalent_current_result {
+                return Ok(RecordQaOutput {
+                    action: String::from("blocked"),
+                    branch_closure_id,
+                    result: args.result.as_str().to_owned(),
+                    code: None,
+                    recommended_command: None,
+                    rederive_via_workflow_operator: None,
+                    required_follow_up: None,
+                    trace_summary: String::from(
+                        "record-qa failed closed because the current branch closure already has a conflicting recorded browser QA outcome.",
+                    ),
+                });
+            }
+        }
+        let test_plan_path = match current_test_plan_artifact_path(&context) {
+            Ok(path) => Some(path),
+            Err(error)
+                if error.error_class == FailureClass::ExecutionStateNotReady.as_str()
+                    || error.error_class == FailureClass::QaArtifactNotFresh.as_str() =>
+            {
+                return Ok(RecordQaOutput {
+                    action: String::from("blocked"),
+                    branch_closure_id,
+                    result: args.result.as_str().to_owned(),
+                    code: Some(String::from("out_of_phase_requery_required")),
+                    recommended_command: Some(recommended_operator_command(&args.plan, false)),
+                    rederive_via_workflow_operator: Some(true),
+                    required_follow_up: None,
+                    trace_summary: String::from(
+                        "record-qa failed closed because workflow/operator must refresh the current test plan before QA recording can proceed.",
+                    ),
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        let summary = read_nonempty_summary_file(&args.summary_file, "summary")?;
+        let summary_hash = qa_summary_hash(&summary);
+        let reviewed_state_id = current_branch_closure.reviewed_state_id;
+        let base_branch = context.current_release_base_branch().ok_or_else(|| {
+            JsonFailure::new(
+                FailureClass::QaArtifactNotFresh,
+                "record-qa requires a resolvable base branch.",
+            )
+        })?;
+        let qa_source = render_qa_artifact(
+            runtime,
+            &context,
+            QaProjectionInput {
+                branch_closure_id: &branch_closure_id,
+                reviewed_state_id: &reviewed_state_id,
+                result: args.result.as_str(),
+                summary: &summary,
+                base_branch: &base_branch,
+                test_plan_path: test_plan_path.as_deref(),
+            },
+        )?;
+        let authoritative_test_plan_write = if let Some(test_plan_path) = test_plan_path.as_deref()
+        {
+            let authoritative_test_plan_source =
+                fs::read_to_string(test_plan_path).map_err(|error| {
+                    JsonFailure::new(
+                        FailureClass::EvidenceWriteFailed,
+                        format!(
+                            "Could not read current test-plan artifact {}: {error}",
+                            test_plan_path.display()
+                        ),
+                    )
+                })?;
+            let authoritative_test_plan_fingerprint =
+                sha256_hex(authoritative_test_plan_source.as_bytes());
+            let authoritative_test_plan_path = harness_authoritative_artifact_path(
+                &runtime.state_dir,
+                &runtime.repo_slug,
+                &runtime.branch_name,
+                &format!("test-plan-{authoritative_test_plan_fingerprint}.md"),
+            );
+            Some((
+                authoritative_test_plan_path,
+                authoritative_test_plan_source,
+                authoritative_test_plan_fingerprint,
+            ))
+        } else {
+            None
+        };
+        let source_test_plan_fingerprint = authoritative_test_plan_write
+            .as_ref()
+            .map(|(_, _, fingerprint)| fingerprint.clone());
+        let authoritative_qa_source = if let Some((authoritative_test_plan_path, _, _)) =
+            authoritative_test_plan_write.as_ref()
+        {
+            rewrite_rebuild_source_test_plan_header(&qa_source, authoritative_test_plan_path)
+        } else {
+            qa_source.clone()
+        };
+        let qa_fingerprint = sha256_hex(authoritative_qa_source.as_bytes());
+        let authoritative_qa_path = harness_authoritative_artifact_path(
             &runtime.state_dir,
             &runtime.repo_slug,
             &runtime.branch_name,
-            &format!("test-plan-{authoritative_test_plan_fingerprint}.md"),
+            &format!("browser-qa-{qa_fingerprint}.md"),
         );
-        Some((
-            authoritative_test_plan_path,
-            authoritative_test_plan_source,
-            authoritative_test_plan_fingerprint,
-        ))
-    } else {
-        None
-    };
-    let source_test_plan_fingerprint = authoritative_test_plan_write
-        .as_ref()
-        .map(|(_, _, fingerprint)| fingerprint.clone());
-    let authoritative_qa_source = if let Some((authoritative_test_plan_path, _, _)) =
-        authoritative_test_plan_write.as_ref()
-    {
-        rewrite_rebuild_source_test_plan_header(&qa_source, authoritative_test_plan_path)
-    } else {
-        qa_source.clone()
-    };
-    let qa_fingerprint = sha256_hex(authoritative_qa_source.as_bytes());
-    let authoritative_qa_path = harness_authoritative_artifact_path(
-        &runtime.state_dir,
-        &runtime.repo_slug,
-        &runtime.branch_name,
-        &format!("browser-qa-{qa_fingerprint}.md"),
-    );
-    let final_review_record_id = authoritative_state
-        .current_final_review_record_id()
-        .ok_or_else(|| {
-            JsonFailure::new(
-                FailureClass::ExecutionStateNotReady,
-                "record-qa requires a current final-review record id.",
+        let final_review_record_id = authoritative_state
+            .current_final_review_record_id()
+            .ok_or_else(|| {
+                JsonFailure::new(
+                    FailureClass::ExecutionStateNotReady,
+                    "record-qa requires a current final-review record id.",
+                )
+            })?;
+        record_browser_qa(
+            authoritative_state,
+            &BrowserQaWrite {
+                branch_closure_id: &branch_closure_id,
+                final_review_record_id: &final_review_record_id,
+                source_plan_path: &context.plan_rel,
+                source_plan_revision: context.plan_document.plan_revision,
+                repo_slug: &runtime.repo_slug,
+                branch_name: &context.runtime.branch_name,
+                base_branch: &base_branch,
+                reviewed_state_id: &reviewed_state_id,
+                result: args.result.as_str(),
+                browser_qa_fingerprint: Some(qa_fingerprint.as_str()),
+                source_test_plan_fingerprint: source_test_plan_fingerprint.as_deref(),
+                summary: &summary,
+                summary_hash: &summary_hash,
+                generated_by_identity: "featureforge/qa",
+            },
+        )?;
+        if let Some((authoritative_test_plan_path, authoritative_test_plan_source, _)) =
+            authoritative_test_plan_write
+        {
+            write_atomic_file(
+                &authoritative_test_plan_path,
+                &authoritative_test_plan_source,
             )
-        })?;
-    record_browser_qa(
-        authoritative_state,
-        BrowserQaWrite {
-            branch_closure_id: &branch_closure_id,
-            final_review_record_id: &final_review_record_id,
-            source_plan_path: &context.plan_rel,
-            source_plan_revision: context.plan_document.plan_revision,
-            repo_slug: &runtime.repo_slug,
-            branch_name: &context.runtime.branch_name,
-            base_branch: &base_branch,
-            reviewed_state_id: &reviewed_state_id,
-            result: args.result.as_str(),
-            browser_qa_fingerprint: Some(qa_fingerprint.as_str()),
-            source_test_plan_fingerprint: source_test_plan_fingerprint.as_deref(),
-            summary: &summary,
-            summary_hash: &summary_hash,
-            generated_by_identity: "featureforge/qa",
-        },
-    )?;
-    if let Some((authoritative_test_plan_path, authoritative_test_plan_source, _)) =
-        authoritative_test_plan_write
-    {
-        write_atomic_file(
-            &authoritative_test_plan_path,
-            &authoritative_test_plan_source,
-        )
-        .map_err(|error| {
+            .map_err(|error| {
+                JsonFailure::new(
+                    FailureClass::EvidenceWriteFailed,
+                    format!(
+                        "Could not write current test-plan artifact {}: {error}",
+                        authoritative_test_plan_path.display()
+                    ),
+                )
+            })?;
+        }
+        write_project_artifact(
+            runtime,
+            &format!(
+                "featureforge-{}-test-outcome-{}.md",
+                runtime.safe_branch,
+                timestamp_slug()
+            ),
+            &qa_source,
+        )?;
+        write_atomic_file(&authoritative_qa_path, &authoritative_qa_source).map_err(|error| {
             JsonFailure::new(
                 FailureClass::EvidenceWriteFailed,
                 format!(
-                    "Could not write current test-plan artifact {}: {error}",
-                    authoritative_test_plan_path.display()
+                    "Could not write browser QA artifact {}: {error}",
+                    authoritative_qa_path.display()
                 ),
             )
         })?;
+        let (
+            code,
+            recommended_command,
+            rederive_via_workflow_operator,
+            required_follow_up,
+            trace_summary,
+        ) = if args.result == ReviewOutcomeArg::Fail && qa_override_out_of_phase {
+            (
+                Some(String::from("out_of_phase_requery_required")),
+                Some(recommended_operator_command(&args.plan, false)),
+                Some(true),
+                None,
+                String::from(
+                    "Recorded browser QA evidence for the current branch closure; workflow/operator must be requeried to continue from the active override lane.",
+                ),
+            )
+        } else {
+            (
+                None,
+                None,
+                None,
+                (args.result == ReviewOutcomeArg::Fail)
+                    .then(|| negative_result_follow_up(&operator))
+                    .flatten(),
+                String::from(
+                    "Recorded browser QA evidence for the current branch closure and approved test plan.",
+                ),
+            )
+        };
+        Ok(RecordQaOutput {
+            action: String::from("recorded"),
+            branch_closure_id,
+            result: args.result.as_str().to_owned(),
+            code,
+            recommended_command,
+            rederive_via_workflow_operator,
+            required_follow_up,
+            trace_summary,
+        })
     }
-    write_project_artifact(
-        runtime,
-        &format!(
-            "featureforge-{}-test-outcome-{}.md",
-            runtime.safe_branch,
-            timestamp_slug()
-        ),
-        &qa_source,
-    )?;
-    write_atomic_file(&authoritative_qa_path, &authoritative_qa_source).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::EvidenceWriteFailed,
-            format!(
-                "Could not write browser QA artifact {}: {error}",
-                authoritative_qa_path.display()
-            ),
-        )
-    })?;
-    let (
-        code,
-        recommended_command,
-        rederive_via_workflow_operator,
-        required_follow_up,
-        trace_summary,
-    ) = if args.result == ReviewOutcomeArg::Fail && qa_override_out_of_phase {
-        (
-            Some(String::from("out_of_phase_requery_required")),
-            Some(recommended_operator_command(&args.plan, false)),
-            Some(true),
-            None,
-            String::from(
-                "Recorded browser QA evidence for the current branch closure; workflow/operator must be requeried to continue from the active override lane.",
-            ),
-        )
-    } else {
-        (
-            None,
-            None,
-            None,
-            (args.result == ReviewOutcomeArg::Fail)
-                .then(|| negative_result_follow_up(&operator))
-                .flatten(),
-            String::from(
-                "Recorded browser QA evidence for the current branch closure and approved test plan.",
-            ),
-        )
-    };
-    Ok(RecordQaOutput {
-        action: String::from("recorded"),
-        branch_closure_id,
-        result: args.result.as_str().to_owned(),
-        code,
-        recommended_command,
-        rederive_via_workflow_operator,
-        required_follow_up,
-        trace_summary,
-    })
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn rebuild_evidence(
     runtime: &ExecutionRuntime,
     args: &RebuildEvidenceArgs,
 ) -> Result<RebuildEvidenceOutput, JsonFailure> {
-    let request = normalize_rebuild_evidence_request(args)?;
-    if request.max_jobs > 1 {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidCommandInput,
-            "max_jobs_parallel_unsupported: rebuild-evidence currently supports only --max-jobs 1.",
-        ));
-    }
-    let started_at = Instant::now();
-    let context = load_execution_context_for_exact_plan(runtime, &request.plan)?;
-    if !context.evidence_abs.is_file() {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidCommandInput,
-            "session_not_found: no execution evidence session exists for the approved plan revision.",
-        ));
-    }
-    let matched_scope_ids = matched_rebuild_scope_ids(&context, &request);
-    let candidates = discover_rebuild_candidates(&context, &request)?;
-    if (!request.tasks.is_empty() || !request.steps.is_empty()) && candidates.is_empty() {
-        return Err(JsonFailure::new(
-            FailureClass::InvalidCommandInput,
-            format!(
-                "scope_empty: requested scope matched approved plan steps [{}] but none currently require rebuild.",
-                matched_scope_ids.join(", ")
-            ),
-        ));
-    }
-    let filter = RebuildEvidenceFilter {
-        all: request.all,
-        tasks: request.tasks.clone(),
-        steps: request.raw_steps.clone(),
-        include_open: request.include_open,
-        skip_manual_fallback: request.skip_manual_fallback,
-        continue_on_error: request.continue_on_error,
-        max_jobs: request.max_jobs,
-        no_output: request.no_output,
-        json: request.json,
-    };
-    let scope = rebuild_scope_label(&request);
+    {
+        let request = normalize_rebuild_evidence_request(args)?;
+        if request.max_jobs > 1 {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "max_jobs_parallel_unsupported: rebuild-evidence currently supports only --max-jobs 1.",
+            ));
+        }
+        let started_at = Instant::now();
+        let context = load_execution_context_for_exact_plan(runtime, &request.plan)?;
+        if !context.evidence_abs.is_file() {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                "session_not_found: no execution evidence session exists for the approved plan revision.",
+            ));
+        }
+        let matched_scope_ids = matched_rebuild_scope_ids(&context, &request);
+        let candidates = discover_rebuild_candidates(&context, &request)?;
+        if (!request.tasks.is_empty() || !request.steps.is_empty()) && candidates.is_empty() {
+            return Err(JsonFailure::new(
+                FailureClass::InvalidCommandInput,
+                format!(
+                    "scope_empty: requested scope matched approved plan steps [{}] but none currently require rebuild.",
+                    matched_scope_ids.join(", ")
+                ),
+            ));
+        }
+        let filter = RebuildEvidenceFilter {
+            all: request.all,
+            tasks: request.tasks.clone(),
+            steps: request.raw_steps.clone(),
+            include_open: request.include_open,
+            skip_manual_fallback: request.skip_manual_fallback,
+            continue_on_error: request.continue_on_error,
+            max_jobs: request.max_jobs,
+            no_output: request.no_output,
+            json: request.json,
+        };
+        let scope = rebuild_scope_label(&request);
 
-    if request.dry_run {
-        let targets = candidates
-            .iter()
-            .map(planned_rebuild_target)
-            .collect::<Vec<_>>();
-        return Ok(RebuildEvidenceOutput {
-            session_root: context.runtime.repo_root.to_string_lossy().into_owned(),
-            dry_run: true,
-            filter,
-            scope,
-            counts: RebuildEvidenceCounts {
-                planned: targets.len() as u32,
-                rebuilt: 0,
-                manual: 0,
-                failed: 0,
-                noop: u32::from(targets.is_empty()),
-            },
-            duration_ms: started_at.elapsed().as_millis() as u64,
-            targets,
-            exit_code: 0,
-        });
-    }
+        if request.dry_run.is_true() {
+            let targets = candidates
+                .iter()
+                .map(planned_rebuild_target)
+                .collect::<Vec<_>>();
+            return Ok(RebuildEvidenceOutput {
+                session_root: context.runtime.repo_root.to_string_lossy().into_owned(),
+                dry_run: true,
+                filter,
+                scope,
+                counts: RebuildEvidenceCounts {
+                    planned: u32::try_from(targets.len()).unwrap_or(u32::MAX),
+                    rebuilt: 0,
+                    manual: 0,
+                    failed: 0,
+                    noop: u32::from(targets.is_empty()),
+                },
+                duration_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                targets,
+                exit_code: 0,
+            });
+        }
 
-    if candidates.is_empty() {
+        if candidates.is_empty() {
+            refresh_rebuild_downstream_truth(runtime, &args.plan)?;
+            return Ok(RebuildEvidenceOutput {
+                session_root: context.runtime.repo_root.to_string_lossy().into_owned(),
+                dry_run: false,
+                filter,
+                scope,
+                counts: RebuildEvidenceCounts {
+                    planned: 0,
+                    rebuilt: 0,
+                    manual: 0,
+                    failed: 0,
+                    noop: 1,
+                },
+                duration_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                targets: Vec::new(),
+                exit_code: 0,
+            });
+        }
+
+        let mut targets = Vec::with_capacity(candidates.len());
+        let mut counts = RebuildEvidenceCounts {
+            planned: u32::try_from(candidates.len()).unwrap_or(u32::MAX),
+            rebuilt: 0,
+            manual: 0,
+            failed: 0,
+            noop: 0,
+        };
+        let candidate_batch_is_manual_only =
+            request.skip_manual_fallback.is_true() && !candidates.is_empty();
+        let mut saw_strict_manual_failure = false;
+        let mut saw_precondition_failure = false;
+        let mut saw_non_precondition_failure = false;
+
+        for (index, candidate) in candidates.iter().enumerate() {
+            let target = execute_rebuild_candidate_projection_only(&request, candidate);
+            match target.status.as_str() {
+                "rebuilt" => counts.rebuilt += 1,
+                "manual_required" => counts.manual += 1,
+                "failed" => {
+                    counts.failed += 1;
+                    match target.failure_class.as_deref() {
+                        Some("manual_required") => {
+                            saw_strict_manual_failure = true;
+                        }
+                        Some(failure_class) if is_rebuild_precondition_failure(failure_class) => {
+                            saw_precondition_failure = true;
+                        }
+                        _ => {
+                            saw_non_precondition_failure = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            let should_stop = target.status == "failed"
+                && target.failure_class.as_deref() != Some("artifact_read_error")
+                && !request.continue_on_error;
+            targets.push(target);
+            if should_stop || index + 1 == candidates.len() {
+                break;
+            }
+        }
+
+        let strict_manual_only = candidate_batch_is_manual_only
+            && saw_strict_manual_failure
+            && !saw_precondition_failure
+            && !saw_non_precondition_failure;
         refresh_rebuild_downstream_truth(runtime, &args.plan)?;
-        return Ok(RebuildEvidenceOutput {
+        let exit_code = if strict_manual_only {
+            3
+        } else if saw_non_precondition_failure || saw_strict_manual_failure {
+            2
+        } else {
+            u8::from(saw_precondition_failure)
+        };
+
+        Ok(RebuildEvidenceOutput {
             session_root: context.runtime.repo_root.to_string_lossy().into_owned(),
             dry_run: false,
             filter,
             scope,
-            counts: RebuildEvidenceCounts {
-                planned: 0,
-                rebuilt: 0,
-                manual: 0,
-                failed: 0,
-                noop: 1,
-            },
-            duration_ms: started_at.elapsed().as_millis() as u64,
-            targets: Vec::new(),
-            exit_code: 0,
-        });
+            counts,
+            duration_ms: u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+            targets,
+            exit_code,
+        })
     }
-
-    let mut targets = Vec::with_capacity(candidates.len());
-    let mut counts = RebuildEvidenceCounts {
-        planned: candidates.len() as u32,
-        rebuilt: 0,
-        manual: 0,
-        failed: 0,
-        noop: 0,
-    };
-    let candidate_batch_is_manual_only = request.skip_manual_fallback && !candidates.is_empty();
-    let mut saw_strict_manual_failure = false;
-    let mut saw_precondition_failure = false;
-    let mut saw_non_precondition_failure = false;
-
-    for (index, candidate) in candidates.iter().enumerate() {
-        let target = execute_rebuild_candidate_projection_only(&request, candidate);
-        match target.status.as_str() {
-            "rebuilt" => counts.rebuilt += 1,
-            "manual_required" => counts.manual += 1,
-            "failed" => {
-                counts.failed += 1;
-                match target.failure_class.as_deref() {
-                    Some("manual_required") => {
-                        saw_strict_manual_failure = true;
-                    }
-                    Some(failure_class) if is_rebuild_precondition_failure(failure_class) => {
-                        saw_precondition_failure = true;
-                    }
-                    _ => {
-                        saw_non_precondition_failure = true;
-                    }
-                }
-            }
-            _ => {}
-        }
-        let should_stop = target.status == "failed"
-            && target.failure_class.as_deref() != Some("artifact_read_error")
-            && !request.continue_on_error;
-        targets.push(target);
-        if should_stop || index + 1 == candidates.len() {
-            break;
-        }
-    }
-
-    let strict_manual_only = candidate_batch_is_manual_only
-        && saw_strict_manual_failure
-        && !saw_precondition_failure
-        && !saw_non_precondition_failure;
-    refresh_rebuild_downstream_truth(runtime, &args.plan)?;
-    let exit_code = if strict_manual_only {
-        3
-    } else if saw_non_precondition_failure || saw_strict_manual_failure {
-        2
-    } else if saw_precondition_failure {
-        1
-    } else {
-        0
-    };
-
-    Ok(RebuildEvidenceOutput {
-        session_root: context.runtime.repo_root.to_string_lossy().into_owned(),
-        dry_run: false,
-        filter,
-        scope,
-        counts,
-        duration_ms: started_at.elapsed().as_millis() as u64,
-        targets,
-        exit_code,
-    })
 }
 
 fn is_rebuild_precondition_failure(failure_class: &str) -> bool {
@@ -3439,7 +3569,7 @@ fn execute_rebuild_candidate_projection_only(
     let projection_only_message = String::from(
         "projection_only: rebuild-evidence only regenerates derived projections; replay stale execution with reopen/begin/complete when execution work must be rerun.",
     );
-    if request.skip_manual_fallback {
+    if request.skip_manual_fallback.is_true() {
         target.status = String::from("failed");
         target.failure_class = Some(String::from("manual_required"));
         target.error = Some(format!("manual_required: {projection_only_message}"));
@@ -3550,11 +3680,11 @@ fn ensure_final_review_dispatch_id_matches(
         .final_review_dispatch_lineage
         .as_ref()
         .and_then(|record| {
-            let expected_branch_closure_id = record.branch_closure_id.as_deref()?;
+            let expected_branch_closure_id = record.branch_closure.as_deref()?;
             if current_branch_closure.branch_closure_id != expected_branch_closure_id {
                 return None;
             }
-            record.dispatch_id.as_deref()
+            record.dispatch.as_deref()
         })
         .map(str::trim)
         .filter(|value| !value.is_empty());
@@ -3654,31 +3784,25 @@ struct CurrentBranchClosureBinding {
 
 fn current_authoritative_branch_closure_binding_optional(
     context: &ExecutionContext,
-) -> Result<Option<CurrentBranchClosureBinding>, JsonFailure> {
-    Ok(
-        usable_current_branch_closure_identity(context).map(|current_identity| {
-            CurrentBranchClosureBinding {
-                branch_closure_id: current_identity.branch_closure_id,
-                reviewed_state_id: current_identity.reviewed_state_id,
-            }
-        }),
-    )
+) -> Option<CurrentBranchClosureBinding> {
+    usable_current_branch_closure_identity(context).map(|current_identity| {
+        CurrentBranchClosureBinding {
+            branch_closure_id: current_identity.branch_closure_id,
+            reviewed_state_id: current_identity.reviewed_state_id,
+        }
+    })
 }
 
-fn current_authoritative_branch_closure_id_optional(
-    context: &ExecutionContext,
-) -> Result<Option<String>, JsonFailure> {
-    Ok(
-        current_authoritative_branch_closure_binding_optional(context)?
-            .map(|binding| binding.branch_closure_id),
-    )
+fn current_authoritative_branch_closure_id_optional(context: &ExecutionContext) -> Option<String> {
+    current_authoritative_branch_closure_binding_optional(context)
+        .map(|binding| binding.branch_closure_id)
 }
 
 fn authoritative_current_branch_closure_binding(
     context: &ExecutionContext,
     command_label: &str,
 ) -> Result<CurrentBranchClosureBinding, JsonFailure> {
-    let Some(current_identity) = current_authoritative_branch_closure_binding_optional(context)?
+    let Some(current_identity) = current_authoritative_branch_closure_binding_optional(context)
     else {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
@@ -3918,18 +4042,16 @@ fn close_current_task_command_matches_follow_up(
         }
         Some("repair_review_state") => recommended_command
             .starts_with("featureforge plan execution repair-review-state --plan "),
-        Some("request_external_review")
-        | Some("wait_for_external_review_result")
-        | Some("run_verification") => {
-            recommended_command.starts_with("featureforge workflow operator --plan ")
-        }
+        Some(
+            "request_external_review" | "wait_for_external_review_result" | "run_verification",
+        ) => recommended_command.starts_with("featureforge workflow operator --plan "),
         Some("record_handoff") => {
             recommended_command.starts_with("featureforge plan execution transfer --plan ")
         }
         Some("record_pivot") => {
             recommended_command.starts_with("featureforge workflow record-pivot --plan ")
         }
-        Some("advance_late_stage") | Some("resolve_release_blocker") => {
+        Some("advance_late_stage" | "resolve_release_blocker") => {
             recommended_command.contains("featureforge plan execution advance-late-stage --plan")
         }
         Some(_) | None => false,
@@ -3958,10 +4080,14 @@ fn with_close_current_task_operator_blocker_metadata(
     mut output: CloseCurrentTaskOutput,
     operator: &ExecutionRoutingState,
 ) -> CloseCurrentTaskOutput {
-    output.blocking_scope = operator.blocking_scope.clone();
+    output.blocking_scope.clone_from(&operator.blocking_scope);
     output.blocking_task = operator.blocking_task;
-    output.blocking_reason_codes = operator.blocking_reason_codes.clone();
-    output.authoritative_next_action = operator.recommended_command.clone();
+    output
+        .blocking_reason_codes
+        .clone_from(&operator.blocking_reason_codes);
+    output
+        .authoritative_next_action
+        .clone_from(&operator.recommended_command);
     output
 }
 
@@ -4217,6 +4343,7 @@ struct BranchReviewedState {
     source_task_closure_ids: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
 struct TaskClosureReceiptRefresh<'a> {
     execution_run_id: &'a str,
     strategy_checkpoint_fingerprint: &'a str,
@@ -4225,6 +4352,7 @@ struct TaskClosureReceiptRefresh<'a> {
     claim_write_authority: bool,
 }
 
+#[derive(Clone, Copy)]
 struct CurrentTaskClosureMaterialization<'a> {
     task: u32,
     dispatch_id: &'a str,
@@ -4309,7 +4437,7 @@ fn branch_closure_record_matches_reviewed_state(
         && record.contract_identity == reviewed_state.contract_identity
         && record.source_task_closure_ids == reviewed_state.source_task_closure_ids
         && record.provenance_basis == reviewed_state.provenance_basis
-        && record._effective_reviewed_branch_surface
+        && record.effective_reviewed_branch_surface
             == reviewed_state.effective_reviewed_branch_surface
 }
 
@@ -4370,9 +4498,7 @@ fn task_closure_record_covers_path(current_record: &CurrentTaskClosureRecord, pa
         })
 }
 
-fn current_authoritative_branch_closure_id(
-    context: &ExecutionContext,
-) -> Result<Option<String>, JsonFailure> {
+fn current_authoritative_branch_closure_id(context: &ExecutionContext) -> Option<String> {
     current_authoritative_branch_closure_id_optional(context)
 }
 
@@ -4632,12 +4758,13 @@ fn current_final_review_record_is_still_authoritative(
     let Some(record) = authoritative_state.current_final_review_record() else {
         return Ok(false);
     };
+    let mismatched_summary_hash = record.summary_hash != check.normalized_summary_hash;
     if record.branch_closure_id != check.branch_closure_id
         || record.dispatch_id != check.dispatch_id
         || record.reviewer_source != check.reviewer_source
         || record.reviewer_id != check.reviewer_id
         || record.result != check.result
-        || record.summary_hash != check.normalized_summary_hash
+        || mismatched_summary_hash
         || record.source_plan_path != context.plan_rel
         || record.source_plan_revision != context.plan_document.plan_revision
         || record.repo_slug != context.runtime.repo_slug
@@ -4673,7 +4800,7 @@ fn final_review_dispatch_lineage_is_current_for_rerun(
         return Ok(false);
     }
     match ensure_final_review_dispatch_id_matches(context, expected_dispatch_id) {
-        Ok(_) => Ok(true),
+        Ok(()) => Ok(true),
         Err(error)
             if matches!(
                 error.error_class.as_str(),
@@ -4822,7 +4949,7 @@ fn materialize_current_task_closure_from_close_inputs(
 ) -> Result<(), JsonFailure> {
     record_current_task_closure(
         authoritative_state,
-        CurrentTaskClosureWrite {
+        &CurrentTaskClosureWrite {
             task: materialization.task,
             dispatch_id: materialization.dispatch_id,
             closure_record_id: materialization.closure_record_id,
@@ -5373,141 +5500,144 @@ fn render_evidence_source(
     plan_fingerprint: &str,
     source_spec_fingerprint: &str,
 ) -> String {
-    let mut output = Vec::new();
-    let topic = Path::new(&context.plan_rel)
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("plan");
-    output.push(format!("# Execution Evidence: {topic}"));
-    output.push(String::new());
-    output.push(format!("**Plan Path:** {}", context.plan_rel));
-    output.push(format!(
-        "**Plan Revision:** {}",
-        context.plan_document.plan_revision
-    ));
-    output.push(format!("**Plan Fingerprint:** {plan_fingerprint}"));
-    output.push(format!(
-        "**Source Spec Path:** {}",
-        context.plan_document.source_spec_path
-    ));
-    output.push(format!(
-        "**Source Spec Revision:** {}",
-        context.plan_document.source_spec_revision
-    ));
-    output.push(format!(
-        "**Source Spec Fingerprint:** {source_spec_fingerprint}"
-    ));
-    output.push(String::new());
-    output.push(String::from("## Step Evidence"));
-
-    for step in &context.steps {
-        let attempts = context
-            .evidence
-            .attempts
-            .iter()
-            .filter(|attempt| {
-                attempt.task_number == step.task_number && attempt.step_number == step.step_number
-            })
-            .collect::<Vec<_>>();
-        if attempts.is_empty() {
-            continue;
-        }
+    {
+        let mut output = Vec::new();
+        let topic = Path::new(&context.plan_rel)
+            .file_stem()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or("plan");
+        output.push(format!("# Execution Evidence: {topic}"));
         output.push(String::new());
+        output.push(format!("**Plan Path:** {}", context.plan_rel));
         output.push(format!(
-            "### Task {} Step {}",
-            step.task_number, step.step_number
+            "**Plan Revision:** {}",
+            context.plan_document.plan_revision
         ));
-        for (index, attempt) in attempts.iter().enumerate() {
-            if index > 0 {
-                output.push(String::new());
-            }
-            output.push(format!("#### Attempt {}", attempt.attempt_number));
-            output.push(format!("**Status:** {}", attempt.status));
-            output.push(format!("**Recorded At:** {}", attempt.recorded_at));
-            output.push(format!(
-                "**Execution Source:** {}",
-                attempt.execution_source
-            ));
-            output.push(format!("**Task Number:** {}", attempt.task_number));
-            output.push(format!("**Step Number:** {}", attempt.step_number));
-            output.push(format!(
-                "**Packet Fingerprint:** {}",
-                attempt
-                    .packet_fingerprint
-                    .clone()
-                    .unwrap_or_else(|| String::from("unknown"))
-            ));
-            output.push(format!(
-                "**Head SHA:** {}",
-                attempt
-                    .head_sha
-                    .clone()
-                    .unwrap_or_else(|| String::from("unknown"))
-            ));
-            if let Some(base_sha) = &attempt.base_sha {
-                output.push(format!("**Base SHA:** {base_sha}"));
-            }
-            output.push(format!("**Claim:** {}", attempt.claim));
-            if let Some(source_contract_path) = &attempt.source_contract_path {
-                output.push(format!("**Source Contract Path:** {source_contract_path}"));
-            }
-            if let Some(source_contract_fingerprint) = &attempt.source_contract_fingerprint {
-                output.push(format!(
-                    "**Source Contract Fingerprint:** `{source_contract_fingerprint}`"
-                ));
-            }
-            if let Some(source_evaluation_report_fingerprint) =
-                &attempt.source_evaluation_report_fingerprint
-            {
-                output.push(format!(
-                    "**Source Evaluation Report Fingerprint:** `{source_evaluation_report_fingerprint}`"
-                ));
-            }
-            if let Some(evaluator_verdict) = &attempt.evaluator_verdict {
-                output.push(format!("**Evaluator Verdict:** {evaluator_verdict}"));
-            }
-            if !attempt.failing_criterion_ids.is_empty() {
-                output.push(String::from("**Failing Criterion IDs:**"));
-                for criterion_id in &attempt.failing_criterion_ids {
-                    output.push(format!("- `{criterion_id}`"));
-                }
-            }
-            if let Some(source_handoff_fingerprint) = &attempt.source_handoff_fingerprint {
-                output.push(format!(
-                    "**Source Handoff Fingerprint:** `{source_handoff_fingerprint}`"
-                ));
-            }
-            if let Some(repo_state_baseline_head_sha) = &attempt.repo_state_baseline_head_sha {
-                output.push(format!(
-                    "**Repo State Baseline Head SHA:** {repo_state_baseline_head_sha}"
-                ));
-            }
-            if let Some(repo_state_baseline_worktree_fingerprint) =
-                &attempt.repo_state_baseline_worktree_fingerprint
-            {
-                output.push(format!(
-                    "**Repo State Baseline Worktree Fingerprint:** {repo_state_baseline_worktree_fingerprint}"
-                ));
-            }
-            output.push(String::from("**Files Proven:**"));
-            for proof in &attempt.file_proofs {
-                output.push(format!("- {} | {}", proof.path, proof.proof));
-            }
-            if let Some(verify_command) = &attempt.verify_command {
-                output.push(format!("**Verify Command:** {verify_command}"));
-            }
-            output.push(format!(
-                "**Verification Summary:** {}",
-                attempt.verification_summary
-            ));
-            output.push(format!(
-                "**Invalidation Reason:** {}",
-                attempt.invalidation_reason
-            ));
-        }
-    }
+        output.push(format!("**Plan Fingerprint:** {plan_fingerprint}"));
+        output.push(format!(
+            "**Source Spec Path:** {}",
+            context.plan_document.source_spec_path
+        ));
+        output.push(format!(
+            "**Source Spec Revision:** {}",
+            context.plan_document.source_spec_revision
+        ));
+        output.push(format!(
+            "**Source Spec Fingerprint:** {source_spec_fingerprint}"
+        ));
+        output.push(String::new());
+        output.push(String::from("## Step Evidence"));
 
-    format!("{}\n", output.join("\n"))
+        for step in &context.steps {
+            let attempts = context
+                .evidence
+                .attempts
+                .iter()
+                .filter(|attempt| {
+                    attempt.task_number == step.task_number
+                        && attempt.step_number == step.step_number
+                })
+                .collect::<Vec<_>>();
+            if attempts.is_empty() {
+                continue;
+            }
+            output.push(String::new());
+            output.push(format!(
+                "### Task {} Step {}",
+                step.task_number, step.step_number
+            ));
+            for (index, attempt) in attempts.iter().enumerate() {
+                if index > 0 {
+                    output.push(String::new());
+                }
+                output.push(format!("#### Attempt {}", attempt.attempt_number));
+                output.push(format!("**Status:** {}", attempt.status));
+                output.push(format!("**Recorded At:** {}", attempt.recorded_at));
+                output.push(format!(
+                    "**Execution Source:** {}",
+                    attempt.execution_source
+                ));
+                output.push(format!("**Task Number:** {}", attempt.task_number));
+                output.push(format!("**Step Number:** {}", attempt.step_number));
+                output.push(format!(
+                    "**Packet Fingerprint:** {}",
+                    attempt
+                        .packet_fingerprint
+                        .clone()
+                        .unwrap_or_else(|| String::from("unknown"))
+                ));
+                output.push(format!(
+                    "**Head SHA:** {}",
+                    attempt
+                        .head_sha
+                        .clone()
+                        .unwrap_or_else(|| String::from("unknown"))
+                ));
+                if let Some(base_sha) = &attempt.base_sha {
+                    output.push(format!("**Base SHA:** {base_sha}"));
+                }
+                output.push(format!("**Claim:** {}", attempt.claim));
+                if let Some(source_contract_path) = &attempt.source_contract_path {
+                    output.push(format!("**Source Contract Path:** {source_contract_path}"));
+                }
+                if let Some(source_contract_fingerprint) = &attempt.source_contract_fingerprint {
+                    output.push(format!(
+                        "**Source Contract Fingerprint:** `{source_contract_fingerprint}`"
+                    ));
+                }
+                if let Some(source_evaluation_report_fingerprint) =
+                    &attempt.source_evaluation_report_fingerprint
+                {
+                    output.push(format!(
+                        "**Source Evaluation Report Fingerprint:** `{source_evaluation_report_fingerprint}`"
+                    ));
+                }
+                if let Some(evaluator_verdict) = &attempt.evaluator_verdict {
+                    output.push(format!("**Evaluator Verdict:** {evaluator_verdict}"));
+                }
+                if !attempt.failing_criterion_ids.is_empty() {
+                    output.push(String::from("**Failing Criterion IDs:**"));
+                    for criterion_id in &attempt.failing_criterion_ids {
+                        output.push(format!("- `{criterion_id}`"));
+                    }
+                }
+                if let Some(source_handoff_fingerprint) = &attempt.source_handoff_fingerprint {
+                    output.push(format!(
+                        "**Source Handoff Fingerprint:** `{source_handoff_fingerprint}`"
+                    ));
+                }
+                if let Some(repo_state_baseline_head_sha) = &attempt.repo_state_baseline_head_sha {
+                    output.push(format!(
+                        "**Repo State Baseline Head SHA:** {repo_state_baseline_head_sha}"
+                    ));
+                }
+                if let Some(repo_state_baseline_worktree_fingerprint) =
+                    &attempt.repo_state_baseline_worktree_fingerprint
+                {
+                    output.push(format!(
+                        "**Repo State Baseline Worktree Fingerprint:** {repo_state_baseline_worktree_fingerprint}"
+                    ));
+                }
+                output.push(String::from("**Files Proven:**"));
+                for proof in &attempt.file_proofs {
+                    output.push(format!("- {} | {}", proof.path, proof.proof));
+                }
+                if let Some(verify_command) = &attempt.verify_command {
+                    output.push(format!("**Verify Command:** {verify_command}"));
+                }
+                output.push(format!(
+                    "**Verification Summary:** {}",
+                    attempt.verification_summary
+                ));
+                output.push(format!(
+                    "**Invalidation Reason:** {}",
+                    attempt.invalidation_reason
+                ));
+            }
+        }
+
+        format!("{}\n", output.join("\n"))
+    }
 }
 
 fn next_attempt_number(evidence: &ExecutionEvidence, task: u32, step: u32) -> u32 {
@@ -5526,7 +5656,7 @@ fn invalidate_latest_completed_attempt(
     task: u32,
     step: u32,
     reason: &str,
-) -> Result<(), JsonFailure> {
+) {
     let attempt_index =
         context
             .evidence
@@ -5541,12 +5671,16 @@ fn invalidate_latest_completed_attempt(
                     .then_some(index)
             });
     let Some(attempt_index) = attempt_index else {
-        return Ok(());
+        return;
     };
     context.evidence.attempts[attempt_index].status = String::from("Invalidated");
     context.evidence.attempts[attempt_index].recorded_at = Timestamp::now().to_string();
-    context.evidence.attempts[attempt_index].invalidation_reason = reason.to_owned();
-    Ok(())
+    context.evidence.attempts[attempt_index]
+        .invalidation_reason
+        .clear();
+    context.evidence.attempts[attempt_index]
+        .invalidation_reason
+        .push_str(reason);
 }
 
 fn write_plan_and_evidence_with_rollback(
@@ -5632,6 +5766,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod unit_tests {
+    use crate::expect_ext::{ExpectErrExt, ExpectValueExt};
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::Path;
@@ -5727,7 +5862,7 @@ mod unit_tests {
 
     #[test]
     fn rewrite_branch_final_review_artifacts_refuses_to_rebind_review_history() {
-        let tempdir = TempDir::new().expect("tempdir should exist");
+        let tempdir = TempDir::new().expect_or_abort("tempdir should exist");
         let reviewer_artifact = tempdir.path().join("reviewer.md");
         let review_receipt = tempdir.path().join("review.md");
         let original_reviewer =
@@ -5737,8 +5872,9 @@ mod unit_tests {
             reviewer_artifact.display()
         );
         fs::write(&reviewer_artifact, original_reviewer)
-            .expect("reviewer artifact fixture should write");
-        fs::write(&review_receipt, &original_review).expect("review receipt fixture should write");
+            .expect_or_abort("reviewer artifact fixture should write");
+        fs::write(&review_receipt, &original_review)
+            .expect_or_abort("review receipt fixture should write");
 
         let error = rewrite_branch_final_review_artifacts(
             &review_receipt,
@@ -5746,362 +5882,371 @@ mod unit_tests {
             "new-head",
             "new-checkpoint",
         )
-        .expect_err("append-only repair must not rewrite historical final-review proof in place");
+        .expect_err_or_abort(
+            "append-only repair must not rewrite historical final-review proof in place",
+        );
 
         assert_eq!(error.error_class, FailureClass::StaleProvenance.as_str());
         assert_eq!(
             fs::read_to_string(&reviewer_artifact)
-                .expect("reviewer artifact should remain readable"),
+                .expect_or_abort("reviewer artifact should remain readable"),
             original_reviewer
         );
         assert_eq!(
-            fs::read_to_string(&review_receipt).expect("review receipt should remain readable"),
+            fs::read_to_string(&review_receipt)
+                .expect_or_abort("review receipt should remain readable"),
             original_review
         );
     }
 
     #[test]
     fn current_final_review_record_authoritativeness_prefers_runtime_record_over_artifact_tamper() {
-        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let mut runtime =
-            ExecutionRuntime::discover(&repo_root).expect("repo runtime should be discoverable");
-        let tempdir = TempDir::new().expect("tempdir should exist");
-        runtime.state_dir = tempdir.path().join("state");
-        fs::create_dir_all(&runtime.state_dir).expect("state dir should be creatable");
+        {
+            let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let mut runtime = ExecutionRuntime::discover(&repo_root)
+                .expect_or_abort("repo runtime should be discoverable");
+            let tempdir = TempDir::new().expect_or_abort("tempdir should exist");
+            runtime.state_dir = tempdir.path().join("state");
+            fs::create_dir_all(&runtime.state_dir).expect_or_abort("state dir should be creatable");
 
-        let plan_rel =
-            "docs/archive/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
-        let plan_abs = repo_root.join(plan_rel);
-        let plan_document = parse_plan_file(&plan_abs).expect("plan document should parse");
-        let plan_source = fs::read_to_string(&plan_abs).expect("plan source should read");
-        let context = ExecutionContext {
-            runtime: runtime.clone(),
-            plan_rel: String::from(plan_rel),
-            plan_abs: plan_abs.clone(),
-            plan_document,
-            plan_source,
-            steps: Vec::new(),
-            local_execution_progress_markers_present: false,
-            legacy_open_step_state_candidates: Vec::new(),
-            tasks_by_number: Default::default(),
-            evidence_rel: String::from(
-                "docs/archive/featureforge/execution-evidence/placeholder.md",
-            ),
-            evidence_abs: repo_root
-                .join("docs/archive/featureforge/execution-evidence/placeholder.md"),
-            evidence: ExecutionEvidence {
-                format: EvidenceFormat::Empty,
-                plan_path: String::from(plan_rel),
-                plan_revision: 0,
-                plan_fingerprint: None,
-                source_spec_path: String::from(
-                    "docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md",
+            let plan_rel = "docs/archive/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
+            let plan_abs = repo_root.join(plan_rel);
+            let plan_document =
+                parse_plan_file(&plan_abs).expect_or_abort("plan document should parse");
+            let plan_source =
+                fs::read_to_string(&plan_abs).expect_or_abort("plan source should read");
+            let context = ExecutionContext {
+                runtime: runtime.clone(),
+                plan_rel: String::from(plan_rel),
+                plan_abs,
+                plan_document,
+                plan_source,
+                steps: Vec::new(),
+                local_execution_progress_markers_present: false,
+                legacy_open_step_state_candidates: Vec::new(),
+                tasks_by_number: BTreeMap::default(),
+                evidence_rel: String::from(
+                    "docs/archive/featureforge/execution-evidence/placeholder.md",
                 ),
-                source_spec_revision: 0,
-                source_spec_fingerprint: None,
-                attempts: Vec::new(),
-                source: None,
-            },
-            source_spec_source: String::new(),
-            source_spec_path: repo_root
-                .join("docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md"),
-            execution_fingerprint: String::from("unit-test-execution-fingerprint"),
-            tracked_tree_sha_cache: OnceLock::new(),
-            reviewed_tree_sha_cache: std::cell::RefCell::new(BTreeMap::new()),
-            head_sha_cache: OnceLock::new(),
-            release_base_branch_cache: OnceLock::new(),
-        };
-        let base_branch =
-            resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
-                .expect("base branch should resolve for the current repo");
-        let branch_closure_id = "unit-test-branch-closure";
-        let reviewed_state_id = format!(
-            "git_tree:{}",
-            crate::execution::current_truth::current_repo_tracked_tree_sha(
-                &context.runtime.repo_root
+                evidence_abs: repo_root
+                    .join("docs/archive/featureforge/execution-evidence/placeholder.md"),
+                evidence: ExecutionEvidence {
+                    format: EvidenceFormat::Empty,
+                    plan_path: String::from(plan_rel),
+                    plan_revision: 0,
+                    plan_fingerprint: None,
+                    source_spec_path: String::from(
+                        "docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md",
+                    ),
+                    source_spec_revision: 0,
+                    source_spec_fingerprint: None,
+                    attempts: Vec::new(),
+                    source: None,
+                },
+                source_spec_source: String::new(),
+                source_spec_path: repo_root
+                    .join("docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md"),
+                execution_fingerprint: String::from("unit-test-execution-fingerprint"),
+                tracked_tree_sha_cache: OnceLock::new(),
+                reviewed_tree_sha_cache: std::cell::RefCell::new(BTreeMap::new()),
+                head_sha_cache: OnceLock::new(),
+                release_base_branch_cache: OnceLock::new(),
+            };
+            let base_branch =
+                resolve_release_base_branch(&context.runtime.git_dir, &context.runtime.branch_name)
+                    .expect_or_abort("base branch should resolve for the current repo");
+            let branch_closure_id = "unit-test-branch-closure";
+            let reviewed_state_id = format!(
+                "git_tree:{}",
+                crate::execution::current_truth::current_repo_tracked_tree_sha(
+                    &context.runtime.repo_root
+                )
+                .expect_or_abort("tracked tree sha should resolve for unit coverage")
+            );
+            let execution_run_id = "run-unit-test";
+            let branch_contract_identity = super::shared_branch_contract_identity(
+                &context.plan_rel,
+                context.plan_document.plan_revision,
+                &runtime.repo_slug,
+                &runtime.branch_name,
+                &base_branch,
+            );
+            let dispatch_id = "unit-test-final-review-dispatch";
+            let reviewer_source = "fresh-context-subagent";
+            let reviewer_id = "unit-reviewer-001";
+            let summary = "Independent final review passed in unit coverage.";
+            let summary_hash = sha256_hex(summary.as_bytes());
+            let strategy_checkpoint_fingerprint = sha256_hex(b"unit-test-strategy-checkpoint");
+            let state_path = authoritative_state_path(&context);
+            fs::create_dir_all(
+                state_path
+                    .parent()
+                    .expect_or_abort("authoritative state path should have a parent dir"),
             )
-            .expect("tracked tree sha should resolve for unit coverage")
-        );
-        let execution_run_id = "run-unit-test";
-        let branch_contract_identity = super::shared_branch_contract_identity(
-            &context.plan_rel,
-            context.plan_document.plan_revision,
-            &runtime.repo_slug,
-            &runtime.branch_name,
-            &base_branch,
-        );
-        let dispatch_id = "unit-test-final-review-dispatch";
-        let reviewer_source = "fresh-context-subagent";
-        let reviewer_id = "unit-reviewer-001";
-        let summary = "Independent final review passed in unit coverage.";
-        let summary_hash = sha256_hex(summary.as_bytes());
-        let strategy_checkpoint_fingerprint = sha256_hex(b"unit-test-strategy-checkpoint");
-        let state_path = authoritative_state_path(&context);
-        fs::create_dir_all(
-            state_path
-                .parent()
-                .expect("authoritative state path should have a parent dir"),
-        )
-        .expect("authoritative state dir should be creatable");
-        fs::write(
-            &state_path,
-            serde_json::to_string_pretty(&json!({
-                "latest_authoritative_sequence": 1,
-                "harness_phase": "final_review_pending",
-                "last_strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
-            }))
-            .expect("seed authoritative state should serialize"),
-        )
-        .expect("seed authoritative state should write");
-        let rendered = render_final_review_artifacts(
-            &runtime,
-            &context,
-            branch_closure_id,
-            reviewed_state_id.as_str(),
-            &base_branch,
-            FinalReviewProjectionInput {
-                dispatch_id,
-                reviewer_source,
-                reviewer_id,
-                result: "pass",
-                deviations_required: false,
-                summary,
-            },
-        )
-        .expect("final-review artifacts should render for unit coverage");
-        let final_review_fingerprint = sha256_hex(rendered.final_review_source.as_bytes());
-        let final_review_path = harness_authoritative_artifact_path(
-            &runtime.state_dir,
-            &runtime.repo_slug,
-            &runtime.branch_name,
-            &format!("final-review-{final_review_fingerprint}.md"),
-        );
-        fs::create_dir_all(
-            rendered
-                .reviewer_artifact_path
-                .parent()
-                .expect("reviewer artifact should have a parent directory"),
-        )
-        .expect("reviewer artifact dir should be creatable");
-        fs::create_dir_all(
-            final_review_path
-                .parent()
-                .expect("final-review artifact should have a parent directory"),
-        )
-        .expect("final-review artifact dir should be creatable");
-        fs::write(
-            &rendered.reviewer_artifact_path,
-            &rendered.reviewer_source_text,
-        )
-        .expect("reviewer artifact should write");
-        fs::write(&final_review_path, &rendered.final_review_source)
-            .expect("final-review artifact should write");
+            .expect_or_abort("authoritative state dir should be creatable");
+            fs::write(
+                &state_path,
+                serde_json::to_string_pretty(&json!({
+                    "latest_authoritative_sequence": 1,
+                    "harness_phase": "final_review_pending",
+                    "last_strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
+                }))
+                .expect_or_abort("seed authoritative state should serialize"),
+            )
+            .expect_or_abort("seed authoritative state should write");
+            let rendered = render_final_review_artifacts(
+                &runtime,
+                &context,
+                branch_closure_id,
+                reviewed_state_id.as_str(),
+                &base_branch,
+                FinalReviewProjectionInput {
+                    dispatch_id,
+                    reviewer_source,
+                    reviewer_id,
+                    result: "pass",
+                    deviations_required: false,
+                    summary,
+                },
+            )
+            .expect_or_abort("final-review artifacts should render for unit coverage");
+            let final_review_fingerprint = sha256_hex(rendered.final_review_source.as_bytes());
+            let final_review_path = harness_authoritative_artifact_path(
+                &runtime.state_dir,
+                &runtime.repo_slug,
+                &runtime.branch_name,
+                &format!("final-review-{final_review_fingerprint}.md"),
+            );
+            fs::create_dir_all(
+                rendered
+                    .reviewer_artifact_path
+                    .parent()
+                    .expect_or_abort("reviewer artifact should have a parent directory"),
+            )
+            .expect_or_abort("reviewer artifact dir should be creatable");
+            fs::create_dir_all(
+                final_review_path
+                    .parent()
+                    .expect_or_abort("final-review artifact should have a parent directory"),
+            )
+            .expect_or_abort("final-review artifact dir should be creatable");
+            fs::write(
+                &rendered.reviewer_artifact_path,
+                &rendered.reviewer_source_text,
+            )
+            .expect_or_abort("reviewer artifact should write");
+            fs::write(&final_review_path, &rendered.final_review_source)
+                .expect_or_abort("final-review artifact should write");
 
-        fs::write(
-            &state_path,
-            serde_json::to_string_pretty(&json!({
-                "latest_authoritative_sequence": 1,
-                "harness_phase": "ready_for_branch_completion",
-                "last_strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
-                "current_branch_closure_id": branch_closure_id,
-                "current_branch_closure_reviewed_state_id": reviewed_state_id.as_str(),
-                "current_branch_closure_contract_identity": branch_contract_identity.clone(),
-                "current_task_closure_records": {
-                    "task-1": {
-                        "task": 1,
-                        "source_plan_path": context.plan_rel,
-                        "source_plan_revision": context.plan_document.plan_revision,
+            fs::write(
+                &state_path,
+                serde_json::to_string_pretty(&json!({
+                    "latest_authoritative_sequence": 1,
+                    "harness_phase": "ready_for_branch_completion",
+                    "last_strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
+                    "current_branch_closure_id": branch_closure_id,
+                    "current_branch_closure_reviewed_state_id": reviewed_state_id.as_str(),
+                    "current_branch_closure_contract_identity": branch_contract_identity.as_str(),
+                    "current_task_closure_records": {
+                        "task-1": {
+                            "task": 1,
+                            "source_plan_path": context.plan_rel,
+                            "source_plan_revision": context.plan_document.plan_revision,
+                            "execution_run_id": execution_run_id,
+                            "dispatch_id": "unit-test-task-dispatch",
+                            "closure_record_id": "task-1-closure",
+                            "reviewed_state_id": reviewed_state_id.as_str(),
+                            "contract_identity": super::current_task_contract_identity(&context, 1),
+                            "effective_reviewed_surface_paths": ["README.md"],
+                            "review_result": "pass",
+                            "review_summary_hash": "task-review-summary",
+                            "verification_result": "pass",
+                            "verification_summary_hash": "task-verification-summary",
+                            "closure_status": "current"
+                        }
+                    },
+                    "task_closure_record_history": {
+                        "task-1-closure": {
+                            "task": 1,
+                            "source_plan_path": context.plan_rel,
+                            "source_plan_revision": context.plan_document.plan_revision,
+                            "execution_run_id": execution_run_id,
+                            "dispatch_id": "unit-test-task-dispatch",
+                            "closure_record_id": "task-1-closure",
+                            "reviewed_state_id": reviewed_state_id.as_str(),
+                            "contract_identity": super::current_task_contract_identity(&context, 1),
+                            "effective_reviewed_surface_paths": ["README.md"],
+                            "review_result": "pass",
+                            "review_summary_hash": "task-review-summary",
+                            "verification_result": "pass",
+                            "verification_summary_hash": "task-verification-summary",
+                            "closure_status": "current"
+                        }
+                    },
+                    "branch_closure_records": {
+                        (branch_closure_id): {
+                            "branch_closure_id": branch_closure_id,
+                            "source_plan_path": context.plan_rel,
+                            "source_plan_revision": context.plan_document.plan_revision,
+                            "repo_slug": runtime.repo_slug,
+                            "branch_name": runtime.branch_name,
+                            "base_branch": base_branch,
+                            "reviewed_state_id": reviewed_state_id.as_str(),
+                            "contract_identity": branch_contract_identity,
+                            "effective_reviewed_branch_surface": "repo_tracked_content",
+                            "source_task_closure_ids": ["task-1-closure"],
+                            "provenance_basis": "task_closure_lineage",
+                            "closure_status": "current",
+                            "superseded_branch_closure_ids": []
+                        }
+                    },
+                    "current_final_review_record_id": "unit-final-review-record",
+                    "current_final_review_branch_closure_id": branch_closure_id,
+                    "current_final_review_dispatch_id": dispatch_id,
+                    "current_final_review_reviewer_source": reviewer_source,
+                    "current_final_review_reviewer_id": reviewer_id,
+                    "current_final_review_result": "pass",
+                    "current_final_review_summary_hash": summary_hash,
+                    "final_review_dispatch_lineage": {
                         "execution_run_id": execution_run_id,
-                        "dispatch_id": "unit-test-task-dispatch",
-                        "closure_record_id": "task-1-closure",
-                        "reviewed_state_id": reviewed_state_id.as_str(),
-                        "contract_identity": super::current_task_contract_identity(&context, 1),
-                        "effective_reviewed_surface_paths": ["README.md"],
-                        "review_result": "pass",
-                        "review_summary_hash": "task-review-summary",
-                        "verification_result": "pass",
-                        "verification_summary_hash": "task-verification-summary",
-                        "closure_status": "current"
-                    }
-                },
-                "task_closure_record_history": {
-                    "task-1-closure": {
-                        "task": 1,
-                        "source_plan_path": context.plan_rel,
-                        "source_plan_revision": context.plan_document.plan_revision,
-                        "execution_run_id": execution_run_id,
-                        "dispatch_id": "unit-test-task-dispatch",
-                        "closure_record_id": "task-1-closure",
-                        "reviewed_state_id": reviewed_state_id.as_str(),
-                        "contract_identity": super::current_task_contract_identity(&context, 1),
-                        "effective_reviewed_surface_paths": ["README.md"],
-                        "review_result": "pass",
-                        "review_summary_hash": "task-review-summary",
-                        "verification_result": "pass",
-                        "verification_summary_hash": "task-verification-summary",
-                        "closure_status": "current"
-                    }
-                },
-                "branch_closure_records": {
-                    (branch_closure_id): {
-                        "branch_closure_id": branch_closure_id,
-                        "source_plan_path": context.plan_rel,
-                        "source_plan_revision": context.plan_document.plan_revision,
-                        "repo_slug": runtime.repo_slug,
-                        "branch_name": runtime.branch_name,
-                        "base_branch": base_branch,
-                        "reviewed_state_id": reviewed_state_id.as_str(),
-                        "contract_identity": branch_contract_identity,
-                        "effective_reviewed_branch_surface": "repo_tracked_content",
-                        "source_task_closure_ids": ["task-1-closure"],
-                        "provenance_basis": "task_closure_lineage",
-                        "closure_status": "current",
-                        "superseded_branch_closure_ids": []
-                    }
-                },
-                "current_final_review_record_id": "unit-final-review-record",
-                "current_final_review_branch_closure_id": branch_closure_id,
-                "current_final_review_dispatch_id": dispatch_id,
-                "current_final_review_reviewer_source": reviewer_source,
-                "current_final_review_reviewer_id": reviewer_id,
-                "current_final_review_result": "pass",
-                "current_final_review_summary_hash": summary_hash,
-                "final_review_dispatch_lineage": {
-                    "execution_run_id": execution_run_id,
-                    "dispatch_id": dispatch_id,
-                    "branch_closure_id": branch_closure_id
-                },
-                "final_review_record_history": {
-                    "unit-final-review-record": {
-                        "record_id": "unit-final-review-record",
-                        "record_sequence": 1,
-                        "record_status": "current",
-                        "branch_closure_id": branch_closure_id,
-                        "source_plan_path": context.plan_rel,
-                        "source_plan_revision": context.plan_document.plan_revision,
-                        "repo_slug": runtime.repo_slug,
-                        "branch_name": runtime.branch_name,
-                        "base_branch": base_branch,
-                        "reviewed_state_id": reviewed_state_id.as_str(),
                         "dispatch_id": dispatch_id,
-                        "reviewer_source": reviewer_source,
-                        "reviewer_id": reviewer_id,
-                        "result": "pass",
-                        "final_review_fingerprint": final_review_fingerprint,
-                        "browser_qa_required": false,
-                        "summary": summary,
-                        "summary_hash": summary_hash
+                        "branch_closure_id": branch_closure_id
+                    },
+                    "final_review_record_history": {
+                        "unit-final-review-record": {
+                            "record_id": "unit-final-review-record",
+                            "record_sequence": 1,
+                            "record_status": "current",
+                            "branch_closure_id": branch_closure_id,
+                            "source_plan_path": context.plan_rel,
+                            "source_plan_revision": context.plan_document.plan_revision,
+                            "repo_slug": runtime.repo_slug,
+                            "branch_name": runtime.branch_name,
+                            "base_branch": base_branch,
+                            "reviewed_state_id": reviewed_state_id.as_str(),
+                            "dispatch_id": dispatch_id,
+                            "reviewer_source": reviewer_source,
+                            "reviewer_id": reviewer_id,
+                            "result": "pass",
+                            "final_review_fingerprint": final_review_fingerprint,
+                            "browser_qa_required": false,
+                            "summary": summary,
+                            "summary_hash": summary_hash
+                        }
                     }
-                }
-            }))
-            .expect("authoritative state fixture should serialize"),
-        )
-        .expect("authoritative state fixture should write");
-
-        let authoritative_state = load_authoritative_transition_state(&context)
-            .expect("authoritative state should load")
-            .expect("authoritative state should exist");
-        assert!(
-            current_final_review_record_is_still_authoritative(
-                &context,
-                &authoritative_state,
-                CurrentFinalReviewAuthorityCheck {
-                    branch_closure_id,
-                    dispatch_id,
-                    reviewer_source,
-                    reviewer_id,
-                    result: "pass",
-                    normalized_summary_hash: &summary_hash,
-                },
+                }))
+                .expect_or_abort("authoritative state fixture should serialize"),
             )
-            .expect("authoritativeness check should succeed for intact artifacts")
-        );
+            .expect_or_abort("authoritative state fixture should write");
 
-        fs::write(
-            &final_review_path,
-            "# Code Review Result\n\nTampered final-review receipt.\n",
-        )
-        .expect("tampered final-review receipt should write");
+            let authoritative_state = load_authoritative_transition_state(&context)
+                .expect_or_abort("authoritative state should load")
+                .expect_or_abort("authoritative state should exist");
+            assert!(
+                current_final_review_record_is_still_authoritative(
+                    &context,
+                    &authoritative_state,
+                    CurrentFinalReviewAuthorityCheck {
+                        branch_closure_id,
+                        dispatch_id,
+                        reviewer_source,
+                        reviewer_id,
+                        result: "pass",
+                        normalized_summary_hash: &summary_hash,
+                    },
+                )
+                .expect_or_abort("authoritativeness check should succeed for intact artifacts")
+            );
 
-        let authoritative_state = load_authoritative_transition_state(&context)
-            .expect("authoritative state should reload after final-review tamper")
-            .expect("authoritative state should still exist after final-review tamper");
-        assert!(
-            current_final_review_record_is_still_authoritative(
-                &context,
-                &authoritative_state,
-                CurrentFinalReviewAuthorityCheck {
-                    branch_closure_id,
-                    dispatch_id,
-                    reviewer_source,
-                    reviewer_id,
-                    result: "pass",
-                    normalized_summary_hash: &summary_hash,
-                },
+            fs::write(
+                &final_review_path,
+                "# Code Review Result\n\nTampered final-review receipt.\n",
             )
-            .expect("authoritativeness check should keep trusting the current record after final-review artifact tamper")
-        );
+            .expect_or_abort("tampered final-review receipt should write");
 
-        fs::write(&final_review_path, &rendered.final_review_source)
-            .expect("intact final-review receipt should restore");
-        fs::write(
-            &rendered.reviewer_artifact_path,
-            "# Code Review Result\n\nTampered reviewer artifact.\n",
-        )
-        .expect("tampered reviewer artifact should write");
+            let authoritative_state = load_authoritative_transition_state(&context)
+                .expect_or_abort("authoritative state should reload after final-review tamper")
+                .expect_or_abort(
+                    "authoritative state should still exist after final-review tamper",
+                );
+            assert!(
+                    current_final_review_record_is_still_authoritative(
+                        &context,
+                        &authoritative_state,
+                        CurrentFinalReviewAuthorityCheck {
+                            branch_closure_id,
+                            dispatch_id,
+                            reviewer_source,
+                            reviewer_id,
+                            result: "pass",
+                            normalized_summary_hash: &summary_hash,
+                        },
+                    )
+                    .expect_or_abort("authoritativeness check should keep trusting the current record after final-review artifact tamper")
+                );
 
-        let authoritative_state = load_authoritative_transition_state(&context)
-            .expect("authoritative state should reload")
-            .expect("authoritative state should still exist");
-        assert!(
-            current_final_review_record_is_still_authoritative(
-                &context,
-                &authoritative_state,
-                CurrentFinalReviewAuthorityCheck {
-                    branch_closure_id,
-                    dispatch_id,
-                    reviewer_source,
-                    reviewer_id,
-                    result: "pass",
-                    normalized_summary_hash: &summary_hash,
-                },
+            fs::write(&final_review_path, &rendered.final_review_source)
+                .expect_or_abort("intact final-review receipt should restore");
+            fs::write(
+                &rendered.reviewer_artifact_path,
+                "# Code Review Result\n\nTampered reviewer artifact.\n",
             )
-            .expect("authoritativeness check should keep trusting the current record after reviewer-artifact tamper")
-        );
+            .expect_or_abort("tampered reviewer artifact should write");
+
+            let authoritative_state = load_authoritative_transition_state(&context)
+                .expect_or_abort("authoritative state should reload")
+                .expect_or_abort("authoritative state should still exist");
+            assert!(
+                    current_final_review_record_is_still_authoritative(
+                        &context,
+                        &authoritative_state,
+                        CurrentFinalReviewAuthorityCheck {
+                            branch_closure_id,
+                            dispatch_id,
+                            reviewer_source,
+                            reviewer_id,
+                            result: "pass",
+                            normalized_summary_hash: &summary_hash,
+                        },
+                    )
+                    .expect_or_abort("authoritativeness check should keep trusting the current record after reviewer-artifact tamper")
+                );
+        }
     }
 
     #[test]
     fn rewrite_branch_head_bound_artifact_refuses_to_rebind_history() {
-        let tempdir = TempDir::new().expect("tempdir should exist");
+        let tempdir = TempDir::new().expect_or_abort("tempdir should exist");
         let artifact = tempdir.path().join("artifact.md");
         let original = "**Head SHA:** old-head\n";
-        fs::write(&artifact, original).expect("head-bound artifact fixture should write");
+        fs::write(&artifact, original).expect_or_abort("head-bound artifact fixture should write");
 
-        let error = rewrite_branch_head_bound_artifact(&artifact, "new-head")
-            .expect_err("append-only repair must not rewrite historical head-bound artifacts");
+        let error = rewrite_branch_head_bound_artifact(&artifact, "new-head").expect_err_or_abort(
+            "append-only repair must not rewrite historical head-bound artifacts",
+        );
 
         assert_eq!(error.error_class, FailureClass::StaleProvenance.as_str());
         assert_eq!(
-            fs::read_to_string(&artifact).expect("artifact should remain readable"),
+            fs::read_to_string(&artifact).expect_or_abort("artifact should remain readable"),
             original
         );
     }
 
     #[test]
     fn rewrite_branch_qa_artifact_refuses_to_rebind_history() {
-        let tempdir = TempDir::new().expect("tempdir should exist");
+        let tempdir = TempDir::new().expect_or_abort("tempdir should exist");
         let qa_artifact = tempdir.path().join("qa.md");
         let test_plan = tempdir.path().join("test-plan.md");
         let original = "**Head SHA:** old-head\n**Source Test Plan:** `old-plan.md`\n";
-        fs::write(&qa_artifact, original).expect("qa artifact fixture should write");
-        fs::write(&test_plan, "placeholder").expect("test plan fixture should write");
+        fs::write(&qa_artifact, original).expect_or_abort("qa artifact fixture should write");
+        fs::write(&test_plan, "placeholder").expect_or_abort("test plan fixture should write");
 
         let error = rewrite_branch_qa_artifact(&qa_artifact, "new-head", &test_plan)
-            .expect_err("append-only repair must not rewrite historical QA artifacts");
+            .expect_err_or_abort("append-only repair must not rewrite historical QA artifacts");
 
         assert_eq!(error.error_class, FailureClass::StaleProvenance.as_str());
         assert_eq!(
-            fs::read_to_string(&qa_artifact).expect("qa artifact should remain readable"),
+            fs::read_to_string(&qa_artifact).expect_or_abort("qa artifact should remain readable"),
             original
         );
     }
@@ -6111,7 +6256,7 @@ mod unit_tests {
         let overlay: StatusAuthoritativeOverlay = serde_json::from_value(json!({
             "current_branch_closure_id": "branch-release-closure-old"
         }))
-        .expect("overlay fixture should deserialize");
+        .expect_or_abort("overlay fixture should deserialize");
 
         let superseded = superseded_branch_closure_ids_from_previous_current(
             Some(&overlay),
@@ -6135,7 +6280,7 @@ mod unit_tests {
         ] {
             let error =
                 normalized_late_stage_surface(&format!("**Late-Stage Surface:** {invalid}\n"))
-                    .expect_err("invalid Late-Stage Surface entries must fail closed");
+                    .expect_err_or_abort("invalid Late-Stage Surface entries must fail closed");
             assert_eq!(
                 error.error_class,
                 FailureClass::InvalidCommandInput.as_str()

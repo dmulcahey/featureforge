@@ -1,3 +1,4 @@
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,14 +20,15 @@ pub fn install_compiled_featureforge(home_dir: &Path) -> PathBuf {
         return target;
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).expect("canonical install bin directory should exist");
+        fs::create_dir_all(parent).expect_or_abort("canonical install bin directory should exist");
     }
-    fs::copy(&source, &target).expect("compiled featureforge binary should copy into the install");
+    fs::copy(&source, &target)
+        .expect_or_abort("compiled featureforge binary should copy into the install");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
-            .expect("copied featureforge binary should stay executable");
+            .expect_or_abort("copied featureforge binary should stay executable");
     }
     target
 }

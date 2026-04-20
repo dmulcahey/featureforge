@@ -16,19 +16,27 @@ const EVIDENCE_ARTIFACT_VERSION: u32 = 1;
 
 const SUPPORTED_SATISFACTION_RULES: [&str; 3] = ["all_of", "any_of", "per_step"];
 const SUPPORTED_EVALUATOR_KINDS: [&str; 2] = ["spec_compliance", "code_quality"];
+/// Runtime constant.
 pub const WORKTREE_LEASE_VERSION: u32 = 1;
+/// Runtime constant.
 pub const EXECUTION_TOPOLOGY_DOWNGRADE_RECORD_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+/// Runtime enum.
 pub enum WorktreeLeaseState {
+    /// Runtime enum variant.
     Open,
+    /// Runtime enum variant.
     ReviewPassedPendingReconcile,
+    /// Runtime enum variant.
     Reconciled,
+    /// Runtime enum variant.
     Cleaned,
 }
 
 impl WorktreeLeaseState {
+    /// Runtime constant.
     pub const ALL: [Self; 4] = [
         Self::Open,
         Self::ReviewPassedPendingReconcile,
@@ -36,6 +44,8 @@ impl WorktreeLeaseState {
         Self::Cleaned,
     ];
 
+    #[must_use]
+    /// Runtime constant.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Open => "open",
@@ -48,16 +58,24 @@ impl WorktreeLeaseState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+/// Runtime enum.
 pub enum DowngradeReasonClass {
+    /// Runtime enum variant.
     WriteScopeOverlap,
+    /// Runtime enum variant.
     DependencyMismatch,
+    /// Runtime enum variant.
     WorkspaceUnavailable,
+    /// Runtime enum variant.
     ReconcileConflict,
+    /// Runtime enum variant.
     BaselineDrift,
+    /// Runtime enum variant.
     PolicySafetyBlock,
 }
 
 impl DowngradeReasonClass {
+    /// Runtime constant.
     pub const ALL: [Self; 6] = [
         Self::WriteScopeOverlap,
         Self::DependencyMismatch,
@@ -67,6 +85,8 @@ impl DowngradeReasonClass {
         Self::PolicySafetyBlock,
     ];
 
+    #[must_use]
+    /// Runtime constant.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::WriteScopeOverlap => "write_scope_overlap",
@@ -81,13 +101,19 @@ impl DowngradeReasonClass {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+/// Runtime enum.
 pub enum DowngradeOperatorImpactSeverity {
+    /// Runtime enum variant.
     Info,
+    /// Runtime enum variant.
     Warning,
+    /// Runtime enum variant.
     Blocking,
 }
 
 impl DowngradeOperatorImpactSeverity {
+    #[must_use]
+    /// Runtime constant.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Info => "info",
@@ -99,13 +125,18 @@ impl DowngradeOperatorImpactSeverity {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "String", into = "String")]
+/// Runtime struct.
 pub struct BlockingEvidenceReference(String);
 
 impl BlockingEvidenceReference {
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn try_new(value: impl Into<String>) -> Result<Self, String> {
         Self::try_from(value.into())
     }
 
+    #[must_use]
+    /// Runtime function.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -148,91 +179,159 @@ impl From<BlockingEvidenceReference> for String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Runtime struct.
 pub struct DowngradeBlockingEvidence {
+    /// Runtime field.
     pub summary: String,
+    /// Runtime field.
     pub references: Vec<BlockingEvidenceReference>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Runtime struct.
 pub struct DowngradeOperatorImpact {
+    /// Runtime field.
     pub severity: DowngradeOperatorImpactSeverity,
+    /// Runtime field.
     pub changed_or_blocked_stage: String,
+    /// Runtime field.
     pub expected_response: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Runtime struct.
 pub struct ExecutionTopologyDowngradeDetail {
+    /// Runtime field.
     pub trigger_summary: String,
+    /// Runtime field.
     pub affected_units: Vec<String>,
+    /// Runtime field.
     pub blocking_evidence: DowngradeBlockingEvidence,
+    /// Runtime field.
     pub operator_impact: DowngradeOperatorImpact,
     #[serde(default)]
+    /// Runtime field.
     pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// Runtime struct.
 pub struct ExecutionTopologyDowngradeRecord {
+    /// Runtime field.
     pub record_version: u32,
+    /// Runtime field.
     pub authoritative_sequence: u64,
+    /// Runtime field.
     pub source_plan_path: String,
+    /// Runtime field.
     pub source_plan_revision: u32,
+    /// Runtime field.
     pub execution_context_key: String,
+    /// Runtime field.
     pub primary_reason_class: DowngradeReasonClass,
+    /// Runtime field.
     pub detail: ExecutionTopologyDowngradeDetail,
+    /// Runtime field.
     pub rerun_guidance_superseded: bool,
+    /// Runtime field.
     pub generated_by: String,
+    /// Runtime field.
     pub generated_at: String,
+    /// Runtime field.
     pub record_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "WorktreeLeaseSerde", into = "WorktreeLeaseSerde")]
+/// Runtime struct.
 pub struct WorktreeLease {
+    /// Runtime field.
     pub lease_version: u32,
+    /// Runtime field.
     pub authoritative_sequence: u64,
+    /// Runtime field.
     pub execution_run_id: String,
+    /// Runtime field.
     pub execution_context_key: String,
+    /// Runtime field.
     pub source_plan_path: String,
+    /// Runtime field.
     pub source_plan_revision: u32,
+    /// Runtime field.
     pub execution_unit_id: String,
+    /// Runtime field.
     pub source_branch: String,
+    /// Runtime field.
     pub authoritative_integration_branch: String,
+    /// Runtime field.
     pub worktree_path: String,
+    /// Runtime field.
     pub repo_state_baseline_head_sha: String,
+    /// Runtime field.
     pub repo_state_baseline_worktree_fingerprint: String,
+    /// Runtime field.
     pub lease_state: WorktreeLeaseState,
+    /// Runtime field.
     pub cleanup_state: String,
+    /// Runtime field.
     pub reviewed_checkpoint_commit_sha: Option<String>,
+    /// Runtime field.
     pub reconcile_result_commit_sha: Option<String>,
+    /// Runtime field.
     pub reconcile_result_proof_fingerprint: Option<String>,
+    /// Runtime field.
     pub reconcile_mode: String,
+    /// Runtime field.
     pub generated_by: String,
+    /// Runtime field.
     pub generated_at: String,
+    /// Runtime field.
     pub lease_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 struct WorktreeLeaseSerde {
+    /// Runtime field.
     pub lease_version: u32,
+    /// Runtime field.
     pub authoritative_sequence: u64,
+    /// Runtime field.
     pub execution_run_id: String,
+    /// Runtime field.
     pub execution_context_key: String,
+    /// Runtime field.
     pub source_plan_path: String,
+    /// Runtime field.
     pub source_plan_revision: u32,
+    /// Runtime field.
     pub execution_unit_id: String,
+    /// Runtime field.
     pub source_branch: String,
+    /// Runtime field.
     pub authoritative_integration_branch: String,
+    /// Runtime field.
     pub worktree_path: String,
+    /// Runtime field.
     pub repo_state_baseline_head_sha: String,
+    /// Runtime field.
     pub repo_state_baseline_worktree_fingerprint: String,
+    /// Runtime field.
     pub lease_state: WorktreeLeaseState,
+    /// Runtime field.
     pub cleanup_state: String,
+    /// Runtime field.
     pub reviewed_checkpoint_commit_sha: Option<String>,
+    /// Runtime field.
     pub reconcile_result_commit_sha: Option<String>,
+    /// Runtime field.
     pub reconcile_result_proof_fingerprint: Option<String>,
+    /// Runtime field.
     pub reconcile_mode: String,
+    /// Runtime field.
     pub generated_by: String,
+    /// Runtime field.
     pub generated_at: String,
+    /// Runtime field.
     pub lease_fingerprint: String,
 }
 
@@ -381,133 +480,239 @@ fn validate_worktree_lease_reconcile_result_proof(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct ExecutionContract {
+    /// Runtime field.
     pub contract_version: u32,
+    /// Runtime field.
     pub authoritative_sequence: u64,
+    /// Runtime field.
     pub source_plan_path: String,
+    /// Runtime field.
     pub source_plan_revision: u32,
+    /// Runtime field.
     pub source_plan_fingerprint: String,
+    /// Runtime field.
     pub source_spec_path: String,
+    /// Runtime field.
     pub source_spec_revision: u32,
+    /// Runtime field.
     pub source_spec_fingerprint: String,
+    /// Runtime field.
     pub source_task_packet_fingerprints: Vec<String>,
+    /// Runtime field.
     pub chunk_id: String,
+    /// Runtime field.
     pub chunking_strategy: String,
+    /// Runtime field.
     pub covered_steps: Vec<String>,
+    /// Runtime field.
     pub requirement_ids: Vec<String>,
+    /// Runtime field.
     pub criteria: Vec<ContractCriterion>,
+    /// Runtime field.
     pub non_goals: Vec<String>,
+    /// Runtime field.
     pub verifiers: Vec<String>,
+    /// Runtime field.
     pub evidence_requirements: Vec<EvidenceRequirement>,
+    /// Runtime field.
     pub retry_budget: u32,
+    /// Runtime field.
     pub pivot_threshold: u32,
+    /// Runtime field.
     pub reset_policy: String,
+    /// Runtime field.
     pub generated_by: String,
+    /// Runtime field.
     pub generated_at: String,
+    /// Runtime field.
     pub contract_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct ContractCriterion {
+    /// Runtime field.
     pub criterion_id: String,
+    /// Runtime field.
     pub title: String,
+    /// Runtime field.
     pub description: String,
+    /// Runtime field.
     pub requirement_ids: Vec<String>,
+    /// Runtime field.
     pub covered_steps: Vec<String>,
+    /// Runtime field.
     pub verifier_types: Vec<String>,
+    /// Runtime field.
     pub threshold: String,
+    /// Runtime field.
     pub notes: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct EvidenceRequirement {
+    /// Runtime field.
     pub evidence_requirement_id: String,
+    /// Runtime field.
     pub kind: String,
+    /// Runtime field.
     pub requirement_ids: Vec<String>,
+    /// Runtime field.
     pub covered_steps: Vec<String>,
+    /// Runtime field.
     pub satisfaction_rule: String,
+    /// Runtime field.
     pub notes: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct EvaluationReport {
+    /// Runtime field.
     pub report_version: u32,
+    /// Runtime field.
     pub authoritative_sequence: u64,
+    /// Runtime field.
     pub source_plan_path: String,
+    /// Runtime field.
     pub source_plan_revision: u32,
+    /// Runtime field.
     pub source_plan_fingerprint: String,
+    /// Runtime field.
     pub source_contract_fingerprint: String,
+    /// Runtime field.
     pub evaluator_kind: String,
+    /// Runtime field.
     pub verdict: String,
+    /// Runtime field.
     pub criterion_results: Vec<CriterionResult>,
+    /// Runtime field.
     pub affected_steps: Vec<String>,
+    /// Runtime field.
     pub evidence_refs: Vec<EvaluationEvidenceRef>,
+    /// Runtime field.
     pub recommended_action: String,
+    /// Runtime field.
     pub summary: String,
+    /// Runtime field.
     pub generated_by: String,
+    /// Runtime field.
     pub generated_at: String,
+    /// Runtime field.
     pub report_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct CriterionResult {
+    /// Runtime field.
     pub criterion_id: String,
+    /// Runtime field.
     pub status: String,
+    /// Runtime field.
     pub requirement_ids: Vec<String>,
+    /// Runtime field.
     pub covered_steps: Vec<String>,
+    /// Runtime field.
     pub finding: String,
+    /// Runtime field.
     pub evidence_refs: Vec<String>,
+    /// Runtime field.
     pub severity: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct EvaluationEvidenceRef {
+    /// Runtime field.
     pub evidence_ref_id: String,
+    /// Runtime field.
     pub kind: String,
+    /// Runtime field.
     pub source: String,
+    /// Runtime field.
     pub requirement_ids: Vec<String>,
+    /// Runtime field.
     pub covered_steps: Vec<String>,
+    /// Runtime field.
     pub evidence_requirement_ids: Vec<String>,
+    /// Runtime field.
     pub summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct ExecutionHandoff {
+    /// Runtime field.
     pub handoff_version: u32,
+    /// Runtime field.
     pub authoritative_sequence: u64,
+    /// Runtime field.
     pub source_plan_path: String,
+    /// Runtime field.
     pub source_plan_revision: u32,
+    /// Runtime field.
     pub source_contract_fingerprint: String,
+    /// Runtime field.
     pub harness_phase: String,
+    /// Runtime field.
     pub chunk_id: String,
+    /// Runtime field.
     pub satisfied_criteria: Vec<String>,
+    /// Runtime field.
     pub open_criteria: Vec<String>,
+    /// Runtime field.
     pub open_findings: Vec<String>,
+    /// Runtime field.
     pub files_touched: Vec<String>,
+    /// Runtime field.
     pub next_action: String,
+    /// Runtime field.
     pub workspace_notes: String,
+    /// Runtime field.
     pub commands_run: Vec<String>,
+    /// Runtime field.
     pub risks: Vec<String>,
+    /// Runtime field.
     pub generated_by: String,
+    /// Runtime field.
     pub generated_at: String,
+    /// Runtime field.
     pub handoff_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct EvidenceArtifact {
+    /// Runtime field.
     pub evidence_artifact_version: u32,
+    /// Runtime field.
     pub evidence_artifact_fingerprint: String,
+    /// Runtime field.
     pub evidence_kind: String,
+    /// Runtime field.
     pub source_locator: String,
+    /// Runtime field.
     pub repo_state_baseline_head_sha: String,
+    /// Runtime field.
     pub repo_state_baseline_worktree_fingerprint: String,
+    /// Runtime field.
     pub relative_path: String,
+    /// Runtime field.
     pub captured_content_fingerprint: String,
+    /// Runtime field.
     pub generated_by: String,
+    /// Runtime field.
     pub generated_at: String,
+    /// Runtime field.
     pub captured_content: String,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn read_execution_contract(
     path: impl AsRef<Path>,
 ) -> Result<ExecutionContract, DiagnosticError> {
@@ -515,37 +720,53 @@ pub fn read_execution_contract(
     parse_execution_contract(&source)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn read_evaluation_report(path: impl AsRef<Path>) -> Result<EvaluationReport, DiagnosticError> {
     let source = read_markdown(path.as_ref(), "evaluation report")?;
     parse_evaluation_report(&source)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn read_execution_handoff(path: impl AsRef<Path>) -> Result<ExecutionHandoff, DiagnosticError> {
     let source = read_markdown(path.as_ref(), "execution handoff")?;
     parse_execution_handoff(&source)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn read_evidence_artifact(path: impl AsRef<Path>) -> Result<EvidenceArtifact, DiagnosticError> {
     let source = read_markdown(path.as_ref(), "evidence artifact")?;
     parse_evidence_artifact(&source)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn fingerprint_execution_contract(markdown: &str) -> String {
     sha256_hex(markdown)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn fingerprint_evaluation_report(markdown: &str) -> String {
     sha256_hex(markdown)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn fingerprint_execution_handoff(markdown: &str) -> String {
     sha256_hex(markdown)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn fingerprint_evidence_artifact(markdown: &str) -> String {
     sha256_hex(markdown)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn sha256_hex(contents: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(contents.as_bytes());
@@ -554,37 +775,128 @@ pub fn sha256_hex(contents: &str) -> String {
 
 fn parse_execution_contract(source: &str) -> Result<ExecutionContract, DiagnosticError> {
     let lines: Vec<&str> = source.lines().collect();
+    let contract_version = parse_execution_contract_version(source)?;
+    let source_fields = parse_execution_contract_source_fields(source, &lines)?;
+    let scope_fields = parse_execution_contract_scope_fields(&lines)?;
+    let tail_fields = parse_execution_contract_tail_fields(source)?;
 
+    Ok(ExecutionContract {
+        contract_version,
+        authoritative_sequence: source_fields.authoritative_sequence,
+        source_plan_path: source_fields.source_plan_path,
+        source_plan_revision: source_fields.source_plan_revision,
+        source_plan_fingerprint: source_fields.source_plan_fingerprint,
+        source_spec_path: source_fields.source_spec_path,
+        source_spec_revision: source_fields.source_spec_revision,
+        source_spec_fingerprint: source_fields.source_spec_fingerprint,
+        source_task_packet_fingerprints: source_fields.source_task_packet_fingerprints,
+        chunk_id: source_fields.chunk_id,
+        chunking_strategy: source_fields.chunking_strategy,
+        covered_steps: scope_fields.covered_steps,
+        requirement_ids: scope_fields.requirement_ids,
+        criteria: scope_fields.criteria,
+        non_goals: scope_fields.non_goals,
+        verifiers: scope_fields.verifiers,
+        evidence_requirements: scope_fields.evidence_requirements,
+        retry_budget: tail_fields.retry_budget,
+        pivot_threshold: tail_fields.pivot_threshold,
+        reset_policy: tail_fields.reset_policy,
+        generated_by: tail_fields.generated_by,
+        generated_at: tail_fields.generated_at,
+        contract_fingerprint: tail_fields.contract_fingerprint,
+    })
+}
+
+struct ExecutionContractSourceFields {
+    authoritative_sequence: u64,
+    source_plan_path: String,
+    source_plan_revision: u32,
+    source_plan_fingerprint: String,
+    source_spec_path: String,
+    source_spec_revision: u32,
+    source_spec_fingerprint: String,
+    source_task_packet_fingerprints: Vec<String>,
+    chunk_id: String,
+    chunking_strategy: String,
+}
+
+struct ExecutionContractScopeFields {
+    covered_steps: Vec<String>,
+    requirement_ids: Vec<String>,
+    criteria: Vec<ContractCriterion>,
+    non_goals: Vec<String>,
+    verifiers: Vec<String>,
+    evidence_requirements: Vec<EvidenceRequirement>,
+}
+
+struct ExecutionContractTailFields {
+    retry_budget: u32,
+    pivot_threshold: u32,
+    reset_policy: String,
+    generated_by: String,
+    generated_at: String,
+    contract_fingerprint: String,
+}
+
+fn parse_execution_contract_version(source: &str) -> Result<u32, DiagnosticError> {
     let contract_version = parse_u32_header(source, "Contract Version", "contract_version")?;
     if contract_version != CONTRACT_VERSION {
         return Err(parse_error(format!(
             "Unsupported contract_version: {contract_version}."
         )));
     }
+    Ok(contract_version)
+}
 
-    let authoritative_sequence =
-        parse_u64_header(source, "Authoritative Sequence", "authoritative_sequence")?;
-    let source_plan_path = parse_string_header(source, "Source Plan Path", "source_plan_path")?;
-    let source_plan_revision =
-        parse_u32_header(source, "Source Plan Revision", "source_plan_revision")?;
-    let source_plan_fingerprint =
-        parse_string_header(source, "Source Plan Fingerprint", "source_plan_fingerprint")?;
-    let source_spec_path = parse_string_header(source, "Source Spec Path", "source_spec_path")?;
-    let source_spec_revision =
-        parse_u32_header(source, "Source Spec Revision", "source_spec_revision")?;
-    let source_spec_fingerprint =
-        parse_string_header(source, "Source Spec Fingerprint", "source_spec_fingerprint")?;
-    let source_task_packet_fingerprints = parse_list_between_markers(
-        &lines,
-        0,
-        "**Source Task Packet Fingerprints:**",
-        "**Chunk ID:**",
-        "source_task_packet_fingerprints",
-    )?;
-    let chunk_id = parse_string_header(source, "Chunk ID", "chunk_id")?;
-    let chunking_strategy = parse_string_header(source, "Chunking Strategy", "chunking_strategy")?;
+fn parse_execution_contract_source_fields(
+    source: &str,
+    lines: &[&str],
+) -> Result<ExecutionContractSourceFields, DiagnosticError> {
+    Ok(ExecutionContractSourceFields {
+        authoritative_sequence: parse_u64_header(
+            source,
+            "Authoritative Sequence",
+            "authoritative_sequence",
+        )?,
+        source_plan_path: parse_string_header(source, "Source Plan Path", "source_plan_path")?,
+        source_plan_revision: parse_u32_header(
+            source,
+            "Source Plan Revision",
+            "source_plan_revision",
+        )?,
+        source_plan_fingerprint: parse_string_header(
+            source,
+            "Source Plan Fingerprint",
+            "source_plan_fingerprint",
+        )?,
+        source_spec_path: parse_string_header(source, "Source Spec Path", "source_spec_path")?,
+        source_spec_revision: parse_u32_header(
+            source,
+            "Source Spec Revision",
+            "source_spec_revision",
+        )?,
+        source_spec_fingerprint: parse_string_header(
+            source,
+            "Source Spec Fingerprint",
+            "source_spec_fingerprint",
+        )?,
+        source_task_packet_fingerprints: parse_list_between_markers(
+            lines,
+            0,
+            "**Source Task Packet Fingerprints:**",
+            "**Chunk ID:**",
+            "source_task_packet_fingerprints",
+        )?,
+        chunk_id: parse_string_header(source, "Chunk ID", "chunk_id")?,
+        chunking_strategy: parse_string_header(source, "Chunking Strategy", "chunking_strategy")?,
+    })
+}
+
+fn parse_execution_contract_scope_fields(
+    lines: &[&str],
+) -> Result<ExecutionContractScopeFields, DiagnosticError> {
     let covered_steps = parse_list_between_markers(
-        &lines,
+        lines,
         0,
         "**Covered Steps:**",
         "**Requirement IDs:**",
@@ -596,24 +908,22 @@ fn parse_execution_contract(source: &str) -> Result<ExecutionContract, Diagnosti
         ));
     }
     let requirement_ids = parse_list_between_markers(
-        &lines,
+        lines,
         0,
         "**Requirement IDs:**",
         "**Criteria:**",
         "requirement_ids",
     )?;
-
     let criteria_section =
-        parse_section_between_markers(&lines, 0, "**Criteria:**", "**Non Goals:**", "criteria")?;
+        parse_section_between_markers(lines, 0, "**Criteria:**", "**Non Goals:**", "criteria")?;
     let criteria = parse_contract_criteria(&criteria_section)?;
     if criteria.is_empty() {
         return Err(parse_error("ExecutionContract has empty criteria."));
     }
-
     let non_goals =
-        parse_list_between_markers(&lines, 0, "**Non Goals:**", "**Verifiers:**", "non_goals")?;
+        parse_list_between_markers(lines, 0, "**Non Goals:**", "**Verifiers:**", "non_goals")?;
     let verifiers = parse_list_between_markers(
-        &lines,
+        lines,
         0,
         "**Verifiers:**",
         "**Evidence Requirements:**",
@@ -625,48 +935,38 @@ fn parse_execution_contract(source: &str) -> Result<ExecutionContract, Diagnosti
         ));
     }
     validate_contract_evaluator_kinds(&verifiers, &criteria)?;
-
     let evidence_requirements_section = parse_section_between_markers(
-        &lines,
+        lines,
         0,
         "**Evidence Requirements:**",
         "**Retry Budget:**",
         "evidence_requirements",
     )?;
     let evidence_requirements = parse_evidence_requirements(&evidence_requirements_section)?;
-
-    let retry_budget = parse_u32_header(source, "Retry Budget", "retry_budget")?;
-    let pivot_threshold = parse_u32_header(source, "Pivot Threshold", "pivot_threshold")?;
-    let reset_policy = parse_string_header(source, "Reset Policy", "reset_policy")?;
-    let generated_by = parse_string_header(source, "Generated By", "generated_by")?;
-    let generated_at = parse_string_header(source, "Generated At", "generated_at")?;
-    let contract_fingerprint =
-        parse_string_header(source, "Contract Fingerprint", "contract_fingerprint")?;
-
-    Ok(ExecutionContract {
-        contract_version,
-        authoritative_sequence,
-        source_plan_path,
-        source_plan_revision,
-        source_plan_fingerprint,
-        source_spec_path,
-        source_spec_revision,
-        source_spec_fingerprint,
-        source_task_packet_fingerprints,
-        chunk_id,
-        chunking_strategy,
+    Ok(ExecutionContractScopeFields {
         covered_steps,
         requirement_ids,
         criteria,
         non_goals,
         verifiers,
         evidence_requirements,
-        retry_budget,
-        pivot_threshold,
-        reset_policy,
-        generated_by,
-        generated_at,
-        contract_fingerprint,
+    })
+}
+
+fn parse_execution_contract_tail_fields(
+    source: &str,
+) -> Result<ExecutionContractTailFields, DiagnosticError> {
+    Ok(ExecutionContractTailFields {
+        retry_budget: parse_u32_header(source, "Retry Budget", "retry_budget")?,
+        pivot_threshold: parse_u32_header(source, "Pivot Threshold", "pivot_threshold")?,
+        reset_policy: parse_string_header(source, "Reset Policy", "reset_policy")?,
+        generated_by: parse_string_header(source, "Generated By", "generated_by")?,
+        generated_at: parse_string_header(source, "Generated At", "generated_at")?,
+        contract_fingerprint: parse_string_header(
+            source,
+            "Contract Fingerprint",
+            "contract_fingerprint",
+        )?,
     })
 }
 

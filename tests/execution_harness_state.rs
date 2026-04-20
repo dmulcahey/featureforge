@@ -1,3 +1,4 @@
+//! Execution harness state integration/benchmark crate.
 #[path = "support/bin.rs"]
 mod bin_support;
 #[path = "support/files.rs"]
@@ -20,6 +21,7 @@ use featureforge::execution::state::{
     ExecutionRuntime, PacketFingerprintInput, compute_packet_fingerprint, current_head_sha,
     hash_contract_plan,
 };
+use featureforge::expect_ext::ExpectValueExt as _;
 use featureforge::paths::{
     harness_authoritative_artifact_path, harness_dependency_index_path, harness_state_path,
 };
@@ -110,7 +112,7 @@ const EXPECTED_OBSERVABILITY_EVENT_FIELDS: &[&str] = &[
 fn run(mut command: Command, context: &str) -> Output {
     command
         .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
+        .unwrap_or_else(|error| featureforge::abort!("{context} should run: {error}"))
 }
 
 fn parse_failure_json(output: &Output, context: &str) -> Value {
@@ -126,8 +128,9 @@ fn parse_failure_json(output: &Output, context: &str) -> Value {
     } else {
         &output.stdout
     };
-    serde_json::from_slice(payload)
-        .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
+    serde_json::from_slice(payload).unwrap_or_else(|error| {
+        featureforge::abort!("{context} should emit valid failure json: {error}")
+    })
 }
 
 fn run_checked_output(command: Command, context: &str) -> Output {
@@ -143,8 +146,8 @@ fn run_checked_output(command: Command, context: &str) -> Output {
 }
 
 fn init_repo(name: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
     let repo = repo_dir.path();
 
     git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
@@ -155,7 +158,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
 fn write_approved_spec(repo: &Path) {
     write_file(
         &repo.join(SPEC_REL),
-        r#"# Execution Harness State Design
+        r"# Execution Harness State Design
 
 **Workflow State:** CEO Approved
 **Spec Revision:** 2
@@ -164,7 +167,7 @@ fn write_approved_spec(repo: &Path) {
 ## Summary
 
 Fixture spec for harness state regression coverage.
-"#,
+",
     );
 }
 
@@ -172,7 +175,7 @@ fn write_plan(repo: &Path, execution_mode: &str) {
     write_file(
         &repo.join(PLAN_REL),
         &format!(
-            r#"# Execution Harness State Plan
+            r"# Execution Harness State Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
@@ -197,18 +200,16 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 - Test: `tests/execution_harness_state.rs`
 
 - [ ] **Step 1: Verify the harness state surface**
-"#,
+",
         ),
     );
 }
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    match plan_execution_direct_support::try_run_plan_execution_output_direct(
+    if let Some(output) = plan_execution_direct_support::try_run_plan_execution_output_direct(
         repo, state, args, context,
     ) {
-        Ok(Some(output)) => return parse_json(&output, context),
-        Ok(None) => {}
-        Err(error) => panic!("{error}"),
+        return parse_json(&output, context);
     }
     parse_json(&run_plan_execution(repo, state, args, context), context)
 }
@@ -225,19 +226,19 @@ fn run_plan_execution(repo: &Path, state: &Path, args: &[&str], context: &str) -
 
 fn harness_state_file_path(repo: &Path, state: &Path) -> PathBuf {
     let runtime = ExecutionRuntime::discover(repo)
-        .expect("execution runtime should discover fixture repository");
+        .expect_or_abort("execution runtime should discover fixture repository");
     harness_state_path(state, &runtime.repo_slug, &runtime.branch_name)
 }
 
 fn repo_slug(repo: &Path) -> String {
     ExecutionRuntime::discover(repo)
-        .expect("execution runtime should discover fixture repository")
+        .expect_or_abort("execution runtime should discover fixture repository")
         .repo_slug
 }
 
 fn branch_name(repo: &Path) -> String {
     ExecutionRuntime::discover(repo)
-        .expect("execution runtime should discover fixture repository")
+        .expect_or_abort("execution runtime should discover fixture repository")
         .branch_name
 }
 
@@ -245,12 +246,12 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     write_file(
         &harness_state_file_path(repo, state),
         &serde_json::to_string_pretty(payload)
-            .expect("harness-state fixture payload should serialize"),
+            .expect_or_abort("harness-state fixture payload should serialize"),
     );
 }
 
 fn git_head_sha(repo: &Path) -> String {
-    current_head_sha(repo).expect("git head sha should resolve")
+    current_head_sha(repo).expect_or_abort("git head sha should resolve")
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -259,10 +260,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn write_authoritative_contract_fixture(repo: &Path, state: &Path) -> (String, String) {
-    let plan_source =
-        fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable for contract");
-    let source_spec_source =
-        fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable for contract");
+    let plan_source = fs::read_to_string(repo.join(PLAN_REL))
+        .expect_or_abort("plan should be readable for contract");
+    let source_spec_source = fs::read_to_string(repo.join(SPEC_REL))
+        .expect_or_abort("spec should be readable for contract");
     let plan_fingerprint = hash_contract_plan(&plan_source);
     let source_spec_fingerprint = sha256_hex(source_spec_source.as_bytes());
     let packet_fingerprint = compute_packet_fingerprint(PacketFingerprintInput {
@@ -277,7 +278,7 @@ fn write_authoritative_contract_fixture(repo: &Path, state: &Path) -> (String, S
     });
 
     let template = format!(
-        r#"# Execution Contract
+        r"# Execution Contract
 
 **Contract Version:** 1
 **Authoritative Sequence:** 11
@@ -324,7 +325,7 @@ fn write_authoritative_contract_fixture(repo: &Path, state: &Path) -> (String, S
 **Generated By:** featureforge:executing-plans
 **Generated At:** 2026-03-25T12:00:00Z
 **Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#
+"
     );
     let contract_fingerprint =
         sha256_hex(template.replace("__CONTRACT_FINGERPRINT__", "").as_bytes());
@@ -342,10 +343,10 @@ fn write_authoritative_contract_fixture(repo: &Path, state: &Path) -> (String, S
 }
 
 fn write_candidate_contract_fixture(repo: &Path, artifact_rel: &str) -> String {
-    let plan_source =
-        fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable for contract");
-    let source_spec_source =
-        fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable for contract");
+    let plan_source = fs::read_to_string(repo.join(PLAN_REL))
+        .expect_or_abort("plan should be readable for contract");
+    let source_spec_source = fs::read_to_string(repo.join(SPEC_REL))
+        .expect_or_abort("spec should be readable for contract");
     let plan_fingerprint = hash_contract_plan(&plan_source);
     let source_spec_fingerprint = sha256_hex(source_spec_source.as_bytes());
     let packet_fingerprint = compute_packet_fingerprint(PacketFingerprintInput {
@@ -360,7 +361,7 @@ fn write_candidate_contract_fixture(repo: &Path, artifact_rel: &str) -> String {
     });
 
     let template = format!(
-        r#"# Execution Contract
+        r"# Execution Contract
 
 **Contract Version:** 1
 **Authoritative Sequence:** 17
@@ -407,7 +408,7 @@ fn write_candidate_contract_fixture(repo: &Path, artifact_rel: &str) -> String {
 **Generated By:** featureforge:executing-plans
 **Generated At:** 2026-03-25T12:00:00Z
 **Contract Fingerprint:** __CONTRACT_FINGERPRINT__
-"#
+"
     );
     let contract_fingerprint =
         sha256_hex(template.replace("__CONTRACT_FINGERPRINT__", "").as_bytes());
@@ -461,7 +462,7 @@ fn begin_and_complete_single_step(repo: &Path, state: &Path, claim: &str) -> Val
             "--expect-execution-fingerprint",
             before_begin["execution_fingerprint"]
                 .as_str()
-                .expect("status should expose execution_fingerprint before begin"),
+                .expect_or_abort("status should expose execution_fingerprint before begin"),
         ],
         "begin step 1 for per-step provenance coverage",
     );
@@ -494,7 +495,7 @@ fn begin_and_complete_single_step(repo: &Path, state: &Path, claim: &str) -> Val
             "--expect-execution-fingerprint",
             before_complete["execution_fingerprint"]
                 .as_str()
-                .expect("status should expose execution_fingerprint before complete"),
+                .expect_or_abort("status should expose execution_fingerprint before complete"),
         ],
         "complete step 1 for per-step provenance coverage",
     )
@@ -616,11 +617,13 @@ fn assert_reason_code_minimum_vocabulary() {
     let req_040_line = spec
         .lines()
         .find(|line| line.contains("[REQ-040][behavior]"))
-        .expect("spec should include REQ-040 minimum reason-code contract");
+        .expect_or_abort("spec should include REQ-040 minimum reason-code contract");
     let minimum_reason_code_clause = req_040_line
         .split("covering at least")
         .nth(1)
-        .expect("REQ-040 should document the minimum reason-code set after 'covering at least'");
+        .expect_or_abort(
+            "REQ-040 should document the minimum reason-code set after 'covering at least'",
+        );
     let spec_minimum_reason_codes: Vec<_> = minimum_reason_code_clause
         .split('`')
         .skip(1)
@@ -645,18 +648,16 @@ fn assert_reason_code_minimum_vocabulary() {
 
 fn harness_event_kind_schema_literals() -> Vec<String> {
     fn collect_enum_literals(schema: &Value, literals: &mut Vec<String>) {
+        if let Some(const_value) = schema.get("const").and_then(Value::as_str) {
+            literals.push(const_value.to_owned());
+        }
         if let Some(values) = schema.get("enum").and_then(Value::as_array) {
-            literals.extend(
-                values
-                    .iter()
-                    .map(|value| {
-                        value
-                            .as_str()
-                            .expect("HarnessEventKind schema literals should be strings")
-                            .to_owned()
-                    })
-                    .collect::<Vec<_>>(),
-            );
+            literals.extend(values.iter().map(|value| {
+                value
+                    .as_str()
+                    .expect_or_abort("HarnessEventKind schema literals should be strings")
+                    .to_owned()
+            }));
         }
         for keyword in ["oneOf", "anyOf", "allOf"] {
             if let Some(variants) = schema.get(keyword).and_then(Value::as_array) {
@@ -667,8 +668,8 @@ fn harness_event_kind_schema_literals() -> Vec<String> {
         }
     }
 
-    let schema_json =
-        to_value(schema_for!(HarnessEventKind)).expect("HarnessEventKind schema should serialize");
+    let schema_json = to_value(schema_for!(HarnessEventKind))
+        .expect_or_abort("HarnessEventKind schema should serialize");
     let root_schema = schema_json.get("schema").unwrap_or(&schema_json);
     let mut literals = Vec::new();
     collect_enum_literals(root_schema, &mut literals);
@@ -700,10 +701,10 @@ fn observability_runtime_surface_matches_literal_event_kind_and_field_corpora() 
         HarnessEventKind::PhaseTransition,
         "2026-03-25T12:00:00Z",
     ))
-    .expect("HarnessObservabilityEvent should serialize");
+    .expect_or_abort("HarnessObservabilityEvent should serialize");
     let event_object = serialized_event
         .as_object()
-        .expect("HarnessObservabilityEvent should serialize to a JSON object");
+        .expect_or_abort("HarnessObservabilityEvent should serialize to a JSON object");
 
     let mut serialized_fields: Vec<String> = event_object.keys().cloned().collect();
     serialized_fields.sort_unstable();
@@ -747,160 +748,162 @@ fn observability_runtime_surface_matches_literal_event_kind_and_field_corpora() 
     assert!(
         event_object
             .get("reason_codes")
-            .is_some_and(|value| value.as_array().is_some_and(|codes| codes.is_empty())),
+            .is_some_and(|value| value.as_array().is_some_and(Vec::is_empty)),
         "reason_codes should remain a required machine-readable string array in the serialized observability envelope"
     );
 }
 
 #[test]
 fn status_exposes_run_identity_policy_snapshot_and_authority_diagnostics_before_execution_starts() {
-    let (repo_dir, state_dir) = init_repo("execution-harness-state");
-    let repo = repo_dir.path();
-    let state = state_dir.path();
-    write_approved_spec(repo);
-    write_plan(repo, "none");
+    {
+        let (repo_dir, state_dir) = init_repo("execution-harness-state");
+        let repo = repo_dir.path();
+        let state = state_dir.path();
+        write_approved_spec(repo);
+        write_plan(repo, "none");
 
-    assert_exact_public_harness_phase_set();
-    assert_reason_code_minimum_vocabulary();
+        assert_exact_public_harness_phase_set();
+        assert_reason_code_minimum_vocabulary();
 
-    let status = run_plan_execution_json(
-        repo,
-        state,
-        &["status", "--plan", PLAN_REL],
-        "plan execution status for harness state",
-    );
+        let status = run_plan_execution_json(
+            repo,
+            state,
+            &["status", "--plan", PLAN_REL],
+            "plan execution status for harness state",
+        );
 
-    let harness_phase = status["harness_phase"]
-        .as_str()
-        .expect("status should expose harness_phase");
-    assert_eq!(
-        harness_phase, "implementation_handoff",
-        "status should expose the exact pre-execution harness phase"
-    );
+        let harness_phase = status["harness_phase"]
+            .as_str()
+            .expect_or_abort("status should expose harness_phase");
+        assert_eq!(
+            harness_phase, "implementation_handoff",
+            "status should expose the exact pre-execution harness phase"
+        );
 
-    let missing_or_invalid_nullable_string_fields = missing_or_invalid_nullable_string_fields(
-        &status,
-        &[
-            "last_final_review_artifact_fingerprint",
-            "last_browser_qa_artifact_fingerprint",
-            "last_release_docs_artifact_fingerprint",
-            "last_strategy_checkpoint_fingerprint",
-            "write_authority_holder",
-            "write_authority_worktree",
-            "repo_state_baseline_head_sha",
-            "repo_state_baseline_worktree_fingerprint",
-        ],
-    );
-    assert!(
-        missing_or_invalid_nullable_string_fields.is_empty(),
-        "status should expose nullable preflight diagnostics as null or non-empty strings, missing/invalid: {missing_or_invalid_nullable_string_fields:?}"
-    );
+        let missing_or_invalid_nullable_string_fields = missing_or_invalid_nullable_string_fields(
+            &status,
+            &[
+                "last_final_review_artifact_fingerprint",
+                "last_browser_qa_artifact_fingerprint",
+                "last_release_docs_artifact_fingerprint",
+                "last_strategy_checkpoint_fingerprint",
+                "write_authority_holder",
+                "write_authority_worktree",
+                "repo_state_baseline_head_sha",
+                "repo_state_baseline_worktree_fingerprint",
+            ],
+        );
+        assert!(
+            missing_or_invalid_nullable_string_fields.is_empty(),
+            "status should expose nullable preflight diagnostics as null or non-empty strings, missing/invalid: {missing_or_invalid_nullable_string_fields:?}"
+        );
 
-    let missing_non_empty_string_fields =
-        missing_or_empty_string_fields(&status, &["chunk_id", "write_authority_state"]);
-    assert!(
-        missing_non_empty_string_fields.is_empty(),
-        "status should expose chunk_id and write_authority_state as non-empty run-scoped strings, missing/invalid: {missing_non_empty_string_fields:?}"
-    );
+        let missing_non_empty_string_fields =
+            missing_or_empty_string_fields(&status, &["chunk_id", "write_authority_state"]);
+        assert!(
+            missing_non_empty_string_fields.is_empty(),
+            "status should expose chunk_id and write_authority_state as non-empty run-scoped strings, missing/invalid: {missing_non_empty_string_fields:?}"
+        );
 
-    let missing_string_fields = missing_string_fields(
-        &status,
-        &[
-            "aggregate_evaluation_state",
-            "repo_state_drift_state",
-            "dependency_index_state",
-            "final_review_state",
-            "browser_qa_state",
-            "release_docs_state",
-            "strategy_state",
-            "strategy_checkpoint_kind",
-        ],
-    );
-    assert!(
-        missing_string_fields.is_empty(),
-        "status should expose the run-scoped string fields, missing: {missing_string_fields:?}"
-    );
+        let missing_string_fields = missing_string_fields(
+            &status,
+            &[
+                "aggregate_evaluation_state",
+                "repo_state_drift_state",
+                "dependency_index_state",
+                "final_review_state",
+                "browser_qa_state",
+                "release_docs_state",
+                "strategy_state",
+                "strategy_checkpoint_kind",
+            ],
+        );
+        assert!(
+            missing_string_fields.is_empty(),
+            "status should expose the run-scoped string fields, missing: {missing_string_fields:?}"
+        );
 
-    let missing_active_pointer_null_fields = missing_null_fields(
-        &status,
-        &[
-            "active_contract_path",
-            "active_contract_fingerprint",
-            "last_evaluation_report_path",
-            "last_evaluation_report_fingerprint",
-            "last_evaluation_evaluator_kind",
-        ],
-    );
-    assert!(
-        missing_active_pointer_null_fields.is_empty(),
-        "status should keep active pointers authoritative-only before execution starts, missing null fields: {missing_active_pointer_null_fields:?}"
-    );
+        let missing_active_pointer_null_fields = missing_null_fields(
+            &status,
+            &[
+                "active_contract_path",
+                "active_contract_fingerprint",
+                "last_evaluation_report_path",
+                "last_evaluation_report_fingerprint",
+                "last_evaluation_evaluator_kind",
+            ],
+        );
+        assert!(
+            missing_active_pointer_null_fields.is_empty(),
+            "status should keep active pointers authoritative-only before execution starts, missing null fields: {missing_active_pointer_null_fields:?}"
+        );
 
-    let missing_array_fields = missing_array_fields(
-        &status,
-        &[
-            "required_evaluator_kinds",
-            "completed_evaluator_kinds",
-            "pending_evaluator_kinds",
-            "non_passing_evaluator_kinds",
-            "open_failed_criteria",
-            "reason_codes",
-        ],
-    );
-    assert!(
-        missing_array_fields.is_empty(),
-        "status should expose the run-scoped arrays, missing: {missing_array_fields:?}"
-    );
+        let missing_array_fields = missing_array_fields(
+            &status,
+            &[
+                "required_evaluator_kinds",
+                "completed_evaluator_kinds",
+                "pending_evaluator_kinds",
+                "non_passing_evaluator_kinds",
+                "open_failed_criteria",
+                "reason_codes",
+            ],
+        );
+        assert!(
+            missing_array_fields.is_empty(),
+            "status should expose the run-scoped arrays, missing: {missing_array_fields:?}"
+        );
 
-    let missing_prestart_null_fields = missing_null_fields(
-        &status,
-        &[
-            "execution_run_id",
-            "chunking_strategy",
-            "evaluator_policy",
-            "reset_policy",
-            "last_evaluation_verdict",
-            "review_stack",
-        ],
-    );
-    assert!(
-        missing_prestart_null_fields.is_empty(),
-        "status should keep pre-start authority fields unset before preflight/evaluation, missing null fields: {missing_prestart_null_fields:?}"
-    );
+        let missing_prestart_null_fields = missing_null_fields(
+            &status,
+            &[
+                "execution_run_id",
+                "chunking_strategy",
+                "evaluator_policy",
+                "reset_policy",
+                "last_evaluation_verdict",
+                "review_stack",
+            ],
+        );
+        assert!(
+            missing_prestart_null_fields.is_empty(),
+            "status should keep pre-start authority fields unset before preflight/evaluation, missing null fields: {missing_prestart_null_fields:?}"
+        );
 
-    let missing_number_fields = missing_number_fields(
-        &status,
-        &[
-            "latest_authoritative_sequence",
-            "current_chunk_retry_count",
-            "current_chunk_retry_budget",
-            "current_chunk_pivot_threshold",
-        ],
-    );
-    assert!(
-        missing_number_fields.is_empty(),
-        "status should expose the run-scoped counters, missing: {missing_number_fields:?}"
-    );
+        let missing_number_fields = missing_number_fields(
+            &status,
+            &[
+                "latest_authoritative_sequence",
+                "current_chunk_retry_count",
+                "current_chunk_retry_budget",
+                "current_chunk_pivot_threshold",
+            ],
+        );
+        assert!(
+            missing_number_fields.is_empty(),
+            "status should expose the run-scoped counters, missing: {missing_number_fields:?}"
+        );
 
-    let missing_bool_fields =
-        missing_bool_fields(&status, &["handoff_required", "strategy_reset_required"]);
-    assert!(
-        missing_bool_fields.is_empty(),
-        "status should expose the run-scoped booleans, missing: {missing_bool_fields:?}"
-    );
+        let missing_bool_fields =
+            missing_bool_fields(&status, &["handoff_required", "strategy_reset_required"]);
+        assert!(
+            missing_bool_fields.is_empty(),
+            "status should expose the run-scoped booleans, missing: {missing_bool_fields:?}"
+        );
 
-    let reason_codes = status["reason_codes"]
-        .as_array()
-        .expect("status should expose stable reason_codes");
-    let non_string_reason_codes: Vec<_> = reason_codes
-        .iter()
-        .filter(|value| value.as_str().is_none())
-        .map(ToString::to_string)
-        .collect();
-    assert!(
-        non_string_reason_codes.is_empty(),
-        "status should expose machine-readable reason_codes entries, got non-strings: {non_string_reason_codes:?}"
-    );
+        let reason_codes = status["reason_codes"]
+            .as_array()
+            .expect_or_abort("status should expose stable reason_codes");
+        let non_string_reason_codes: Vec<_> = reason_codes
+            .iter()
+            .filter(|value| value.as_str().is_none())
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            non_string_reason_codes.is_empty(),
+            "status should expose machine-readable reason_codes entries, got non-strings: {non_string_reason_codes:?}"
+        );
+    }
 }
 
 #[test]
@@ -1014,7 +1017,7 @@ fn status_fail_closes_with_reason_code_on_authoritative_late_stage_parity_diverg
     assert!(
         status["reason_codes"]
             .as_array()
-            .expect("status should expose reason_codes as an array")
+            .expect_or_abort("status should expose reason_codes as an array")
             .iter()
             .any(|value| value.as_str() == Some("stale_provenance")),
         "status should emit stale_provenance when authoritative late-stage phase diverges from canonical precedence; status payload: {status:?}"
@@ -1072,12 +1075,12 @@ fn record_contract_persists_dependency_index_with_authoritative_contract_node() 
 
     let dependency_index: Value = serde_json::from_str(
         &fs::read_to_string(&dependency_index_path)
-            .expect("dependency index should be readable after record-contract"),
+            .expect_or_abort("dependency index should be readable after record-contract"),
     )
-    .expect("dependency index should remain valid json after record-contract");
+    .expect_or_abort("dependency index should remain valid json after record-contract");
     let nodes = dependency_index["nodes"]
         .as_array()
-        .expect("dependency index should expose a nodes array");
+        .expect_or_abort("dependency index should expose a nodes array");
     let has_authoritative_contract_node = nodes.iter().any(|node| {
         node["artifact_kind"] == "contract"
             && node["artifact_fingerprint"] == contract_fingerprint
@@ -1131,7 +1134,7 @@ fn record_contract_persists_observability_event_and_authoritative_mutation_count
 
     let harness_root = harness_state_path(state, &repo_slug(repo), &branch_name(repo))
         .parent()
-        .expect("harness state path should always live under a branch-scoped harness root")
+        .expect_or_abort("harness state path should always live under a branch-scoped harness root")
         .to_path_buf();
     let events_path = harness_root.join("observability-events.jsonl");
     let telemetry_path = harness_root.join("telemetry-counters.json");
@@ -1148,13 +1151,15 @@ fn record_contract_persists_observability_event_and_authoritative_mutation_count
     );
 
     let first_event_line = fs::read_to_string(&events_path)
-        .expect("observability event sink should be readable after record-contract")
+        .expect_or_abort("observability event sink should be readable after record-contract")
         .lines()
         .find(|line| !line.trim().is_empty())
         .map(str::to_owned)
-        .expect("observability event sink should contain at least one structured event line");
+        .expect_or_abort(
+            "observability event sink should contain at least one structured event line",
+        );
     let event_json: Value = serde_json::from_str(&first_event_line)
-        .expect("first observability event line should be valid json");
+        .expect_or_abort("first observability event line should be valid json");
     assert_eq!(
         event_json["event_kind"],
         Value::String("authoritative_mutation_recorded".to_owned()),
@@ -1173,9 +1178,9 @@ fn record_contract_persists_observability_event_and_authoritative_mutation_count
 
     let telemetry_json: Value = serde_json::from_str(
         &fs::read_to_string(&telemetry_path)
-            .expect("telemetry counters sink should be readable after record-contract"),
+            .expect_or_abort("telemetry counters sink should be readable after record-contract"),
     )
-    .expect("telemetry counters sink should remain valid json after record-contract");
+    .expect_or_abort("telemetry counters sink should remain valid json after record-contract");
     assert_eq!(
         telemetry_json["authoritative_mutation_count"],
         Value::Number(1_u64.into()),
@@ -1240,7 +1245,7 @@ fn status_fails_closed_on_malformed_authoritative_overlay_fields() {
         write_file(
             &harness_state,
             &serde_json::to_string_pretty(&payload)
-                .expect("malformed overlay fixture should serialize"),
+                .expect_or_abort("malformed overlay fixture should serialize"),
         );
         let output = run_plan_execution(
             repo,
@@ -1339,15 +1344,15 @@ fn complete_writes_contract_evaluation_and_repo_state_provenance_into_step_evide
     let evidence_path = repo.join(
         complete_status["evidence_path"]
             .as_str()
-            .expect("complete status should expose evidence_path"),
+            .expect_or_abort("complete status should expose evidence_path"),
     );
     let evidence = read_execution_evidence(&evidence_path)
-        .expect("execution evidence should parse after complete");
+        .expect_or_abort("execution evidence should parse after complete");
     let step = evidence
         .steps
         .iter()
         .find(|step| step.task_number == 1 && step.step_number == 1)
-        .expect("execution evidence should include task 1 step 1");
+        .expect_or_abort("execution evidence should include task 1 step 1");
 
     let expected_head_sha = git_head_sha(repo);
     let mut missing_provenance_fields = Vec::new();
@@ -1395,12 +1400,12 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
     let evidence_path = repo.join(
         complete_status["evidence_path"]
             .as_str()
-            .expect("complete status should expose evidence_path"),
+            .expect_or_abort("complete status should expose evidence_path"),
     );
     let source_handoff_fingerprint =
         "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_owned();
     let seeded_source = fs::read_to_string(&evidence_path)
-        .expect("seed execution evidence should be readable before provenance injection");
+        .expect_or_abort("seed execution evidence should be readable before provenance injection");
     let seeded_with_handoff = seeded_source.replace(
         "**Claim:** Seed completion before reopen provenance preservation check.",
         &format!(
@@ -1414,11 +1419,11 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
     write_file(&evidence_path, &seeded_with_handoff);
 
     let seeded_step = read_execution_evidence(&evidence_path)
-        .expect("seeded execution evidence should parse before reopen")
+        .expect_or_abort("seeded execution evidence should parse before reopen")
         .steps
         .into_iter()
         .find(|step| step.task_number == 1 && step.step_number == 1)
-        .expect("seeded execution evidence should include task 1 step 1");
+        .expect_or_abort("seeded execution evidence should include task 1 step 1");
     assert_eq!(
         seeded_step.source_handoff_fingerprint.as_deref(),
         Some(source_handoff_fingerprint.as_str()),
@@ -1449,17 +1454,17 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
             "--expect-execution-fingerprint",
             before_reopen["execution_fingerprint"]
                 .as_str()
-                .expect("status should expose execution_fingerprint before reopen"),
+                .expect_or_abort("status should expose execution_fingerprint before reopen"),
         ],
         "reopen should preserve source handoff provenance when applicable",
     );
 
     let reopened_step = read_execution_evidence(&evidence_path)
-        .expect("execution evidence should parse after reopen")
+        .expect_or_abort("execution evidence should parse after reopen")
         .steps
         .into_iter()
         .find(|step| step.task_number == 1 && step.step_number == 1)
-        .expect("execution evidence should include task 1 step 1 after reopen");
+        .expect_or_abort("execution evidence should include task 1 step 1 after reopen");
     assert_eq!(
         reopened_step.source_handoff_fingerprint.as_deref(),
         Some(source_handoff_fingerprint.as_str()),

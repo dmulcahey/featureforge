@@ -1,5 +1,7 @@
+//! Workflow status integration/benchmark crate.
 mod common;
 
+use featureforge::expect_ext::ExpectValueExt as _;
 use featureforge::git::discover_repo_identity;
 use featureforge::workflow::manifest::{ManifestLoadResult, load_manifest, manifest_path};
 use featureforge::workflow::status::WorkflowRuntime;
@@ -15,8 +17,8 @@ fn main() {
     let state = state_dir.path();
 
     let report = common::run_benchmark(&config, || {
-        let identity =
-            discover_repo_identity(repo).expect("workflow benchmark repo identity should resolve");
+        let identity = discover_repo_identity(repo)
+            .expect_or_abort("workflow benchmark repo identity should resolve");
         let manifest_path_buf = manifest_path(&identity, state);
         let (manifest, manifest_warning, manifest_recovery_reasons) =
             match load_manifest(&manifest_path_buf) {
@@ -41,7 +43,7 @@ fn main() {
         };
         runtime
             .status()
-            .expect("workflow status benchmark should succeed");
+            .expect_or_abort("workflow status benchmark should succeed");
     });
 
     common::emit_report(&config, &report);

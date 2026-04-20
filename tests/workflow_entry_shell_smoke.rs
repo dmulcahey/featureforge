@@ -1,3 +1,4 @@
+//! Workflow entry shell smoke integration/benchmark crate.
 #[path = "support/bin.rs"]
 mod bin_support;
 #[path = "support/process.rs"]
@@ -6,6 +7,7 @@ mod process_support;
 mod workflow_support;
 
 use bin_support::compiled_featureforge_path;
+use featureforge::expect_ext::ExpectValueExt as _;
 use featureforge::git::discover_slug_identity;
 use featureforge::paths::harness_state_path;
 use process_support::run;
@@ -34,20 +36,24 @@ fn public_route_snapshot(value: &Value) -> PublicRouteSnapshot {
         .or_else(|| value.get("harness_phase"))
         .and_then(Value::as_str)
         .unwrap_or_else(|| {
-            panic!("route payload must include string `phase` or `harness_phase`: {value}")
+            featureforge::abort!(
+                "route payload must include string `phase` or `harness_phase`: {value}"
+            )
         })
         .to_owned();
     let review_state_status = value
         .get("review_state_status")
         .and_then(Value::as_str)
         .unwrap_or_else(|| {
-            panic!("route payload must include string `review_state_status`: {value}")
+            featureforge::abort!("route payload must include string `review_state_status`: {value}")
         })
         .to_owned();
     let next_action = value
         .get("next_action")
         .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("route payload must include string `next_action`: {value}"))
+        .unwrap_or_else(|| {
+            featureforge::abort!("route payload must include string `next_action`: {value}")
+        })
         .to_owned();
 
     PublicRouteSnapshot {
@@ -130,7 +136,7 @@ fn run_featureforge_json(repo: &Path, state_dir: &Path, args: &[&str], context: 
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
+        .unwrap_or_else(|error| featureforge::abort!("{context} should emit valid json: {error}"))
 }
 
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
@@ -148,125 +154,127 @@ fn harness_state_file_path(repo: &Path, state: &Path) -> std::path::PathBuf {
 fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     let state_path = harness_state_file_path(repo, state);
     if let Some(parent) = state_path.parent() {
-        fs::create_dir_all(parent).expect("harness state parent should be creatable");
+        fs::create_dir_all(parent).expect_or_abort("harness state parent should be creatable");
     }
     fs::write(
         &state_path,
-        serde_json::to_string_pretty(payload).expect("harness state should serialize"),
+        serde_json::to_string_pretty(payload).expect_or_abort("harness state should serialize"),
     )
-    .expect("harness state should be writable");
+    .expect_or_abort("harness state should be writable");
 }
 
 fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
-    install_full_contract_ready_artifacts(repo);
-    fs::write(repo.join(plan_rel), task_boundary_blocked_plan_source())
-        .expect("task-boundary blocked plan fixture should write");
-    prepare_preflight_acceptance_workspace(repo, "workflow-entry-task-boundary-blocked");
+    {
+        install_full_contract_ready_artifacts(repo);
+        fs::write(repo.join(plan_rel), task_boundary_blocked_plan_source())
+            .expect_or_abort("task-boundary blocked plan fixture should write");
+        prepare_preflight_acceptance_workspace(repo, "workflow-entry-task-boundary-blocked");
 
-    let status_before_begin = run_plan_execution_json(
-        repo,
-        state,
-        &["status", "--plan", plan_rel],
-        "status before task-boundary blocked entry fixture execution",
-    );
-    let _ = run_plan_execution_json(
-        repo,
-        state,
-        &["preflight", "--plan", plan_rel],
-        "preflight for task-boundary blocked entry fixture execution",
-    );
-    let begin_task1_step1 = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "begin",
-            "--plan",
-            plan_rel,
-            "--task",
-            "1",
-            "--step",
-            "1",
-            "--execution-mode",
-            "featureforge:executing-plans",
-            "--expect-execution-fingerprint",
-            status_before_begin["execution_fingerprint"]
-                .as_str()
-                .expect("status should expose execution fingerprint before begin"),
-        ],
-        "begin task 1 step 1 for task-boundary blocked entry fixture",
-    );
-    let complete_task1_step1 = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "complete",
-            "--plan",
-            plan_rel,
-            "--task",
-            "1",
-            "--step",
-            "1",
-            "--source",
-            "featureforge:executing-plans",
-            "--claim",
-            "Completed task 1 step 1 for task-boundary blocked entry fixture.",
-            "--manual-verify-summary",
-            "Verified by entry-shell task-boundary fixture setup.",
-            "--file",
-            "tests/workflow_entry_shell_smoke.rs",
-            "--expect-execution-fingerprint",
-            begin_task1_step1["execution_fingerprint"]
-                .as_str()
-                .expect("begin should expose execution fingerprint for complete"),
-        ],
-        "complete task 1 step 1 for task-boundary blocked entry fixture",
-    );
-    let begin_task1_step2 = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "begin",
-            "--plan",
-            plan_rel,
-            "--task",
-            "1",
-            "--step",
-            "2",
-            "--execution-mode",
-            "featureforge:executing-plans",
-            "--expect-execution-fingerprint",
-            complete_task1_step1["execution_fingerprint"]
-                .as_str()
-                .expect("complete should expose execution fingerprint for next begin"),
-        ],
-        "begin task 1 step 2 for task-boundary blocked entry fixture",
-    );
-    let _ = run_plan_execution_json(
-        repo,
-        state,
-        &[
-            "complete",
-            "--plan",
-            plan_rel,
-            "--task",
-            "1",
-            "--step",
-            "2",
-            "--source",
-            "featureforge:executing-plans",
-            "--claim",
-            "Completed task 1 step 2 for task-boundary blocked entry fixture.",
-            "--manual-verify-summary",
-            "Verified by entry-shell task-boundary fixture setup.",
-            "--file",
-            "tests/workflow_entry_shell_smoke.rs",
-            "--expect-execution-fingerprint",
-            begin_task1_step2["execution_fingerprint"]
-                .as_str()
-                .expect("begin should expose execution fingerprint for complete"),
-        ],
-        "complete task 1 step 2 for task-boundary blocked entry fixture",
-    );
+        let status_before_begin = run_plan_execution_json(
+            repo,
+            state,
+            &["status", "--plan", plan_rel],
+            "status before task-boundary blocked entry fixture execution",
+        );
+        let _ = run_plan_execution_json(
+            repo,
+            state,
+            &["preflight", "--plan", plan_rel],
+            "preflight for task-boundary blocked entry fixture execution",
+        );
+        let begin_task1_step1 = run_plan_execution_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                plan_rel,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                status_before_begin["execution_fingerprint"]
+                    .as_str()
+                    .expect_or_abort("status should expose execution fingerprint before begin"),
+            ],
+            "begin task 1 step 1 for task-boundary blocked entry fixture",
+        );
+        let complete_task1_step1 = run_plan_execution_json(
+            repo,
+            state,
+            &[
+                "complete",
+                "--plan",
+                plan_rel,
+                "--task",
+                "1",
+                "--step",
+                "1",
+                "--source",
+                "featureforge:executing-plans",
+                "--claim",
+                "Completed task 1 step 1 for task-boundary blocked entry fixture.",
+                "--manual-verify-summary",
+                "Verified by entry-shell task-boundary fixture setup.",
+                "--file",
+                "tests/workflow_entry_shell_smoke.rs",
+                "--expect-execution-fingerprint",
+                begin_task1_step1["execution_fingerprint"]
+                    .as_str()
+                    .expect_or_abort("begin should expose execution fingerprint for complete"),
+            ],
+            "complete task 1 step 1 for task-boundary blocked entry fixture",
+        );
+        let begin_task1_step2 = run_plan_execution_json(
+            repo,
+            state,
+            &[
+                "begin",
+                "--plan",
+                plan_rel,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--execution-mode",
+                "featureforge:executing-plans",
+                "--expect-execution-fingerprint",
+                complete_task1_step1["execution_fingerprint"]
+                    .as_str()
+                    .expect_or_abort("complete should expose execution fingerprint for next begin"),
+            ],
+            "begin task 1 step 2 for task-boundary blocked entry fixture",
+        );
+        let _ = run_plan_execution_json(
+            repo,
+            state,
+            &[
+                "complete",
+                "--plan",
+                plan_rel,
+                "--task",
+                "1",
+                "--step",
+                "2",
+                "--source",
+                "featureforge:executing-plans",
+                "--claim",
+                "Completed task 1 step 2 for task-boundary blocked entry fixture.",
+                "--manual-verify-summary",
+                "Verified by entry-shell task-boundary fixture setup.",
+                "--file",
+                "tests/workflow_entry_shell_smoke.rs",
+                "--expect-execution-fingerprint",
+                begin_task1_step2["execution_fingerprint"]
+                    .as_str()
+                    .expect_or_abort("begin should expose execution fingerprint for complete"),
+            ],
+            "complete task 1 step 2 for task-boundary blocked entry fixture",
+        );
+    }
 }
 
 fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
@@ -284,8 +292,8 @@ fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
     );
 }
 
-fn task_boundary_blocked_plan_source() -> &'static str {
-    r#"# Runtime Integration Hardening Implementation Plan
+const fn task_boundary_blocked_plan_source() -> &'static str {
+    r"# Runtime Integration Hardening Implementation Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
@@ -337,7 +345,7 @@ Task 1 -> Task 2
 - Modify: `tests/workflow_entry_shell_smoke.rs`
 
 - [ ] **Step 1: Start the follow-on task**
-"#
+"
 }
 
 #[test]
@@ -361,8 +369,9 @@ fn fresh_entry_workflow_status_refresh_routes_directly_without_session_entry_sta
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let json: Value = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("workflow status refresh should emit valid json: {error}"));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        featureforge::abort!("workflow status refresh should emit valid json: {error}")
+    });
     assert_eq!(json["schema_version"], Value::from(3));
     assert!(
         json["status"]
@@ -393,14 +402,14 @@ fn fs02_entry_route_surfaces_share_parity_and_budget() {
     install_full_contract_ready_artifacts(repo);
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path)
-        .expect("FS-02 fixture plan should be readable before late-stage drift setup");
+        .expect_or_abort("FS-02 fixture plan should be readable before late-stage drift setup");
     fs::write(
         &plan_path,
         format!(
             "{plan_source}\n<!-- FS-02 fixture: repo-owned plan/evidence drift after baseline -->\n"
         ),
     )
-    .expect("FS-02 fixture plan should be writable for late-stage drift setup");
+    .expect_or_abort("FS-02 fixture plan should be writable for late-stage drift setup");
 
     let mut runtime_management_commands = 0usize;
     runtime_management_commands += 1;
@@ -417,15 +426,17 @@ fn fs02_entry_route_surfaces_share_parity_and_budget() {
         &["plan", "execution", "status", "--plan", plan_rel],
         "FS-02 entry plan execution status parity",
     );
-    let operator_json: Value = serde_json::from_slice(&operator.stdout)
-        .unwrap_or_else(|error| panic!("workflow operator should emit valid json: {error}"));
-    let status_json: Value = serde_json::from_slice(&status.stdout)
-        .unwrap_or_else(|error| panic!("plan execution status should emit valid json: {error}"));
+    let operator_json: Value = serde_json::from_slice(&operator.stdout).unwrap_or_else(|error| {
+        featureforge::abort!("workflow operator should emit valid json: {error}")
+    });
+    let status_json: Value = serde_json::from_slice(&status.stdout).unwrap_or_else(|error| {
+        featureforge::abort!("plan execution status should emit valid json: {error}")
+    });
 
     assert_public_route_parity(&operator_json, &status_json, None);
     let phase_detail = operator_json["phase_detail"]
         .as_str()
-        .expect("FS-02 operator route should include phase_detail");
+        .expect_or_abort("FS-02 operator route should include phase_detail");
     assert_eq!(
         phase_detail, "planning_reentry_required",
         "FS-02 fixture should deterministically classify this entry-path drift to planning reentry, got {operator_json}"
@@ -448,9 +459,9 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
 
     let mut harness_state_json: Value = serde_json::from_str(
         &fs::read_to_string(harness_state_file_path(repo, state))
-            .expect("harness state should be readable before FS-09 fixture mutation"),
+            .expect_or_abort("harness state should be readable before FS-09 fixture mutation"),
     )
-    .expect("harness state should remain valid json before FS-09 fixture mutation");
+    .expect_or_abort("harness state should remain valid json before FS-09 fixture mutation");
     harness_state_json["current_task_closure_records"] = serde_json::json!({});
     harness_state_json["strategy_review_dispatch_lineage"] = serde_json::json!({});
     harness_state_json["review_state_repair_follow_up"] = Value::from("execution_reentry");

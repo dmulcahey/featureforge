@@ -122,10 +122,10 @@ fn try_direct_featureforge_output(
         return None;
     }
 
-    match root_direct_support::try_run_root_output_direct(repo, state_dir, args, context) {
-        Ok(Some(output)) => return Some(output),
-        Ok(None) => {}
-        Err(error) => panic!("{error}"),
+    if let Some(output) =
+        root_direct_support::try_run_root_output_direct(repo, state_dir, args, context)
+    {
+        return Some(output);
     }
 
     let (Some(repo), Some(state_dir)) = (repo, state_dir) else {
@@ -136,26 +136,18 @@ fn try_direct_featureforge_output(
     // root-command shell behavior must keep using the real binary. Everything else
     // should converge on the same in-process runtime path so semantic surfaces don't drift.
     if args.first().copied() == Some("workflow") {
-        return match workflow_direct_support::try_run_workflow_output_direct(
+        return workflow_direct_support::try_run_workflow_output_direct(
             repo, state_dir, args, context,
-        ) {
-            Ok(Some(output)) => Some(output),
-            Ok(None) => None,
-            Err(error) => panic!("{error}"),
-        };
+        );
     }
 
     if args.starts_with(&["plan", "execution"]) {
-        return match plan_execution_direct_support::try_run_plan_execution_output_direct(
+        return plan_execution_direct_support::try_run_plan_execution_output_direct(
             repo,
             state_dir,
             &args[2..],
             context,
-        ) {
-            Ok(Some(output)) => Some(output),
-            Ok(None) => None,
-            Err(error) => panic!("{error}"),
-        };
+        );
     }
 
     None

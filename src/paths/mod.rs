@@ -17,18 +17,25 @@ const HARNESS_OBSERVABILITY_EVENTS_FILE: &str = "observability-events.jsonl";
 const HARNESS_TELEMETRY_COUNTERS_FILE: &str = "telemetry-counters.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Runtime struct.
 pub struct RepoPath(String);
 
 impl RepoPath {
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn parse(input: &str) -> Result<Self, DiagnosticError> {
         normalize_repo_relative_path(input).map(Self)
     }
 
+    #[must_use]
+    /// Runtime function.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn normalize_repo_relative_path(input: &str) -> Result<String, DiagnosticError> {
     if input.is_empty() || input.starts_with('/') {
         return Err(invalid_repo_path(input));
@@ -62,6 +69,8 @@ pub fn normalize_repo_relative_path(input: &str) -> Result<String, DiagnosticErr
     Ok(parts.join("/"))
 }
 
+#[must_use]
+/// Runtime function.
 pub fn normalize_whitespace(value: &str) -> String {
     let mut normalized = String::new();
     for token in value.split_whitespace() {
@@ -73,6 +82,8 @@ pub fn normalize_whitespace(value: &str) -> String {
     normalized
 }
 
+#[must_use]
+/// Runtime function.
 pub fn normalize_identifier_token(value: &str) -> String {
     let normalized = normalize_whitespace(value);
     if normalized.is_empty() {
@@ -95,6 +106,8 @@ pub fn normalize_identifier_token(value: &str) -> String {
     }
 }
 
+#[must_use]
+/// Runtime function.
 pub fn branch_storage_key(value: &str) -> String {
     let normalized = normalize_identifier_token(value);
     if normalized.is_empty() {
@@ -110,10 +123,13 @@ pub fn branch_storage_key(value: &str) -> String {
     format!("{normalized}-{}", &digest[..12])
 }
 
+#[must_use]
+/// Runtime function.
 pub fn featureforge_home_dir() -> Option<PathBuf> {
     resolve_home_dir(|key| env::var_os(key))
 }
 
+/// Runtime function.
 pub fn featureforge_state_dir() -> PathBuf {
     env::var_os("FEATUREFORGE_STATE_DIR")
         .map(PathBuf::from)
@@ -121,6 +137,8 @@ pub fn featureforge_state_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".featureforge"))
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_branch_root(state_dir: &Path, repo_slug: &str, branch_name: &str) -> PathBuf {
     let safe_branch = branch_storage_key(branch_name);
     state_dir
@@ -131,10 +149,14 @@ pub fn harness_branch_root(state_dir: &Path, repo_slug: &str, branch_name: &str)
         .join(EXECUTION_HARNESS_DIR)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_state_path(state_dir: &Path, repo_slug: &str, branch_name: &str) -> PathBuf {
     harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_STATE_FILE)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_dependency_index_path(
     state_dir: &Path,
     repo_slug: &str,
@@ -143,6 +165,8 @@ pub fn harness_dependency_index_path(
     harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_DEPENDENCY_INDEX_FILE)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_observability_events_path(
     state_dir: &Path,
     repo_slug: &str,
@@ -151,6 +175,8 @@ pub fn harness_observability_events_path(
     harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_OBSERVABILITY_EVENTS_FILE)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_telemetry_counters_path(
     state_dir: &Path,
     repo_slug: &str,
@@ -159,6 +185,8 @@ pub fn harness_telemetry_counters_path(
     harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_TELEMETRY_COUNTERS_FILE)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_authoritative_artifacts_dir(
     state_dir: &Path,
     repo_slug: &str,
@@ -167,6 +195,8 @@ pub fn harness_authoritative_artifacts_dir(
     harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_AUTHORITATIVE_ARTIFACTS_DIR)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_authoritative_artifact_path(
     state_dir: &Path,
     repo_slug: &str,
@@ -176,6 +206,8 @@ pub fn harness_authoritative_artifact_path(
     harness_authoritative_artifacts_dir(state_dir, repo_slug, branch_name).join(artifact_file_name)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_state_publish_temp_path(
     state_dir: &Path,
     repo_slug: &str,
@@ -185,6 +217,8 @@ pub fn harness_state_publish_temp_path(
     atomic_publish_temp_path(&state_path)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn harness_authoritative_artifact_publish_temp_path(
     state_dir: &Path,
     repo_slug: &str,
@@ -196,6 +230,8 @@ pub fn harness_authoritative_artifact_publish_temp_path(
     atomic_publish_temp_path(&artifact_path)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -224,6 +260,7 @@ fn looks_like_windows_absolute(input: &str) -> bool {
         || input.starts_with("\\\\")
 }
 
+/// Runtime function.
 pub fn atomic_publish_temp_path(path: &Path) -> PathBuf {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

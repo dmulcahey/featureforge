@@ -1,3 +1,4 @@
+//! Session config slug integration/benchmark crate.
 #[path = "support/bin.rs"]
 mod bin_support;
 #[path = "support/featureforge.rs"]
@@ -9,6 +10,7 @@ mod git_support;
 #[path = "support/process.rs"]
 mod process_support;
 
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -25,22 +27,23 @@ fn parse_slug_output(output: &[u8], context: &str) -> (String, String) {
         .arg("unset SLUG BRANCH; eval \"$ASSIGNMENTS\"; printf '%s\\n%s\\n' \"$SLUG\" \"$BRANCH\"")
         .env("ASSIGNMENTS", String::from_utf8_lossy(output).to_string());
     let parsed = run_checked(command, context);
-    let text = String::from_utf8(parsed.stdout).expect("parsed slug output should be utf8");
+    let text =
+        String::from_utf8(parsed.stdout).expect_or_abort("parsed slug output should be utf8");
     let mut lines = text.lines();
     let slug = lines
         .next()
-        .expect("parsed slug should include slug line")
+        .expect_or_abort("parsed slug should include slug line")
         .to_owned();
     let branch = lines
         .next()
-        .expect("parsed slug should include branch line")
+        .expect_or_abort("parsed slug should include branch line")
         .to_owned();
     (slug, branch)
 }
 
 fn init_repo(name: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
     let repo = repo_dir.path();
 
     git_support::init_repo_with_initial_commit(repo, &format!("# {name}\n"), "init");
@@ -81,8 +84,8 @@ fn run_rust_featureforge_with_env_control(
 
 #[test]
 fn canonical_config_uses_userprofile_when_home_is_missing() {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let userprofile_dir = TempDir::new().expect("userprofile tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let userprofile_dir = TempDir::new().expect_or_abort("userprofile tempdir should exist");
     init_repo_at(repo_dir.path(), "config-userprofile-home-fallback");
 
     let output = run_rust_featureforge_with_env_control(
@@ -93,7 +96,7 @@ fn canonical_config_uses_userprofile_when_home_is_missing() {
             userprofile_dir
                 .path()
                 .to_str()
-                .expect("userprofile path should be utf8"),
+                .expect_or_abort("userprofile path should be utf8"),
         )],
         &["config", "set", "update_check", "false"],
         "canonical config set with USERPROFILE fallback",
@@ -116,7 +119,7 @@ fn canonical_config_uses_userprofile_when_home_is_missing() {
         "config command should store canonical config beneath USERPROFILE when HOME is missing"
     );
     let contents = fs::read_to_string(&canonical_path)
-        .expect("canonical USERPROFILE-backed config should be readable");
+        .expect_or_abort("canonical USERPROFILE-backed config should be readable");
     assert!(
         contents.contains("update_check: false"),
         "canonical config should record the requested value, got:\n{contents}"
@@ -201,7 +204,7 @@ fn canonical_config_set_get_and_list_use_canonical_path() {
     assert!(listing_text.contains("featureforge_contributor: true"));
     assert_eq!(String::from_utf8_lossy(&listing.stderr).trim(), "");
     assert_eq!(
-        fs::read_to_string(&canonical_config).expect("canonical config should be written"),
+        fs::read_to_string(&canonical_config).expect_or_abort("canonical config should be written"),
         "update_check: true\nfeatureforge_contributor: true\n"
     );
 }
@@ -298,8 +301,8 @@ fn canonical_slug_matches_helper_for_remote_and_detached_head() {
 
 #[test]
 fn canonical_slug_matches_helper_for_fallback_path_hashing_and_branch_cleanup() {
-    let temp_root = TempDir::new().expect("temp root should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let temp_root = TempDir::new().expect_or_abort("temp root should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
 
     let fallback_repo = temp_root
         .path()

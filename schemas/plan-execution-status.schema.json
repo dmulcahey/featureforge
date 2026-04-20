@@ -1,50 +1,116 @@
 {
   "$defs": {
     "AggregateEvaluationState": {
-      "enum": [
-        "pass",
-        "pending",
-        "fail",
-        "blocked"
-      ],
-      "type": "string"
+      "description": "Runtime enum.",
+      "oneOf": [
+        {
+          "const": "pass",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "pending",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "fail",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        }
+      ]
     },
     "ChunkId": {
+      "description": "Runtime struct.",
       "type": "string"
     },
     "ChunkingStrategy": {
-      "enum": [
-        "task",
-        "task-group",
-        "whole-run"
-      ],
-      "type": "string"
+      "description": "Runtime enum.",
+      "oneOf": [
+        {
+          "const": "task",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "task-group",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "whole-run",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        }
+      ]
     },
     "DownstreamFreshnessState": {
-      "enum": [
-        "not_required",
-        "missing",
-        "fresh",
-        "stale"
-      ],
-      "type": "string"
+      "description": "Runtime enum.",
+      "oneOf": [
+        {
+          "const": "not_required",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "missing",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "fresh",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "stale",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        }
+      ]
     },
     "EvaluationVerdict": {
-      "enum": [
-        "pass",
-        "fail",
-        "blocked"
-      ],
-      "type": "string"
+      "description": "Runtime enum.",
+      "oneOf": [
+        {
+          "const": "pass",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "fail",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "blocked",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        }
+      ]
     },
     "EvaluatorKind": {
-      "enum": [
-        "spec_compliance",
-        "code_quality"
-      ],
-      "type": "string"
+      "description": "Runtime enum.",
+      "oneOf": [
+        {
+          "const": "spec_compliance",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "code_quality",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        }
+      ]
     },
     "EvaluatorPolicyName": {
+      "description": "Runtime struct.",
       "type": "string"
     },
     "ExecutionCommandKindSchema": {
@@ -56,6 +122,7 @@
       "type": "string"
     },
     "ExecutionRunId": {
+      "description": "Runtime struct.",
       "type": "string"
     },
     "FollowUpOverrideSchema": {
@@ -67,23 +134,79 @@
       "type": "string"
     },
     "HarnessPhase": {
-      "enum": [
-        "implementation_handoff",
-        "execution_preflight",
-        "contract_drafting",
-        "contract_pending_approval",
-        "contract_approved",
-        "executing",
-        "evaluating",
-        "repairing",
-        "pivot_required",
-        "handoff_required",
-        "final_review_pending",
-        "qa_pending",
-        "document_release_pending",
-        "ready_for_branch_completion"
-      ],
-      "type": "string"
+      "description": "Runtime enum.",
+      "oneOf": [
+        {
+          "const": "implementation_handoff",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "execution_preflight",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "contract_drafting",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "contract_pending_approval",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "contract_approved",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "executing",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "evaluating",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "repairing",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "pivot_required",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "handoff_required",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "final_review_pending",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "qa_pending",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "document_release_pending",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "ready_for_branch_completion",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        }
+      ]
     },
     "NextActionSchema": {
       "enum": [
@@ -129,16 +252,20 @@
     },
     "PublicExecutionCommandContext": {
       "additionalProperties": false,
+      "description": "Runtime struct.",
       "properties": {
         "command_kind": {
-          "$ref": "#/$defs/ExecutionCommandKindSchema"
+          "$ref": "#/$defs/ExecutionCommandKindSchema",
+          "description": "Runtime field."
         },
         "step_id": {
+          "description": "Runtime field.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "task_number": {
+          "description": "Runtime field.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -165,15 +292,19 @@
           ]
         }
       ],
+      "description": "Runtime struct.",
       "minProperties": 1,
       "properties": {
         "branch_closure_id": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "dispatch_id": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "task_number": {
+          "description": "Runtime field.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -182,23 +313,29 @@
       "type": "object"
     },
     "PublicReviewStateTaskClosure": {
+      "description": "Runtime struct.",
       "properties": {
         "closure_record_id": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "contract_identity": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "effective_reviewed_surface_paths": {
+          "description": "Runtime field.",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "reviewed_state_id": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "task": {
+          "description": "Runtime field.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -234,12 +371,24 @@
       "type": "string"
     },
     "ResetPolicy": {
-      "enum": [
-        "none",
-        "chunk-boundary",
-        "adaptive"
-      ],
-      "type": "string"
+      "description": "Runtime enum.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "chunk-boundary",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        },
+        {
+          "const": "adaptive",
+          "description": "Runtime enum variant.",
+          "type": "string"
+        }
+      ]
     },
     "ReviewStateStatusSchema": {
       "enum": [
@@ -250,20 +399,25 @@
       "type": "string"
     },
     "StatusBlockingRecord": {
+      "description": "Runtime struct.",
       "properties": {
         "code": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "message": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "record_id": {
+          "description": "Runtime field.",
           "type": [
             "string",
             "null"
           ]
         },
         "record_type": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "required_follow_up": {
@@ -274,15 +428,19 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Runtime field."
         },
         "review_state_status": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "scope_key": {
+          "description": "Runtime field.",
           "type": "string"
         },
         "scope_type": {
+          "description": "Runtime field.",
           "type": "string"
         }
       },
@@ -450,20 +608,24 @@
       }
     }
   ],
+  "description": "Runtime struct.",
   "properties": {
     "active_contract_fingerprint": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "active_contract_path": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "active_step": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -472,6 +634,7 @@
       ]
     },
     "active_task": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -480,27 +643,32 @@
       ]
     },
     "aggregate_evaluation_state": {
-      "$ref": "#/$defs/AggregateEvaluationState"
+      "$ref": "#/$defs/AggregateEvaluationState",
+      "description": "Runtime field."
     },
     "blocking_reason_codes": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "blocking_records": {
+      "description": "Runtime field.",
       "items": {
         "$ref": "#/$defs/StatusBlockingRecord"
       },
       "type": "array"
     },
     "blocking_scope": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "blocking_step": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -509,6 +677,7 @@
       ]
     },
     "blocking_task": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -517,10 +686,12 @@
       ]
     },
     "browser_qa_state": {
-      "$ref": "#/$defs/DownstreamFreshnessState"
+      "$ref": "#/$defs/DownstreamFreshnessState",
+      "description": "Runtime field."
     },
     "chunk_id": {
-      "$ref": "#/$defs/ChunkId"
+      "$ref": "#/$defs/ChunkId",
+      "description": "Runtime field."
     },
     "chunking_strategy": {
       "anyOf": [
@@ -530,84 +701,100 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Runtime field."
     },
     "completed_evaluator_kinds": {
+      "description": "Runtime field.",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
       },
       "type": "array"
     },
     "current_branch_closure_id": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "current_branch_reviewed_state_id": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "current_chunk_pivot_threshold": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "current_chunk_retry_budget": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "current_chunk_retry_count": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "current_final_review_branch_closure_id": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "current_final_review_result": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "current_final_review_state": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "current_qa_branch_closure_id": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "current_qa_result": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "current_qa_state": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "current_release_readiness_state": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "current_task_closures": {
+      "description": "Runtime field.",
       "items": {
         "$ref": "#/$defs/PublicReviewStateTaskClosure"
       },
       "type": "array"
     },
     "dependency_index_state": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "evaluator_policy": {
@@ -618,18 +805,23 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Runtime field."
     },
     "evidence_path": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "execution_command_context": {
-      "$ref": "#/$defs/PublicExecutionCommandContext"
+      "$ref": "#/$defs/PublicExecutionCommandContext",
+      "description": "Runtime field."
     },
     "execution_fingerprint": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "execution_mode": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "execution_run_id": {
@@ -640,36 +832,45 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Runtime field."
     },
     "execution_started": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "external_wait_state": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "final_review_state": {
-      "$ref": "#/$defs/DownstreamFreshnessState"
+      "$ref": "#/$defs/DownstreamFreshnessState",
+      "description": "Runtime field."
     },
     "finish_review_gate_pass_branch_closure_id": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "follow_up_override": {
-      "$ref": "#/$defs/FollowUpOverrideSchema"
+      "$ref": "#/$defs/FollowUpOverrideSchema",
+      "description": "Runtime field."
     },
     "handoff_required": {
+      "description": "Runtime field.",
       "type": "boolean"
     },
     "harness_phase": {
-      "$ref": "#/$defs/HarnessPhase"
+      "$ref": "#/$defs/HarnessPhase",
+      "description": "Runtime field."
     },
     "last_browser_qa_artifact_fingerprint": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
@@ -683,15 +884,18 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Runtime field."
     },
     "last_evaluation_report_fingerprint": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "last_evaluation_report_path": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
@@ -705,56 +909,67 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Runtime field."
     },
     "last_final_review_artifact_fingerprint": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "last_release_docs_artifact_fingerprint": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "last_strategy_checkpoint_fingerprint": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "latest_authoritative_sequence": {
+      "description": "Runtime field.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
     "next_action": {
-      "$ref": "#/$defs/NextActionSchema"
+      "$ref": "#/$defs/NextActionSchema",
+      "description": "Runtime field."
     },
     "non_passing_evaluator_kinds": {
+      "description": "Runtime field.",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
       },
       "type": "array"
     },
     "open_failed_criteria": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "pending_evaluator_kinds": {
+      "description": "Runtime field.",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
       },
       "type": "array"
     },
     "phase_detail": {
-      "$ref": "#/$defs/PhaseDetailSchema"
+      "$ref": "#/$defs/PhaseDetailSchema",
+      "description": "Runtime field."
     },
     "plan_revision": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
@@ -767,39 +982,48 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Runtime field."
     },
     "reason_codes": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "recommended_command": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "recording_context": {
-      "$ref": "#/$defs/PublicRecordingContext"
+      "$ref": "#/$defs/PublicRecordingContext",
+      "description": "Runtime field."
     },
     "release_docs_state": {
-      "$ref": "#/$defs/DownstreamFreshnessState"
+      "$ref": "#/$defs/DownstreamFreshnessState",
+      "description": "Runtime field."
     },
     "repo_state_baseline_head_sha": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "repo_state_baseline_worktree_fingerprint": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "repo_state_drift_state": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "required_evaluator_kinds": {
+      "description": "Runtime field.",
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
       },
@@ -813,9 +1037,11 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "description": "Runtime field."
     },
     "resume_step": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -824,6 +1050,7 @@
       ]
     },
     "resume_task": {
+      "description": "Runtime field.",
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -832,6 +1059,7 @@
       ]
     },
     "review_stack": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
@@ -841,48 +1069,59 @@
       ]
     },
     "review_state_status": {
-      "$ref": "#/$defs/ReviewStateStatusSchema"
+      "$ref": "#/$defs/ReviewStateStatusSchema",
+      "description": "Runtime field."
     },
     "stale_unreviewed_closures": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "strategy_checkpoint_kind": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "strategy_reset_required": {
+      "description": "Runtime field.",
       "type": "boolean"
     },
     "strategy_state": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "superseded_closures_summary": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "warning_codes": {
+      "description": "Runtime field.",
       "items": {
         "type": "string"
       },
       "type": "array"
     },
     "workspace_state_id": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "write_authority_holder": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"
       ]
     },
     "write_authority_state": {
+      "description": "Runtime field.",
       "type": "string"
     },
     "write_authority_worktree": {
+      "description": "Runtime field.",
       "type": [
         "string",
         "null"

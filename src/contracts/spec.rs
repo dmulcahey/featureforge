@@ -8,23 +8,36 @@ use crate::contracts::headers;
 use crate::diagnostics::{DiagnosticError, FailureClass};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct Requirement {
+    /// Runtime field.
     pub id: String,
+    /// Runtime field.
     pub kind: String,
+    /// Runtime field.
     pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct SpecDocument {
+    /// Runtime field.
     pub path: String,
+    /// Runtime field.
     pub workflow_state: String,
+    /// Runtime field.
     pub spec_revision: u32,
+    /// Runtime field.
     pub last_reviewed_by: String,
+    /// Runtime field.
     pub requirements: Vec<Requirement>,
     #[serde(skip)]
+    /// Runtime field.
     pub source: String,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn parse_spec_file(path: impl AsRef<Path>) -> Result<SpecDocument, DiagnosticError> {
     let path = path.as_ref();
     let source = fs::read_to_string(path).map_err(|err| {
@@ -36,6 +49,8 @@ pub fn parse_spec_file(path: impl AsRef<Path>) -> Result<SpecDocument, Diagnosti
     parse_spec_source(path, source)
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn parse_spec_source(path: &Path, source: String) -> Result<SpecDocument, DiagnosticError> {
     let workflow_state = parse_required_header(&source, "Workflow State")?;
     let spec_revision = parse_required_header(&source, "Spec Revision")?

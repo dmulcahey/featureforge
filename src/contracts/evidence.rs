@@ -8,30 +8,51 @@ use crate::contracts::headers;
 use crate::diagnostics::{DiagnosticError, FailureClass};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct EvidenceStep {
+    /// Runtime field.
     pub task_number: u32,
+    /// Runtime field.
     pub step_number: u32,
+    /// Runtime field.
     pub status: String,
+    /// Runtime field.
     pub claim: String,
+    /// Runtime field.
     pub source_contract_path: Option<String>,
+    /// Runtime field.
     pub source_contract_fingerprint: Option<String>,
+    /// Runtime field.
     pub source_evaluation_report_fingerprint: Option<String>,
+    /// Runtime field.
     pub evaluator_verdict: Option<String>,
+    /// Runtime field.
     pub failing_criterion_ids: Vec<String>,
+    /// Runtime field.
     pub source_handoff_fingerprint: Option<String>,
+    /// Runtime field.
     pub repo_state_baseline_head_sha: Option<String>,
+    /// Runtime field.
     pub repo_state_baseline_worktree_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct ExecutionEvidence {
+    /// Runtime field.
     pub plan_path: String,
+    /// Runtime field.
     pub plan_revision: u32,
+    /// Runtime field.
     pub source_spec_path: String,
+    /// Runtime field.
     pub source_spec_revision: u32,
+    /// Runtime field.
     pub steps: Vec<EvidenceStep>,
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn read_execution_evidence(
     path: impl AsRef<Path>,
 ) -> Result<ExecutionEvidence, DiagnosticError> {
@@ -75,13 +96,10 @@ fn parse_required_header(source: &str, header: &str) -> Result<String, Diagnosti
 }
 
 fn parse_steps(source: &str) -> Result<Vec<EvidenceStep>, DiagnosticError> {
-    let chunks = source
+    source
         .split("\n### Task ")
         .skip(1)
         .map(|chunk| format!("### Task {chunk}"))
-        .collect::<Vec<_>>();
-    chunks
-        .into_iter()
         .map(|chunk| parse_step_chunk(&chunk))
         .collect()
 }

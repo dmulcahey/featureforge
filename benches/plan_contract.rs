@@ -1,6 +1,8 @@
+//! Plan contract integration/benchmark crate.
 mod common;
 
 use featureforge::contracts::plan::analyze_plan;
+use featureforge::expect_ext::ExpectValueExt as _;
 
 fn main() {
     let config = common::parse_args("plan_contract");
@@ -14,7 +16,7 @@ fn main() {
     let plan = repo.join(common::PLAN_CONTRACT_PLAN_REL);
 
     let report = common::run_benchmark(&config, || {
-        analyze_plan(&spec, &plan).expect("plan-contract benchmark should succeed");
+        analyze_plan(&spec, &plan).expect_or_abort("plan-contract benchmark should succeed");
     });
 
     common::emit_report(&config, &report);

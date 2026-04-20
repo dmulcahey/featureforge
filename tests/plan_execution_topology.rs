@@ -1,3 +1,4 @@
+//! Plan execution topology integration/benchmark crate.
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/json.rs"]
@@ -12,6 +13,7 @@ use featureforge::cli::plan_execution::ExecutionTopologyArg;
 use featureforge::contracts::plan::{AnalyzePlanReport, analyze_plan};
 use featureforge::execution::harness::{LearnedTopologyGuidance, TopologySelectionContext};
 use featureforge::execution::topology::recommend_topology;
+use featureforge::expect_ext::ExpectValueExt as _;
 use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
@@ -25,8 +27,8 @@ const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-pla
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-17-example-execution-plan-design.md";
 
 fn init_repo(name: &str) -> (TempDir, TempDir) {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
     let repo = repo_dir.path();
 
     let _ = name;
@@ -48,7 +50,7 @@ fn init_repo(name: &str) -> (TempDir, TempDir) {
 fn write_approved_spec(repo: &Path) {
     write_file(
         &repo.join(SPEC_REL),
-        r#"# Example Execution Plan Design
+        r"# Example Execution Plan Design
 
 **Workflow State:** CEO Approved
 **Spec Revision:** 1
@@ -62,7 +64,7 @@ fn write_approved_spec(repo: &Path) {
 ## Summary
 
 Fixture spec for focused execution-helper regression coverage.
-"#,
+",
     );
 }
 
@@ -70,7 +72,7 @@ fn write_independent_plan(repo: &Path) {
     write_file(
         &repo.join(PLAN_REL),
         &format!(
-            r#"# Example Execution Plan
+            r"# Example Execution Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
@@ -122,7 +124,7 @@ Task 1    Task 2
 - Modify: `docs/task-b.md`
 
 - [ ] **Step 1: Complete Task B**
-"#
+"
         ),
     );
 }
@@ -131,7 +133,7 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
     write_file(
         &repo.join(PLAN_REL),
         &format!(
-            r#"# Example Execution Plan
+            r"# Example Execution Plan
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
@@ -167,16 +169,16 @@ Task 1
 - Modify: `docs/example-output.md`
 
 - [ ] **Step 1: Prepare the workspace for execution**
-"#
+"
         ),
     );
 }
 
 fn run_shell(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
-    let compat_bin =
-        std::env::var_os("CARGO_BIN_EXE_featureforge").expect("featureforge test binary path");
+    let mut command = Command::cargo_bin("featureforge")
+        .expect_or_abort("featureforge binary should be available");
+    let compat_bin = std::env::var_os("CARGO_BIN_EXE_featureforge")
+        .expect_or_abort("featureforge test binary path");
     command
         .current_dir(repo)
         .env("FEATUREFORGE_COMPAT_BIN", compat_bin)
@@ -191,8 +193,8 @@ fn run_shell_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Va
 }
 
 fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
+    let mut command = Command::cargo_bin("featureforge")
+        .expect_or_abort("featureforge binary should be available");
     command
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state)
@@ -202,7 +204,8 @@ fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Val
 }
 
 fn topology_report(repo: &Path) -> AnalyzePlanReport {
-    analyze_plan(repo.join(SPEC_REL), repo.join(PLAN_REL)).expect("plan analysis should succeed")
+    analyze_plan(repo.join(SPEC_REL), repo.join(PLAN_REL))
+        .expect_or_abort("plan analysis should succeed")
 }
 
 fn topology_context(
@@ -299,9 +302,9 @@ fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_pr
         "reset_policy",
         "review_stack",
     ] {
-        let value = status_before
-            .get(field)
-            .unwrap_or_else(|| panic!("status should expose {field} before recommend"));
+        let value = status_before.get(field).unwrap_or_else(|| {
+            featureforge::abort!("status should expose {field} before recommend")
+        });
         assert!(
             value.is_null(),
             "status should keep {field} null before recommend, got {value:?}"
@@ -355,9 +358,9 @@ fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_pr
         "reset_policy",
         "review_stack",
     ] {
-        let value = status_after
-            .get(field)
-            .unwrap_or_else(|| panic!("status should expose {field} after recommend"));
+        let value = status_after.get(field).unwrap_or_else(|| {
+            featureforge::abort!("status should expose {field} after recommend")
+        });
         assert!(
             value.is_null(),
             "recommend should not mutate preflight-owned {field}, got {value:?}"
@@ -464,14 +467,14 @@ fn runtime_topology_falls_back_conservatively_when_worktrees_or_agents_are_not_r
         recommendation
             .reason_codes
             .iter()
-            .any(|code: &String| code == "conservative_fallback_policy_safety_block"),
+            .any(|code| code == "conservative_fallback_policy_safety_block"),
         "fallback topology should expose the actual blocker reason code"
     );
     assert!(
         !recommendation
             .reason_codes
             .iter()
-            .any(|code: &String| code == "conservative_fallback_same_session_unavailable"),
+            .any(|code| code == "conservative_fallback_same_session_unavailable"),
         "fallback diagnostics should not blame same-session viability when it is not the actual blocker"
     );
     assert_eq!(
@@ -626,7 +629,7 @@ fn runtime_topology_supersedes_downgrade_history_when_the_blocker_clears() {
 #[test]
 fn runtime_topology_serializes_selected_topology_with_contract_values() {
     let serialized = serde_json::to_value(ExecutionTopologyArg::WorktreeBackedParallel)
-        .expect("topology enum should serialize");
+        .expect_or_abort("topology enum should serialize");
     assert_eq!(
         serialized,
         Value::String(String::from("worktree-backed-parallel"))
@@ -634,7 +637,7 @@ fn runtime_topology_serializes_selected_topology_with_contract_values() {
 
     let round_tripped: ExecutionTopologyArg =
         serde_json::from_value(Value::String(String::from("conservative-fallback")))
-            .expect("topology enum should deserialize from contract value");
+            .expect_or_abort("topology enum should deserialize from contract value");
     assert_eq!(round_tripped, ExecutionTopologyArg::ConservativeFallback);
 
     let (repo_dir, _state_dir) = init_repo("plan-execution-topology-json-contract");
@@ -647,7 +650,8 @@ fn runtime_topology_serializes_selected_topology_with_contract_values() {
         &report,
         &topology_context("main@base-a", true, "available", "stay", "yes", true, None),
     );
-    let json = serde_json::to_value(&recommendation).expect("recommendation should serialize");
+    let json =
+        serde_json::to_value(&recommendation).expect_or_abort("recommendation should serialize");
     assert_eq!(
         json["selected_topology"],
         Value::String(String::from("worktree-backed-parallel"))
@@ -718,11 +722,11 @@ fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_chang
     );
     let accepted_run_id = accepted_status["execution_run_id"]
         .as_str()
-        .expect("execution_run_id should be present after preflight acceptance")
+        .expect_or_abort("execution_run_id should be present after preflight acceptance")
         .to_owned();
     let accepted_chunk_id = accepted_status["chunk_id"]
         .as_str()
-        .expect("chunk_id should be present after preflight acceptance")
+        .expect_or_abort("chunk_id should be present after preflight acceptance")
         .to_owned();
 
     let begin = run_rust_json(
@@ -741,7 +745,7 @@ fn preflight_acceptance_persists_run_and_chunk_identity_across_fingerprint_chang
             "--expect-execution-fingerprint",
             accepted_status["execution_fingerprint"]
                 .as_str()
-                .expect("accepted status fingerprint should be present"),
+                .expect_or_abort("accepted status fingerprint should be present"),
         ],
         "begin after preflight identity acceptance",
     );

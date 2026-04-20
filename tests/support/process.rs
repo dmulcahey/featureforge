@@ -1,3 +1,4 @@
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -12,7 +13,7 @@ pub fn run(mut command: Command, context: &str) -> Output {
     configure_git_command_env(&mut command);
     command
         .output()
-        .unwrap_or_else(|error| panic!("{context} should run: {error}"))
+        .unwrap_or_else(|error| featureforge::abort!("{context} should run: {error}"))
 }
 
 fn configure_git_command_env(command: &mut Command) {
@@ -47,9 +48,9 @@ fn hermetic_git_global_config_path() -> &'static Path {
             let tmp_path = path.with_extension("tmp");
             let contents = "[user]\n\tname = FeatureForge Test\n\temail = featureforge-tests@example.com\n[init]\n\tdefaultBranch = main\n";
             fs::write(&tmp_path, contents)
-                .expect("test process helper should write hermetic git global config");
+                .expect_or_abort("test process helper should write hermetic git global config");
             fs::rename(&tmp_path, &path)
-                .expect("test process helper should atomically install hermetic git config");
+                .expect_or_abort("test process helper should atomically install hermetic git config");
             path
         })
         .as_path()

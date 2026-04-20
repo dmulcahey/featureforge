@@ -41,74 +41,126 @@ const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowRoute {
+    /// Runtime field.
     pub schema_version: u32,
+    /// Runtime field.
     pub status: String,
+    /// Runtime field.
     pub next_skill: String,
+    /// Runtime field.
     pub spec_path: String,
+    /// Runtime field.
     pub plan_path: String,
+    /// Runtime field.
     pub contract_state: String,
+    /// Runtime field.
     pub reason_codes: Vec<String>,
+    /// Runtime field.
     pub diagnostics: Vec<WorkflowDiagnostic>,
+    /// Runtime field.
     pub scan_truncated: bool,
+    /// Runtime field.
     pub spec_candidate_count: usize,
+    /// Runtime field.
     pub plan_candidate_count: usize,
+    /// Runtime field.
     pub manifest_path: String,
+    /// Runtime field.
     pub root: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+    /// Runtime field.
     pub reason: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+    /// Runtime field.
     pub note: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowDiagnostic {
+    /// Runtime field.
     pub code: String,
+    /// Runtime field.
     pub severity: String,
+    /// Runtime field.
     pub artifact: String,
+    /// Runtime field.
     pub message: String,
+    /// Runtime field.
     pub remediation: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct WorkflowPhase {
+    /// Runtime field.
     pub schema_version: u32,
+    /// Runtime field.
     pub phase: String,
+    /// Runtime field.
     pub route_status: String,
+    /// Runtime field.
     pub phase_detail: String,
+    /// Runtime field.
     pub review_state_status: String,
+    /// Runtime field.
     pub next_skill: String,
+    /// Runtime field.
     pub next_step: String,
+    /// Runtime field.
     pub next_action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Runtime field.
     pub recommended_command: Option<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
+    /// Runtime field.
     pub reason_family: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// Runtime field.
     pub diagnostic_reason_codes: Vec<String>,
+    /// Runtime field.
     pub spec_path: String,
+    /// Runtime field.
     pub plan_path: String,
+    /// Runtime field.
     pub route: WorkflowRoute,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// Runtime struct.
 pub struct PlanFidelityRecord {
+    /// Runtime field.
     pub status: String,
+    /// Runtime field.
     pub receipt_path: String,
+    /// Runtime field.
     pub review_artifact_path: String,
+    /// Runtime field.
     pub review_stage: String,
+    /// Runtime field.
     pub reviewer_source: String,
+    /// Runtime field.
     pub reviewer_id: String,
+    /// Runtime field.
     pub verified_surfaces: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
+/// Runtime struct.
 pub struct WorkflowRuntime {
+    /// Runtime field.
     pub identity: RepositoryIdentity,
+    /// Runtime field.
     pub state_dir: PathBuf,
+    /// Runtime field.
     pub manifest_path: PathBuf,
+    /// Runtime field.
     pub manifest: Option<WorkflowManifest>,
+    /// Runtime field.
     pub manifest_warning: Option<String>,
+    /// Runtime field.
     pub manifest_recovery_reasons: Vec<String>,
 }
 
@@ -130,10 +182,14 @@ struct WorkflowPlanCandidate {
 }
 
 impl WorkflowRuntime {
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn discover(current_dir: &Path) -> Result<Self, DiagnosticError> {
         Self::discover_with_loader(current_dir, false)
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn discover_for_state_dir(
         current_dir: &Path,
         state_dir: &Path,
@@ -141,10 +197,14 @@ impl WorkflowRuntime {
         Self::discover_with_loader_and_state_dir(current_dir, state_dir.to_path_buf(), false)
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn discover_read_only(current_dir: &Path) -> Result<Self, DiagnosticError> {
         Self::discover_with_loader(current_dir, true)
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn discover_read_only_for_state_dir(
         current_dir: &Path,
         state_dir: &Path,
@@ -175,15 +235,16 @@ impl WorkflowRuntime {
                 } else {
                     recover_slug_changed_manifest(&identity, &state_dir, &manifest_path)
                 };
-                if let Some(manifest) = recovered_manifest {
-                    (
-                        Some(manifest),
-                        None,
-                        vec![String::from("repo_slug_recovered")],
-                    )
-                } else {
-                    (None, None, Vec::new())
-                }
+                recovered_manifest.map_or_else(
+                    || (None, None, Vec::new()),
+                    |manifest| {
+                        (
+                            Some(manifest),
+                            None,
+                            vec![String::from("repo_slug_recovered")],
+                        )
+                    },
+                )
             }
             ManifestLoadResult::Loaded(manifest) => {
                 let mut reasons = Vec::new();
@@ -220,11 +281,15 @@ impl WorkflowRuntime {
         })
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn status(&self) -> Result<WorkflowRoute, DiagnosticError> {
         resolve_route(self, false, false)
             .map(|route| normalize_workflow_route(self.decorate_route_with_manifest_context(route)))
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn status_refresh(&mut self) -> Result<WorkflowRoute, DiagnosticError> {
         let route = normalize_workflow_route(
             self.decorate_route_with_manifest_context(resolve_route(self, false, true)?),
@@ -244,7 +309,7 @@ impl WorkflowRuntime {
             note: route.note.clone(),
             updated_at: String::from("1970-01-01T00:00:00Z"),
         };
-        if let Err(route) = self.persist_manifest_with_retry(manifest.clone(), &route) {
+        if let Err(route) = self.persist_manifest_with_retry(&manifest, &route) {
             return Ok(*route);
         }
         self.manifest = Some(manifest);
@@ -253,6 +318,8 @@ impl WorkflowRuntime {
         Ok(route)
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn resolve(&self) -> Result<WorkflowRoute, DiagnosticError> {
         match env::var("FEATUREFORGE_WORKFLOW_RESOLVE_TEST_FAILPOINT").as_deref() {
             Ok("invalid_contract") => {
@@ -273,6 +340,8 @@ impl WorkflowRuntime {
             .map(|route| normalize_workflow_route(self.decorate_route_with_manifest_context(route)))
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn expect(
         &mut self,
         artifact: ArtifactKind,
@@ -293,31 +362,33 @@ impl WorkflowRuntime {
         });
         match artifact {
             ArtifactKind::Spec => {
-                manifest.expected_spec_path = repo_path.clone();
+                manifest.expected_spec_path = repo_path;
                 manifest.expected_plan_path.clear();
                 manifest.status = String::from("needs_brainstorming");
                 manifest.next_skill = String::from("featureforge:brainstorming");
                 manifest.reason = String::from("missing_expected_spec,expect_set");
-                manifest.note = manifest.reason.clone();
+                manifest.note.clone_from(&manifest.reason);
             }
             ArtifactKind::Plan => {
-                manifest.expected_plan_path = repo_path.clone();
+                manifest.expected_plan_path = repo_path;
                 manifest.status = String::from("plan_draft");
                 manifest.next_skill = String::from("featureforge:writing-plans");
                 manifest.reason = String::from("missing_expected_plan,expect_set");
-                manifest.note = manifest.reason.clone();
+                manifest.note.clone_from(&manifest.reason);
             }
         }
         let mut preview = self.clone();
         preview.manifest = Some(manifest.clone());
         let route = preview.status()?;
-        if let Err(route) = self.persist_manifest_with_retry(manifest.clone(), &route) {
+        if let Err(route) = self.persist_manifest_with_retry(&manifest, &route) {
             return Ok(*route);
         }
         self.manifest = Some(manifest);
         Ok(route)
     }
 
+    /// # Errors
+    /// Returns an error when validation, parsing, IO, or runtime state checks fail.
     pub fn sync(
         &mut self,
         artifact: ArtifactKind,
@@ -357,8 +428,8 @@ impl WorkflowRuntime {
             updated_at: String::from("1970-01-01T00:00:00Z"),
         });
         match artifact {
-            ArtifactKind::Spec => manifest.expected_spec_path = repo_path.clone(),
-            ArtifactKind::Plan => manifest.expected_plan_path = repo_path.clone(),
+            ArtifactKind::Spec => manifest.expected_spec_path.clone_from(&repo_path),
+            ArtifactKind::Plan => manifest.expected_plan_path.clone_from(&repo_path),
         }
         let mut preview = self.clone();
         preview.manifest = Some(manifest.clone());
@@ -370,7 +441,7 @@ impl WorkflowRuntime {
                 route.spec_path
             };
             route.plan_path = if matches!(artifact, ArtifactKind::Plan) {
-                repo_path.clone()
+                repo_path
             } else {
                 route.plan_path
             };
@@ -387,9 +458,9 @@ impl WorkflowRuntime {
                 ],
             };
             route.reason = route.reason_codes.join(",");
-            route.note = route.reason.clone();
+            route.note.clone_from(&route.reason);
         }
-        if let Err(route) = self.persist_manifest_with_retry(manifest.clone(), &route) {
+        if let Err(route) = self.persist_manifest_with_retry(&manifest, &route) {
             return Ok(*route);
         }
         self.manifest = Some(manifest);
@@ -398,7 +469,7 @@ impl WorkflowRuntime {
     }
 }
 
-fn normalize_workflow_route(mut route: WorkflowRoute) -> WorkflowRoute {
+const fn normalize_workflow_route(mut route: WorkflowRoute) -> WorkflowRoute {
     route.schema_version = WORKFLOW_ROUTE_SCHEMA_VERSION;
     route
 }
@@ -422,8 +493,8 @@ impl WorkflowRuntime {
                     .reason_codes
                     .push(String::from("corrupt_manifest_rescued"));
             }
-            route.note = warning.clone();
-            route.reason = warning.clone();
+            route.note.clone_from(warning);
+            route.reason.clone_from(warning);
         }
         for reason_code in &self.manifest_recovery_reasons {
             if !route
@@ -441,21 +512,21 @@ impl WorkflowRuntime {
                 route.note = recovery_reason;
             } else if !route.reason.contains(&recovery_reason) {
                 route.reason = format!("{recovery_reason},{}", route.reason);
-                route.note = route.reason.clone();
+                route.note.clone_from(&route.reason);
             }
         }
         route
     }
 
     fn persist_manifest_with_retry(
-        &mut self,
-        manifest: WorkflowManifest,
+        &self,
+        manifest: &WorkflowManifest,
         route: &WorkflowRoute,
     ) -> Result<(), Box<WorkflowRoute>> {
-        if save_manifest(&self.manifest_path, &manifest).is_ok() {
+        if save_manifest(&self.manifest_path, manifest).is_ok() {
             return Ok(());
         }
-        if save_manifest(&self.manifest_path, &manifest).is_ok() {
+        if save_manifest(&self.manifest_path, manifest).is_ok() {
             return Ok(());
         }
         Err(Box::new(self.manifest_write_conflict_route(route)))
@@ -493,257 +564,536 @@ fn resolve_route(
     read_only: bool,
     refresh: bool,
 ) -> Result<WorkflowRoute, DiagnosticError> {
-    let manifest_path = runtime.manifest_path.display().to_string();
-    let root = runtime.identity.repo_root.to_string_lossy().into_owned();
-
-    let (mut spec_candidates, mut malformed_spec_candidates) =
-        scan_specs(&runtime.identity.repo_root);
-    spec_candidates.sort_by(|left, right| left.path.cmp(&right.path));
-    malformed_spec_candidates.sort_by(|left, right| left.path.cmp(&right.path));
-    let spec_candidate_count = spec_candidates.len();
-    let (spec_candidates, scan_truncated) = apply_fallback_limit(spec_candidates);
-
-    let plan_candidates = scan_plans(&runtime.identity.repo_root);
-
-    if let Some(manifest) = runtime.matching_manifest()
-        && !manifest.expected_spec_path.is_empty()
-        && !runtime
-            .identity
-            .repo_root
-            .join(&manifest.expected_spec_path)
-            .is_file()
-        && !(refresh && spec_candidates.len() == 1)
     {
-        return Ok(WorkflowRoute {
-            schema_version: 2,
-            status: String::from("needs_brainstorming"),
-            next_skill: String::from("featureforge:brainstorming"),
-            spec_path: manifest.expected_spec_path.clone(),
-            plan_path: String::new(),
-            contract_state: String::from("unknown"),
-            reason_codes: vec![String::from("missing_expected_spec")],
-            diagnostics: Vec::new(),
-            scan_truncated,
-            spec_candidate_count: 0,
-            plan_candidate_count: 0,
-            manifest_path,
-            root,
-            reason: String::from("missing_expected_spec"),
-            note: String::from("missing_expected_spec"),
-        });
-    }
+        let manifest_path = runtime.manifest_path.display().to_string();
+        let root = runtime.identity.repo_root.to_string_lossy().into_owned();
 
-    if spec_candidates.is_empty() && !malformed_spec_candidates.is_empty() {
-        let selected_spec = malformed_spec_candidates
-            .last()
-            .expect("non-empty malformed spec list should have a last entry");
-        return Ok(WorkflowRoute {
-            schema_version: 2,
-            status: String::from("spec_draft"),
-            next_skill: String::from("featureforge:plan-ceo-review"),
-            spec_path: selected_spec.path.clone(),
-            plan_path: String::new(),
-            contract_state: String::from("unknown"),
-            reason_codes: vec![String::from("malformed_spec_headers")],
-            diagnostics: vec![WorkflowDiagnostic {
-                code: String::from("malformed_spec_headers"),
-                severity: String::from("error"),
-                artifact: selected_spec.path.clone(),
-                message: String::from(
-                    "Spec headers are missing required Workflow State, Spec Revision, or Last Reviewed By fields.",
-                ),
-                remediation: String::from(
-                    "Repair the spec headers before treating the document as an approved workflow artifact.",
-                ),
-            }],
-            scan_truncated,
-            spec_candidate_count: malformed_spec_candidates.len(),
-            plan_candidate_count: plan_candidates.len(),
-            manifest_path,
-            root,
-            reason: String::from("malformed_spec_headers"),
-            note: String::from("malformed_spec_headers"),
-        });
-    }
+        let (mut spec_candidates, mut malformed_spec_candidates) =
+            scan_specs(&runtime.identity.repo_root);
+        spec_candidates.sort_by(|left, right| left.path.cmp(&right.path));
+        malformed_spec_candidates.sort_by(|left, right| left.path.cmp(&right.path));
+        let spec_candidate_count = spec_candidates.len();
+        let (spec_candidates, scan_truncated) = apply_fallback_limit(spec_candidates);
 
-    if spec_candidates.is_empty() {
-        return Ok(WorkflowRoute {
-            schema_version: 2,
-            status: String::from("needs_brainstorming"),
-            next_skill: String::from("featureforge:brainstorming"),
-            spec_path: String::new(),
-            plan_path: String::new(),
-            contract_state: String::from("unknown"),
-            reason_codes: Vec::new(),
-            diagnostics: Vec::new(),
-            scan_truncated,
-            spec_candidate_count: 0,
-            plan_candidate_count: plan_candidates.len(),
-            manifest_path,
-            root,
-            reason: String::new(),
-            note: String::new(),
-        });
-    }
+        let plan_candidates = scan_plans(&runtime.identity.repo_root);
 
-    let manifest_selected_spec = runtime.matching_manifest().and_then(|manifest| {
-        if manifest.expected_spec_path.is_empty() {
-            return None;
+        if let Some(manifest) = runtime.matching_manifest()
+            && !manifest.expected_spec_path.is_empty()
+            && !runtime
+                .identity
+                .repo_root
+                .join(&manifest.expected_spec_path)
+                .is_file()
+            && !(refresh && spec_candidates.len() == 1)
+        {
+            return Ok(WorkflowRoute {
+                schema_version: 2,
+                status: String::from("needs_brainstorming"),
+                next_skill: String::from("featureforge:brainstorming"),
+                spec_path: manifest.expected_spec_path.clone(),
+                plan_path: String::new(),
+                contract_state: String::from("unknown"),
+                reason_codes: vec![String::from("missing_expected_spec")],
+                diagnostics: Vec::new(),
+                scan_truncated,
+                spec_candidate_count: 0,
+                plan_candidate_count: 0,
+                manifest_path,
+                root,
+                reason: String::from("missing_expected_spec"),
+                note: String::from("missing_expected_spec"),
+            });
         }
-        let path = runtime
-            .identity
-            .repo_root
-            .join(&manifest.expected_spec_path);
-        if !path.is_file() {
-            return None;
+
+        if spec_candidates.is_empty() && !malformed_spec_candidates.is_empty() {
+            let Some(selected_spec) = malformed_spec_candidates.last() else {
+                return Ok(WorkflowRoute {
+                    schema_version: 2,
+                    status: String::from("needs_brainstorming"),
+                    next_skill: String::from("featureforge:brainstorming"),
+                    spec_path: String::new(),
+                    plan_path: String::new(),
+                    contract_state: String::from("unknown"),
+                    reason_codes: Vec::new(),
+                    diagnostics: Vec::new(),
+                    scan_truncated,
+                    spec_candidate_count: 0,
+                    plan_candidate_count: plan_candidates.len(),
+                    manifest_path,
+                    root,
+                    reason: String::new(),
+                    note: String::new(),
+                });
+            };
+            return Ok(WorkflowRoute {
+                schema_version: 2,
+                status: String::from("spec_draft"),
+                next_skill: String::from("featureforge:plan-ceo-review"),
+                spec_path: selected_spec.path.clone(),
+                plan_path: String::new(),
+                contract_state: String::from("unknown"),
+                reason_codes: vec![String::from("malformed_spec_headers")],
+                diagnostics: vec![WorkflowDiagnostic {
+                    code: String::from("malformed_spec_headers"),
+                    severity: String::from("error"),
+                    artifact: selected_spec.path.clone(),
+                    message: String::from(
+                        "Spec headers are missing required Workflow State, Spec Revision, or Last Reviewed By fields.",
+                    ),
+                    remediation: String::from(
+                        "Repair the spec headers before treating the document as an approved workflow artifact.",
+                    ),
+                }],
+                scan_truncated,
+                spec_candidate_count: malformed_spec_candidates.len(),
+                plan_candidate_count: plan_candidates.len(),
+                manifest_path,
+                root,
+                reason: String::from("malformed_spec_headers"),
+                note: String::from("malformed_spec_headers"),
+            });
         }
-        parse_workflow_spec_candidate(&path).ok()
-    });
-    let manifest_selected_spec_present = manifest_selected_spec.is_some();
-    let selected_spec = manifest_selected_spec.unwrap_or_else(|| {
-        spec_candidates
-            .last()
-            .cloned()
-            .expect("non-empty candidate list should have a last entry")
-    });
 
-    if !manifest_selected_spec_present && spec_candidates.len() > 1 {
-        return Ok(WorkflowRoute {
-            schema_version: 2,
-            status: String::from("spec_draft"),
-            next_skill: String::from("featureforge:plan-ceo-review"),
-            spec_path: selected_spec.path.clone(),
-            plan_path: String::new(),
-            contract_state: String::from("unknown"),
-            reason_codes: vec![String::from("ambiguous_spec_candidates")],
-            diagnostics: vec![WorkflowDiagnostic {
-                code: String::from("ambiguous_spec_candidates"),
-                severity: String::from("error"),
-                artifact: selected_spec.path.clone(),
-                message: String::from(
-                    "More than one current spec candidate matches the fallback scan window.",
-                ),
-                remediation: String::from("Reduce spec ambiguity before proceeding."),
-            }],
-            scan_truncated,
-            spec_candidate_count,
-            plan_candidate_count: plan_candidates.len(),
-            manifest_path,
-            root,
-            reason: String::from("fallback_ambiguity_spec"),
-            note: String::from("fallback_ambiguity_spec"),
-        });
-    }
+        if spec_candidates.is_empty() {
+            return Ok(WorkflowRoute {
+                schema_version: 2,
+                status: String::from("needs_brainstorming"),
+                next_skill: String::from("featureforge:brainstorming"),
+                spec_path: String::new(),
+                plan_path: String::new(),
+                contract_state: String::from("unknown"),
+                reason_codes: Vec::new(),
+                diagnostics: Vec::new(),
+                scan_truncated,
+                spec_candidate_count: 0,
+                plan_candidate_count: plan_candidates.len(),
+                manifest_path,
+                root,
+                reason: String::new(),
+                note: String::new(),
+            });
+        }
 
-    if selected_spec.workflow_state == "Draft" {
-        return Ok(WorkflowRoute {
-            schema_version: 2,
-            status: String::from("spec_draft"),
-            next_skill: String::from("featureforge:plan-ceo-review"),
-            spec_path: selected_spec.path.clone(),
-            plan_path: String::new(),
-            contract_state: String::from("unknown"),
-            reason_codes: Vec::new(),
-            diagnostics: Vec::new(),
-            scan_truncated,
-            spec_candidate_count,
-            plan_candidate_count: plan_candidates.len(),
-            manifest_path,
-            root,
-            reason: String::new(),
-            note: String::new(),
-        });
-    }
-
-    let approved_spec = selected_spec;
-    let manifest_selected_plan = runtime
-        .matching_manifest()
-        .and_then(|manifest| {
-            if manifest.expected_plan_path.is_empty() {
+        let manifest_selected_spec = runtime.matching_manifest().and_then(|manifest| {
+            if manifest.expected_spec_path.is_empty() {
                 return None;
             }
             let path = runtime
                 .identity
                 .repo_root
-                .join(&manifest.expected_plan_path);
+                .join(&manifest.expected_spec_path);
             if !path.is_file() {
                 return None;
             }
-            parse_workflow_plan_candidate(&path).ok()
-        })
-        .filter(|plan| {
-            runtime
-                .matching_manifest()
-                .as_ref()
-                .is_some_and(|manifest| plan.path == manifest.expected_plan_path)
+            parse_workflow_spec_candidate(&path).ok()
         });
-    let exact_matching_plans = plan_candidates
-        .iter()
-        .filter(|plan| plan.source_spec_path == approved_spec.path)
-        .collect::<Vec<_>>();
-    let ambiguous_plan_candidate_count = if manifest_selected_plan.is_some() {
-        0
-    } else if exact_matching_plans.len() > 1 {
-        exact_matching_plans.len()
-    } else if exact_matching_plans.is_empty() && plan_candidates.len() > 1 {
-        plan_candidates.len()
-    } else {
-        0
-    };
-    if ambiguous_plan_candidate_count > 1 {
-        return Ok(WorkflowRoute {
+        let manifest_selected_spec_present = manifest_selected_spec.is_some();
+        let selected_spec = if let Some(selected_spec) = manifest_selected_spec {
+            selected_spec
+        } else if let Some(selected_spec) = spec_candidates.last().cloned() {
+            selected_spec
+        } else {
+            return Ok(WorkflowRoute {
+                schema_version: 2,
+                status: String::from("needs_brainstorming"),
+                next_skill: String::from("featureforge:brainstorming"),
+                spec_path: String::new(),
+                plan_path: String::new(),
+                contract_state: String::from("unknown"),
+                reason_codes: Vec::new(),
+                diagnostics: Vec::new(),
+                scan_truncated,
+                spec_candidate_count: 0,
+                plan_candidate_count: plan_candidates.len(),
+                manifest_path,
+                root,
+                reason: String::new(),
+                note: String::new(),
+            });
+        };
+
+        if !manifest_selected_spec_present && spec_candidates.len() > 1 {
+            return Ok(WorkflowRoute {
+                schema_version: 2,
+                status: String::from("spec_draft"),
+                next_skill: String::from("featureforge:plan-ceo-review"),
+                spec_path: selected_spec.path.clone(),
+                plan_path: String::new(),
+                contract_state: String::from("unknown"),
+                reason_codes: vec![String::from("ambiguous_spec_candidates")],
+                diagnostics: vec![WorkflowDiagnostic {
+                    code: String::from("ambiguous_spec_candidates"),
+                    severity: String::from("error"),
+                    artifact: selected_spec.path,
+                    message: String::from(
+                        "More than one current spec candidate matches the fallback scan window.",
+                    ),
+                    remediation: String::from("Reduce spec ambiguity before proceeding."),
+                }],
+                scan_truncated,
+                spec_candidate_count,
+                plan_candidate_count: plan_candidates.len(),
+                manifest_path,
+                root,
+                reason: String::from("fallback_ambiguity_spec"),
+                note: String::from("fallback_ambiguity_spec"),
+            });
+        }
+
+        if selected_spec.workflow_state == "Draft" {
+            return Ok(WorkflowRoute {
+                schema_version: 2,
+                status: String::from("spec_draft"),
+                next_skill: String::from("featureforge:plan-ceo-review"),
+                spec_path: selected_spec.path,
+                plan_path: String::new(),
+                contract_state: String::from("unknown"),
+                reason_codes: Vec::new(),
+                diagnostics: Vec::new(),
+                scan_truncated,
+                spec_candidate_count,
+                plan_candidate_count: plan_candidates.len(),
+                manifest_path,
+                root,
+                reason: String::new(),
+                note: String::new(),
+            });
+        }
+
+        let approved_spec = selected_spec;
+        let manifest_selected_plan = runtime
+            .matching_manifest()
+            .and_then(|manifest| {
+                if manifest.expected_plan_path.is_empty() {
+                    return None;
+                }
+                let path = runtime
+                    .identity
+                    .repo_root
+                    .join(&manifest.expected_plan_path);
+                if !path.is_file() {
+                    return None;
+                }
+                parse_workflow_plan_candidate(&path).ok()
+            })
+            .filter(|plan| {
+                runtime
+                    .matching_manifest()
+                    .as_ref()
+                    .is_some_and(|manifest| plan.path == manifest.expected_plan_path)
+            });
+        let exact_matching_plans = plan_candidates
+            .iter()
+            .filter(|plan| plan.source_spec_path == approved_spec.path)
+            .collect::<Vec<_>>();
+        let ambiguous_plan_candidate_count = if manifest_selected_plan.is_some() {
+            0
+        } else if exact_matching_plans.len() > 1 {
+            exact_matching_plans.len()
+        } else if exact_matching_plans.is_empty() && plan_candidates.len() > 1 {
+            plan_candidates.len()
+        } else {
+            0
+        };
+        if ambiguous_plan_candidate_count > 1 {
+            return Ok(WorkflowRoute {
+                schema_version: 2,
+                status: String::from("spec_approved_needs_plan"),
+                next_skill: String::from("featureforge:writing-plans"),
+                spec_path: approved_spec.path.clone(),
+                plan_path: String::new(),
+                contract_state: String::from("unknown"),
+                reason_codes: vec![String::from("ambiguous_plan_candidates")],
+                diagnostics: vec![WorkflowDiagnostic {
+                    code: String::from("ambiguous_plan_candidates"),
+                    severity: String::from("error"),
+                    artifact: approved_spec.path.clone(),
+                    message: String::from(
+                        "More than one plan candidate matches the current approved spec.",
+                    ),
+                    remediation: String::from(
+                        "Reduce plan ambiguity before treating the approved spec as ready for execution.",
+                    ),
+                }],
+                scan_truncated,
+                spec_candidate_count,
+                plan_candidate_count: ambiguous_plan_candidate_count,
+                manifest_path,
+                root,
+                reason: String::from("ambiguous_plan_candidates"),
+                note: String::from("ambiguous_plan_candidates"),
+            });
+        }
+        let matching_plan = manifest_selected_plan
+            .or_else(|| exact_matching_plans.first().copied().cloned())
+            .or_else(|| {
+                if plan_candidates.len() == 1 {
+                    plan_candidates.first().cloned()
+                } else {
+                    None
+                }
+            });
+        let preserved_plan_path = runtime
+            .matching_manifest()
+            .as_ref()
+            .map(|manifest| manifest.expected_plan_path.clone())
+            .filter(|path| !path.is_empty());
+        let missing_expected_plan = preserved_plan_path
+            .as_ref()
+            .is_some_and(|path| !runtime.identity.repo_root.join(path).is_file());
+
+        if let Some(plan) = matching_plan {
+            let stale_source_spec_linkage = plan.source_spec_path != approved_spec.path
+                || plan
+                    .source_spec_revision
+                    .is_some_and(|revision| revision != approved_spec.spec_revision);
+            let report =
+                analyze_full_contract(runtime.identity.repo_root.as_path(), &approved_spec, &plan);
+            let packet_buildability_failure = report
+                .as_ref()
+                .is_some_and(needs_packet_buildability_failure);
+            let contract_state = workflow_contract_state(
+                report.as_ref(),
+                stale_source_spec_linkage,
+                packet_buildability_failure,
+            );
+            let reason_codes = workflow_reason_codes(
+                report.as_ref(),
+                stale_source_spec_linkage,
+                packet_buildability_failure,
+            );
+            let diagnostics = workflow_diagnostics(
+                &plan,
+                &approved_spec,
+                report.as_ref(),
+                stale_source_spec_linkage,
+                packet_buildability_failure,
+            );
+            let reason = compatibility_reason(&reason_codes);
+            if plan.workflow_state == "Draft" {
+                let plan_fidelity_gate =
+                    evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
+                if plan_fidelity_gate.state != "pass" {
+                    let has_non_fidelity_contract_reason = reason_codes
+                        .iter()
+                        .any(|code| !is_plan_fidelity_reason_code(code));
+                    let plan_needs_authoring = stale_source_spec_linkage
+                        || packet_buildability_failure
+                        || plan.malformed_headers
+                        || report.is_none()
+                        || has_non_fidelity_contract_reason;
+                    let fidelity_next_skill = if plan_needs_authoring {
+                        "featureforge:writing-plans"
+                    } else {
+                        "featureforge:plan-fidelity-review"
+                    };
+                    let mut combined_reason_codes = plan_fidelity_gate.reason_codes.clone();
+                    for code in &reason_codes {
+                        if !combined_reason_codes
+                            .iter()
+                            .any(|existing| existing == code)
+                        {
+                            combined_reason_codes.push(code.clone());
+                        }
+                    }
+                    let mut combined_diagnostics = plan_fidelity_gate_diagnostics(
+                        &plan,
+                        &plan_fidelity_gate,
+                        fidelity_next_skill,
+                    );
+                    for diagnostic in &diagnostics {
+                        if combined_diagnostics
+                            .iter()
+                            .any(|existing| existing.code == diagnostic.code)
+                        {
+                            continue;
+                        }
+                        combined_diagnostics.push(diagnostic.clone());
+                    }
+                    let reason = compatibility_reason(&combined_reason_codes);
+                    return Ok(WorkflowRoute {
+                        schema_version: 2,
+                        status: String::from("plan_draft"),
+                        next_skill: String::from(fidelity_next_skill),
+                        spec_path: approved_spec.path.clone(),
+                        plan_path: plan.path,
+                        contract_state,
+                        reason_codes: combined_reason_codes,
+                        diagnostics: combined_diagnostics,
+                        scan_truncated,
+                        spec_candidate_count,
+                        plan_candidate_count: 1,
+                        manifest_path,
+                        root,
+                        reason: reason.clone(),
+                        note: reason,
+                    });
+                }
+                return Ok(WorkflowRoute {
+                    schema_version: 2,
+                    status: String::from("plan_draft"),
+                    next_skill: String::from("featureforge:plan-eng-review"),
+                    spec_path: approved_spec.path.clone(),
+                    plan_path: plan.path,
+                    contract_state,
+                    reason_codes,
+                    diagnostics,
+                    scan_truncated,
+                    spec_candidate_count,
+                    plan_candidate_count: 1,
+                    manifest_path,
+                    root,
+                    reason: reason.clone(),
+                    note: reason,
+                });
+            }
+
+            if !stale_source_spec_linkage
+                && !packet_buildability_failure
+                && plan.workflow_state == "Engineering Approved"
+                && report
+                    .as_ref()
+                    .is_some_and(|report| report.contract_state == "valid")
+            {
+                if read_only {
+                    return resolve_route(runtime, false, false);
+                }
+                return Ok(WorkflowRoute {
+                    schema_version: 2,
+                    status: String::from("implementation_ready"),
+                    next_skill: String::new(),
+                    spec_path: approved_spec.path.clone(),
+                    plan_path: plan.path,
+                    contract_state,
+                    reason_codes: vec![String::from("implementation_ready")],
+                    diagnostics: Vec::new(),
+                    scan_truncated,
+                    spec_candidate_count,
+                    plan_candidate_count: 1,
+                    manifest_path,
+                    root,
+                    reason: String::from("implementation_ready"),
+                    note: String::from("implementation_ready"),
+                });
+            }
+
+            if plan.workflow_state == "Engineering Approved" && contract_state == "stale" {
+                return Ok(WorkflowRoute {
+                    schema_version: 2,
+                    status: String::from("stale_plan"),
+                    next_skill: String::from("featureforge:writing-plans"),
+                    spec_path: approved_spec.path.clone(),
+                    plan_path: plan.path,
+                    contract_state,
+                    reason_codes,
+                    diagnostics,
+                    scan_truncated,
+                    spec_candidate_count,
+                    plan_candidate_count: 1,
+                    manifest_path,
+                    root,
+                    reason: reason.clone(),
+                    note: reason,
+                });
+            }
+
+            return Ok(WorkflowRoute {
+                schema_version: 2,
+                status: String::from("plan_draft"),
+                next_skill: String::from("featureforge:plan-eng-review"),
+                spec_path: approved_spec.path.clone(),
+                plan_path: plan.path,
+                contract_state,
+                reason_codes,
+                diagnostics,
+                scan_truncated,
+                spec_candidate_count,
+                plan_candidate_count: 1,
+                manifest_path,
+                root,
+                reason: reason.clone(),
+                note: reason,
+            });
+        }
+
+        Ok(WorkflowRoute {
             schema_version: 2,
             status: String::from("spec_approved_needs_plan"),
             next_skill: String::from("featureforge:writing-plans"),
             spec_path: approved_spec.path.clone(),
-            plan_path: String::new(),
+            plan_path: preserved_plan_path.unwrap_or_default(),
             contract_state: String::from("unknown"),
-            reason_codes: vec![String::from("ambiguous_plan_candidates")],
-            diagnostics: vec![WorkflowDiagnostic {
-                code: String::from("ambiguous_plan_candidates"),
-                severity: String::from("error"),
-                artifact: approved_spec.path.clone(),
-                message: String::from(
-                    "More than one plan candidate matches the current approved spec.",
-                ),
-                remediation: String::from(
-                    "Reduce plan ambiguity before treating the approved spec as ready for execution.",
-                ),
-            }],
+            reason_codes: if missing_expected_plan {
+                vec![String::from("missing_expected_plan")]
+            } else {
+                Vec::new()
+            },
+            diagnostics: Vec::new(),
             scan_truncated,
             spec_candidate_count,
-            plan_candidate_count: ambiguous_plan_candidate_count,
+            plan_candidate_count: plan_candidates.len(),
             manifest_path,
             root,
-            reason: String::from("ambiguous_plan_candidates"),
-            note: String::from("ambiguous_plan_candidates"),
-        });
-    }
-    let matching_plan = manifest_selected_plan
-        .or_else(|| exact_matching_plans.first().copied().cloned())
-        .or_else(|| {
-            if plan_candidates.len() == 1 {
-                plan_candidates.first().cloned()
+            reason: if missing_expected_plan {
+                String::from("missing_expected_plan")
             } else {
-                None
-            }
-        });
-    let preserved_plan_path = runtime
-        .matching_manifest()
-        .as_ref()
-        .map(|manifest| manifest.expected_plan_path.clone())
-        .filter(|path| !path.is_empty());
-    let missing_expected_plan = preserved_plan_path
-        .as_ref()
-        .is_some_and(|path| !runtime.identity.repo_root.join(path).is_file());
+                String::new()
+            },
+            note: if missing_expected_plan {
+                String::from("missing_expected_plan")
+            } else {
+                String::new()
+            },
+        })
+    }
+}
 
-    if let Some(plan) = matching_plan {
-        let stale_source_spec_linkage = plan.source_spec_path != approved_spec.path
+fn normalize_repo_path(path: &Path) -> Result<String, DiagnosticError> {
+    let raw = path.to_str().ok_or_else(|| {
+        DiagnosticError::new(
+            FailureClass::InvalidRepoPath,
+            "Workflow paths must be valid utf-8 repo-relative paths.",
+        )
+    })?;
+    RepoPath::parse(raw).map(|path| path.as_str().to_owned())
+}
+
+pub(crate) fn explicit_plan_override_route(
+    workflow: &WorkflowRuntime,
+    resolved_route: &WorkflowRoute,
+    plan_override: &Path,
+) -> Result<WorkflowRoute, DiagnosticError> {
+    {
+        let decorate = |route: WorkflowRoute| workflow.decorate_route_with_manifest_context(route);
+        let plan_path = normalize_repo_path(plan_override)?;
+        let plan_abs = workflow.identity.repo_root.join(&plan_path);
+        if !plan_abs.is_file() {
+            return Err(DiagnosticError::new(
+                FailureClass::InvalidCommandInput,
+                "Workflow plan override file does not exist.",
+            ));
+        }
+
+        let plan = parse_workflow_plan_candidate(&plan_abs)?;
+        let approved_spec_abs = workflow.identity.repo_root.join(&plan.source_spec_path);
+        let approved_spec_exists = approved_spec_abs.is_file();
+        let approved_spec = if approved_spec_exists {
+            parse_workflow_spec_candidate(&approved_spec_abs)?
+        } else {
+            WorkflowSpecCandidate {
+                path: plan.source_spec_path.clone(),
+                workflow_state: String::from("Draft"),
+                spec_revision: 0,
+                malformed_headers: true,
+            }
+        };
+        let stale_source_spec_linkage = !approved_spec_exists
+            || plan.source_spec_path != approved_spec.path
             || plan
                 .source_spec_revision
                 .is_some_and(|revision| revision != approved_spec.spec_revision);
         let report =
-            analyze_full_contract(runtime.identity.repo_root.as_path(), &approved_spec, &plan);
+            analyze_full_contract(workflow.identity.repo_root.as_path(), &approved_spec, &plan);
         let packet_buildability_failure = report
             .as_ref()
             .is_some_and(needs_packet_buildability_failure);
@@ -765,9 +1115,27 @@ fn resolve_route(
             packet_buildability_failure,
         );
         let reason = compatibility_reason(&reason_codes);
+        let base_route = WorkflowRoute {
+            schema_version: WORKFLOW_ROUTE_SCHEMA_VERSION,
+            status: String::new(),
+            next_skill: String::new(),
+            spec_path: approved_spec.path.clone(),
+            plan_path: plan.path.clone(),
+            contract_state,
+            reason_codes: Vec::new(),
+            diagnostics: Vec::new(),
+            scan_truncated: resolved_route.scan_truncated,
+            spec_candidate_count: resolved_route.spec_candidate_count,
+            plan_candidate_count: 1,
+            manifest_path: resolved_route.manifest_path.clone(),
+            root: resolved_route.root.clone(),
+            reason: String::new(),
+            note: String::new(),
+        };
+
         if plan.workflow_state == "Draft" {
             let plan_fidelity_gate =
-                evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
+                evaluate_plan_fidelity_gate(workflow, &approved_spec.path, &plan.path);
             if plan_fidelity_gate.state != "pass" {
                 let has_non_fidelity_contract_reason = reason_codes
                     .iter()
@@ -803,41 +1171,25 @@ fn resolve_route(
                     combined_diagnostics.push(diagnostic.clone());
                 }
                 let reason = compatibility_reason(&combined_reason_codes);
-                return Ok(WorkflowRoute {
-                    schema_version: 2,
+                return Ok(decorate(WorkflowRoute {
                     status: String::from("plan_draft"),
                     next_skill: String::from(fidelity_next_skill),
-                    spec_path: approved_spec.path.clone(),
-                    plan_path: plan.path.clone(),
-                    contract_state,
                     reason_codes: combined_reason_codes,
                     diagnostics: combined_diagnostics,
-                    scan_truncated,
-                    spec_candidate_count,
-                    plan_candidate_count: 1,
-                    manifest_path,
-                    root,
                     reason: reason.clone(),
                     note: reason,
-                });
+                    ..base_route
+                }));
             }
-            return Ok(WorkflowRoute {
-                schema_version: 2,
+            return Ok(decorate(WorkflowRoute {
                 status: String::from("plan_draft"),
                 next_skill: String::from("featureforge:plan-eng-review"),
-                spec_path: approved_spec.path.clone(),
-                plan_path: plan.path.clone(),
-                contract_state,
                 reason_codes,
                 diagnostics,
-                scan_truncated,
-                spec_candidate_count,
-                plan_candidate_count: 1,
-                manifest_path,
-                root,
                 reason: reason.clone(),
                 note: reason,
-            });
+                ..base_route
+            }));
         }
 
         if !stale_source_spec_linkage
@@ -847,231 +1199,30 @@ fn resolve_route(
                 .as_ref()
                 .is_some_and(|report| report.contract_state == "valid")
         {
-            if read_only {
-                return resolve_route(runtime, false, false);
-            }
-            return Ok(WorkflowRoute {
-                schema_version: 2,
+            return Ok(decorate(WorkflowRoute {
                 status: String::from("implementation_ready"),
                 next_skill: String::new(),
-                spec_path: approved_spec.path.clone(),
-                plan_path: plan.path.clone(),
-                contract_state,
                 reason_codes: vec![String::from("implementation_ready")],
                 diagnostics: Vec::new(),
-                scan_truncated,
-                spec_candidate_count,
-                plan_candidate_count: 1,
-                manifest_path,
-                root,
                 reason: String::from("implementation_ready"),
                 note: String::from("implementation_ready"),
-            });
+                ..base_route
+            }));
         }
 
-        if plan.workflow_state == "Engineering Approved" && contract_state == "stale" {
-            return Ok(WorkflowRoute {
-                schema_version: 2,
+        if plan.workflow_state == "Engineering Approved" && base_route.contract_state == "stale" {
+            return Ok(decorate(WorkflowRoute {
                 status: String::from("stale_plan"),
                 next_skill: String::from("featureforge:writing-plans"),
-                spec_path: approved_spec.path.clone(),
-                plan_path: plan.path.clone(),
-                contract_state,
                 reason_codes,
                 diagnostics,
-                scan_truncated,
-                spec_candidate_count,
-                plan_candidate_count: 1,
-                manifest_path,
-                root,
-                reason: reason.clone(),
-                note: reason,
-            });
-        }
-
-        return Ok(WorkflowRoute {
-            schema_version: 2,
-            status: String::from("plan_draft"),
-            next_skill: String::from("featureforge:plan-eng-review"),
-            spec_path: approved_spec.path.clone(),
-            plan_path: plan.path.clone(),
-            contract_state,
-            reason_codes,
-            diagnostics,
-            scan_truncated,
-            spec_candidate_count,
-            plan_candidate_count: 1,
-            manifest_path,
-            root,
-            reason: reason.clone(),
-            note: reason,
-        });
-    }
-
-    Ok(WorkflowRoute {
-        schema_version: 2,
-        status: String::from("spec_approved_needs_plan"),
-        next_skill: String::from("featureforge:writing-plans"),
-        spec_path: approved_spec.path.clone(),
-        plan_path: preserved_plan_path.unwrap_or_default(),
-        contract_state: String::from("unknown"),
-        reason_codes: if missing_expected_plan {
-            vec![String::from("missing_expected_plan")]
-        } else {
-            Vec::new()
-        },
-        diagnostics: Vec::new(),
-        scan_truncated,
-        spec_candidate_count,
-        plan_candidate_count: plan_candidates.len(),
-        manifest_path,
-        root,
-        reason: if missing_expected_plan {
-            String::from("missing_expected_plan")
-        } else {
-            String::new()
-        },
-        note: if missing_expected_plan {
-            String::from("missing_expected_plan")
-        } else {
-            String::new()
-        },
-    })
-}
-
-fn normalize_repo_path(path: &Path) -> Result<String, DiagnosticError> {
-    let raw = path.to_str().ok_or_else(|| {
-        DiagnosticError::new(
-            FailureClass::InvalidRepoPath,
-            "Workflow paths must be valid utf-8 repo-relative paths.",
-        )
-    })?;
-    RepoPath::parse(raw).map(|path| path.as_str().to_owned())
-}
-
-pub(crate) fn explicit_plan_override_route(
-    workflow: &WorkflowRuntime,
-    resolved_route: &WorkflowRoute,
-    plan_override: &Path,
-) -> Result<WorkflowRoute, DiagnosticError> {
-    let decorate = |route: WorkflowRoute| workflow.decorate_route_with_manifest_context(route);
-    let plan_path = normalize_repo_path(plan_override)?;
-    let plan_abs = workflow.identity.repo_root.join(&plan_path);
-    if !plan_abs.is_file() {
-        return Err(DiagnosticError::new(
-            FailureClass::InvalidCommandInput,
-            "Workflow plan override file does not exist.",
-        ));
-    }
-
-    let plan = parse_workflow_plan_candidate(&plan_abs)?;
-    let approved_spec_abs = workflow.identity.repo_root.join(&plan.source_spec_path);
-    let approved_spec_exists = approved_spec_abs.is_file();
-    let approved_spec = if approved_spec_exists {
-        parse_workflow_spec_candidate(&approved_spec_abs)?
-    } else {
-        WorkflowSpecCandidate {
-            path: plan.source_spec_path.clone(),
-            workflow_state: String::from("Draft"),
-            spec_revision: 0,
-            malformed_headers: true,
-        }
-    };
-    let stale_source_spec_linkage = !approved_spec_exists
-        || plan.source_spec_path != approved_spec.path
-        || plan
-            .source_spec_revision
-            .is_some_and(|revision| revision != approved_spec.spec_revision);
-    let report =
-        analyze_full_contract(workflow.identity.repo_root.as_path(), &approved_spec, &plan);
-    let packet_buildability_failure = report
-        .as_ref()
-        .is_some_and(needs_packet_buildability_failure);
-    let contract_state = workflow_contract_state(
-        report.as_ref(),
-        stale_source_spec_linkage,
-        packet_buildability_failure,
-    );
-    let reason_codes = workflow_reason_codes(
-        report.as_ref(),
-        stale_source_spec_linkage,
-        packet_buildability_failure,
-    );
-    let diagnostics = workflow_diagnostics(
-        &plan,
-        &approved_spec,
-        report.as_ref(),
-        stale_source_spec_linkage,
-        packet_buildability_failure,
-    );
-    let reason = compatibility_reason(&reason_codes);
-    let base_route = WorkflowRoute {
-        schema_version: WORKFLOW_ROUTE_SCHEMA_VERSION,
-        status: String::new(),
-        next_skill: String::new(),
-        spec_path: approved_spec.path.clone(),
-        plan_path: plan.path.clone(),
-        contract_state,
-        reason_codes: Vec::new(),
-        diagnostics: Vec::new(),
-        scan_truncated: resolved_route.scan_truncated,
-        spec_candidate_count: resolved_route.spec_candidate_count,
-        plan_candidate_count: 1,
-        manifest_path: resolved_route.manifest_path.clone(),
-        root: resolved_route.root.clone(),
-        reason: String::new(),
-        note: String::new(),
-    };
-
-    if plan.workflow_state == "Draft" {
-        let plan_fidelity_gate =
-            evaluate_plan_fidelity_gate(workflow, &approved_spec.path, &plan.path);
-        if plan_fidelity_gate.state != "pass" {
-            let has_non_fidelity_contract_reason = reason_codes
-                .iter()
-                .any(|code| !is_plan_fidelity_reason_code(code));
-            let plan_needs_authoring = stale_source_spec_linkage
-                || packet_buildability_failure
-                || plan.malformed_headers
-                || report.is_none()
-                || has_non_fidelity_contract_reason;
-            let fidelity_next_skill = if plan_needs_authoring {
-                "featureforge:writing-plans"
-            } else {
-                "featureforge:plan-fidelity-review"
-            };
-            let mut combined_reason_codes = plan_fidelity_gate.reason_codes.clone();
-            for code in &reason_codes {
-                if !combined_reason_codes
-                    .iter()
-                    .any(|existing| existing == code)
-                {
-                    combined_reason_codes.push(code.clone());
-                }
-            }
-            let mut combined_diagnostics =
-                plan_fidelity_gate_diagnostics(&plan, &plan_fidelity_gate, fidelity_next_skill);
-            for diagnostic in &diagnostics {
-                if combined_diagnostics
-                    .iter()
-                    .any(|existing| existing.code == diagnostic.code)
-                {
-                    continue;
-                }
-                combined_diagnostics.push(diagnostic.clone());
-            }
-            let reason = compatibility_reason(&combined_reason_codes);
-            return Ok(decorate(WorkflowRoute {
-                status: String::from("plan_draft"),
-                next_skill: String::from(fidelity_next_skill),
-                reason_codes: combined_reason_codes,
-                diagnostics: combined_diagnostics,
                 reason: reason.clone(),
                 note: reason,
                 ..base_route
             }));
         }
-        return Ok(decorate(WorkflowRoute {
+
+        Ok(decorate(WorkflowRoute {
             status: String::from("plan_draft"),
             next_skill: String::from("featureforge:plan-eng-review"),
             reason_codes,
@@ -1079,48 +1230,8 @@ pub(crate) fn explicit_plan_override_route(
             reason: reason.clone(),
             note: reason,
             ..base_route
-        }));
+        }))
     }
-
-    if !stale_source_spec_linkage
-        && !packet_buildability_failure
-        && plan.workflow_state == "Engineering Approved"
-        && report
-            .as_ref()
-            .is_some_and(|report| report.contract_state == "valid")
-    {
-        return Ok(decorate(WorkflowRoute {
-            status: String::from("implementation_ready"),
-            next_skill: String::new(),
-            reason_codes: vec![String::from("implementation_ready")],
-            diagnostics: Vec::new(),
-            reason: String::from("implementation_ready"),
-            note: String::from("implementation_ready"),
-            ..base_route
-        }));
-    }
-
-    if plan.workflow_state == "Engineering Approved" && base_route.contract_state == "stale" {
-        return Ok(decorate(WorkflowRoute {
-            status: String::from("stale_plan"),
-            next_skill: String::from("featureforge:writing-plans"),
-            reason_codes,
-            diagnostics,
-            reason: reason.clone(),
-            note: reason,
-            ..base_route
-        }));
-    }
-
-    Ok(decorate(WorkflowRoute {
-        status: String::from("plan_draft"),
-        next_skill: String::from("featureforge:plan-eng-review"),
-        reason_codes,
-        diagnostics,
-        reason: reason.clone(),
-        note: reason,
-        ..base_route
-    }))
 }
 
 fn scan_specs(repo_root: &Path) -> (Vec<WorkflowSpecCandidate>, Vec<WorkflowSpecCandidate>) {
@@ -1206,14 +1317,20 @@ fn fallback_limit() -> Option<usize> {
         .filter(|limit| *limit > 0)
 }
 
+#[must_use]
+/// Runtime function.
 pub fn sync_reason_codes(route: &WorkflowRoute) -> Vec<String> {
     route.reason_codes.clone()
 }
 
+#[must_use]
+/// Runtime function.
 pub fn report_contract_state(report: &AnalyzePlanReport) -> &str {
     &report.contract_state
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn record_plan_fidelity_receipt(
     current_dir: &Path,
     args: &PlanFidelityRecordArgs,
@@ -1234,7 +1351,7 @@ pub fn record_plan_fidelity_receipt(
     validate_plan_fidelity_review_artifact(&review_artifact, &plan, &spec)?;
 
     let receipt =
-        build_plan_fidelity_receipt(crate::contracts::runtime::PlanFidelityReceiptInput {
+        build_plan_fidelity_receipt(&crate::contracts::runtime::PlanFidelityReceiptInput {
             spec: &spec,
             plan: &plan,
             verdict: &review_artifact.review_verdict,
@@ -1265,18 +1382,31 @@ pub fn record_plan_fidelity_receipt(
     })
 }
 
+#[must_use]
+/// Runtime function.
 pub fn render_plan_fidelity_record(record: PlanFidelityRecord) -> String {
+    let PlanFidelityRecord {
+        receipt_path,
+        review_artifact_path,
+        review_stage,
+        reviewer_source,
+        reviewer_id,
+        verified_surfaces,
+        ..
+    } = record;
     format!(
         "Recorded plan-fidelity receipt at {}\nReview artifact: {}\nReview stage: {}\nReviewer source: {}\nReviewer id: {}\nVerified surfaces: {}",
-        record.receipt_path,
-        record.review_artifact_path,
-        record.review_stage,
-        record.reviewer_source,
-        record.reviewer_id,
-        record.verified_surfaces.join(", "),
+        receipt_path,
+        review_artifact_path,
+        review_stage,
+        reviewer_source,
+        reviewer_id,
+        verified_surfaces.join(", "),
     )
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), DiagnosticError> {
     let output_dir = output_dir.as_ref();
     fs::create_dir_all(output_dir).map_err(|err| {
@@ -1847,10 +1977,10 @@ fn workflow_contract_state(
     if packet_buildability_failure {
         return String::from("invalid");
     }
-    match report {
-        Some(report) => report.contract_state.clone(),
-        None => String::from("unknown"),
-    }
+    report.map_or_else(
+        || String::from("unknown"),
+        |report| report.contract_state.clone(),
+    )
 }
 
 fn workflow_reason_codes(
@@ -1971,45 +2101,39 @@ fn evaluate_plan_fidelity_gate(
         &runtime.identity.branch_name,
     );
 
-    let plan = match parse_plan_file(&plan_abs) {
-        Ok(plan) => plan,
-        Err(_) => {
-            return crate::contracts::plan::PlanFidelityGateReport {
-                state: String::from("invalid"),
-                receipt_path: receipt_path.display().to_string(),
-                reviewer_stage: String::new(),
-                provenance_source: String::new(),
-                verified_requirement_index: false,
-                verified_execution_topology: false,
-                reason_codes: vec![String::from("plan_fidelity_verification_incomplete")],
-                diagnostics: vec![crate::contracts::plan::ContractDiagnostic {
-                    code: String::from("plan_fidelity_verification_incomplete"),
-                    message: String::from(
-                        "Plan-fidelity review cannot be validated until the draft plan parses cleanly.",
-                    ),
-                }],
-            };
-        }
+    let Ok(plan) = parse_plan_file(&plan_abs) else {
+        return crate::contracts::plan::PlanFidelityGateReport {
+            state: String::from("invalid"),
+            receipt_path: receipt_path.display().to_string(),
+            reviewer_stage: String::new(),
+            provenance_source: String::new(),
+            verified_requirement_index: false,
+            verified_execution_topology: false,
+            reason_codes: vec![String::from("plan_fidelity_verification_incomplete")],
+            diagnostics: vec![crate::contracts::plan::ContractDiagnostic {
+                code: String::from("plan_fidelity_verification_incomplete"),
+                message: String::from(
+                    "Plan-fidelity review cannot be validated until the draft plan parses cleanly.",
+                ),
+            }],
+        };
     };
-    let spec = match load_plan_fidelity_spec_document(&spec_abs) {
-        Ok(spec) => spec,
-        Err(_) => {
-            return crate::contracts::plan::PlanFidelityGateReport {
-                state: String::from("invalid"),
-                receipt_path: receipt_path.display().to_string(),
-                reviewer_stage: String::new(),
-                provenance_source: String::new(),
-                verified_requirement_index: false,
-                verified_execution_topology: false,
-                reason_codes: vec![String::from("plan_fidelity_verification_incomplete")],
-                diagnostics: vec![crate::contracts::plan::ContractDiagnostic {
-                    code: String::from("plan_fidelity_verification_incomplete"),
-                    message: String::from(
-                        "Plan-fidelity review cannot be validated until the source spec parses cleanly, including a parseable Requirement Index.",
-                    ),
-                }],
-            };
-        }
+    let Ok(spec) = load_plan_fidelity_spec_document(&spec_abs) else {
+        return crate::contracts::plan::PlanFidelityGateReport {
+            state: String::from("invalid"),
+            receipt_path: receipt_path.display().to_string(),
+            reviewer_stage: String::new(),
+            provenance_source: String::new(),
+            verified_requirement_index: false,
+            verified_execution_topology: false,
+            reason_codes: vec![String::from("plan_fidelity_verification_incomplete")],
+            diagnostics: vec![crate::contracts::plan::ContractDiagnostic {
+                code: String::from("plan_fidelity_verification_incomplete"),
+                message: String::from(
+                    "Plan-fidelity review cannot be validated until the source spec parses cleanly, including a parseable Requirement Index.",
+                ),
+            }],
+        };
     };
 
     evaluate_plan_fidelity_receipt_at_path(

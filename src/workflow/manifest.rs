@@ -8,28 +8,48 @@ use crate::git::{RepositoryIdentity, derive_repo_slug, stored_repo_root_matches_
 use crate::paths::{branch_storage_key, write_atomic as write_atomic_file};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Runtime struct.
 pub struct WorkflowManifest {
+    /// Runtime field.
     pub version: u32,
+    /// Runtime field.
     pub repo_root: String,
+    /// Runtime field.
     pub branch: String,
+    /// Runtime field.
     pub expected_spec_path: String,
+    /// Runtime field.
     pub expected_plan_path: String,
+    /// Runtime field.
     pub status: String,
+    /// Runtime field.
     pub next_skill: String,
+    /// Runtime field.
     pub reason: String,
+    /// Runtime field.
     pub note: String,
+    /// Runtime field.
     pub updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Runtime enum.
 pub enum ManifestLoadResult {
+    /// Runtime enum variant.
     Missing,
+    /// Runtime enum variant.
     Loaded(WorkflowManifest),
-    Corrupt { backup_path: PathBuf },
+    /// Runtime enum variant.
+    Corrupt {
+        /// Runtime field.
+        backup_path: PathBuf,
+    },
 }
 
 const CROSS_SLUG_RECOVERY_LIMIT: usize = 12;
 
+#[must_use]
+/// Runtime function.
 pub fn manifest_path(identity: &RepositoryIdentity, state_dir: &Path) -> PathBuf {
     let slug = derive_repo_slug(&identity.repo_root, identity.remote_url.as_deref());
     let safe_branch = branch_storage_key(&identity.branch_name);
@@ -40,32 +60,37 @@ pub fn manifest_path(identity: &RepositoryIdentity, state_dir: &Path) -> PathBuf
         .join(format!("{user_name}-{safe_branch}-workflow-state.json"))
 }
 
+#[must_use]
+/// Runtime function.
 pub fn load_manifest(path: &Path) -> ManifestLoadResult {
     let Ok(source) = fs::read_to_string(path) else {
         return ManifestLoadResult::Missing;
     };
-    match serde_json::from_str(&source) {
-        Ok(manifest) => ManifestLoadResult::Loaded(manifest),
-        Err(_) => {
+    serde_json::from_str(&source).map_or_else(
+        |_| {
             let backup_path = corrupt_backup_path(path);
             let _ = fs::rename(path, &backup_path);
             ManifestLoadResult::Corrupt { backup_path }
-        }
-    }
+        },
+        ManifestLoadResult::Loaded,
+    )
 }
 
+#[must_use]
+/// Runtime function.
 pub fn load_manifest_read_only(path: &Path) -> ManifestLoadResult {
     let Ok(source) = fs::read_to_string(path) else {
         return ManifestLoadResult::Missing;
     };
-    match serde_json::from_str(&source) {
-        Ok(manifest) => ManifestLoadResult::Loaded(manifest),
-        Err(_) => ManifestLoadResult::Corrupt {
+    serde_json::from_str(&source).map_or_else(
+        |_| ManifestLoadResult::Corrupt {
             backup_path: corrupt_backup_path(path),
         },
-    }
+        ManifestLoadResult::Loaded,
+    )
 }
 
+/// Runtime function.
 pub fn recover_slug_changed_manifest(
     identity: &RepositoryIdentity,
     state_dir: &Path,
@@ -79,6 +104,7 @@ pub fn recover_slug_changed_manifest(
     )
 }
 
+/// Runtime function.
 pub fn recover_slug_changed_manifest_read_only(
     identity: &RepositoryIdentity,
     state_dir: &Path,
@@ -125,9 +151,15 @@ fn recover_slug_changed_manifest_with_loader(
     None
 }
 
+/// # Errors
+/// Returns an error when validation, parsing, IO, or runtime state checks fail.
 pub fn save_manifest(path: &Path, manifest: &WorkflowManifest) -> std::io::Result<()> {
-    let payload = serde_json::to_string(manifest)
-        .expect("workflow manifest serialization should stay valid json");
+    let payload = serde_json::to_string(manifest).map_err(|error| {
+        std::io::Error::other(format!(
+            "workflow manifest serialization failed for {}: {error}",
+            path.display()
+        ))
+    })?;
     write_atomic_file(path, payload)
 }
 

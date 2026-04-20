@@ -1,3 +1,4 @@
+//! Update and install integration/benchmark crate.
 #[path = "support/bin.rs"]
 mod bin_support;
 #[path = "support/featureforge.rs"]
@@ -5,6 +6,7 @@ mod featureforge_support;
 #[path = "support/process.rs"]
 mod process_support;
 
+use featureforge::expect_ext::ExpectValueExt as _;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -15,9 +17,9 @@ use process_support::run;
 
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("parent directory should exist");
+        fs::create_dir_all(parent).expect_or_abort("parent directory should exist");
     }
-    fs::write(path, contents).expect("file should be writable");
+    fs::write(path, contents).expect_or_abort("file should be writable");
 }
 
 fn file_url(path: &Path) -> String {
@@ -28,23 +30,23 @@ fn make_runtime_root(dir: &Path, version: &str) {
     write_file(&dir.join("VERSION"), &format!("{version}\n"));
     let bin_path = dir.join("bin/featureforge");
     if let Some(parent) = bin_path.parent() {
-        fs::create_dir_all(parent).expect("runtime bin dir should exist");
+        fs::create_dir_all(parent).expect_or_abort("runtime bin dir should exist");
     }
     fs::copy(bin_support::compiled_featureforge_path(), &bin_path)
-        .expect("compiled featureforge binary should copy");
+        .expect_or_abort("compiled featureforge binary should copy");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&bin_path, fs::Permissions::from_mode(0o755))
-            .expect("runtime binary should be executable");
+            .expect_or_abort("runtime binary should be executable");
     }
 }
 
 #[test]
 fn canonical_update_check_reports_upgrade_and_writes_canonical_state() {
-    let state_dir = TempDir::new().expect("state tempdir should exist");
-    let install_dir = TempDir::new().expect("install tempdir should exist");
-    let remote_dir = TempDir::new().expect("remote tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
+    let install_dir = TempDir::new().expect_or_abort("install tempdir should exist");
+    let remote_dir = TempDir::new().expect_or_abort("remote tempdir should exist");
     make_runtime_root(install_dir.path(), "1.0.0");
     write_file(&remote_dir.path().join("VERSION"), "1.1.0\n");
 
@@ -78,7 +80,7 @@ fn canonical_update_check_reports_upgrade_and_writes_canonical_state() {
     );
     assert_eq!(
         fs::read_to_string(state_dir.path().join("update-check/last-update-check"))
-            .expect("canonical update-check state should exist"),
+            .expect_or_abort("canonical update-check state should exist"),
         "UPGRADE_AVAILABLE 1.0.0 1.1.0\n"
     );
     assert!(
@@ -89,10 +91,10 @@ fn canonical_update_check_reports_upgrade_and_writes_canonical_state() {
 
 #[test]
 fn canonical_update_check_uses_userprofile_install_when_home_is_missing() {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
-    let userprofile_dir = TempDir::new().expect("userprofile tempdir should exist");
-    let remote_dir = TempDir::new().expect("remote tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
+    let userprofile_dir = TempDir::new().expect_or_abort("userprofile tempdir should exist");
+    let remote_dir = TempDir::new().expect_or_abort("remote tempdir should exist");
     let install_dir = userprofile_dir.path().join(".featureforge/install");
 
     make_runtime_root(&install_dir, "1.0.0");
@@ -156,9 +158,9 @@ fn install_command_surface_is_removed() {
 
 #[test]
 fn canonical_update_check_ignores_version_only_repo_roots() {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
-    let remote_dir = TempDir::new().expect("remote tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
+    let remote_dir = TempDir::new().expect_or_abort("remote tempdir should exist");
 
     write_file(&repo_dir.path().join("VERSION"), "1.0.0\n");
     write_file(&remote_dir.path().join("VERSION"), "1.1.0\n");
@@ -197,10 +199,10 @@ fn canonical_update_check_ignores_version_only_repo_roots() {
 
 #[test]
 fn canonical_update_check_accepts_a_valid_repo_local_runtime_root() {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
-    let remote_dir = TempDir::new().expect("remote tempdir should exist");
-    let home_dir = TempDir::new().expect("home tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
+    let remote_dir = TempDir::new().expect_or_abort("remote tempdir should exist");
+    let home_dir = TempDir::new().expect_or_abort("home tempdir should exist");
 
     make_runtime_root(repo_dir.path(), "1.0.0");
     write_file(&remote_dir.path().join("VERSION"), "1.3.0\n");
@@ -232,10 +234,10 @@ fn canonical_update_check_accepts_a_valid_repo_local_runtime_root() {
 
 #[test]
 fn canonical_update_check_uses_a_binary_adjacent_runtime_root() {
-    let runtime_dir = TempDir::new().expect("runtime tempdir should exist");
-    let work_dir = TempDir::new().expect("work tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
-    let remote_dir = TempDir::new().expect("remote tempdir should exist");
+    let runtime_dir = TempDir::new().expect_or_abort("runtime tempdir should exist");
+    let work_dir = TempDir::new().expect_or_abort("work tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
+    let remote_dir = TempDir::new().expect_or_abort("remote tempdir should exist");
 
     make_runtime_root(runtime_dir.path(), "1.0.0");
     write_file(&remote_dir.path().join("VERSION"), "1.6.0\n");
@@ -271,10 +273,10 @@ fn canonical_update_check_uses_a_binary_adjacent_runtime_root() {
 
 #[test]
 fn canonical_update_check_rejects_invalid_featureforge_dir_overrides() {
-    let repo_dir = TempDir::new().expect("repo tempdir should exist");
-    let state_dir = TempDir::new().expect("state tempdir should exist");
-    let remote_dir = TempDir::new().expect("remote tempdir should exist");
-    let invalid_override = TempDir::new().expect("invalid override tempdir should exist");
+    let repo_dir = TempDir::new().expect_or_abort("repo tempdir should exist");
+    let state_dir = TempDir::new().expect_or_abort("state tempdir should exist");
+    let remote_dir = TempDir::new().expect_or_abort("remote tempdir should exist");
+    let invalid_override = TempDir::new().expect_or_abort("invalid override tempdir should exist");
 
     make_runtime_root(repo_dir.path(), "9.9.9");
     write_file(&invalid_override.path().join("VERSION"), "1.0.0\n");
