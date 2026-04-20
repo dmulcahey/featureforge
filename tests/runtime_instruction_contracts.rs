@@ -850,6 +850,7 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
         "--test runtime_instruction_contracts --test using_featureforge_skill",
         "README.md",
     );
+    assert_contains(&readme_content, "--test runtime_root_cli", "README.md");
     assert_contains(
         &readme_content,
         "--test powershell_wrapper_resolution --test upgrade_skill",
@@ -888,6 +889,11 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
     );
     assert_contains(
         &docs_testing_content,
+        "--test runtime_root_cli",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
         "cargo clippy --all-targets --all-features -- -D warnings",
         "docs/testing.md",
     );
@@ -921,6 +927,70 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
     assert_contains(
         &docs_testing_content,
         "Legacy `tests/codex-runtime/*.sh` harnesses have been removed",
+        "docs/testing.md",
+    );
+}
+
+#[test]
+fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_step12_sequence() {
+    let root = repo_root();
+    let readme_content = read_utf8(root.join("README.md"));
+    let subagent_skill = read_utf8(root.join("skills/subagent-driven-development/SKILL.md"));
+    let docs_testing_content = read_utf8(root.join("docs/testing.md"));
+
+    assert_contains(
+        &readme_content,
+        "the approved plan checklist is the human-visible execution progress projection; runtime-owned execution state remains authoritative for operator routing and gates",
+        "README.md",
+    );
+    assert_not_contains(
+        &readme_content,
+        "execution progress truth for operators lives in the approved plan checklist",
+        "README.md",
+    );
+    assert_contains(
+        &subagent_skill,
+        "The approved plan checklist is the human-visible execution progress projection. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.",
+        "skills/subagent-driven-development/SKILL.md",
+    );
+    assert_not_contains(
+        &subagent_skill,
+        "The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker.",
+        "skills/subagent-driven-development/SKILL.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "If the repo's normal verification flow also expects these and they are available locally, then run:",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "cargo nextest run --test using_featureforge_skill --test runtime_root_cli --test upgrade_skill",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "task closure happy path `<= 2` runtime-management commands",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "internal-dispatch task closure `<= 2` runtime-management commands",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "rebase / resume stale-boundary recovery `<= 3` runtime-management commands before implementation resumes",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "stale release refresh `<= 3` runtime-management commands before the next real review step",
+        "docs/testing.md",
+    );
+    assert_contains(
+        &docs_testing_content,
+        "Run the FS-13 fixture and confirm the runtime surfaces the earliest stale boundary without any manual edit to `**Execution Note:**` lines.",
         "docs/testing.md",
     );
 }
@@ -1539,7 +1609,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Treat low-level runtime primitives as compatibility/debug-only surfaces unless workflow/operator explicitly routes to them.",
+        "Keep hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` out of the normal path; do not route to them for normal workflow progression.",
     );
     assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1628,6 +1698,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
+        "Task `N+1` may begin only after Task `N` has a current positive task-closure record",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "dedicated-independent review loops plus verification are required inputs to `close-current-task`",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
         "if workflow/operator reports `task_review_dispatch_required`, treat it as a compatibility/debug lane and keep routing through workflow/operator plus intent-level commands; do not expand the normal closure loop into manual low-level command choreography",
     );
     assert_file_contains(
@@ -1660,7 +1738,15 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
+        "Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
         "MUST NOT manually edit runtime-owned execution records.",
+    );
+    assert_file_contains(
+        root.join("skills/executing-plans/SKILL.md"),
+        "MUST NOT manually edit `**Execution Note:**` lines to recover runtime state.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1724,6 +1810,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
+        "Task `N+1` may begin only after Task `N` has a current positive task-closure record",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "review loops and verification are required inputs to `close-current-task`",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
         "featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]",
     );
     assert_file_contains(
@@ -1733,6 +1827,10 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
         "After `repair-review-state`, MUST follow the command returned in that command's `recommended_command` before any additional recording commands.",
+    );
+    assert_file_contains(
+        root.join("skills/subagent-driven-development/SKILL.md"),
+        "Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -2309,7 +2407,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("README.md"),
-        "`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.",
+        "`rebuild-evidence` remains a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth and is not part of normal public routing.",
     );
     assert_file_not_contains(
         root.join("README.md"),
@@ -2863,13 +2961,33 @@ fn execution_skill_docs_keep_candidate_artifacts_and_authoritative_mutations_sep
 #[test]
 fn runtime_remediation_inventory_is_visible_to_instruction_contract_tests() {
     let inventory = read_utf8(repo_root().join("tests/fixtures/runtime-remediation/README.md"));
+    assert_contains(
+        &inventory,
+        "## Detailed Failure Shapes (Mandatory)",
+        "tests/fixtures/runtime-remediation/README.md",
+    );
     for scenario in [
         "FS-01", "FS-02", "FS-03", "FS-04", "FS-05", "FS-06", "FS-07", "FS-08", "FS-09", "FS-10",
-        "FS-11", "FS-12", "FS-13",
+        "FS-11", "FS-12", "FS-13", "FS-14", "FS-15", "FS-16",
     ] {
         assert_contains(
             &inventory,
             scenario,
+            "tests/fixtures/runtime-remediation/README.md",
+        );
+    }
+    for detail_anchor in [
+        "branch-closure mutation says repair is required",
+        "helper-backed tests pass but compiled CLI behavior differs",
+        "status points to the right blocker, operator still recommends execution reentry / begin",
+        "rebased consumer-style fixture with forward reentry overlay pointing at Task 3",
+        "authoritative state contains `run_identity.execution_run_id`",
+        "completed task with no current task closure baseline",
+        "remove or stale receipt projections without changing the reviewed state that closure binds to",
+    ] {
+        assert_contains(
+            &inventory,
+            detail_anchor,
             "tests/fixtures/runtime-remediation/README.md",
         );
     }
@@ -2878,11 +2996,14 @@ fn runtime_remediation_inventory_is_visible_to_instruction_contract_tests() {
         "tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation",
         "tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation",
         "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift",
-        "tests/plan_execution_final_review.rs::fs11_gate_finish_rejects_final_review_release_binding_mismatch",
-        "tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered",
-        "tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails",
-        "tests/plan_execution_final_review.rs::dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass",
-        "tests/plan_execution_final_review.rs::dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict",
+        "tests/workflow_runtime.rs::runtime_remediation_fs11_operator_begin_repair_share_one_next_action_engine",
+        "tests/workflow_shell_smoke.rs::fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers",
+        "tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight",
+        "tests/plan_execution.rs::runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state",
+        "tests/workflow_runtime.rs::runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task",
+        "tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch",
+        "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task",
+        "tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts",
         "task_close_internal_dispatch_runtime_management_budget_is_capped",
     ] {
         assert_contains(

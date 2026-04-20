@@ -160,9 +160,9 @@ fn execute_plan_execution_command_json(
         PlanExecutionCommand::RecordReviewDispatch(args) => {
             Ok(to_json!(runtime.record_review_dispatch(&args)?))
         }
-        PlanExecutionCommand::RepairReviewState(args) => {
-            Ok(to_json!(review_state::repair_review_state(runtime, &args)?))
-        }
+        PlanExecutionCommand::RepairReviewState(args) => Ok(to_json!(
+            review_state::repair_review_state_command(runtime, &args)?
+        )),
         PlanExecutionCommand::ExplainReviewState(args) => Ok(to_json!(
             review_state::explain_review_state(runtime, &args)?
         )),

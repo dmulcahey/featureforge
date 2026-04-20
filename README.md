@@ -26,7 +26,7 @@ Repo-visible artifacts remain authoritative:
 
 - for this repository's shipped work packages, approved specs and plans are preserved under `docs/archive/featureforge/specs/*.md` and `docs/archive/featureforge/plans/*.md`
 - for new FeatureForge-managed project work, approved specs and plans still live under `docs/featureforge/specs/*.md` and `docs/featureforge/plans/*.md`
-- execution progress truth for operators lives in the approved plan checklist
+- the approved plan checklist is the human-visible execution progress projection; runtime-owned execution state remains authoritative for operator routing and gates
 - runtime-owned reviewed-closure, milestone, and strategy state is authoritative for routing and gates
 - execution evidence plus release/review markdown artifacts are derived operator handoff surfaces, not the primary gate-truth source
 - branch-scoped local state lives under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
@@ -74,22 +74,27 @@ The generated `using-featureforge` skill routes through `featureforge workflow o
 
 Execution starts from an engineering-approved plan and the exact approved plan path.
 Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command for the current phase. The normal public execution surface is `begin`, `note`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Compatibility/debug helpers remain available only for exceptional or contract-boundary cases and are not part of the normal path.
+Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.
 
-`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.
+`rebuild-evidence` remains a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth and is not part of normal public routing.
 
 When workflow/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
 
 After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra command. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
+Do not manually edit `**Execution Note:**` lines to recover runtime state; execution-note markdown is projection-only.
 
 `featureforge plan execution` is the execution preflight boundary for the approved plan.
 
 Task closure is enforced at task boundaries, not only at the end of the full plan:
 
+- Task `N+1` may begin only after Task `N` has a current positive task-closure record.
+- dedicated-independent review loops and verification are inputs to `close-current-task`; they are not separate begin-time authority once a current positive closure exists
 - after implementation steps complete and review plus verification are ready, run `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and use `close-current-task` as the authoritative task-closure command
 - if workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep the normal path on workflow/operator plus the intent-level commands; do not route the normal path through low-level dispatch primitives
 - compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path
 - task-boundary remediation churn is capped with runtime-owned `cycle_break` handling on repeated loops
 - after review passes, task verification is required before the task can close and before next-task advancement
+- `repair-review-state` returns one exact next command; follow that returned command directly
 - once approved-plan execution has started, execution-phase implementation/review subagent dispatch is authorized without per-dispatch user-consent prompts
 
 Completion then flows through (runtime-owned late-stage sequencing keeps `featureforge:document-release` ahead of terminal `featureforge:requesting-code-review`):
@@ -155,6 +160,13 @@ node scripts/gen-skill-docs.mjs --check
 node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test contracts_spec_plan --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
+cargo nextest run --test runtime_root_cli
+```
+
+Full Rust suite without parallel cargo lock contention (single archive build + isolated shards):
+
+```bash
+scripts/run-rust-tests-sharded.sh 8
 ```
 
 Refresh checked-in prebuilt binaries (release-facing artifacts) when runtime packaging or binary surfaces change:

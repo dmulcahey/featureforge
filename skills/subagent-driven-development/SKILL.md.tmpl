@@ -56,9 +56,10 @@ For each task, enforce this exact order before dispatching the next task:
 3. If review fails, reopen/remediate/re-review until green.
 4. When remediation churn reaches 3 cycles for the same task, follow runtime cycle-break handling before retry.
 5. After review is green, run `verification-before-completion` and collect the verification result inputs needed by `close-current-task`.
-6. Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.
-7. If workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep routing through workflow/operator plus the intent-level commands; do not expand the normal closure loop into low-level dispatch-lineage management.
-8. No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.
+6. Task `N+1` may begin only after Task `N` has a current positive task-closure record; dedicated-independent review loops and verification are required inputs to `close-current-task` and are not separate begin-time authority after closure is current.
+7. Rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and follow its route; the normal closure path is `featureforge plan execution close-current-task --plan <approved-plan-path> --task <n> --review-result pass|fail --review-summary-file <review-summary> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]`.
+8. If workflow/operator reports `task_review_dispatch_required` or `final_review_dispatch_required`, keep routing through workflow/operator plus the intent-level commands; do not expand the normal closure loop into low-level dispatch-lineage management.
+9. No exceptions: only after close-current-task succeeds may you dispatch Task `N+1`.
 
 ### Reviewed-Closure Command Matrix
 
@@ -79,8 +80,10 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - The returned `recommended_command` is authoritative for the immediate reroute.
 - Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required.
 - Keep compatibility/debug-only runtime primitives out of the normal path unless explicitly debugging a compatibility boundary.
+- Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.
 - In `*_dispatch_required` lanes, request the review and keep rerouting through workflow/operator; do not expand the normal path into low-level dispatch-lineage management.
 - MUST NOT manually edit runtime-owned execution records.
+- MUST NOT manually edit `**Execution Note:**` lines to recover runtime state.
 - MUST NOT manually edit derived markdown artifacts or receipts.
 - MUST NOT use the internal task-closure recording service boundary directly.
 - MUST use `close-current-task` for task closure.
@@ -182,7 +185,7 @@ Before dispatching any implementation subagent:
 - calls `complete` after each completed step
 - calls `note` when work is interrupted or blocked
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:subagent-driven-development`
-- The approved plan checklist is the execution progress record; do not create or maintain a separate authoritative task tracker.
+- The approved plan checklist is the human-visible execution progress projection. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 

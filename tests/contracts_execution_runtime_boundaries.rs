@@ -26,7 +26,7 @@ const TASK_BOUNDARY_BLOCKED_PLAN_SOURCE: &str = r#"# Runtime Integration Hardeni
 
 **Workflow State:** Engineering Approved
 **Plan Revision:** 1
-**Execution Mode:** none
+**Execution Mode:** featureforge:executing-plans
 **Source Spec:** `docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md`
 **Source Spec Revision:** 1
 **Last Reviewed By:** plan-eng-review
@@ -74,6 +74,108 @@ Task 1 -> Task 2
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`
 
 - [ ] **Step 1: Start the follow-on task**
+"#;
+const TASK_BOUNDARY_FS15_PLAN_SOURCE: &str = r#"# Runtime Remediation FS-15 Plan
+
+**Workflow State:** Engineering Approved
+**Plan Revision:** 1
+**Execution Mode:** none
+**Source Spec:** `docs/featureforge/specs/2026-03-22-runtime-integration-hardening-design.md`
+**Source Spec Revision:** 1
+**Last Reviewed By:** plan-eng-review
+
+## Requirement Coverage Matrix
+
+- REQ-001 -> Task 1, Task 2, Task 3, Task 4, Task 5, Task 6
+- VERIFY-001 -> Task 1, Task 2, Task 3, Task 4, Task 5, Task 6
+
+## Execution Strategy
+
+- Execute tasks serially from Task 1 through Task 6 so stale-boundary targeting order stays deterministic.
+
+## Dependency Diagram
+
+```text
+Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
+```
+
+## Task 1: FS-15 task 1
+
+**Spec Coverage:** REQ-001, VERIFY-001
+**Task Outcome:** Establishes the earliest completed baseline.
+**Plan Constraints:**
+- Keep one step per task for deterministic reopen targeting.
+**Open Questions:** none
+
+**Files:**
+- Modify: `tests/contracts_execution_runtime_boundaries.rs`
+
+- [ ] **Step 1: Execute task 1 baseline step**
+
+## Task 2: FS-15 task 2
+
+**Spec Coverage:** REQ-001, VERIFY-001
+**Task Outcome:** Represents the earliest unresolved stale boundary.
+**Plan Constraints:**
+- Keep one step per task for deterministic reopen targeting.
+**Open Questions:** none
+
+**Files:**
+- Modify: `tests/contracts_execution_runtime_boundaries.rs`
+
+- [ ] **Step 1: Execute task 2 baseline step**
+
+## Task 3: FS-15 task 3
+
+**Spec Coverage:** REQ-001, VERIFY-001
+**Task Outcome:** Provides intermediate task numbering for stale-boundary ordering.
+**Plan Constraints:**
+- Keep one step per task for deterministic reopen targeting.
+**Open Questions:** none
+
+**Files:**
+- Modify: `tests/contracts_execution_runtime_boundaries.rs`
+
+- [ ] **Step 1: Execute task 3 baseline step**
+
+## Task 4: FS-15 task 4
+
+**Spec Coverage:** REQ-001, VERIFY-001
+**Task Outcome:** Provides intermediate task numbering for stale-boundary ordering.
+**Plan Constraints:**
+- Keep one step per task for deterministic reopen targeting.
+**Open Questions:** none
+
+**Files:**
+- Modify: `tests/contracts_execution_runtime_boundaries.rs`
+
+- [ ] **Step 1: Execute task 4 baseline step**
+
+## Task 5: FS-15 task 5
+
+**Spec Coverage:** REQ-001, VERIFY-001
+**Task Outcome:** Provides intermediate task numbering for stale-boundary ordering.
+**Plan Constraints:**
+- Keep one step per task for deterministic reopen targeting.
+**Open Questions:** none
+
+**Files:**
+- Modify: `tests/contracts_execution_runtime_boundaries.rs`
+
+- [ ] **Step 1: Execute task 5 baseline step**
+
+## Task 6: FS-15 task 6
+
+**Spec Coverage:** REQ-001, VERIFY-001
+**Task Outcome:** Represents the later stale overlay target that must not outrank Task 2.
+**Plan Constraints:**
+- Keep one step per task for deterministic reopen targeting.
+**Open Questions:** none
+
+**Files:**
+- Modify: `tests/contracts_execution_runtime_boundaries.rs`
+
+- [ ] **Step 1: Execute task 6 baseline step**
 "#;
 
 fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
@@ -186,6 +288,151 @@ fn parse_json_output(output: &Output, context: &str) -> Value {
                 String::from_utf8_lossy(&output.stderr)
             )
         })
+}
+
+fn run_recommended_plan_execution_command(
+    repo: &Path,
+    state: &Path,
+    recommended_command: &str,
+    real_cli: bool,
+    context: &str,
+) -> Value {
+    let command_parts = recommended_command.split_whitespace().collect::<Vec<_>>();
+    assert!(
+        command_parts.len() >= 4,
+        "{context} should expose a full featureforge plan-execution command, got {recommended_command}"
+    );
+    assert_eq!(
+        command_parts[0], "featureforge",
+        "{context} recommended command must start with featureforge, got {recommended_command}"
+    );
+    assert_eq!(
+        command_parts[1], "plan",
+        "{context} recommended command must route through `plan execution`, got {recommended_command}"
+    );
+    assert_eq!(
+        command_parts[2], "execution",
+        "{context} recommended command must route through `plan execution`, got {recommended_command}"
+    );
+    let command_args = if command_parts
+        .get(3)
+        .is_some_and(|command| *command == "close-current-task")
+        && (recommended_command.contains("pass|fail") || recommended_command.contains("<path>"))
+    {
+        let plan = command_parts
+            .windows(2)
+            .find(|window| window[0] == "--plan")
+            .map(|window| window[1])
+            .unwrap_or(PLAN_REL);
+        let task = command_parts
+            .windows(2)
+            .find(|window| window[0] == "--task")
+            .map(|window| window[1])
+            .unwrap_or("1");
+        let summary_path = repo.join("boundary-close-current-task-review-summary.md");
+        let verification_summary_path =
+            repo.join("boundary-close-current-task-verification-summary.md");
+        fs::write(
+            &summary_path,
+            format!("Close-current-task command generated from shared template for {context}.\n"),
+        )
+        .expect("close-current-task template follow-up should write deterministic review summary");
+        fs::write(
+            &verification_summary_path,
+            format!("Verification summary generated from shared template for {context}.\n"),
+        )
+        .expect(
+            "close-current-task template follow-up should write deterministic verification summary",
+        );
+        vec![
+            String::from("plan"),
+            String::from("execution"),
+            String::from("close-current-task"),
+            String::from("--plan"),
+            plan.to_owned(),
+            String::from("--task"),
+            task.to_owned(),
+            String::from("--review-result"),
+            String::from("pass"),
+            String::from("--review-summary-file"),
+            summary_path
+                .to_str()
+                .expect("summary path should stay utf-8")
+                .to_owned(),
+            String::from("--verification-result"),
+            String::from("pass"),
+            String::from("--verification-summary-file"),
+            verification_summary_path
+                .to_str()
+                .expect("verification summary path should stay utf-8")
+                .to_owned(),
+        ]
+    } else {
+        command_parts[1..]
+            .iter()
+            .map(|part| (*part).to_owned())
+            .collect::<Vec<_>>()
+    };
+    let command_args_refs = command_args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_featureforge_json(repo, state, &command_args_refs, real_cli, context)
+}
+
+fn assert_follow_up_blocker_parity_with_operator(
+    operator: &Value,
+    follow_up: &Value,
+    context: &str,
+) {
+    if follow_up["action"].as_str() != Some("blocked") {
+        return;
+    }
+    let follow_up_blocking_reason_codes = follow_up
+        .get("blocking_reason_codes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!(
+                "{context} blocked follow-up must include blocking_reason_codes metadata: {follow_up:?}"
+            )
+        });
+    let operator_blocking_reason_codes = operator
+        .get("blocking_reason_codes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| {
+            panic!(
+                "{context} operator route must include blocking_reason_codes metadata for blocked parity checks: {operator:?}"
+            )
+        });
+    assert!(
+        !follow_up_blocking_reason_codes.is_empty(),
+        "{context} blocked follow-up must keep a non-empty blocker reason-code set",
+    );
+    assert!(
+        !operator_blocking_reason_codes.is_empty(),
+        "{context} operator route must keep a non-empty blocker reason-code set for blocked parity checks",
+    );
+    assert_eq!(
+        follow_up["blocking_scope"], operator["blocking_scope"],
+        "{context} blocked follow-up must preserve operator blocking scope"
+    );
+    assert_eq!(
+        follow_up["blocking_task"], operator["blocking_task"],
+        "{context} blocked follow-up must preserve operator blocking task"
+    );
+    assert_eq!(
+        follow_up["blocking_reason_codes"], operator["blocking_reason_codes"],
+        "{context} blocked follow-up must preserve operator blocker reason-code set"
+    );
+    if !follow_up["blocking_step"].is_null() || !operator["blocking_step"].is_null() {
+        assert_eq!(
+            follow_up["blocking_step"], operator["blocking_step"],
+            "{context} blocked follow-up must preserve operator blocking step"
+        );
+    }
+    if !follow_up["authoritative_next_action"].is_null() {
+        assert_eq!(
+            follow_up["authoritative_next_action"], operator["recommended_command"],
+            "{context} blocked follow-up authoritative next action must mirror workflow operator"
+        );
+    }
 }
 
 fn authoritative_harness_state_path(repo: &Path, state: &Path) -> PathBuf {
@@ -478,6 +725,25 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
     );
 }
 
+fn setup_fs08_stale_blocker_fixture(repo: &Path, state: &Path) {
+    setup_task_boundary_blocked_case(repo, state);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            ("current_branch_closure_id", Value::Null),
+            ("current_branch_closure_reviewed_state_id", Value::Null),
+            ("current_branch_closure_contract_identity", Value::Null),
+            ("resume_task", Value::from(1_u64)),
+            ("resume_step", Value::from(1_u64)),
+            (
+                "review_state_repair_follow_up",
+                Value::from("execution_reentry"),
+            ),
+        ],
+    );
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -648,7 +914,7 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
         .expect("execution query source should be readable");
 
     assert!(
-        query_source.contains("String::from(\"task_closure_recording_ready\")")
+        query_source.contains("\"task_closure_recording_ready\"")
             && query_source.contains("task_number: Some(task_number)")
             && query_source.contains("dispatch_id: task_review_dispatch_id.clone()"),
         "task_closure_recording_ready should expose task_number and may surface dispatch_id in recording_context",
@@ -660,7 +926,7 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
         "release-readiness recording-ready states should expose branch_closure_id recording_context ids",
     );
     assert!(
-        query_source.contains("String::from(\"final_review_recording_ready\")")
+        query_source.contains("\"final_review_recording_ready\"")
             && query_source.contains("dispatch_id: final_review_dispatch_id.clone()")
             && query_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
         "final_review_recording_ready should expose branch_closure_id and may surface dispatch_id in the routing constructor",
@@ -984,7 +1250,57 @@ fn rebuild_evidence_refresh_claims_write_authority_before_loading_authoritative_
 }
 
 #[test]
-fn gate_follow_up_contract_prefers_shared_routing_over_stale_branch_closure_heuristics() {
+fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-fs04-shared-action");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+    let runtime = execution_runtime(repo, state);
+    let plan = PathBuf::from(PLAN_REL);
+    let routing = query_workflow_routing_state_for_runtime(&runtime, Some(&plan), true)
+        .expect("FS-04 shared-action routing query should succeed");
+    let operator = run_workflow_operator_json(
+        repo,
+        state,
+        PLAN_REL,
+        true,
+        "FS-04 shared-action workflow operator parity",
+    );
+
+    assert_eq!(
+        routing.phase_detail, "task_closure_recording_ready",
+        "FS-04 shared-action contract should expose the exact closure-recording phase detail"
+    );
+    assert_eq!(
+        routing.next_action, "close current task",
+        "FS-04 shared-action contract should expose the exact shared next action"
+    );
+    let recommended_command = routing
+        .recommended_command
+        .as_deref()
+        .expect("FS-04 shared-action contract should expose the exact recommended command");
+    assert!(
+        recommended_command.starts_with("featureforge plan execution close-current-task --plan "),
+        "FS-04 shared-action contract should route through close-current-task, got {recommended_command}"
+    );
+    assert!(
+        recommended_command.contains("--task 1"),
+        "FS-04 shared-action contract should stay pinned to Task 1, got {recommended_command}"
+    );
+    assert_routing_parity_with_operator_json(&routing, &operator);
+    let routed_follow_up = run_recommended_plan_execution_command(
+        repo,
+        state,
+        recommended_command,
+        true,
+        "FS-04 shared-action routed-command parity",
+    );
+    assert_follow_up_blocker_parity_with_operator(
+        &operator,
+        &routed_follow_up,
+        "FS-04 shared-action routed-command parity",
+    );
+
     let query_source = fs::read_to_string(repo_root().join("src/execution/query.rs"))
         .expect("execution query source should be readable");
     let follow_up_start = query_source
@@ -1051,6 +1367,28 @@ fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
     assert!(
         inventory.contains("FS-08"),
         "runtime-remediation inventory should include FS-08 stale-blocker visibility coverage"
+    );
+    assert!(
+        inventory.contains("FS-13"),
+        "runtime-remediation inventory should include FS-13 authoritative open-step runtime-state coverage"
+    );
+    assert!(
+        inventory.contains("FS-14"),
+        "runtime-remediation inventory should include FS-14 closure-baseline repair routing coverage"
+    );
+    assert!(
+        inventory.contains("FS-15"),
+        "runtime-remediation inventory should include FS-15 earliest-stale-boundary targeting coverage"
+    );
+    assert!(
+        inventory.contains("FS-16"),
+        "runtime-remediation inventory should include FS-16 begin-time closure-authority coverage"
+    );
+    assert!(
+        inventory.contains(
+            "tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task"
+        ),
+        "runtime-remediation inventory should map FS-15 parity coverage to the compiled-cli boundary contract test"
     );
     assert!(
         inventory.contains("tests/contracts_execution_runtime_boundaries.rs"),
@@ -1187,14 +1525,21 @@ fn runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibi
 #[test]
 fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli()
 {
-    let run_case = |label: &str, real_cli: bool| -> Value {
+    let run_case = |label: &str, real_cli: bool| -> (Value, Value) {
         let (repo_dir, state_dir) = init_repo(&format!(
             "contracts-boundary-runtime-remediation-fs04-{label}"
         ));
         let repo = repo_dir.path();
         let state = state_dir.path();
         setup_task_boundary_blocked_case(repo, state);
-        run_featureforge_json(
+        let operator = run_featureforge_json(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+            real_cli,
+            &format!("FS-04 {label} workflow operator shared-route parity"),
+        );
+        let repair = run_featureforge_json(
             repo,
             state,
             &[
@@ -1206,25 +1551,76 @@ fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct
             ],
             real_cli,
             &format!("FS-04 {label} repair-review-state route visibility"),
-        )
+        );
+        let recommended_command = repair["recommended_command"]
+            .as_str()
+            .expect("FS-04 repair output should expose recommended command");
+        assert!(
+            recommended_command
+                .starts_with("featureforge plan execution close-current-task --plan "),
+            "FS-04 closure-baseline route should keep repair/operator on close-current-task guidance, got {recommended_command}"
+        );
+        let routed_follow_up = run_recommended_plan_execution_command(
+            repo,
+            state,
+            recommended_command,
+            real_cli,
+            &format!("FS-04 {label} routed-command parity"),
+        );
+        assert_follow_up_blocker_parity_with_operator(
+            &operator,
+            &routed_follow_up,
+            &format!("FS-04 {label} routed-command parity"),
+        );
+        assert!(
+            matches!(
+                routed_follow_up["action"].as_str(),
+                Some("recorded" | "already_current")
+            ),
+            "FS-04 {label} routed command must be immediately runnable when repair reports already_current, got {routed_follow_up:?}"
+        );
+        (operator, repair)
     };
 
-    let repair_direct = run_case("direct", false);
-    let repair_real = run_case("compiled-cli", true);
-    assert_eq!(repair_direct["action"], repair_real["action"]);
+    let (operator_direct, repair_direct) = run_case("direct", false);
+    let (operator_real, repair_real) = run_case("compiled-cli", true);
     assert_eq!(
-        repair_direct["required_follow_up"],
-        repair_real["required_follow_up"]
+        operator_direct, operator_real,
+        "FS-04 direct and compiled-cli operator outputs must stay semantically aligned"
     );
-    assert_eq!(repair_real["action"], Value::from("blocked"));
+    assert_eq!(
+        repair_direct["action"], repair_real["action"],
+        "FS-04 direct and compiled-cli repair actions must stay aligned"
+    );
+    assert_eq!(
+        repair_direct["phase_detail"], repair_real["phase_detail"],
+        "FS-04 direct and compiled-cli repair phase_detail must stay aligned"
+    );
+    assert_eq!(
+        repair_direct["required_follow_up"], repair_real["required_follow_up"],
+        "FS-04 direct and compiled-cli repair follow-up classification must stay aligned"
+    );
+    assert_eq!(
+        operator_real["recommended_command"], repair_real["recommended_command"],
+        "FS-04 compiled-cli repair output should keep operator and repair on the exact same shared command target"
+    );
+    assert_eq!(
+        operator_direct["recommended_command"], repair_direct["recommended_command"],
+        "FS-04 direct repair output should keep operator and repair on the exact same shared command target"
+    );
+    assert_eq!(
+        repair_real["action"],
+        Value::from("blocked"),
+        "FS-04 closure-baseline repair should surface the shared closure-recording blocker instead of claiming repair is already current"
+    );
+    assert_eq!(
+        repair_real["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-04 repair-review-state should expose the exact shared next-action phase detail for closure-baseline recovery, got {repair_real:?}"
+    );
     assert!(
-        repair_real["required_follow_up"]
-            .as_str()
-            .is_some_and(|follow_up| matches!(
-                follow_up,
-                "advance_late_stage" | "execution_reentry" | "request_external_review"
-            )),
-        "FS-04 repair-review-state should expose one authoritative blocker follow-up"
+        repair_real["required_follow_up"].is_null(),
+        "FS-04 closure-baseline recovery should not force a stale follow-up category once shared routing is closure-recording-ready, got {repair_real:?}"
     );
 }
 
@@ -1259,7 +1655,40 @@ fn runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_fl
             &output,
             &format!("FS-04 {label} repair-review-state flag acceptance"),
         );
-        results.push((label, routed));
+        let operator = run_featureforge_json(
+            repo,
+            state,
+            &[
+                "workflow",
+                "operator",
+                "--plan",
+                PLAN_REL,
+                "--external-review-result-ready",
+                "--json",
+            ],
+            real_cli,
+            &format!("FS-04 {label} operator parity after repair-review-state flag acceptance"),
+        );
+        assert_eq!(
+            routed["recommended_command"], operator["recommended_command"],
+            "FS-04 {label} repair and operator should expose the same command target before command-follow parity checks"
+        );
+        let recommended_command = routed["recommended_command"]
+            .as_str()
+            .expect("FS-04 routed output should expose recommended_command text");
+        let routed_follow_up = run_recommended_plan_execution_command(
+            repo,
+            state,
+            recommended_command,
+            real_cli,
+            &format!("FS-04 {label} routed-command parity"),
+        );
+        assert_follow_up_blocker_parity_with_operator(
+            &operator,
+            &routed_follow_up,
+            &format!("FS-04 {label} routed-command parity"),
+        );
+        results.push((label, routed, routed_follow_up));
     }
 
     assert_eq!(results[0].1["action"], results[1].1["action"]);
@@ -1268,8 +1697,26 @@ fn runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_fl
         results[1].1["required_follow_up"]
     );
     assert_eq!(
-        results[0].1["recommended_command"],
-        results[1].1["recommended_command"]
+        results[0].2["action"], results[1].2["action"],
+        "FS-04 direct and compiled-cli routed-command actions should stay aligned"
+    );
+    let direct_recommended = results[0].1["recommended_command"]
+        .as_str()
+        .expect("FS-04 direct route should expose recommended_command text");
+    let compiled_recommended = results[1].1["recommended_command"]
+        .as_str()
+        .expect("FS-04 compiled-cli route should expose recommended_command text");
+    let normalized_recommended_command = |command: &str| {
+        command
+            .split(" --expect-execution-fingerprint ")
+            .next()
+            .unwrap_or(command)
+            .to_owned()
+    };
+    assert_eq!(
+        normalized_recommended_command(direct_recommended),
+        normalized_recommended_command(compiled_recommended),
+        "FS-04 direct and compiled-cli routes should stay command-shape aligned even when per-fixture execution fingerprints differ"
     );
 }
 
@@ -1279,22 +1726,7 @@ fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direc
     let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs08");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    setup_task_boundary_blocked_case(repo, state);
-    update_authoritative_harness_state(
-        repo,
-        state,
-        &[
-            ("current_branch_closure_id", Value::Null),
-            ("current_branch_closure_reviewed_state_id", Value::Null),
-            ("current_branch_closure_contract_identity", Value::Null),
-            ("resume_task", Value::from(1_u64)),
-            ("resume_step", Value::from(1_u64)),
-            (
-                "review_state_repair_follow_up",
-                Value::from("execution_reentry"),
-            ),
-        ],
-    );
+    setup_fs08_stale_blocker_fixture(repo, state);
 
     let operator_direct = run_featureforge_json(
         repo,
@@ -1316,19 +1748,465 @@ fn runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direc
     );
     assert_eq!(
         operator_real["phase_detail"],
-        Value::from("task_review_dispatch_required"),
-        "FS-08 stale blocker should remain visible as task_review_dispatch_required"
+        Value::from("task_closure_recording_ready"),
+        "FS-08 stale blocker should remain visible as task_closure_recording_ready"
     );
     assert_eq!(operator_real["blocking_scope"], Value::from("task"));
     assert_eq!(operator_real["blocking_task"], Value::from(1_u64));
+    let mut operator_reason_codes = operator_real["blocking_reason_codes"]
+        .as_array()
+        .expect("FS-08 operator should expose blocking_reason_codes as an array")
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    operator_reason_codes.sort();
+    let expected_reason_codes = vec![
+        String::from("prior_task_current_closure_missing"),
+        String::from("task_closure_baseline_repair_candidate"),
+    ];
+    assert_eq!(
+        operator_reason_codes, expected_reason_codes,
+        "FS-08 operator should expose the exact stale-blocker reason-code set for this fixture"
+    );
+    let operator_recommended = operator_real["recommended_command"]
+        .as_str()
+        .expect("FS-08 operator should expose a recommended command");
+
+    let status_direct = run_featureforge_json(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        false,
+        "FS-08 direct status stale-blocker visibility",
+    );
+    let status_real = run_featureforge_json(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        true,
+        "FS-08 compiled-cli status stale-blocker visibility",
+    );
+    assert_eq!(
+        status_direct, status_real,
+        "FS-08 direct and compiled-cli status outputs must stay semantically aligned"
+    );
+    assert_eq!(
+        status_real["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-08 status should keep stale blocker visible as task_closure_recording_ready"
+    );
+    assert_eq!(status_real["blocking_scope"], Value::from("task"));
+    assert_eq!(status_real["blocking_task"], Value::from(1_u64));
+    let mut status_reason_codes = status_real["blocking_reason_codes"]
+        .as_array()
+        .expect("FS-08 status should expose blocking_reason_codes as an array")
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    status_reason_codes.sort();
+    assert_eq!(
+        status_reason_codes, expected_reason_codes,
+        "FS-08 status should expose the exact stale-blocker reason-code set for this fixture"
+    );
+    let (direct_repo_dir, direct_state_dir) =
+        init_repo("contracts-boundary-runtime-remediation-fs08-direct-follow-up");
+    let direct_repo = direct_repo_dir.path();
+    let direct_state = direct_state_dir.path();
+    setup_fs08_stale_blocker_fixture(direct_repo, direct_state);
+    let direct_operator_follow_up = run_recommended_plan_execution_command(
+        direct_repo,
+        direct_state,
+        operator_recommended,
+        false,
+        "FS-08 direct operator recommended command follow-up parity",
+    );
     assert!(
-        operator_real["blocking_reason_codes"]
-            .as_array()
-            .is_some_and(|codes| {
-                codes
-                    .iter()
-                    .any(|code| code == "prior_task_review_dispatch_missing")
-            }),
-        "FS-08 stale blocker should preserve prior_task_review_dispatch_missing reason code"
+        direct_operator_follow_up["action"].as_str().is_some(),
+        "FS-08 direct follow-up command should return an action payload"
+    );
+    assert_follow_up_blocker_parity_with_operator(
+        &operator_direct,
+        &direct_operator_follow_up,
+        "FS-08 direct command-follow parity",
+    );
+    let (compiled_repo_dir, compiled_state_dir) =
+        init_repo("contracts-boundary-runtime-remediation-fs08-compiled-follow-up");
+    let compiled_repo = compiled_repo_dir.path();
+    let compiled_state = compiled_state_dir.path();
+    setup_fs08_stale_blocker_fixture(compiled_repo, compiled_state);
+    let operator_follow_up = run_recommended_plan_execution_command(
+        compiled_repo,
+        compiled_state,
+        operator_recommended,
+        true,
+        "FS-08 compiled-cli operator recommended command follow-up parity",
+    );
+    assert_follow_up_blocker_parity_with_operator(
+        &operator_real,
+        &operator_follow_up,
+        "FS-08 command-follow parity",
+    );
+    assert!(
+        operator_follow_up["action"].as_str().is_some(),
+        "FS-08 follow-up command should return an action payload"
+    );
+    assert!(
+        operator_recommended.starts_with("featureforge plan execution close-current-task --plan "),
+        "FS-08 closure-baseline route should recommend close-current-task in direct and compiled-cli surfaces, got {operator_recommended}"
+    );
+    assert!(
+        operator_recommended.contains("--task 1"),
+        "FS-08 closure-baseline route should remain pinned to Task 1, got {operator_recommended}"
+    );
+}
+
+#[test]
+fn runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs15");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
+    fs::write(repo.join(PLAN_REL), TASK_BOUNDARY_FS15_PLAN_SOURCE)
+        .expect("FS-15 stale-boundary fixture plan should be writable");
+    prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs15");
+
+    let preflight = run_plan_execution_json(
+        repo,
+        state,
+        &["preflight", "--plan", PLAN_REL],
+        "FS-15 preflight before stale-boundary fixture",
+    );
+    assert_eq!(
+        preflight["allowed"],
+        Value::Bool(true),
+        "FS-15 preflight should allow stale-boundary fixture execution",
+    );
+    let status_before_task1 = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "FS-15 status before bootstrap task 1 begin",
+    );
+    let begin_task1 = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_before_task1["execution_fingerprint"]
+                .as_str()
+                .expect("FS-15 status should expose execution fingerprint before bootstrap task 1 begin"),
+        ],
+        "FS-15 bootstrap task 1 begin",
+    );
+    run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "complete",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--claim",
+            "FS-15 bootstrap task 1 complete",
+            "--manual-verify-summary",
+            "FS-15 bootstrap task 1 complete summary",
+            "--file",
+            "tests/contracts_execution_runtime_boundaries.rs",
+            "--expect-execution-fingerprint",
+            begin_task1["execution_fingerprint"]
+                .as_str()
+                .expect("FS-15 begin task 1 should expose execution fingerprint before complete"),
+        ],
+        "FS-15 bootstrap task 1 complete",
+    );
+    let repair_task1 = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "repair-review-state",
+            "--plan",
+            PLAN_REL,
+            "--external-review-result-ready",
+        ],
+        "FS-15 bootstrap task 1 repair-review-state",
+    );
+    assert_eq!(
+        repair_task1["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-15 bootstrap task 1 repair-review-state should surface the public closure-recording repair bridge"
+    );
+    let repair_task1_command = repair_task1["recommended_command"]
+        .as_str()
+        .expect("FS-15 bootstrap task 1 repair-review-state should expose a follow-up command");
+    assert!(
+        repair_task1_command.contains("close-current-task"),
+        "FS-15 bootstrap task 1 repair-review-state should route through close-current-task, got {repair_task1_command}"
+    );
+    let close_task1 = run_recommended_plan_execution_command(
+        repo,
+        state,
+        repair_task1_command,
+        true,
+        "FS-15 bootstrap task 1 repair-review-state follow-up",
+    );
+    assert_eq!(
+        close_task1["action"],
+        Value::from("recorded"),
+        "FS-15 bootstrap task 1 repair follow-up should record a task closure"
+    );
+    let status_after_close_task1 = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "FS-15 status after bootstrap task 1 close-current-task",
+    );
+    let begin_task2 = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--expect-execution-fingerprint",
+            status_after_close_task1["execution_fingerprint"]
+                .as_str()
+                .expect(
+                    "FS-15 status after close-current-task should expose execution fingerprint before task 2 begin",
+                ),
+        ],
+        "FS-15 bootstrap task 2 begin",
+    );
+    run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "complete",
+            "--plan",
+            PLAN_REL,
+            "--task",
+            "2",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--claim",
+            "FS-15 bootstrap task 2 complete",
+            "--manual-verify-summary",
+            "FS-15 bootstrap task 2 complete summary",
+            "--file",
+            "tests/contracts_execution_runtime_boundaries.rs",
+            "--expect-execution-fingerprint",
+            begin_task2["execution_fingerprint"]
+                .as_str()
+                .expect("FS-15 begin task 2 should expose execution fingerprint before complete"),
+        ],
+        "FS-15 bootstrap task 2 complete",
+    );
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &[
+            (
+                "task_closure_record_history",
+                serde_json::json!({
+                    "task-1-current": {
+                        "closure_record_id": "task-1-current",
+                        "task": 1,
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 5,
+                        "closure_status": "current",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    },
+                    "task-2-stale": {
+                        "closure_record_id": "task-2-stale",
+                        "task": 2,
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 10,
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    },
+                    "task-6-stale": {
+                        "closure_record_id": "task-6-stale",
+                        "task": 6,
+                        "source_plan_path": PLAN_REL,
+                        "source_plan_revision": 1,
+                        "record_sequence": 20,
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    }
+                }),
+            ),
+            (
+                "current_open_step_state",
+                serde_json::json!({
+                    "task": 6,
+                    "step": 1,
+                    "note_state": "Interrupted",
+                    "note_summary": "FS-15 later interrupted overlay",
+                    "source_plan_path": PLAN_REL,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 30
+                }),
+            ),
+            ("resume_task", Value::from(6_u64)),
+            ("resume_step", Value::from(1_u64)),
+        ],
+    );
+
+    let operator_direct = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        false,
+        "FS-15 direct operator stale-boundary targeting",
+    );
+    let operator_real = run_featureforge_json(
+        repo,
+        state,
+        &["workflow", "operator", "--plan", PLAN_REL, "--json"],
+        true,
+        "FS-15 compiled-cli operator stale-boundary targeting",
+    );
+    assert_eq!(
+        operator_direct, operator_real,
+        "FS-15 direct and compiled-cli operator outputs must stay semantically aligned",
+    );
+    assert_eq!(
+        operator_real["execution_command_context"]["command_kind"],
+        Value::from("reopen")
+    );
+    assert_eq!(
+        operator_real["execution_command_context"]["task_number"],
+        Value::from(2_u64),
+        "FS-15 should always target the earliest unresolved stale boundary (Task 2)",
+    );
+    assert_eq!(
+        operator_real["execution_command_context"]["step_id"],
+        Value::from(1_u64)
+    );
+    let recommended_command = operator_real["recommended_command"]
+        .as_str()
+        .expect("FS-15 compiled-cli operator should expose a reopen command");
+    assert!(
+        recommended_command.contains("--task 2 --step 1"),
+        "FS-15 compiled-cli operator should route reopen to Task 2 Step 1, got {recommended_command}",
+    );
+    assert!(
+        !recommended_command.contains("--task 6"),
+        "FS-15 compiled-cli operator must not route to Task 6 while Task 2 is stale, got {recommended_command}",
+    );
+    let operator_follow_up = run_recommended_plan_execution_command(
+        repo,
+        state,
+        recommended_command,
+        true,
+        "FS-15 compiled-cli operator recommended command follow-up parity",
+    );
+    assert_follow_up_blocker_parity_with_operator(
+        &operator_real,
+        &operator_follow_up,
+        "FS-15 command-follow parity",
+    );
+}
+
+#[test]
+fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_round_trip() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs13");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_execution_in_progress(repo, state);
+
+    let authoritative_state_path = authoritative_harness_state_path(repo, state);
+    let authoritative_state: Value = serde_json::from_str(
+        &fs::read_to_string(&authoritative_state_path)
+            .expect("FS-13 authoritative harness state should be readable"),
+    )
+    .expect("FS-13 authoritative harness state should remain valid json");
+    assert_eq!(
+        authoritative_state["current_open_step_state"]["task"],
+        Value::from(1_u64)
+    );
+    assert_eq!(
+        authoritative_state["current_open_step_state"]["step"],
+        Value::from(1_u64)
+    );
+    assert_eq!(
+        authoritative_state["current_open_step_state"]["note_state"],
+        Value::from("Active")
+    );
+
+    let status_real = run_featureforge_json(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        true,
+        "FS-13 compiled-cli status before markdown note tamper",
+    );
+    assert_eq!(status_real["active_task"], Value::from(1_u64));
+    assert_eq!(status_real["active_step"], Value::from(1_u64));
+
+    let plan_path = repo.join(PLAN_REL);
+    let plan_source =
+        fs::read_to_string(&plan_path).expect("FS-13 plan source should be readable for tamper");
+    let tampered = plan_source.replace(
+        "- [ ] **Step 2: Validate workflow fixture output**",
+        "- [ ] **Step 2: Validate workflow fixture output**\n\n  **Execution Note:** Interrupted - FS-13 tampered markdown note should be projection-only.",
+    );
+    fs::write(&plan_path, tampered).expect("FS-13 tampered plan source should be writable");
+
+    let status_real_after_tamper = run_featureforge_json(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        true,
+        "FS-13 compiled-cli status after markdown note tamper",
+    );
+    let status_direct_after_tamper = run_featureforge_json(
+        repo,
+        state,
+        &["plan", "execution", "status", "--plan", PLAN_REL],
+        false,
+        "FS-13 direct status after markdown note tamper",
+    );
+    assert_eq!(
+        status_real_after_tamper["active_task"],
+        Value::from(1_u64),
+        "FS-13 compiled-cli status must keep authoritative active open-step target despite markdown tamper"
+    );
+    assert_eq!(status_real_after_tamper["active_step"], Value::from(1_u64));
+    assert_eq!(status_real_after_tamper["resume_task"], Value::Null);
+    assert_eq!(
+        status_direct_after_tamper["active_task"],
+        status_real_after_tamper["active_task"]
+    );
+    assert_eq!(
+        status_direct_after_tamper["active_step"],
+        status_real_after_tamper["active_step"]
+    );
+    assert_eq!(
+        status_direct_after_tamper["resume_task"],
+        status_real_after_tamper["resume_task"]
     );
 }

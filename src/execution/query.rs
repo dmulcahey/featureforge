@@ -11,29 +11,25 @@ use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::closure_graph::{
     AuthoritativeClosureGraph, ClosureGraphSignals, reason_code_indicates_stale_unreviewed,
 };
+#[cfg(test)]
+use crate::execution::current_truth::late_stage_stale_unreviewed as shared_late_stage_stale_unreviewed;
 use crate::execution::current_truth::{
-    BranchRerecordingUnsupportedReason, FollowUpOverrideInputs, IntentLevelCommandTemplateInputs,
-    ReviewStateRepairReroute,
+    BranchRerecordingUnsupportedReason, FollowUpOverrideInputs, ReviewStateRepairReroute,
     branch_closure_refresh_missing_current_closure as shared_branch_closure_refresh_missing_current_closure,
     branch_closure_rerecording_assessment,
     current_branch_closure_has_tracked_drift as shared_current_branch_closure_has_tracked_drift,
-    current_final_review_dispatch_id as shared_current_final_review_dispatch_id,
     current_late_stage_branch_bindings as shared_current_late_stage_branch_bindings,
     current_task_negative_result_task as shared_current_task_negative_result_task,
-    current_task_review_dispatch_id as shared_current_task_review_dispatch_id,
     execution_state_has_open_steps as shared_execution_state_has_open_steps,
-    final_review_dispatch_still_current, finish_requires_test_plan_refresh,
-    handoff_decision_scope as shared_handoff_decision_scope, intent_level_command_template,
+    handoff_decision_scope as shared_handoff_decision_scope,
     late_stage_missing_current_closure_stale_provenance_present as shared_late_stage_missing_current_closure_stale_provenance_present,
     late_stage_qa_blocked as shared_late_stage_qa_blocked,
     late_stage_release_blocked as shared_late_stage_release_blocked,
     late_stage_release_truth_blocked as shared_late_stage_release_truth_blocked,
     late_stage_review_blocked as shared_late_stage_review_blocked,
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
-    late_stage_stale_unreviewed as shared_late_stage_stale_unreviewed,
     live_review_state_repair_reroute as shared_live_review_state_repair_reroute,
     live_task_scope_repair_precedence_active as shared_live_task_scope_repair_precedence_active,
-    negative_result_requires_execution_reentry as shared_negative_result_requires_execution_reentry,
     normalized_plan_qa_requirement as shared_normalized_plan_qa_requirement,
     public_late_stage_rederivation_basis_present as late_stage_rederivation_basis_present,
     public_late_stage_stale_unreviewed as shared_public_late_stage_stale_unreviewed,
@@ -41,26 +37,32 @@ use crate::execution::current_truth::{
     qa_requirement_policy_invalid as shared_qa_requirement_policy_invalid,
     resolve_follow_up_override as resolve_shared_follow_up_override,
     task_boundary_block_reason_code as shared_task_boundary_block_reason_code,
-    task_review_dispatch_task, task_review_result_pending_task,
+    task_review_result_requires_verification_reason_codes,
     task_scope_overlay_restore_required as shared_task_scope_overlay_restore_required,
     task_scope_stale_review_state_reason_present as shared_task_scope_stale_review_state_reason_present,
 };
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
-#[cfg(test)]
-use crate::execution::state::status_from_context;
+use crate::execution::next_action::{
+    NextActionDecision, NextActionKind, compute_next_action_decision_with_inputs,
+    exact_execution_command_from_decision, public_next_action_text,
+};
 use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionRuntime, GateResult, PlanExecutionStatus,
-    current_branch_closure_structural_review_state_reason, current_head_sha,
-    execution_reentry_requires_review_state_repair, gate_finish_from_context,
-    gate_review_from_context, live_review_state_status_for_reroute_from_status,
-    load_execution_context, load_execution_context_for_exact_plan, load_execution_read_scope,
+    current_branch_closure_structural_review_state_reason,
+    current_final_review_dispatch_authority_for_context, current_head_sha,
+    current_task_review_dispatch_id_for_status, execution_reentry_requires_review_state_repair,
+    gate_finish_from_context, gate_review_from_context,
+    live_review_state_status_for_reroute_from_status, load_execution_read_scope,
     missing_derived_review_state_fields, preflight_from_context,
-    prerelease_branch_closure_refresh_required, qa_pending_requires_test_plan_refresh,
-    require_public_exact_execution_command, resolve_exact_execution_command_from_context,
-    stale_current_task_closure_record_ids, still_current_task_closure_records,
-    task_completion_lineage_fingerprint, task_scope_review_state_repair_reason,
-    task_scope_structural_review_state_reason,
+    qa_pending_requires_test_plan_refresh, stale_current_task_closure_record_ids,
+    still_current_task_closure_records, task_scope_review_state_repair_reason,
+    task_scope_structural_review_state_reason, unprojected_status_from_read_scope,
     usable_current_branch_closure_identity_from_authoritative_state,
+};
+#[cfg(test)]
+use crate::execution::state::{
+    load_execution_context, load_execution_context_for_exact_plan,
+    resolve_exact_execution_command_from_context,
 };
 use crate::git::discover_slug_identity_and_head;
 use crate::workflow::late_stage_precedence::{
@@ -99,8 +101,9 @@ pub struct ReviewStateSnapshot {
     pub trace_summary: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct WorkflowExecutionState {
+    pub execution_context: Option<ExecutionContext>,
     pub execution_status: Option<PlanExecutionStatus>,
     pub preflight: Option<GateResult>,
     pub gate_review: Option<GateResult>,
@@ -108,6 +111,7 @@ pub struct WorkflowExecutionState {
     pub review_state_snapshot: Option<ReviewStateSnapshot>,
     pub task_scope_overlay_restore_required: bool,
     pub task_negative_result_task: Option<u32>,
+    pub task_negative_result_verification_failed: bool,
     pub task_review_dispatch_id: Option<String>,
     pub final_review_dispatch_id: Option<String>,
     pub final_review_dispatch_lineage_present: bool,
@@ -196,16 +200,60 @@ pub(crate) fn required_follow_up_from_routing(routing: &ExecutionRoutingState) -
     if routing.phase_detail == "branch_closure_recording_required_for_release_readiness" {
         return Some(String::from("advance_late_stage"));
     }
-    match routing.phase_detail.as_str() {
+    follow_up_from_phase_detail(
+        routing.phase_detail.as_str(),
+        routing.blocking_reason_codes.iter().map(String::as_str),
+    )
+    .map(str::to_owned)
+}
+
+pub(crate) fn follow_up_from_phase_detail<'a>(
+    phase_detail: &str,
+    blocking_reason_codes: impl IntoIterator<Item = &'a str>,
+) -> Option<&'static str> {
+    if phase_detail == "branch_closure_recording_required_for_release_readiness" {
+        return Some("advance_late_stage");
+    }
+    match phase_detail {
         "task_review_dispatch_required" | "final_review_dispatch_required" => {
-            Some(String::from("request_external_review"))
+            Some("request_external_review")
         }
-        "release_blocker_resolution_required" => Some(String::from("resolve_release_blocker")),
-        "execution_reentry_required" => Some(String::from("execution_reentry")),
-        "handoff_recording_required" => Some(String::from("record_handoff")),
-        "planning_reentry_required" => Some(String::from("record_pivot")),
+        "task_review_result_pending" => {
+            if task_review_result_requires_verification(blocking_reason_codes) {
+                Some("run_verification")
+            } else {
+                Some("wait_for_external_review_result")
+            }
+        }
+        "final_review_outcome_pending" => Some("wait_for_external_review_result"),
+        "release_blocker_resolution_required" => Some("resolve_release_blocker"),
+        "execution_reentry_required" => Some("execution_reentry"),
+        "handoff_recording_required" => Some("record_handoff"),
+        "planning_reentry_required" => Some("record_pivot"),
         _ => None,
     }
+}
+
+pub(crate) fn normalize_public_follow_up_alias(required_follow_up: Option<&str>) -> Option<&str> {
+    match required_follow_up {
+        Some("record_branch_closure") => Some("advance_late_stage"),
+        other => other,
+    }
+}
+
+pub(crate) fn normalize_persisted_follow_up_alias(
+    required_follow_up: Option<&str>,
+) -> Option<&str> {
+    match required_follow_up {
+        Some("advance_late_stage") => Some("record_branch_closure"),
+        other => other,
+    }
+}
+
+pub(crate) fn task_review_result_requires_verification<'a>(
+    reason_codes: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    task_review_result_requires_verification_reason_codes(reason_codes)
 }
 
 fn routing_requires_review_state_repair(routing: &ExecutionRoutingState) -> bool {
@@ -222,6 +270,19 @@ fn routing_requires_review_state_repair(routing: &ExecutionRoutingState) -> bool
         return true;
     }
     routing.execution_status.as_ref().is_some_and(|status| {
+        let late_stage_stale_provenance_without_branch_binding =
+            matches!(
+                status.harness_phase,
+                HarnessPhase::DocumentReleasePending
+                    | HarnessPhase::FinalReviewPending
+                    | HarnessPhase::QaPending
+                    | HarnessPhase::ReadyForBranchCompletion
+            ) && status.current_branch_closure_id.is_none()
+                && !status.stale_unreviewed_closures.is_empty()
+                && status
+                    .reason_codes
+                    .iter()
+                    .any(|code| code == "stale_provenance");
         task_scope_structural_review_state_reason(status).is_some()
             || task_scope_review_state_repair_reason(status).is_some()
             || current_branch_closure_structural_review_state_reason(status).is_some()
@@ -229,6 +290,7 @@ fn routing_requires_review_state_repair(routing: &ExecutionRoutingState) -> bool
                 .reason_codes
                 .iter()
                 .any(|code| code == "derived_review_state_missing")
+            || late_stage_stale_provenance_without_branch_binding
     })
 }
 
@@ -245,14 +307,14 @@ fn query_review_state_internal(
     exact_plan_override: bool,
 ) -> Result<ReviewStateSnapshot, JsonFailure> {
     let read_scope = load_execution_read_scope(runtime, plan_path, exact_plan_override)?;
-    review_state_snapshot_from_read_scope(&read_scope)
+    review_state_snapshot_from_read_scope_with_status(&read_scope, &read_scope.status)
 }
 
-fn review_state_snapshot_from_read_scope(
+pub(crate) fn review_state_snapshot_from_read_scope_with_status(
     read_scope: &ExecutionReadScope,
+    status: &PlanExecutionStatus,
 ) -> Result<ReviewStateSnapshot, JsonFailure> {
     let context = &read_scope.context;
-    let status = &read_scope.status;
     let overlay = read_scope.overlay.as_ref();
     let authoritative_state = read_scope.authoritative_state.as_ref();
     let branch_closure_tracked_drift =
@@ -446,7 +508,7 @@ fn query_workflow_execution_state_internal(
     plan_path: &str,
     exact_plan_override: bool,
     preloaded_read_scope: Option<&ExecutionReadScope>,
-    require_exact_execution_command: bool,
+    _require_exact_execution_command: bool,
 ) -> Result<WorkflowExecutionState, JsonFailure> {
     if plan_path.is_empty() {
         return Ok(WorkflowExecutionState::default());
@@ -459,14 +521,13 @@ fn query_workflow_execution_state_internal(
         owned_read_scope = load_execution_read_scope(runtime, &plan_path_buf, exact_plan_override)?;
         &owned_read_scope
     };
-    let review_state_snapshot = review_state_snapshot_from_read_scope(read_scope)?;
     let context = read_scope.context.clone();
-    let execution_status = read_scope.status.clone();
+    let projected_execution_status = read_scope.status.clone();
+    let review_state_snapshot =
+        review_state_snapshot_from_read_scope_with_status(read_scope, &projected_execution_status)?;
+    let execution_status = unprojected_status_from_read_scope(read_scope)?;
     let overlay = read_scope.overlay.clone();
     let authoritative_state = read_scope.authoritative_state.as_ref();
-    if require_exact_execution_command {
-        require_public_exact_execution_command(&context, &execution_status)?;
-    }
     let mut preflight = None;
     let mut gate_review = None;
     let mut gate_finish = None;
@@ -479,26 +540,20 @@ fn query_workflow_execution_state_internal(
     } else if !status_has_accepted_preflight(&execution_status) {
         preflight = Some(preflight_from_context(&context));
     }
-    let current_task_lineage_fingerprint = execution_status
-        .blocking_task
-        .and_then(|task_number| task_completion_lineage_fingerprint(&context, task_number));
-    let current_task_reviewed_state_id = execution_status.blocking_task.and_then(|_| {
-        context
-            .current_tracked_tree_sha()
-            .ok()
-            .map(|tree_sha| format!("git_tree:{tree_sha}"))
-    });
-    let task_review_dispatch_id = shared_current_task_review_dispatch_id(
-        execution_status.blocking_task,
-        current_task_lineage_fingerprint.as_deref(),
-        current_task_reviewed_state_id.as_deref(),
-        overlay.as_ref(),
-    );
+    let task_review_dispatch_id =
+        current_task_review_dispatch_id_for_status(&context, &execution_status, overlay.as_ref());
     let task_negative_result_task = shared_current_task_negative_result_task(
         &execution_status,
         overlay.as_ref(),
         authoritative_state,
     );
+    let task_negative_result_verification_failed = task_negative_result_task
+        .and_then(|task| {
+            authoritative_state
+                .and_then(|state| state.task_closure_negative_result(task))
+                .map(|record| record.verification_result.eq_ignore_ascii_case("fail"))
+        })
+        .unwrap_or(false);
     let task_scope_overlay_restore_required = execution_status.execution_started == "yes"
         && shared_task_scope_overlay_restore_required(
             &review_state_snapshot.missing_derived_overlays,
@@ -533,6 +588,9 @@ fn query_workflow_execution_state_internal(
             || shared_current_branch_closure_has_tracked_drift(&context, authoritative_state)
                 .unwrap_or(false)
     });
+    let live_stale_unreviewed = live_stale_unreviewed
+        || shared_current_branch_closure_has_tracked_drift(&context, authoritative_state)
+            .unwrap_or(false);
     let live_review_state_status =
         live_review_state_status_for_reroute_from_status(&execution_status, live_stale_unreviewed);
     let task_scope_stale_reason_present = shared_task_scope_stale_review_state_reason_present(
@@ -546,7 +604,7 @@ fn query_workflow_execution_state_internal(
         branch_reroute_still_valid,
         live_review_state_status,
     );
-    let repair_review_state_follow_up = match shared_live_review_state_repair_reroute(
+    let mut repair_review_state_follow_up = match shared_live_review_state_repair_reroute(
         persisted_repair_follow_up,
         task_scope_repair_precedence_active,
         branch_reroute_still_valid,
@@ -559,34 +617,27 @@ fn query_workflow_execution_state_internal(
         ReviewStateRepairReroute::ExecutionReentry => Some(String::from("execution_reentry")),
         ReviewStateRepairReroute::None => None,
     };
-    let final_review_dispatch_id = shared_current_final_review_dispatch_id(
-        usable_current_branch_closure_id.as_deref(),
+    let persisted_branch_reroute_without_current_binding = repair_review_state_follow_up.as_deref()
+        != Some("execution_reentry")
+        && persisted_repair_follow_up == Some("record_branch_closure")
+        && !task_scope_repair_precedence_active
+        && branch_reroute_still_valid
+        && execution_status.current_branch_closure_id.is_none();
+    if persisted_branch_reroute_without_current_binding {
+        repair_review_state_follow_up = Some(String::from("record_branch_closure"));
+    }
+    let final_review_dispatch_authority = current_final_review_dispatch_authority_for_context(
+        &context,
         overlay.as_ref(),
+        authoritative_state,
     );
-    let final_review_dispatch_lineage_present = overlay
-        .as_ref()
-        .and_then(|overlay| overlay.final_review_dispatch_lineage.as_ref())
-        .and_then(|record| {
-            let execution_run_id = record.execution_run_id.as_deref()?;
-            if execution_run_id.trim().is_empty() {
-                return None;
-            }
-            let branch_closure_id = record.branch_closure_id.as_deref()?;
-            if usable_current_branch_closure_id.as_deref() != Some(branch_closure_id) {
-                return None;
-            }
-            record
-                .dispatch_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-        .is_some();
+    let final_review_dispatch_id = final_review_dispatch_authority.dispatch_id.clone();
     let late_stage_bindings = shared_current_late_stage_branch_bindings(
         authoritative_state,
         authoritative_current_branch_closure_id.as_deref(),
         usable_current_branch_reviewed_state_id.as_deref(),
     );
+    let final_review_dispatch_lineage_present = final_review_dispatch_authority.lineage_present;
     let finish_review_gate_pass_branch_closure_id =
         late_stage_bindings.finish_review_gate_pass_branch_closure_id;
     let current_release_readiness_result = late_stage_bindings.current_release_readiness_result;
@@ -628,6 +679,7 @@ fn query_workflow_execution_state_internal(
             == Some("required")
             && qa_pending_requires_test_plan_refresh(&context, gate_finish.as_ref());
     Ok(WorkflowExecutionState {
+        execution_context: Some(context.clone()),
         execution_status: Some(execution_status),
         preflight,
         gate_review,
@@ -635,6 +687,7 @@ fn query_workflow_execution_state_internal(
         review_state_snapshot: Some(review_state_snapshot),
         task_scope_overlay_restore_required,
         task_negative_result_task,
+        task_negative_result_verification_failed,
         task_review_dispatch_id,
         final_review_dispatch_id,
         final_review_dispatch_lineage_present,
@@ -685,21 +738,6 @@ pub fn query_workflow_routing_state_for_runtime(
     )
 }
 
-pub(crate) fn query_workflow_routing_state_for_runtime_with_read_scope(
-    runtime: &ExecutionRuntime,
-    read_scope: &ExecutionReadScope,
-    external_review_result_ready: bool,
-) -> Result<ExecutionRoutingState, JsonFailure> {
-    query_workflow_routing_state_internal(
-        &runtime.repo_root,
-        Some(std::path::Path::new(read_scope.context.plan_rel.as_str())),
-        external_review_result_ready,
-        Some(runtime),
-        Some(read_scope),
-        true,
-    )
-}
-
 pub(crate) fn query_workflow_routing_state_for_runtime_with_read_scope_best_effort(
     runtime: &ExecutionRuntime,
     read_scope: &ExecutionReadScope,
@@ -734,27 +772,18 @@ fn query_workflow_routing_state_internal(
         route = explicit_route_for_plan_override(&workflow, &route, plan_override)?;
     }
     let mut execution_status = None;
+    let mut execution_context = None;
     let mut preflight = None;
     let mut gate_review = None;
     let mut gate_finish = None;
-    let mut task_scope_overlay_restore_required = false;
-    let mut review_state_snapshot = None;
-    let mut task_negative_result_task = None;
     let mut task_review_dispatch_id = None;
     let mut final_review_dispatch_id = None;
     let mut final_review_dispatch_lineage_present = false;
     let mut current_branch_closure_id = None;
     let mut finish_review_gate_pass_branch_closure_id = None;
     let mut current_release_readiness_result = None;
-    let mut current_final_review_branch_closure_id = None;
-    let mut current_final_review_result = None;
-    let mut current_qa_branch_closure_id = None;
-    let mut current_qa_result = None;
     let mut base_branch = None;
     let mut qa_requirement = None;
-    let mut qa_pending_test_plan_refresh_required = false;
-    let mut persisted_repair_review_state_follow_up = None;
-    let mut repair_review_state_follow_up = None;
     let mut resolved_runtime = runtime_override.cloned();
 
     let explicit_plan_query = plan_override.is_some();
@@ -773,13 +802,16 @@ fn query_workflow_routing_state_internal(
             require_exact_execution_command,
         )?;
         let WorkflowExecutionState {
+            execution_context: workflow_execution_context,
             execution_status: workflow_execution_status,
             preflight: workflow_preflight,
             gate_review: workflow_gate_review,
             gate_finish: workflow_gate_finish,
-            review_state_snapshot: workflow_review_state_snapshot,
-            task_scope_overlay_restore_required: workflow_task_scope_overlay_restore_required,
-            task_negative_result_task: workflow_task_negative_result_task,
+            review_state_snapshot: _workflow_review_state_snapshot,
+            task_scope_overlay_restore_required: _workflow_task_scope_overlay_restore_required,
+            task_negative_result_task: _workflow_task_negative_result_task,
+            task_negative_result_verification_failed:
+                _workflow_task_negative_result_verification_failed,
             task_review_dispatch_id: workflow_task_review_dispatch_id,
             final_review_dispatch_id: workflow_final_review_dispatch_id,
             final_review_dispatch_lineage_present: workflow_final_review_dispatch_lineage_present,
@@ -787,20 +819,18 @@ fn query_workflow_routing_state_internal(
             finish_review_gate_pass_branch_closure_id:
                 workflow_finish_review_gate_pass_branch_closure_id,
             current_release_readiness_result: workflow_current_release_readiness_result,
-            current_final_review_branch_closure_id: workflow_current_final_review_branch_closure_id,
-            current_final_review_result: workflow_current_final_review_result,
-            current_qa_branch_closure_id: workflow_current_qa_branch_closure_id,
-            current_qa_result: workflow_current_qa_result,
+            current_final_review_branch_closure_id: _workflow_current_final_review_branch_closure_id,
+            current_final_review_result: _workflow_current_final_review_result,
+            current_qa_branch_closure_id: _workflow_current_qa_branch_closure_id,
+            current_qa_result: _workflow_current_qa_result,
             base_branch: workflow_base_branch,
             qa_requirement: workflow_qa_requirement,
-            qa_pending_test_plan_refresh_required: workflow_qa_pending_test_plan_refresh_required,
+            qa_pending_test_plan_refresh_required: _workflow_qa_pending_test_plan_refresh_required,
             persisted_repair_review_state_follow_up:
-                workflow_persisted_repair_review_state_follow_up,
-            repair_review_state_follow_up: workflow_repair_review_state_follow_up,
+                _workflow_persisted_repair_review_state_follow_up,
+            repair_review_state_follow_up: _workflow_repair_review_state_follow_up,
         } = workflow_state;
-        review_state_snapshot = workflow_review_state_snapshot;
-        task_scope_overlay_restore_required = workflow_task_scope_overlay_restore_required;
-        task_negative_result_task = workflow_task_negative_result_task;
+        execution_context = workflow_execution_context;
         task_review_dispatch_id = workflow_task_review_dispatch_id;
         final_review_dispatch_id = workflow_final_review_dispatch_id;
         final_review_dispatch_lineage_present = workflow_final_review_dispatch_lineage_present;
@@ -808,15 +838,8 @@ fn query_workflow_routing_state_internal(
         finish_review_gate_pass_branch_closure_id =
             workflow_finish_review_gate_pass_branch_closure_id;
         current_release_readiness_result = workflow_current_release_readiness_result;
-        current_final_review_branch_closure_id = workflow_current_final_review_branch_closure_id;
-        current_final_review_result = workflow_current_final_review_result;
-        current_qa_branch_closure_id = workflow_current_qa_branch_closure_id;
-        current_qa_result = workflow_current_qa_result;
         base_branch = workflow_base_branch;
         qa_requirement = workflow_qa_requirement;
-        qa_pending_test_plan_refresh_required = workflow_qa_pending_test_plan_refresh_required;
-        persisted_repair_review_state_follow_up = workflow_persisted_repair_review_state_follow_up;
-        repair_review_state_follow_up = workflow_repair_review_state_follow_up;
         execution_status = workflow_execution_status;
         preflight = workflow_preflight;
         gate_review = workflow_gate_review;
@@ -843,7 +866,6 @@ fn query_workflow_routing_state_internal(
         gate_finish.as_ref(),
     );
     let plan_path = route.plan_path.clone();
-    let exact_plan_query = explicit_plan_query;
     let (repo_slug, safe_branch, branch_name, head_sha) =
         if let Some(runtime) = resolved_runtime.as_ref() {
             (
@@ -888,6 +910,42 @@ fn query_workflow_routing_state_internal(
             .unwrap_or(route.reason_codes.as_slice()),
         qa_requirement: qa_requirement.as_deref(),
     });
+    let explicit_plan_preserves_route_truth = explicit_plan_query
+        && route.status != "implementation_ready"
+        && execution_status
+            .as_ref()
+            .is_some_and(|status| status.execution_started != "yes");
+    let shared_next_action_authority_enabled = execution_context.is_some()
+        && execution_status.is_some()
+        && !explicit_plan_preserves_route_truth;
+    let precomputed_shared_seed = if shared_next_action_authority_enabled {
+        match (execution_context.as_ref(), execution_status.as_ref()) {
+            (Some(context), Some(status)) => shared_next_action_seed_from_decision(
+                context,
+                status,
+                SharedNextActionRoutingInputs {
+                    plan_path: &plan_path,
+                    external_review_result_ready,
+                    require_exact_execution_command,
+                    task_review_dispatch_id: task_review_dispatch_id.as_deref(),
+                    final_review_dispatch_id: final_review_dispatch_id.as_deref(),
+                    final_review_dispatch_lineage_present,
+                    current_branch_closure_id: current_branch_closure_id.as_deref(),
+                },
+            )?,
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if shared_next_action_authority_enabled && precomputed_shared_seed.is_none() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Workflow routing could not derive a shared next-action decision for `{plan_path}`. Run `featureforge plan execution repair-review-state --plan {plan_path}` before continuing."
+            ),
+        ));
+    }
     let (
         phase,
         phase_detail,
@@ -896,731 +954,23 @@ fn query_workflow_routing_state_internal(
         execution_command_context,
         next_action,
         recommended_command,
-    ) = if let Some(status) = execution_status.as_ref() {
-        let late_stage_review_state_stale_unreviewed = review_state_snapshot
-            .as_ref()
-            .is_some_and(|snapshot| !snapshot.stale_unreviewed_closures.is_empty());
-        let status_projects_review_state_repair_execution_reentry =
-            execution_reentry_requires_review_state_repair(status)
-                && status.review_state_status != "clean"
-                && !(repair_review_state_follow_up.as_deref() == Some("record_branch_closure")
-                    && current_branch_closure_structural_review_state_reason(status).is_none());
-        if task_scope_overlay_restore_required
-            || status_projects_review_state_repair_execution_reentry
-            || ((workflow_phase == "executing" || workflow_phase == "task_closure_pending")
-                && (((status.resume_task.is_some() || status.resume_step.is_some())
-                    && execution_reentry_requires_review_state_repair(status))
-                    || task_scope_structural_review_state_reason(status).is_some()
-                    || shared_task_scope_stale_review_state_reason_present(
-                        task_scope_review_state_repair_reason(status),
-                    )))
-        {
-            (
-                String::from("executing"),
-                String::from("execution_reentry_required"),
-                status.review_state_status.clone(),
-                None,
-                None,
-                String::from("repair review state / reenter execution"),
-                Some(format!(
-                    "featureforge plan execution repair-review-state --plan {plan_path}"
-                )),
-            )
-        } else if matches!(
-            workflow_phase.as_str(),
-            "document_release_pending"
-                | "final_review_pending"
-                | "qa_pending"
-                | "ready_for_branch_completion"
-        ) && late_stage_review_state_stale_unreviewed
-            && !prerelease_branch_closure_refresh_required(status)
-        {
-            if repair_review_state_follow_up.as_deref() == Some("record_branch_closure") {
-                (
-                    String::from("document_release_pending"),
-                    String::from("branch_closure_recording_required_for_release_readiness"),
-                    String::from("missing_current_closure"),
-                    None,
-                    None,
-                    String::from("advance late stage"),
-                    Some(format!(
-                        "featureforge plan execution advance-late-stage --plan {plan_path}"
-                    )),
-                )
-            } else {
-                (
-                    String::from("executing"),
-                    String::from("execution_reentry_required"),
-                    String::from("stale_unreviewed"),
-                    None,
-                    None,
-                    String::from("repair review state / reenter execution"),
-                    Some(format!(
-                        "featureforge plan execution repair-review-state --plan {plan_path}"
-                    )),
-                )
-            }
-        } else if repair_review_state_follow_up.as_deref() == Some("execution_reentry") {
-            let exact_execution_command = required_execution_command_for_routing(
-                current_dir,
-                runtime_override,
-                &plan_path,
-                status,
-                exact_plan_query,
-                "workflow/operator could not derive the exact execution command required after repair-review-state rerouted late-stage review truth back to execution.",
-            );
-            let (execution_command_context, recommended_command) =
-                if require_exact_execution_command {
-                    let (execution_command_context, recommended_command) = exact_execution_command?;
-                    (Some(execution_command_context), Some(recommended_command))
-                } else {
-                    exact_execution_command.ok().map_or(
-                        (None, None),
-                        |(execution_command_context, recommended_command)| {
-                            (Some(execution_command_context), Some(recommended_command))
-                        },
-                    )
-                };
-            (
-                String::from("executing"),
-                String::from("execution_reentry_required"),
-                String::from("clean"),
-                None,
-                execution_command_context,
-                String::from("execution reentry required"),
-                recommended_command,
-            )
-        } else if repair_review_state_follow_up.as_deref() == Some("record_branch_closure") {
-            (
-                String::from("document_release_pending"),
-                String::from("branch_closure_recording_required_for_release_readiness"),
-                String::from("missing_current_closure"),
-                None,
-                None,
-                String::from("advance late stage"),
-                Some(format!(
-                    "featureforge plan execution advance-late-stage --plan {plan_path}"
-                )),
-            )
-        } else if workflow_phase == "executing"
-            && late_stage_rederivation_basis_present(status)
-            && execution_reentry_requires_review_state_repair(status)
-        {
-            (
-                String::from("executing"),
-                String::from("execution_reentry_required"),
-                status.review_state_status.clone(),
-                None,
-                None,
-                String::from("repair review state / reenter execution"),
-                Some(format!(
-                    "featureforge plan execution repair-review-state --plan {plan_path}"
-                )),
-            )
-        } else if let Some(repair_review_state_status) = late_stage_repair_review_state_status(
-            workflow_phase.as_str(),
-            execution_status.as_ref(),
-            gate_review.as_ref(),
-            gate_finish.as_ref(),
-            current_branch_closure_id.as_deref(),
-            current_release_readiness_result.as_deref(),
-        ) {
-            (
-                String::from("executing"),
-                String::from("execution_reentry_required"),
-                String::from(repair_review_state_status),
-                None,
-                None,
-                String::from("repair review state / reenter execution"),
-                Some(format!(
-                    "featureforge plan execution repair-review-state --plan {plan_path}"
-                )),
-            )
-        } else if !late_stage_prerequisite_reroute_active(
-            workflow_phase.as_str(),
-            qa_requirement.as_deref(),
-            qa_pending_test_plan_refresh_required,
-            current_branch_closure_id.as_deref(),
-            current_release_readiness_result.as_deref(),
-        ) && shared_negative_result_requires_execution_reentry(
-            task_negative_result_task.is_some(),
-            workflow_phase.as_str(),
-            current_branch_closure_id.as_deref(),
-            current_final_review_branch_closure_id.as_deref(),
-            current_final_review_result.as_deref(),
-            current_qa_branch_closure_id.as_deref(),
-            current_qa_result.as_deref(),
-        ) {
-            match follow_up_override.as_str() {
-                "record_handoff" => (
-                    String::from("handoff_required"),
-                    String::from("handoff_recording_required"),
-                    String::from("clean"),
-                    None,
-                    None,
-                    String::from("hand off"),
-                    Some(format!(
-                        "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
-                    )),
-                ),
-                "record_pivot" => (
-                    String::from("pivot_required"),
-                    String::from("planning_reentry_required"),
-                    String::from("clean"),
-                    None,
-                    None,
-                    String::from("pivot / return to planning"),
-                    Some(format!(
-                        "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
-                    )),
-                ),
-                _ => {
-                    let exact_execution_command = required_execution_command_for_routing(
-                        current_dir,
-                        runtime_override,
-                        &plan_path,
-                        status,
-                        exact_plan_query,
-                        "workflow/operator could not derive the execution reentry command required after a negative review outcome.",
-                    );
-                    let (execution_command_context, recommended_command) =
-                        if require_exact_execution_command {
-                            let (execution_command_context, recommended_command) =
-                                exact_execution_command?;
-                            (Some(execution_command_context), Some(recommended_command))
-                        } else {
-                            exact_execution_command.ok().map_or(
-                                (None, None),
-                                |(execution_command_context, recommended_command)| {
-                                    (Some(execution_command_context), Some(recommended_command))
-                                },
-                            )
-                        };
-                    (
-                        String::from("executing"),
-                        String::from("execution_reentry_required"),
-                        String::from("clean"),
-                        None,
-                        execution_command_context,
-                        String::from("execution reentry required"),
-                        recommended_command,
-                    )
-                }
-            }
-        } else {
-            if let Some(task_number) =
-                task_review_result_pending_task(status, task_review_dispatch_id.as_deref())
-            {
-                let recommended_command = if external_review_result_ready {
-                    Some(format!(
-                        "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-                    ))
-                } else {
-                    None
-                };
-                (
-                    String::from("task_closure_pending"),
-                    if external_review_result_ready {
-                        String::from("task_closure_recording_ready")
-                    } else {
-                        String::from("task_review_result_pending")
-                    },
-                    String::from("clean"),
-                    if external_review_result_ready {
-                        Some(ExecutionRoutingRecordingContext {
-                            task_number: Some(task_number),
-                            dispatch_id: task_review_dispatch_id.clone(),
-                            branch_closure_id: None,
-                        })
-                    } else {
-                        None
-                    },
-                    None,
-                    if external_review_result_ready {
-                        String::from("close current task")
-                    } else {
-                        String::from("wait for external review result")
-                    },
-                    recommended_command,
-                )
-            } else if let Some(task_number) = task_review_dispatch_task(status) {
-                if external_review_result_ready {
-                    (
-                        String::from("task_closure_pending"),
-                        String::from("task_closure_recording_ready"),
-                        String::from("clean"),
-                        Some(ExecutionRoutingRecordingContext {
-                            task_number: Some(task_number),
-                            dispatch_id: task_review_dispatch_id.clone(),
-                            branch_closure_id: None,
-                        }),
-                        None,
-                        String::from("close current task"),
-                        Some(format!(
-                            "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-                        )),
-                    )
-                } else {
-                    (
-                        String::from("task_closure_pending"),
-                        String::from("task_review_dispatch_required"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        String::from("request task review"),
-                        None,
-                    )
-                }
-            } else if workflow_phase == "final_review_pending"
-                && current_branch_closure_id.is_none()
-            {
-                (
-                    String::from("document_release_pending"),
-                    String::from("branch_closure_recording_required_for_release_readiness"),
-                    String::from("missing_current_closure"),
-                    None,
-                    None,
-                    String::from("advance late stage"),
-                    Some(format!(
-                        "featureforge plan execution advance-late-stage --plan {plan_path}"
-                    )),
-                )
-            } else if workflow_phase == "final_review_pending"
-                && current_release_readiness_result.as_deref() != Some("ready")
-            {
-                (
-                    String::from("document_release_pending"),
-                    String::from(
-                        if current_release_readiness_result.as_deref() == Some("blocked") {
-                            "release_blocker_resolution_required"
-                        } else {
-                            "release_readiness_recording_ready"
-                        },
-                    ),
-                    String::from("clean"),
-                    current_branch_closure_id.as_ref().map(|branch_closure_id| {
-                        ExecutionRoutingRecordingContext {
-                            task_number: None,
-                            dispatch_id: None,
-                            branch_closure_id: Some(branch_closure_id.clone()),
-                        }
-                    }),
-                    None,
-                    String::from(
-                        if current_release_readiness_result.as_deref() == Some("blocked") {
-                            "resolve release blocker"
-                        } else {
-                            "advance late stage"
-                        },
-                    ),
-                    Some(format!(
-                        "featureforge plan execution advance-late-stage --plan {plan_path} --result ready|blocked --summary-file <path>"
-                    )),
-                )
-            } else if workflow_phase == "final_review_pending"
-                && ((!external_review_result_ready
-                    && (!final_review_dispatch_lineage_present
-                        || final_review_dispatch_id.is_none()))
-                    || !final_review_dispatch_still_current(
-                        gate_review.as_ref(),
-                        gate_finish.as_ref(),
-                    ))
-            {
-                (
-                    String::from("final_review_pending"),
-                    String::from("final_review_dispatch_required"),
-                    String::from("clean"),
-                    None,
-                    None,
-                    String::from("request final review"),
-                    None,
-                )
-            } else if workflow_phase == "final_review_pending" {
-                let recommended_command = if external_review_result_ready {
-                    Some(format!(
-                        "featureforge plan execution advance-late-stage --plan {plan_path} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
-                    ))
-                } else {
-                    None
-                };
-                (
-                    String::from("final_review_pending"),
-                    if external_review_result_ready {
-                        String::from("final_review_recording_ready")
-                    } else {
-                        String::from("final_review_outcome_pending")
-                    },
-                    String::from("clean"),
-                    if external_review_result_ready {
-                        current_branch_closure_id.as_ref().map(|branch_closure_id| {
-                            ExecutionRoutingRecordingContext {
-                                task_number: None,
-                                dispatch_id: final_review_dispatch_id.clone(),
-                                branch_closure_id: Some(branch_closure_id.clone()),
-                            }
-                        })
-                    } else {
-                        None
-                    },
-                    None,
-                    if external_review_result_ready {
-                        String::from("advance late stage")
-                    } else {
-                        String::from("wait for external review result")
-                    },
-                    recommended_command,
-                )
-            } else if workflow_phase == "document_release_pending" {
-                if status.review_state_status == "missing_current_closure" {
-                    (
-                        String::from("document_release_pending"),
-                        String::from("branch_closure_recording_required_for_release_readiness"),
-                        String::from("missing_current_closure"),
-                        None,
-                        None,
-                        String::from("advance late stage"),
-                        Some(format!(
-                            "featureforge plan execution advance-late-stage --plan {plan_path}"
-                        )),
-                    )
-                } else if let Some(branch_closure_id) = current_branch_closure_id.as_ref() {
-                    (
-                        String::from("document_release_pending"),
-                        String::from(
-                            if current_release_readiness_result.as_deref() == Some("blocked") {
-                                "release_blocker_resolution_required"
-                            } else {
-                                "release_readiness_recording_ready"
-                            },
-                        ),
-                        String::from("clean"),
-                        Some(ExecutionRoutingRecordingContext {
-                            task_number: None,
-                            dispatch_id: None,
-                            branch_closure_id: Some(branch_closure_id.clone()),
-                        }),
-                        None,
-                        String::from(
-                            if current_release_readiness_result.as_deref() == Some("blocked") {
-                                "resolve release blocker"
-                            } else {
-                                "advance late stage"
-                            },
-                        ),
-                        Some(format!(
-                            "featureforge plan execution advance-late-stage --plan {plan_path} --result ready|blocked --summary-file <path>"
-                        )),
-                    )
-                } else {
-                    (
-                        String::from("document_release_pending"),
-                        String::from("branch_closure_recording_required_for_release_readiness"),
-                        String::from("missing_current_closure"),
-                        None,
-                        None,
-                        String::from("advance late stage"),
-                        Some(format!(
-                            "featureforge plan execution advance-late-stage --plan {plan_path}"
-                        )),
-                    )
-                }
-            } else if workflow_phase == "qa_pending" && current_branch_closure_id.is_none() {
-                (
-                    String::from("document_release_pending"),
-                    String::from("branch_closure_recording_required_for_release_readiness"),
-                    String::from("missing_current_closure"),
-                    None,
-                    None,
-                    String::from("advance late stage"),
-                    Some(format!(
-                        "featureforge plan execution advance-late-stage --plan {plan_path}"
-                    )),
-                )
-            } else if workflow_phase == "qa_pending" {
-                match qa_requirement.as_deref() {
-                    Some("required") if qa_pending_test_plan_refresh_required => (
-                        String::from("qa_pending"),
-                        String::from("test_plan_refresh_required"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        String::from("refresh test plan"),
-                        None,
-                    ),
-                    Some("required") => (
-                        String::from("qa_pending"),
-                        String::from("qa_recording_required"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        String::from("run QA"),
-                        Some(format!(
-                            "featureforge plan execution advance-late-stage --plan {plan_path} --result pass|fail --summary-file <path>"
-                        )),
-                    ),
-                    _ => (
-                        String::from("pivot_required"),
-                        String::from("planning_reentry_required"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        String::from("pivot / return to planning"),
-                        Some(format!(
-                            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
-                        )),
-                    ),
-                }
-            } else if workflow_phase == "ready_for_branch_completion" {
-                match qa_requirement.as_deref() {
-                    Some("required") | Some("not-required") => {
-                        if finish_review_gate_pass_branch_closure_id
-                            .as_ref()
-                            .zip(current_branch_closure_id.as_ref())
-                            .is_some_and(|(checkpoint, current)| checkpoint == current)
-                            && gate_finish.as_ref().is_some_and(|gate| gate.allowed)
-                        {
-                            (
-                                String::from("ready_for_branch_completion"),
-                                String::from("finish_completion_gate_ready"),
-                                String::from("clean"),
-                                None,
-                                None,
-                                String::from("finish branch"),
-                                None,
-                            )
-                        } else {
-                            (
-                                String::from("ready_for_branch_completion"),
-                                String::from("finish_review_gate_ready"),
-                                String::from("clean"),
-                                None,
-                                None,
-                                String::from("finish branch"),
-                                None,
-                            )
-                        }
-                    }
-                    _ => (
-                        String::from("pivot_required"),
-                        String::from("planning_reentry_required"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        String::from("pivot / return to planning"),
-                        Some(format!(
-                            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
-                        )),
-                    ),
-                }
-            } else {
-                match workflow_phase.as_str() {
-                    "executing" => {
-                        let mut execution_command_context =
-                            optional_execution_command_from_status(status);
-                        let mut recommended_command = None;
-                        if execution_command_context.is_some()
-                            && let Ok((exact_command, exact_recommended)) =
-                                required_execution_command_for_routing(
-                                    current_dir,
-                                    runtime_override,
-                                    &plan_path,
-                                    status,
-                                    exact_plan_query,
-                                    "workflow/operator could not derive the exact execution command for the current execution state.",
-                                )
-                        {
-                            execution_command_context = Some(exact_command);
-                            recommended_command = Some(exact_recommended);
-                        }
-                        let has_explicit_reentry_context = status.active_task.is_none()
-                            && status.blocking_step.is_none()
-                            && status.resume_task.is_none()
-                            && execution_command_context.as_ref().is_some_and(|context| {
-                                matches!(context.command_kind.as_str(), "begin" | "reopen")
-                            });
-                        let mut phase_detail = if has_explicit_reentry_context {
-                            String::from("execution_reentry_required")
-                        } else if shared_execution_state_has_open_steps(status)
-                            || status.active_task.is_some()
-                            || status.blocking_task.is_some()
-                            || status.resume_task.is_some()
-                        {
-                            String::from("execution_in_progress")
-                        } else {
-                            String::from("execution_reentry_required")
-                        };
-                        let mut next_action = if phase_detail == "execution_in_progress" {
-                            String::from("continue execution")
-                        } else {
-                            String::from("execution reentry required")
-                        };
-                        let marker_free_execution = status.active_task.is_none()
-                            && status.blocking_task.is_none()
-                            && status.resume_task.is_none()
-                            && execution_command_context.is_none();
-                        if marker_free_execution
-                            && (status.execution_mode == "featureforge:executing-plans"
-                                || (phase_detail == "execution_in_progress"
-                                    && !shared_execution_state_has_open_steps(status)))
-                        {
-                            let exact_execution_command = required_execution_command_for_routing(
-                                current_dir,
-                                runtime_override,
-                                &plan_path,
-                                status,
-                                exact_plan_query,
-                                "workflow/operator could not derive the exact execution command for marker-free execution reentry.",
-                            );
-                            if require_exact_execution_command {
-                                let (exact_command, exact_recommended) = exact_execution_command?;
-                                phase_detail = String::from("execution_reentry_required");
-                                next_action = String::from("execution reentry required");
-                                execution_command_context = Some(exact_command);
-                                recommended_command = Some(exact_recommended);
-                            } else if let Ok((exact_command, exact_recommended)) =
-                                exact_execution_command
-                            {
-                                phase_detail = String::from("execution_reentry_required");
-                                next_action = String::from("execution reentry required");
-                                execution_command_context = Some(exact_command);
-                                recommended_command = Some(exact_recommended);
-                            }
-                        }
-                        (
-                            String::from("executing"),
-                            phase_detail,
-                            String::from("clean"),
-                            None,
-                            execution_command_context,
-                            next_action,
-                            recommended_command,
-                        )
-                    }
-                    "repairing" => {
-                        let exact_execution_command = required_execution_command_for_routing(
-                            current_dir,
-                            runtime_override,
-                            &plan_path,
-                            status,
-                            exact_plan_query,
-                            "workflow/operator could not derive the exact execution command for the current execution state.",
-                        );
-                        let (execution_command_context, recommended_command) =
-                            if require_exact_execution_command {
-                                let (execution_command_context, recommended_command) =
-                                    exact_execution_command?;
-                                (Some(execution_command_context), Some(recommended_command))
-                            } else {
-                                exact_execution_command.ok().map_or(
-                                    (None, None),
-                                    |(execution_command_context, recommended_command)| {
-                                        (Some(execution_command_context), Some(recommended_command))
-                                    },
-                                )
-                            };
-                        (
-                            String::from("executing"),
-                            String::from("execution_reentry_required"),
-                            String::from("clean"),
-                            None,
-                            execution_command_context,
-                            String::from("execution reentry required"),
-                            recommended_command,
-                        )
-                    }
-                    "execution_preflight" | "implementation_handoff" => (
-                        workflow_phase.clone(),
-                        String::from("execution_in_progress"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        next_action_for_context_like(
-                            workflow_phase.as_str(),
-                            gate_review.as_ref(),
-                            gate_finish.as_ref(),
-                        )
-                        .replace('_', " "),
-                        None,
-                    ),
-                    "handoff_required" => (
-                        String::from("handoff_required"),
-                        String::from("handoff_recording_required"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        String::from("hand off"),
-                        Some(format!(
-                            "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
-                        )),
-                    ),
-                    "pivot_required" => (
-                        String::from("pivot_required"),
-                        String::from("planning_reentry_required"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        String::from("pivot / return to planning"),
-                        Some(format!(
-                            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
-                        )),
-                    ),
-                    _ => (
-                        String::from("pivot_required"),
-                        String::from("planning_reentry_required"),
-                        String::from("clean"),
-                        None,
-                        None,
-                        String::from("pivot / return to planning"),
-                        Some(format!(
-                            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
-                        )),
-                    ),
-                }
-            }
-        }
-    } else if let Some(repair_review_state_status) = late_stage_repair_review_state_status(
-        workflow_phase.as_str(),
-        execution_status.as_ref(),
-        gate_review.as_ref(),
-        gate_finish.as_ref(),
-        current_branch_closure_id.as_deref(),
-        current_release_readiness_result.as_deref(),
-    ) {
+    ) = if let Some(shared_seed) = precomputed_shared_seed.as_ref() {
         (
-            String::from("executing"),
-            String::from("execution_reentry_required"),
-            String::from(repair_review_state_status),
-            None,
-            None,
-            String::from("repair review state / reenter execution"),
-            Some(format!(
-                "featureforge plan execution repair-review-state --plan {plan_path}"
-            )),
+            shared_seed.phase.clone(),
+            shared_seed.phase_detail.clone(),
+            shared_seed.review_state_status.clone(),
+            shared_seed.recording_context.clone(),
+            shared_seed.execution_command_context.clone(),
+            shared_seed.next_action.clone(),
+            shared_seed.recommended_command.clone(),
         )
-    } else if !late_stage_prerequisite_reroute_active(
-        workflow_phase.as_str(),
-        qa_requirement.as_deref(),
-        qa_pending_test_plan_refresh_required,
-        current_branch_closure_id.as_deref(),
-        current_release_readiness_result.as_deref(),
-    ) && shared_negative_result_requires_execution_reentry(
-        task_negative_result_task.is_some(),
-        workflow_phase.as_str(),
-        current_branch_closure_id.as_deref(),
-        current_final_review_branch_closure_id.as_deref(),
-        current_final_review_result.as_deref(),
-        current_qa_branch_closure_id.as_deref(),
-        current_qa_result.as_deref(),
-    ) {
-        (
-            String::from("executing"),
-            String::from("execution_reentry_required"),
-            String::from("clean"),
-            None,
-            None,
-            String::from("execution reentry required"),
-            None,
-        )
+    } else if shared_next_action_authority_enabled && execution_status.is_some() {
+        return Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Workflow routing could not derive a shared next-action decision for `{plan_path}`. Run `featureforge plan execution repair-review-state --plan {plan_path}` before continuing."
+            ),
+        ));
     } else {
         let (phase, phase_detail, next_action, recommended_command) = match workflow_phase.as_str()
         {
@@ -1652,27 +1002,54 @@ fn query_workflow_routing_state_internal(
         )
     };
 
-    let decision = canonicalize_routing_decision(CanonicalRoutingInputs {
-        external_review_result_ready,
-        plan_path: &plan_path,
-        status: execution_status.as_ref(),
-        persisted_repair_review_state_follow_up: persisted_repair_review_state_follow_up.as_deref(),
-        repair_review_state_follow_up: repair_review_state_follow_up.as_deref(),
-        seed: WorkflowRoutingDecision {
-            phase,
-            phase_detail,
-            review_state_status,
-            recording_context,
-            execution_command_context,
-            next_action,
-            recommended_command,
-            blocking_scope: None,
-            blocking_task: None,
-            external_wait_state: None,
-            blocking_reason_codes: Vec::new(),
-        },
-    })?;
+    let mut seed = WorkflowRoutingDecision {
+        phase,
+        phase_detail,
+        review_state_status,
+        recording_context,
+        execution_command_context,
+        next_action,
+        recommended_command,
+        blocking_scope: None,
+        blocking_task: None,
+        external_wait_state: None,
+        blocking_reason_codes: Vec::new(),
+    };
+    if let Some(shared_seed) = precomputed_shared_seed {
+        seed = shared_seed;
+    }
+    if seed.phase_detail == "execution_preflight_required"
+        && preflight.as_ref().is_some_and(|gate| !gate.allowed)
+    {
+        seed.phase = String::from("implementation_handoff");
+    }
 
+    let mut decision = canonicalize_routing_decision(CanonicalRoutingInputs {
+        external_review_result_ready,
+        status: execution_status.as_ref(),
+        seed,
+    })?;
+    if workflow_phase == "pivot_required"
+        && execution_status.as_ref().is_some_and(|status| {
+            status.execution_started != "yes"
+                && matches!(
+                    status.harness_phase,
+                    HarnessPhase::PivotRequired
+                        | HarnessPhase::ContractDrafting
+                        | HarnessPhase::ContractPendingApproval
+                        | HarnessPhase::ContractApproved
+                        | HarnessPhase::Evaluating
+                )
+        })
+    {
+        decision.phase = String::from("pivot_required");
+        decision.phase_detail = String::from("planning_reentry_required");
+        decision.next_action = String::from("pivot / return to planning");
+        decision.recommended_command = Some(format!(
+            "featureforge workflow record-pivot --plan {plan_path} --reason <reason>"
+        ));
+        decision.execution_command_context = None;
+    }
     Ok(ExecutionRoutingState {
         route,
         execution_status,
@@ -1706,10 +1083,7 @@ fn query_workflow_routing_state_internal(
 
 struct CanonicalRoutingInputs<'a> {
     external_review_result_ready: bool,
-    plan_path: &'a str,
     status: Option<&'a PlanExecutionStatus>,
-    persisted_repair_review_state_follow_up: Option<&'a str>,
-    repair_review_state_follow_up: Option<&'a str>,
     seed: WorkflowRoutingDecision,
 }
 
@@ -1718,30 +1092,9 @@ fn canonicalize_routing_decision(
 ) -> Result<WorkflowRoutingDecision, JsonFailure> {
     let CanonicalRoutingInputs {
         external_review_result_ready,
-        plan_path,
         status,
-        persisted_repair_review_state_follow_up,
-        repair_review_state_follow_up,
         mut seed,
     } = inputs;
-
-    if status.is_some_and(|status| status.execution_started == "yes")
-        && status
-            .and_then(|status| status.current_branch_closure_id.as_deref())
-            .is_some()
-        && persisted_repair_review_state_follow_up == Some("record_branch_closure")
-        && repair_review_state_follow_up == Some("record_branch_closure")
-    {
-        seed.phase = String::from("document_release_pending");
-        seed.phase_detail = String::from("branch_closure_recording_required_for_release_readiness");
-        seed.review_state_status = String::from("missing_current_closure");
-        seed.recording_context = None;
-        seed.execution_command_context = None;
-        seed.next_action = String::from("advance late stage");
-        seed.recommended_command = Some(format!(
-            "featureforge plan execution advance-late-stage --plan {plan_path}"
-        ));
-    }
 
     if seed.blocking_task.is_none() {
         seed.blocking_task = status.and_then(|status| status.blocking_task);
@@ -1754,48 +1107,206 @@ fn canonicalize_routing_decision(
             seed.review_state_status.as_str(),
         );
     }
-    seed.external_wait_state =
-        external_wait_state_for_phase_detail(&seed.phase_detail, external_review_result_ready);
-    if seed.blocking_reason_codes.is_empty() {
-        seed.blocking_reason_codes = compact_operator_reason_codes(
-            status,
-            seed.phase_detail.as_str(),
-            seed.review_state_status.as_str(),
-        );
+    let compact_codes = compact_operator_reason_codes(
+        status,
+        seed.phase_detail.as_str(),
+        seed.review_state_status.as_str(),
+    );
+    for code in compact_codes {
+        if !seed
+            .blocking_reason_codes
+            .iter()
+            .any(|existing| existing == &code)
+        {
+            seed.blocking_reason_codes.push(code);
+        }
     }
 
-    seed = normalize_intent_level_routing_decision(seed, plan_path, status);
+    seed.external_wait_state = external_wait_state_for_phase_detail(
+        &seed.phase_detail,
+        &seed.blocking_reason_codes,
+        external_review_result_ready,
+    );
 
     Ok(seed)
 }
 
-fn normalize_intent_level_routing_decision(
-    mut decision: WorkflowRoutingDecision,
-    plan_path: &str,
-    _status: Option<&PlanExecutionStatus>,
-) -> WorkflowRoutingDecision {
-    let task_number = decision
-        .recording_context
-        .as_ref()
-        .and_then(|context| context.task_number)
-        .or(decision.blocking_task);
-    let dispatch_id = decision
-        .recording_context
-        .as_ref()
-        .and_then(|context| context.dispatch_id.as_deref());
-    let intent_template = intent_level_command_template(IntentLevelCommandTemplateInputs {
-        phase_detail: decision.phase_detail.as_str(),
-        plan_path,
-        task_number,
-        dispatch_id,
-    });
-    if let Some(next_action) = intent_template.next_action {
-        decision.next_action = next_action;
+struct SharedNextActionRoutingInputs<'a> {
+    plan_path: &'a str,
+    external_review_result_ready: bool,
+    require_exact_execution_command: bool,
+    task_review_dispatch_id: Option<&'a str>,
+    final_review_dispatch_id: Option<&'a str>,
+    final_review_dispatch_lineage_present: bool,
+    current_branch_closure_id: Option<&'a str>,
+}
+
+fn shared_next_action_seed_from_decision(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    inputs: SharedNextActionRoutingInputs<'_>,
+) -> Result<Option<WorkflowRoutingDecision>, JsonFailure> {
+    let Some(decision) = compute_next_action_decision_with_inputs(
+        context,
+        status,
+        inputs.plan_path,
+        inputs.external_review_result_ready,
+        inputs.task_review_dispatch_id,
+        inputs.final_review_dispatch_id,
+        inputs.final_review_dispatch_lineage_present,
+    ) else {
+        return Ok(None);
+    };
+    let phase = canonical_phase_for_shared_decision(
+        decision.phase.as_str(),
+        decision.phase_detail.as_str(),
+    );
+    let phase_detail = decision.phase_detail.clone();
+    let review_state_status = decision.review_state_status.clone();
+    let mut recording_context = None;
+    let mut execution_command_context = None;
+    let mut next_action = next_action_text_from_shared_decision(&decision);
+    let mut recommended_command = decision.recommended_command.clone();
+    let mut blocking_task = decision.blocking_task;
+    let task_review_dispatch_id = inputs.task_review_dispatch_id.map(str::to_owned);
+    let final_review_dispatch_id = inputs.final_review_dispatch_id.map(str::to_owned);
+
+    let marker_free_begin_projection = decision.kind == NextActionKind::Begin
+        && decision.phase == "execution_preflight"
+        && decision.phase_detail == "execution_in_progress"
+        && status.execution_started == "no";
+    let decision_requires_exact_execution_command = (!marker_free_begin_projection
+        && matches!(
+            decision.kind,
+            NextActionKind::Begin | NextActionKind::Resume | NextActionKind::Reopen
+        ))
+        || (decision.kind == NextActionKind::CloseCurrentTask
+            && status.active_task.is_some()
+            && status.active_step.is_some());
+    if decision_requires_exact_execution_command {
+        let exact_execution_command = exact_execution_command_from_decision(status, &decision);
+        if decision_requires_exact_execution_command
+            && inputs.require_exact_execution_command
+            && exact_execution_command.is_none()
+        {
+            return Ok(None);
+        }
+        if let Some(exact_execution_command) = exact_execution_command {
+            execution_command_context = Some(ExecutionRoutingExecutionCommandContext {
+                command_kind: String::from(exact_execution_command.command_kind),
+                task_number: Some(exact_execution_command.task_number),
+                step_id: exact_execution_command.step_id,
+            });
+            recommended_command = Some(exact_execution_command.recommended_command);
+            if decision.kind == NextActionKind::Reopen {
+                blocking_task = Some(exact_execution_command.task_number);
+            }
+        }
     }
-    if let Some(recommended_command) = intent_template.recommended_command {
-        decision.recommended_command = recommended_command;
+    if phase_detail == "task_closure_recording_ready" {
+        if let Some(task_number) = decision.task_number.or(status.blocking_task) {
+            recording_context = Some(ExecutionRoutingRecordingContext {
+                task_number: Some(task_number),
+                dispatch_id: task_review_dispatch_id.clone(),
+                branch_closure_id: None,
+            });
+            recommended_command = Some(close_current_task_recording_command(
+                inputs.plan_path,
+                task_number,
+            ));
+            next_action = String::from("close current task");
+            blocking_task = Some(task_number);
+        }
+    } else if phase_detail == "final_review_recording_ready" {
+        recording_context = inputs.current_branch_closure_id.map(|branch_closure_id| {
+            let branch_closure_id = branch_closure_id.to_owned();
+            ExecutionRoutingRecordingContext {
+                task_number: None,
+                dispatch_id: final_review_dispatch_id.clone(),
+                branch_closure_id: Some(branch_closure_id.clone()),
+            }
+        });
+        recommended_command = Some(final_review_recording_command(inputs.plan_path));
+        next_action = String::from("advance late stage");
+    } else if matches!(
+        phase_detail.as_str(),
+        "release_readiness_recording_ready" | "release_blocker_resolution_required"
+    ) {
+        recording_context = inputs.current_branch_closure_id.map(|branch_closure_id| {
+            let branch_closure_id = branch_closure_id.to_owned();
+            ExecutionRoutingRecordingContext {
+                task_number: None,
+                dispatch_id: None,
+                branch_closure_id: Some(branch_closure_id.clone()),
+            }
+        });
     }
-    decision
+
+    Ok(Some(WorkflowRoutingDecision {
+        phase,
+        phase_detail,
+        review_state_status,
+        recording_context,
+        execution_command_context,
+        next_action,
+        recommended_command,
+        blocking_scope: None,
+        blocking_task,
+        external_wait_state: None,
+        blocking_reason_codes: decision.blocking_reason_codes.clone(),
+    }))
+}
+
+fn next_action_text_from_shared_decision(decision: &NextActionDecision) -> String {
+    public_next_action_text(decision)
+}
+
+fn canonical_phase_for_shared_decision(default_phase: &str, phase_detail: &str) -> String {
+    match phase_detail {
+        "task_review_dispatch_required"
+        | "task_review_result_pending"
+        | "task_closure_recording_ready" => String::from("task_closure_pending"),
+        "branch_closure_recording_required_for_release_readiness"
+        | "release_readiness_recording_ready"
+        | "release_blocker_resolution_required" => String::from("document_release_pending"),
+        "final_review_dispatch_required"
+        | "final_review_outcome_pending"
+        | "final_review_recording_ready" => String::from("final_review_pending"),
+        "qa_recording_required" | "test_plan_refresh_required" => String::from("qa_pending"),
+        "finish_review_gate_ready" | "finish_completion_gate_ready" => {
+            String::from("ready_for_branch_completion")
+        }
+        "execution_preflight_required" => String::from("execution_preflight"),
+        "execution_reentry_required" => String::from("executing"),
+        "execution_in_progress" => {
+            if default_phase == "execution_preflight" {
+                String::from("execution_preflight")
+            } else {
+                String::from("executing")
+            }
+        }
+        "planning_reentry_required" => String::from("pivot_required"),
+        "handoff_recording_required" => {
+            if default_phase == "executing" {
+                String::from("executing")
+            } else {
+                String::from("handoff_required")
+            }
+        }
+        _ => default_phase.to_owned(),
+    }
+}
+
+fn close_current_task_recording_command(plan_path: &str, task_number: u32) -> String {
+    format!(
+        "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
+    )
+}
+
+fn final_review_recording_command(plan_path: &str) -> String {
+    format!(
+        "featureforge plan execution advance-late-stage --plan {plan_path} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
+    )
 }
 
 fn blocking_scope_for_phase_detail(
@@ -1818,11 +1329,16 @@ fn blocking_scope_for_phase_detail(
         | "test_plan_refresh_required"
         | "finish_review_gate_ready"
         | "finish_completion_gate_ready" => Some("branch"),
-        "planning_reentry_required" | "handoff_recording_required" => Some("workflow"),
-        "execution_reentry_required" => {
+        "planning_reentry_required" => Some("workflow"),
+        "handoff_recording_required" => {
             if blocking_task.is_some() {
                 Some("task")
-            } else if matches!(
+            } else {
+                Some("workflow")
+            }
+        }
+        "execution_reentry_required" => {
+            if matches!(
                 review_state_status,
                 "missing_current_closure" | "stale_unreviewed"
             ) || status.is_some_and(|status| {
@@ -1830,6 +1346,8 @@ fn blocking_scope_for_phase_detail(
                     || current_branch_closure_structural_review_state_reason(status).is_some()
             }) {
                 Some("branch")
+            } else if blocking_task.is_some() {
+                Some("task")
             } else {
                 Some("workflow")
             }
@@ -1841,15 +1359,21 @@ fn blocking_scope_for_phase_detail(
 
 fn external_wait_state_for_phase_detail(
     phase_detail: &str,
+    blocking_reason_codes: &[String],
     external_review_result_ready: bool,
 ) -> Option<String> {
     if external_review_result_ready {
         return None;
     }
     match phase_detail {
-        "task_review_result_pending" | "final_review_outcome_pending" => {
+        "task_review_result_pending"
+            if !task_review_result_requires_verification(
+                blocking_reason_codes.iter().map(String::as_str),
+            ) =>
+        {
             Some(String::from("waiting_for_external_review_result"))
         }
+        "final_review_outcome_pending" => Some(String::from("waiting_for_external_review_result")),
         _ => None,
     }
 }
@@ -1873,10 +1397,7 @@ fn compact_operator_reason_codes(
         push_unique_reason(&mut reason_codes, "stale_unreviewed");
     }
     if let Some(status) = status {
-        if matches!(
-            phase_detail,
-            "task_review_dispatch_required" | "task_closure_recording_ready"
-        ) {
+        if phase_detail == "task_review_dispatch_required" {
             if status
                 .reason_codes
                 .iter()
@@ -1947,11 +1468,17 @@ fn review_state_is_stale_unreviewed(
 }
 
 fn status_has_accepted_preflight(status: &PlanExecutionStatus) -> bool {
-    status
-        .execution_run_id
-        .as_ref()
-        .is_some_and(|run_id| !run_id.as_str().trim().is_empty())
-        || status.harness_phase == HarnessPhase::ExecutionPreflight
+    status.chunking_strategy.is_some()
+        && status.evaluator_policy.is_some()
+        && status.reset_policy.is_some()
+        && status
+            .execution_run_id
+            .as_ref()
+            .is_some_and(|execution_run_id| !execution_run_id.as_str().trim().is_empty())
+        && status
+            .review_stack
+            .as_ref()
+            .is_some_and(|review_stack| !review_stack.is_empty())
 }
 
 fn explicit_plan_execution_route_required(status: Option<&PlanExecutionStatus>) -> bool {
@@ -2018,18 +1545,30 @@ fn derive_phase(
     let Some(execution_status) = execution_status else {
         return String::from("implementation_handoff");
     };
-
     if let Some(authoritative_phase) = authoritative_public_phase(execution_status) {
+        if matches!(
+            authoritative_phase,
+            "contract_drafting" | "contract_pending_approval" | "contract_approved" | "evaluating"
+        ) {
+            return String::from("pivot_required");
+        }
         return authoritative_phase.to_owned();
     }
 
     if execution_status.execution_started != "yes" {
+        if matches!(
+            execution_status.harness_phase,
+            HarnessPhase::PivotRequired
+                | HarnessPhase::ContractDrafting
+                | HarnessPhase::ContractPendingApproval
+                | HarnessPhase::ContractApproved
+                | HarnessPhase::Evaluating
+        ) {
+            return String::from("pivot_required");
+        }
         if status_has_accepted_preflight(execution_status)
             || preflight.map(|result| result.allowed).unwrap_or(false)
         {
-            if execution_status.execution_mode == "featureforge:executing-plans" {
-                return String::from("executing");
-            }
             return String::from("execution_preflight");
         }
         return String::from("implementation_handoff");
@@ -2139,6 +1678,7 @@ fn late_stage_observability_for_phase(
     (decision.reason_family.to_owned(), diagnostic_reason_codes)
 }
 
+#[cfg(test)]
 fn late_stage_repair_review_state_status(
     workflow_phase: &str,
     execution_status: Option<&PlanExecutionStatus>,
@@ -2179,26 +1719,6 @@ fn late_stage_repair_review_state_status(
     })
 }
 
-fn late_stage_prerequisite_reroute_active(
-    workflow_phase: &str,
-    qa_requirement: Option<&str>,
-    qa_pending_test_plan_refresh_required: bool,
-    current_branch_closure_id: Option<&str>,
-    current_release_readiness_result: Option<&str>,
-) -> bool {
-    match workflow_phase {
-        "document_release_pending" => true,
-        "final_review_pending" => {
-            current_branch_closure_id.is_none() || current_release_readiness_result != Some("ready")
-        }
-        "qa_pending" => {
-            current_branch_closure_id.is_none()
-                || (qa_requirement == Some("required") && qa_pending_test_plan_refresh_required)
-        }
-        _ => false,
-    }
-}
-
 fn explicit_route_for_plan_override(
     workflow: &WorkflowRuntime,
     resolved_route: &WorkflowRoute,
@@ -2233,20 +1753,7 @@ fn task_scope_review_state_is_stale_unreviewed(status: &PlanExecutionStatus) -> 
     ))
 }
 
-fn optional_execution_command_from_status(
-    status: &PlanExecutionStatus,
-) -> Option<ExecutionRoutingExecutionCommandContext> {
-    status
-        .execution_command_context
-        .as_ref()
-        .cloned()
-        .map(|context| ExecutionRoutingExecutionCommandContext {
-            command_kind: context.command_kind,
-            task_number: context.task_number,
-            step_id: context.step_id,
-        })
-}
-
+#[cfg(test)]
 fn required_execution_command_for_routing(
     current_dir: &std::path::Path,
     runtime_override: Option<&ExecutionRuntime>,
@@ -2278,49 +1785,13 @@ fn required_execution_command_for_routing(
     ))
 }
 
-fn next_action_for_context_like(
-    phase: &str,
-    gate_review: Option<&GateResult>,
-    gate_finish: Option<&GateResult>,
-) -> &'static str {
-    if phase == "final_review_pending" && gate_review.is_some_and(|gate| !gate.allowed) {
-        "return_to_execution"
-    } else if phase == "qa_pending" && finish_requires_test_plan_refresh(gate_finish) {
-        "refresh_test_plan"
-    } else {
-        next_action_for_phase(phase)
-    }
-}
-
-fn next_action_for_phase(phase: &str) -> &'static str {
-    match phase {
-        "needs_brainstorming"
-        | "brainstorming"
-        | "spec_review"
-        | "plan_writing"
-        | "plan_review"
-        | "plan_update"
-        | "workflow_unresolved" => "use_next_skill",
-        "implementation_handoff" | "execution_preflight" => "execution_preflight",
-        "executing"
-        | "contract_drafting"
-        | "contract_pending_approval"
-        | "contract_approved"
-        | "evaluating"
-        | "repairing"
-        | "handoff_required" => "return_to_execution",
-        "pivot_required" => "plan_update",
-        "final_review_pending" => "request_code_review",
-        "qa_pending" => "run_qa_only",
-        "document_release_pending" => "run_document_release",
-        "ready_for_branch_completion" => "finish_branch",
-        _ => "inspect_workflow",
-    }
-}
-
 #[cfg(test)]
 mod routing_helper_tests {
     use super::*;
+    use crate::execution::current_truth::{
+        task_review_dispatch_task, task_review_result_pending_task,
+    };
+    use crate::execution::state::status_from_context;
     use crate::test_support::init_committed_test_repo;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -2386,13 +1857,61 @@ mod routing_helper_tests {
         status
     }
 
+    fn routing_state_for_follow_up(
+        phase_detail: &str,
+        blocking_reason_codes: Vec<String>,
+    ) -> ExecutionRoutingState {
+        ExecutionRoutingState {
+            route: WorkflowRoute {
+                schema_version: 3,
+                status: String::from("ok"),
+                next_skill: String::from("featureforge:workflow"),
+                spec_path: String::new(),
+                plan_path: String::new(),
+                contract_state: String::new(),
+                reason_codes: Vec::new(),
+                diagnostics: Vec::new(),
+                scan_truncated: false,
+                spec_candidate_count: 0,
+                plan_candidate_count: 0,
+                manifest_path: String::new(),
+                root: String::new(),
+                reason: String::new(),
+                note: String::new(),
+            },
+            execution_status: None,
+            preflight: None,
+            gate_review: None,
+            gate_finish: None,
+            workflow_phase: String::from("executing"),
+            phase: String::from("task_closure_pending"),
+            phase_detail: phase_detail.to_owned(),
+            review_state_status: String::from("clean"),
+            qa_requirement: None,
+            follow_up_override: String::from("none"),
+            finish_review_gate_pass_branch_closure_id: None,
+            recording_context: None,
+            execution_command_context: None,
+            next_action: String::new(),
+            recommended_command: None,
+            blocking_scope: Some(String::from("task")),
+            blocking_task: Some(1),
+            external_wait_state: None,
+            blocking_reason_codes,
+            reason_family: String::new(),
+            diagnostic_reason_codes: Vec::new(),
+            task_review_dispatch_id: Some(String::from("dispatch-task-1")),
+            final_review_dispatch_id: None,
+            current_branch_closure_id: None,
+            current_release_readiness_result: None,
+            base_branch: None,
+        }
+    }
+
     #[test]
-    fn task_review_result_pending_task_accepts_boundary_repair_reason_codes() {
+    fn task_review_result_pending_task_accepts_verification_reason_codes() {
         let status = unresolved_status();
         for reason_code in [
-            "prior_task_review_not_green",
-            "task_review_not_independent",
-            "task_review_receipt_malformed",
             "prior_task_verification_missing",
             "prior_task_verification_missing_legacy",
             "task_verification_receipt_malformed",
@@ -2402,9 +1921,152 @@ mod routing_helper_tests {
             assert_eq!(
                 task_review_result_pending_task(&mutated, Some("dispatch-task-1")),
                 Some(1),
-                "{reason_code} should keep task-boundary routing in the task review result lane"
+                "{reason_code} should keep verification blockers in the task review result lane"
             );
         }
+    }
+
+    #[test]
+    fn task_review_result_pending_task_excludes_invalid_review_reason_codes() {
+        let status = unresolved_status();
+        for reason_code in [
+            "task_review_not_independent",
+            "task_review_receipt_malformed",
+        ] {
+            let mut mutated = status.clone();
+            mutated.reason_codes = vec![reason_code.to_owned()];
+            assert_eq!(
+                task_review_result_pending_task(&mutated, Some("dispatch-task-1")),
+                None,
+                "{reason_code} should not route through pending external-review wait lanes"
+            );
+        }
+    }
+
+    #[test]
+    fn task_review_dispatch_task_accepts_stale_dispatch_reason_code() {
+        let mut status = unresolved_status();
+        status.reason_codes = vec![String::from("prior_task_review_dispatch_stale")];
+        assert_eq!(
+            task_review_dispatch_task(&status),
+            Some(1),
+            "stale dispatch should route through the dispatch-required lane",
+        );
+    }
+
+    #[test]
+    fn task_review_result_pending_task_excludes_stale_dispatch_reason_code() {
+        let mut status = unresolved_status();
+        status.reason_codes = vec![String::from("prior_task_review_dispatch_stale")];
+        assert_eq!(
+            task_review_result_pending_task(&status, Some("dispatch-task-1")),
+            None,
+            "stale dispatch should no longer route through the pending-review lane",
+        );
+    }
+
+    #[test]
+    fn required_follow_up_from_routing_keeps_non_green_review_in_execution_reentry_lane() {
+        let routing = routing_state_for_follow_up(
+            "execution_reentry_required",
+            vec![String::from("prior_task_review_not_green")],
+        );
+        assert_eq!(
+            required_follow_up_from_routing(&routing).as_deref(),
+            Some("repair_review_state")
+        );
+    }
+
+    #[test]
+    fn required_follow_up_from_routing_requires_verification_for_verification_blockers() {
+        let routing = routing_state_for_follow_up(
+            "task_review_result_pending",
+            vec![String::from("prior_task_verification_missing")],
+        );
+        assert_eq!(
+            required_follow_up_from_routing(&routing).as_deref(),
+            Some("run_verification")
+        );
+    }
+
+    #[test]
+    fn verification_blockers_align_task_review_pending_follow_up_with_public_next_action() {
+        let routing = routing_state_for_follow_up(
+            "task_review_result_pending",
+            vec![String::from("prior_task_verification_missing_legacy")],
+        );
+        assert_eq!(
+            required_follow_up_from_routing(&routing).as_deref(),
+            Some("run_verification")
+        );
+        let decision = NextActionDecision {
+            kind: NextActionKind::WaitForTaskReviewResult,
+            phase: String::from("task_closure_pending"),
+            phase_detail: String::from("task_review_result_pending"),
+            review_state_status: String::from("clean"),
+            task_number: Some(1),
+            step_number: None,
+            blocking_task: Some(1),
+            blocking_reason_codes: routing.blocking_reason_codes.clone(),
+            recommended_command: None,
+        };
+        assert_eq!(
+            next_action_text_from_shared_decision(&decision),
+            "run verification"
+        );
+    }
+
+    #[test]
+    fn external_wait_state_omits_external_review_wait_for_verification_blockers() {
+        assert_eq!(
+            external_wait_state_for_phase_detail(
+                "task_review_result_pending",
+                &[String::from("prior_task_verification_missing")],
+                false,
+            ),
+            None
+        );
+        assert_eq!(
+            external_wait_state_for_phase_detail(
+                "task_review_result_pending",
+                &[String::from("prior_task_review_not_green")],
+                false,
+            )
+            .as_deref(),
+            Some("waiting_for_external_review_result")
+        );
+    }
+
+    #[test]
+    fn external_review_ready_keeps_verification_blockers_in_verification_lane() {
+        let (_repo_dir, _runtime, context, plan_rel) = unresolved_execution_context();
+        let mut status = unresolved_status();
+        status.execution_started = String::from("yes");
+        status.phase_detail = String::from("task_review_result_pending");
+        status.blocking_task = Some(1);
+        status.blocking_step = None;
+        status.reason_codes = vec![String::from("prior_task_verification_missing")];
+
+        let routing = shared_next_action_seed_from_decision(
+            &context,
+            &status,
+            SharedNextActionRoutingInputs {
+                plan_path: &plan_rel,
+                external_review_result_ready: true,
+                require_exact_execution_command: false,
+                task_review_dispatch_id: Some("dispatch-task-1"),
+                final_review_dispatch_id: None,
+                final_review_dispatch_lineage_present: false,
+                current_branch_closure_id: None,
+            },
+        )
+        .expect("routing derivation should succeed")
+        .expect(
+            "task-review-pending verification blockers should still produce a routing decision",
+        );
+
+        assert_eq!(routing.phase_detail, "task_review_result_pending");
+        assert_eq!(routing.next_action, "run verification");
     }
 
     #[test]

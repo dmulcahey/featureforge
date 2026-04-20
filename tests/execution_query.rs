@@ -535,7 +535,7 @@ fn routing_snapshot_matches_workflow_operator_execution_command_context_payload(
 
     assert!(
         routing.execution_command_context.is_some(),
-        "active execution should expose execution command context through routing state",
+        "active execution should expose execution command context through routing state: {routing:?}",
     );
     assert_routing_parity_with_operator_json(&routing, &operator);
 }
@@ -630,7 +630,7 @@ fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocke
     )
     .expect("review-state query should succeed for FS-07 task-review-dispatch blocked fixture");
 
-    assert_eq!(routing.phase_detail, "task_review_dispatch_required");
+    assert_eq!(routing.phase_detail, "task_closure_recording_ready");
     assert_routing_parity_with_operator_json(&routing, &operator);
     assert_eq!(
         status["phase_detail"], operator["phase_detail"],
@@ -647,7 +647,7 @@ fn runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocke
 }
 
 #[test]
-fn routing_external_review_ready_still_requires_task_dispatch_lineage() {
+fn routing_external_review_ready_without_dispatch_lineage_routes_to_close_current_task() {
     let (repo_dir, state_dir) = init_repo("execution-query-task-dispatch-lineage-required");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -665,41 +665,27 @@ fn routing_external_review_ready_still_requires_task_dispatch_lineage() {
         "workflow operator json for missing task-dispatch-lineage fixture",
     );
 
-    assert_eq!(
-        routing.phase_detail, "task_closure_recording_ready",
-        "external review readiness should route directly to task closure recording",
-    );
-    assert_eq!(
-        routing.next_action, "close current task",
-        "external review readiness should surface the intent-level task closure command",
-    );
-    assert_eq!(
-        routing.recommended_command.as_deref(),
-        Some(
-            "featureforge plan execution close-current-task --plan docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
+    assert_eq!(routing.phase_detail, "task_closure_recording_ready");
+    assert_eq!(routing.next_action, "close current task");
+    assert!(
+        routing.recommended_command.as_deref().is_some_and(
+            |command| command.contains("featureforge plan execution close-current-task --plan")
         ),
-        "external review readiness should expose the executable task closure command",
-    );
-    assert!(
-        routing
-            .recording_context
-            .as_ref()
-            .is_some_and(|context| context.task_number == Some(1) && context.dispatch_id.is_none()),
-        "task-closure recording-ready routing should expose task context without requiring a public dispatch id"
+        "external-review-ready routing without dispatch lineage should keep a runnable close-current-task command",
     );
     assert!(
         routing
             .blocking_reason_codes
             .iter()
-            .any(|code| code == "prior_task_review_dispatch_missing"),
-        "dispatch-required routing should preserve the specific task-boundary dispatch blocker reason code",
+            .any(|code| code == "prior_task_current_closure_missing"),
+        "task-closure-recording-ready routing should preserve the task-boundary closure-missing reason code",
     );
     assert!(
         routing
-            .blocking_reason_codes
-            .iter()
-            .any(|code| code == "task_review_dispatch_required"),
-        "dispatch-required routing should preserve the task dispatch required blocker class",
+            .recommended_command
+            .as_deref()
+            .is_some_and(|command| !command.contains("record-review-dispatch")),
+        "external-review-ready task-boundary routing should not require hidden dispatch helpers",
     );
     assert_routing_parity_with_operator_json(&routing, &operator);
 }

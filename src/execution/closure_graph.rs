@@ -241,21 +241,15 @@ impl AuthoritativeClosureGraph {
         stale_record_ids
     }
 
-    pub(crate) fn latest_stale_task_number(&self) -> Option<u32> {
+    pub(crate) fn earliest_unresolved_stale_task_number(&self) -> Option<u32> {
         self.evaluations
             .values()
             .filter(|evaluation| {
                 evaluation.identity.kind == ClosureKind::TaskClosure
                     && evaluation.freshness == ClosureFreshness::StaleUnreviewed
             })
-            .filter_map(|evaluation| {
-                evaluation
-                    .identity
-                    .task_number
-                    .map(|task_number| (evaluation.identity.authoritative_sequence, task_number))
-            })
-            .max_by_key(|(sequence, task_number)| (*sequence, *task_number))
-            .map(|(_, task_number)| task_number)
+            .filter_map(|evaluation| evaluation.identity.task_number)
+            .min()
     }
 
     fn ingest_task_closure_history(&mut self, history: &BTreeMap<String, Value>) {
@@ -1151,7 +1145,7 @@ mod tests {
     }
 
     #[test]
-    fn latest_stale_task_number_uses_authoritative_stale_task_target() {
+    fn earliest_unresolved_stale_task_number_prefers_earliest_task_target() {
         let snapshot = ClosureHistorySnapshot {
             task_closure_record_history: BTreeMap::from([
                 (
@@ -1171,7 +1165,7 @@ mod tests {
         };
         let graph =
             AuthoritativeClosureGraph::from_snapshot(&snapshot, &ClosureGraphSignals::default());
-        assert_eq!(graph.latest_stale_task_number(), Some(6));
+        assert_eq!(graph.earliest_unresolved_stale_task_number(), Some(4));
     }
 
     #[test]

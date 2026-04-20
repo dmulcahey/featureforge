@@ -358,8 +358,21 @@ pub fn ensure_preflight_authoritative_bootstrap(
     ) {
         state.harness_phase = Some(String::from("execution_preflight"));
     }
-    state.run_identity = Some(run_identity);
-    state.chunk_id = Some(chunk_id.as_str().to_owned());
+    let preserve_existing_post_preflight_identity = matches!(
+        state.harness_phase.as_deref(),
+        Some(phase) if !matches!(phase, "implementation_handoff" | "execution_preflight")
+    ) && state
+        .run_identity
+        .as_ref()
+        .is_some_and(|identity| !identity.execution_run_id.as_str().trim().is_empty())
+        && state
+            .chunk_id
+            .as_deref()
+            .is_some_and(|existing_chunk_id| !existing_chunk_id.trim().is_empty());
+    if !preserve_existing_post_preflight_identity {
+        state.run_identity = Some(run_identity);
+        state.chunk_id = Some(chunk_id.as_str().to_owned());
+    }
     if state.active_worktree_lease_fingerprints.is_none() {
         state.active_worktree_lease_fingerprints = Some(Vec::new());
     }

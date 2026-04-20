@@ -10,10 +10,10 @@ use crate::cli::plan_execution::{RecommendArgs, StatusArgs as ExecutionStatusArg
 use crate::cli::workflow::{DoctorArgs, OperatorArgs, PlanArgs};
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, JsonFailure};
-use crate::execution::current_truth::task_boundary_block_reason_code as shared_task_boundary_block_reason_code;
 use crate::execution::harness::EvaluatorKind;
 use crate::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state, query_workflow_routing_state_for_runtime,
+    task_review_result_requires_verification,
 };
 use crate::execution::state::{ExecutionRuntime, GateResult, PlanExecutionStatus};
 use crate::execution::topology::RecommendOutput;
@@ -103,6 +103,8 @@ enum WorkflowOperatorNextActionSchema {
     ResolveReleaseBlocker,
     #[serde(rename = "run QA")]
     RunQa,
+    #[serde(rename = "run verification")]
+    RunVerification,
     #[serde(rename = "wait for external review result")]
     WaitForExternalReviewResult,
 }
@@ -447,6 +449,7 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         .as_ref()
         .map(|report| report.contract_state.clone())
         .unwrap_or_else(|| context.route.contract_state.clone());
+    let gate_review = doctor_gate_review(&context);
 
     WorkflowDoctor {
         schema_version: WORKFLOW_DOCTOR_SCHEMA_VERSION,
@@ -469,10 +472,102 @@ fn doctor_from_context(context: OperatorContext) -> WorkflowDoctor {
         execution_status: context.execution_status,
         plan_contract: context.plan_contract,
         preflight: context.preflight,
-        gate_review: context.gate_review,
+        gate_review,
         gate_finish: context.gate_finish,
         task_review_dispatch_id: context.task_review_dispatch_id,
         final_review_dispatch_id: context.final_review_dispatch_id,
+    }
+}
+
+fn doctor_gate_review(context: &OperatorContext) -> Option<GateResult> {
+    if let Some(mut gate_review) = context.gate_review.clone() {
+        if let Some(status) = context.execution_status.as_ref() {
+            for reason_code in context
+                .operator_blocking_reason_codes
+                .iter()
+                .chain(status.reason_codes.iter())
+            {
+                if doctor_synthetic_gate_review_reason_code(reason_code)
+                    && !gate_review
+                        .reason_codes
+                        .iter()
+                        .any(|existing| existing == reason_code)
+                {
+                    gate_review.reason_codes.push(reason_code.clone());
+                }
+            }
+        }
+        if gate_review.failure_class == "StaleExecutionEvidence"
+            || doctor_synthetic_gate_review_failure_class(&gate_review.reason_codes)
+                == "StaleProvenance"
+        {
+            gate_review.failure_class = String::from("StaleProvenance");
+        }
+        return Some(gate_review);
+    }
+
+    let status = context.execution_status.as_ref()?;
+    if status.execution_started != "yes" {
+        return None;
+    }
+
+    let mut reason_codes = Vec::new();
+    for reason_code in context
+        .operator_blocking_reason_codes
+        .iter()
+        .chain(status.reason_codes.iter())
+    {
+        if doctor_synthetic_gate_review_reason_code(reason_code)
+            && !reason_codes.iter().any(|existing| existing == reason_code)
+        {
+            reason_codes.push(reason_code.clone());
+        }
+    }
+    if reason_codes.is_empty() {
+        return None;
+    }
+
+    Some(GateResult {
+        allowed: false,
+        action: String::from("blocked"),
+        failure_class: doctor_synthetic_gate_review_failure_class(&reason_codes),
+        reason_codes,
+        warning_codes: Vec::new(),
+        diagnostics: Vec::new(),
+        code: None,
+        workspace_state_id: Some(status.workspace_state_id.clone()),
+        current_branch_reviewed_state_id: status.current_branch_reviewed_state_id.clone(),
+        current_branch_closure_id: status.current_branch_closure_id.clone(),
+        finish_review_gate_pass_branch_closure_id: status
+            .finish_review_gate_pass_branch_closure_id
+            .clone(),
+        recommended_command: context.operator_recommended_command.clone(),
+        rederive_via_workflow_operator: None,
+    })
+}
+
+fn doctor_synthetic_gate_review_reason_code(reason_code: &str) -> bool {
+    matches!(
+        reason_code,
+        "stale_provenance"
+            | "stale_unreviewed"
+            | "post_review_repo_write_detected"
+            | "final_review_state_not_fresh"
+            | "browser_qa_state_not_fresh"
+            | "release_docs_state_not_fresh"
+    )
+}
+
+fn doctor_synthetic_gate_review_failure_class(reason_codes: &[String]) -> String {
+    if reason_codes.iter().any(|reason_code| {
+        matches!(
+            reason_code.as_str(),
+            "stale_provenance" | "stale_unreviewed" | "post_review_repo_write_detected"
+        )
+    }) {
+        String::from("StaleProvenance")
+    } else {
+        String::from("ExecutionStateNotReady")
     }
 }
 
@@ -683,7 +778,9 @@ fn handoff_from_context(
                     .as_ref()
                     .map(|status| status.execution_mode.clone())
                     .unwrap_or_default();
-                (skill, reason_text(&context))
+                let recommendation_reason =
+                    task_boundary_next_step_text(&context).unwrap_or_else(|| reason_text(&context));
+                (skill, recommendation_reason)
             }
             _ if execution_started == "yes" => {
                 let skill = context
@@ -1181,39 +1278,20 @@ fn reason_text(context: &OperatorContext) -> String {
                     "The approved plan is ready, but execution preflight is still blocked by the current workspace state.",
                 )
             }),
-        "executing" => String::from(
-            "Execution already started for the approved plan and should continue through the current execution flow.",
-        ),
+        "executing" => task_boundary_reason_text(context).unwrap_or_else(|| {
+            String::from(
+                "Execution already started for the approved plan and should continue through the current execution flow.",
+            )
+        }),
         "pivot_required" => {
             String::from("Execution is blocked pending an approved plan revision.")
         }
         "task_closure_pending" => {
-            let dispatch_block_reason = context.execution_status.as_ref().and_then(|status| {
-                shared_task_boundary_block_reason_code(status).filter(|reason_code| {
-                    matches!(
-                        *reason_code,
-                        "prior_task_review_dispatch_missing"
-                            | "prior_task_review_dispatch_stale"
-                    )
-                })
-            });
-            if dispatch_block_reason.is_some() {
-                task_boundary_next_step_text(context).unwrap_or_else(|| {
-                    String::from(
-                        "Execution already started for the approved plan and should continue through the current execution flow.",
-                    )
-                })
-            } else {
-                context
-                    .execution_status
-                    .as_ref()
-                    .and_then(task_boundary_reason_text)
-                    .unwrap_or_else(|| {
-                        String::from(
-                            "Execution already started for the approved plan and should continue through the current execution flow.",
-                        )
-                    })
-            }
+            task_boundary_reason_text(context).unwrap_or_else(|| {
+                String::from(
+                    "Execution already started for the approved plan and should continue through the current execution flow.",
+                )
+            })
         }
         "contract_drafting"
         | "contract_pending_approval"
@@ -1290,68 +1368,94 @@ fn review_requires_execution_reentry(context: &OperatorContext) -> bool {
             .is_some_and(|gate| !gate.allowed)
 }
 
-fn task_boundary_reason_text(status: &PlanExecutionStatus) -> Option<String> {
-    let blocking_task = status.blocking_task?;
-    let reason_code = shared_task_boundary_block_reason_code(status)?;
-    let message = match reason_code {
-        "prior_task_review_not_green"
-        | "task_review_not_independent"
-        | "task_review_receipt_malformed" => format!(
-            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Complete dedicated-independent review for Task {blocking_task} until it is green."
+fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
+    let blocking_task = context.operator_blocking_task?;
+    let message = match context.operator_phase_detail.as_str() {
+        "task_review_dispatch_required" => format!(
+            "Task {blocking_task} closure cannot be recorded/refreshed yet. Dispatch dedicated-independent review for Task {blocking_task} first."
         ),
-        "prior_task_verification_missing" | "task_verification_receipt_malformed" => format!(
-            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Run verification-before-completion for Task {blocking_task} and record a passing task verification receipt."
+        "task_review_result_pending" => {
+            if task_review_result_pending_requires_verification(context) {
+                format!(
+                    "Task {blocking_task} closure cannot be recorded/refreshed yet. Run verification and then record task closure for Task {blocking_task}."
+                )
+            } else if operator_blocking_reason_present(context, "task_review_not_independent")
+                || operator_blocking_reason_present(context, "task_review_receipt_malformed")
+                || operator_blocking_reason_present(context, "prior_task_review_not_green")
+            {
+                format!(
+                    "Task {blocking_task} closure cannot be recorded/refreshed yet because the latest review provenance is invalid or not green. Dispatch dedicated-independent review for Task {blocking_task}, then record task closure."
+                )
+            } else {
+                format!(
+                    "Task {blocking_task} closure cannot be recorded/refreshed yet. Wait for the outstanding review result, then record task closure for Task {blocking_task}."
+                )
+            }
+        }
+        "task_closure_recording_ready" => format!(
+            "Task {blocking_task} closure is ready to record/refresh. Record or refresh Task {blocking_task} closure now."
         ),
-        "prior_task_verification_missing_legacy" => format!(
-            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Backfill Task {blocking_task} verification evidence or record an approved migration marker before starting the next task."
-        ),
-        "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale" => format!(
-            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. STOP and dispatch fresh-context dedicated-independent review before any next-task begin."
-        ),
-        "prior_task_current_closure_stale" => format!(
-            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Reenter execution to refresh Task {blocking_task} closure truth before advancing."
-        ),
-        "prior_task_current_closure_invalid"
-        | "prior_task_current_closure_reviewed_state_malformed" => format!(
-            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Repair invalid closure provenance through execution reentry before advancing."
-        ),
-        "task_cycle_break_active" => format!(
-            "Task-boundary gate ({reason_code}) is blocking advancement past Task {blocking_task}. Resolve cycle-break remediation for Task {blocking_task} before retrying."
-        ),
+        "execution_reentry_required" => {
+            if operator_blocking_reason_present(context, "prior_task_review_not_green") {
+                format!(
+                    "Task {blocking_task} closure cannot be recorded/refreshed yet because the latest dedicated-independent review is not green. Reenter execution to remediate Task {blocking_task}, then rerun review and record task closure."
+                )
+            } else {
+                format!(
+                    "Next-task begin is blocked because Task {blocking_task} closure state is stale or invalid. Reenter execution and complete the routed repair for Task {blocking_task}."
+                )
+            }
+        }
         _ => return None,
     };
     Some(message)
 }
 
+fn operator_blocking_reason_present(context: &OperatorContext, reason_code: &str) -> bool {
+    context
+        .operator_blocking_reason_codes
+        .iter()
+        .any(|code| code == reason_code)
+        || context
+            .execution_status
+            .iter()
+            .any(|status| status.reason_codes.iter().any(|code| code == reason_code))
+}
+
 fn task_boundary_next_step_text(context: &OperatorContext) -> Option<String> {
-    if context.phase != "repairing" && context.phase != "task_closure_pending" {
+    if !task_boundary_guidance_applies(context) {
         return None;
     }
-    let status = context.execution_status.as_ref()?;
-    let reason = task_boundary_reason_text(status)?;
-    let reason_code = shared_task_boundary_block_reason_code(status)?;
-    if matches!(
-        reason_code,
-        "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
-    ) {
-        if context.route.plan_path.is_empty() {
-            return Some(format!(
-                "{reason} Request fresh-context dedicated-independent review, then rerun `featureforge workflow operator --plan <approved-plan-path> --external-review-result-ready` and continue intent-level task closure."
-            ));
-        }
+    let reason = task_boundary_reason_text(context)?;
+    if let Some(recommended_command) = context.operator_recommended_command.as_deref() {
         return Some(format!(
-            "{reason} Request fresh-context dedicated-independent review, then rerun `featureforge workflow operator --plan {} --external-review-result-ready` and continue intent-level task closure.",
-            context.route.plan_path
+            "{reason} Follow the routed command: {recommended_command}"
         ));
     }
-    if context.route.plan_path.is_empty() {
-        Some(format!("{reason} Continue in the active execution flow."))
-    } else {
-        Some(format!(
-            "{reason} Continue in the active execution flow for {}.",
-            context.route.plan_path
-        ))
-    }
+    Some(reason)
+}
+
+fn task_boundary_guidance_applies(context: &OperatorContext) -> bool {
+    context.phase == "repairing"
+        || context.phase == "task_closure_pending"
+        || (context.phase == "executing"
+            && context.operator_phase_detail == "execution_reentry_required"
+            && context.operator_blocking_task.is_some())
+}
+
+fn task_review_result_pending_requires_verification(context: &OperatorContext) -> bool {
+    task_review_result_requires_verification(
+        context
+            .operator_blocking_reason_codes
+            .iter()
+            .map(String::as_str)
+            .chain(
+                context
+                    .execution_status
+                    .iter()
+                    .flat_map(|status| status.reason_codes.iter().map(String::as_str)),
+            ),
+    )
 }
 
 fn gate_first_diagnostic_message(gate: Option<&GateResult>) -> Option<String> {
@@ -1468,6 +1572,62 @@ fn execution_status_args(args: &PlanArgs) -> ExecutionStatusArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow::status::WorkflowRoute;
+
+    fn task_boundary_context(
+        phase_detail: &str,
+        blocking_reason_codes: &[&str],
+        recommended_command: Option<&str>,
+    ) -> OperatorContext {
+        OperatorContext {
+            route: WorkflowRoute {
+                schema_version: 3,
+                status: String::from("implementation_ready"),
+                next_skill: String::from("featureforge:executing-plans"),
+                spec_path: String::from("docs/featureforge/specs/example.md"),
+                plan_path: String::from("docs/featureforge/plans/example.md"),
+                contract_state: String::from("approved"),
+                reason_codes: Vec::new(),
+                diagnostics: Vec::new(),
+                scan_truncated: false,
+                spec_candidate_count: 1,
+                plan_candidate_count: 1,
+                manifest_path: String::new(),
+                root: String::from("/tmp/featureforge"),
+                reason: String::new(),
+                note: String::new(),
+            },
+            execution_status: None,
+            plan_contract: None,
+            preflight: None,
+            gate_review: None,
+            gate_finish: None,
+            execution_preflight_block_reason: None,
+            phase: String::from("task_closure_pending"),
+            operator_phase: String::from("task_closure_pending"),
+            operator_phase_detail: String::from(phase_detail),
+            operator_review_state_status: String::from("clean"),
+            operator_follow_up_override: String::from("none"),
+            operator_recording_context: None,
+            operator_execution_command_context: None,
+            operator_next_action: String::from("wait for external review result"),
+            operator_recommended_command: recommended_command.map(str::to_owned),
+            operator_base_branch: Some(String::from("main")),
+            operator_blocking_scope: Some(String::from("task")),
+            operator_blocking_task: Some(1),
+            operator_external_wait_state: None,
+            operator_blocking_reason_codes: blocking_reason_codes
+                .iter()
+                .map(|reason| String::from(*reason))
+                .collect(),
+            reason_family: String::new(),
+            diagnostic_reason_codes: Vec::new(),
+            task_review_dispatch_id: Some(String::from("dispatch-task-1")),
+            final_review_dispatch_id: None,
+            finish_review_gate_pass_branch_closure_id: None,
+            qa_requirement: None,
+        }
+    }
 
     #[test]
     fn render_operator_surfaces_public_contract_fields() {
@@ -1511,5 +1671,35 @@ mod tests {
         assert!(rendered.contains(
             "Execution command context: command_kind=complete, task_number=1, step_id=2"
         ));
+    }
+
+    #[test]
+    fn task_boundary_reason_text_uses_verification_language_when_verification_is_missing() {
+        let context = task_boundary_context(
+            "task_review_result_pending",
+            &["prior_task_verification_missing"],
+            Some(
+                "featureforge plan execution close-current-task --plan docs/featureforge/plans/example.md --task 1 --review-result pass --verification-result pass",
+            ),
+        );
+
+        let reason = task_boundary_reason_text(&context)
+            .expect("task-boundary reason text should be available for task_review_result_pending");
+        assert!(
+            reason.contains("Run verification and then record task closure"),
+            "verification-missing task-boundary reason text should mention verification + closure recording, got {reason}"
+        );
+
+        let next_step = task_boundary_next_step_text(&context).expect(
+            "task-boundary next-step text should be available for task_review_result_pending",
+        );
+        assert!(
+            next_step.contains("Run verification and then record task closure"),
+            "verification-missing next-step text should preserve verification + closure-recording guidance, got {next_step}"
+        );
+        assert!(
+            next_step.contains("featureforge plan execution close-current-task"),
+            "task-boundary next-step text should still include the routed command for verification-missing blockers, got {next_step}"
+        );
     }
 }

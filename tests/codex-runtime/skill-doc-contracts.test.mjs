@@ -1314,7 +1314,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /Treat low-level runtime primitives as compatibility\/debug-only surfaces unless workflow\/operator explicitly routes to them\./,
+    /Keep hidden compatibility\/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` out of the normal path; do not route to them for normal workflow progression\./,
   );
   assert.doesNotMatch(
     usingFeatureForge,
@@ -1911,9 +1911,14 @@ test('active docs describe the post-session-entry routing contract', () => {
 
 test('runtime-remediation regression inventory fixture stays complete', () => {
   const inventory = readUtf8(path.join(REPO_ROOT, 'tests/fixtures/runtime-remediation/README.md'));
+  assert.match(
+    inventory,
+    /## Detailed Failure Shapes \(Mandatory\)/,
+    'runtime-remediation inventory should include the mandatory detailed failure-shape section',
+  );
   for (const scenario of [
     'FS-01', 'FS-02', 'FS-03', 'FS-04', 'FS-05', 'FS-06',
-    'FS-07', 'FS-08', 'FS-09', 'FS-10', 'FS-11', 'FS-12', 'FS-13',
+    'FS-07', 'FS-08', 'FS-09', 'FS-10', 'FS-11', 'FS-12', 'FS-13', 'FS-14', 'FS-15', 'FS-16',
   ]) {
     assert.match(
       inventory,
@@ -1921,17 +1926,77 @@ test('runtime-remediation regression inventory fixture stays complete', () => {
       `runtime-remediation inventory should include ${scenario}`,
     );
   }
+  for (const detailAnchor of [
+    'branch-closure mutation says repair is required',
+    'helper-backed tests pass but compiled CLI behavior differs',
+    'status points to the right blocker, operator still recommends execution reentry / begin',
+    'rebased consumer-style fixture with forward reentry overlay pointing at Task 3',
+    'authoritative state contains `run_identity.execution_run_id`',
+    'completed task with no current task closure baseline',
+    'remove or stale receipt projections without changing the reviewed state that closure binds to',
+  ]) {
+    assert.match(
+      inventory,
+      new RegExp(escapeRegex(detailAnchor)),
+      `runtime-remediation inventory should preserve detailed failure-shape text: ${detailAnchor}`,
+    );
+  }
   for (const [scenario, anchor] of [
+    ['FS-01', 'tests/workflow_runtime.rs::runtime_remediation_fs01_shared_route_parity_for_missing_current_closure'],
+    ['FS-01', 'tests/workflow_shell_smoke.rs::compiled_cli_route_parity_probe_for_late_stage_refresh_fixture'],
+    ['FS-01', 'tests/workflow_shell_smoke.rs::plan_execution_record_release_readiness_primitive_uses_shared_routing_when_stale'],
     ['FS-01', 'tests/workflow_shell_smoke.rs::runtime_remediation_fs01_compiled_cli_repair_and_branch_closure_do_not_disagree'],
+    ['FS-02', 'tests/workflow_runtime_final_review.rs::fs02_late_stage_drift_routes_consistently_across_operator_and_status'],
+    ['FS-02', 'tests/workflow_entry_shell_smoke.rs::fs02_entry_route_surfaces_share_parity_and_budget'],
+    ['FS-03', 'tests/workflow_runtime.rs::workflow_phase_routes_task_boundary_blocked'],
+    ['FS-03', 'tests/plan_execution.rs::runtime_remediation_fs03_compiled_cli_dispatch_target_acceptance_and_mismatch'],
+    ['FS-03', 'tests/workflow_shell_smoke.rs::plan_execution_record_review_dispatch_prefers_task_boundary_target_over_interrupted_note_state'],
+    ['FS-03', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli'],
+    ['FS-04', 'tests/workflow_runtime.rs::runtime_remediation_fs04_repair_returns_route_consumed_by_operator'],
+    ['FS-04', 'tests/workflow_runtime.rs::runtime_remediation_fs04_compiled_cli_repair_returns_route_consumed_by_operator'],
+    ['FS-04', 'tests/plan_execution.rs::runtime_remediation_fs04_rebuild_evidence_preserves_authoritative_state_digest'],
+    ['FS-04', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct_and_compiled_cli'],
+    ['FS-04', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift'],
+    ['FS-05', 'tests/plan_execution.rs::record_review_dispatch_task_target_mismatch_fails_before_authoritative_mutation'],
     ['FS-05', 'tests/plan_execution.rs::record_review_dispatch_final_review_scope_rejects_task_field_before_authoritative_mutation'],
     ['FS-05', 'tests/plan_execution.rs::record_final_review_rejects_unapproved_reviewer_source_before_mutation'],
-    ['FS-04', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs04_repair_review_state_accepts_external_review_ready_flag_without_irrelevant_route_drift'],
-    ['FS-11', 'tests/plan_execution_final_review.rs::fs11_gate_finish_rejects_final_review_release_binding_mismatch'],
-    ['FS-12', 'tests/plan_execution.rs::rebuild_evidence_noop_regenerates_final_review_projection_when_reviewer_projection_is_tampered'],
-    ['FS-13', 'tests/workflow_shell_smoke.rs::plan_execution_advance_late_stage_final_review_keeps_deviation_verdict_independent_when_review_fails'],
-    ['FS-13', 'tests/plan_execution_final_review.rs::dedicated_final_review_receipt_accepts_failed_result_with_independent_deviation_pass'],
-    ['FS-13', 'tests/plan_execution_final_review.rs::dedicated_final_review_receipt_rejects_failed_result_with_failed_deviation_verdict'],
+    ['FS-05', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases'],
+    ['FS-06', 'tests/workflow_shell_smoke.rs::fs06_helper_and_compiled_cli_target_mismatch_stay_in_parity'],
+    ['FS-07', 'tests/execution_query.rs::runtime_remediation_fs07_query_surface_parity_for_task_review_dispatch_blocked'],
+    ['FS-07', 'tests/workflow_shell_smoke.rs::fs07_task_review_dispatch_route_parity_in_compiled_cli_surfaces'],
+    ['FS-08', 'tests/workflow_runtime.rs::runtime_remediation_fs08_resume_overlay_does_not_hide_stale_blocker'],
+    ['FS-08', 'tests/workflow_runtime.rs::runtime_remediation_fs08_compiled_cli_resume_overlay_does_not_hide_stale_blocker'],
+    ['FS-08', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs08_stale_blocker_visibility_stays_aligned_between_direct_and_compiled_cli'],
+    ['FS-09', 'tests/workflow_runtime.rs::runtime_remediation_fs09_repair_exposes_next_blocker_immediately'],
+    ['FS-09', 'tests/workflow_entry_shell_smoke.rs::fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli'],
+    ['FS-10', 'tests/workflow_runtime.rs::runtime_remediation_fs10_stale_follow_up_is_ignored_when_truth_is_current'],
+    ['FS-10', 'tests/workflow_shell_smoke.rs::prerelease_branch_closure_refresh_ignores_stale_execution_reentry_follow_up'],
+    ['FS-11', 'tests/workflow_runtime.rs::runtime_remediation_fs11_operator_begin_repair_share_one_next_action_engine'],
+    ['FS-11', 'tests/workflow_runtime.rs::runtime_remediation_fs11_repair_returns_same_action_as_operator_and_begin'],
+    ['FS-11', 'tests/workflow_shell_smoke.rs::fs11_operator_and_begin_target_parity_after_rebase_resume'],
+    ['FS-11', 'tests/workflow_shell_smoke.rs::fs11_repair_output_matches_following_public_command_without_hidden_helper'],
+    ['FS-11', 'tests/workflow_shell_smoke.rs::fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers'],
+    ['FS-12', 'tests/workflow_runtime.rs::runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin_and_operator'],
+    ['FS-12', 'tests/plan_execution.rs::runtime_remediation_fs12_close_current_task_uses_authoritative_run_identity_without_hidden_preflight'],
+    ['FS-12', 'tests/workflow_shell_smoke.rs::fs12_recovery_path_does_not_require_hidden_preflight_when_run_identity_exists'],
+    ['FS-13', 'tests/workflow_runtime.rs::runtime_remediation_fs13_markdown_note_is_projection_not_authority'],
+    ['FS-13', 'tests/workflow_runtime.rs::runtime_remediation_fs13_hidden_gates_materialize_legacy_open_step_state_when_blocked'],
+    ['FS-13', 'tests/plan_execution.rs::runtime_remediation_fs13_reopen_and_begin_update_authoritative_open_step_state'],
+    ['FS-13', 'tests/workflow_shell_smoke.rs::fs13_normal_recovery_never_requires_manual_plan_note_edit'],
+    ['FS-13', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_round_trip'],
+    ['FS-14', 'tests/workflow_runtime.rs::runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_current_task_not_execution_reentry'],
+    ['FS-14', 'tests/workflow_runtime.rs::runtime_remediation_fs14_repair_routes_missing_task_closure_baseline_to_close_current_task'],
+    ['FS-14', 'tests/plan_execution.rs::runtime_remediation_fs14_close_current_task_rebuilds_missing_current_closure_baseline_without_hidden_dispatch'],
+    ['FS-14', 'tests/workflow_shell_smoke.rs::fs14_recovery_to_close_current_task_uses_only_public_intent_commands'],
+    ['FS-15', 'tests/workflow_runtime.rs::runtime_remediation_fs15_earliest_stale_boundary_beats_latest_overlay_target'],
+    ['FS-15', 'tests/workflow_runtime.rs::runtime_remediation_fs15_repair_never_jumps_to_later_task_when_earlier_boundary_exists'],
+    ['FS-15', 'tests/contracts_execution_runtime_boundaries.rs::runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task'],
+    ['FS-16', 'tests/workflow_runtime.rs::runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh'],
+    ['FS-16', 'tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts'],
+    ['Task-12', 'task_close_happy_path_runtime_management_budget_is_capped'],
     ['Task-12', 'task_close_internal_dispatch_runtime_management_budget_is_capped'],
+    ['Task-12', 'fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers'],
+    ['Task-12', 'stale_release_refresh_runtime_management_budget_is_capped_before_new_review_step'],
   ]) {
     assert.match(
       inventory,

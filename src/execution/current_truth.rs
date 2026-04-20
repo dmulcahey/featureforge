@@ -62,96 +62,6 @@ pub(crate) enum ReviewStateRepairReroute {
     RecordBranchClosure,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IntentLevelCommandTemplateInputs<'a> {
-    pub phase_detail: &'a str,
-    pub plan_path: &'a str,
-    pub task_number: Option<u32>,
-    pub dispatch_id: Option<&'a str>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IntentLevelCommandTemplate {
-    pub next_action: Option<String>,
-    pub recommended_command: Option<Option<String>>,
-}
-
-pub(crate) fn intent_level_command_template(
-    inputs: IntentLevelCommandTemplateInputs<'_>,
-) -> IntentLevelCommandTemplate {
-    let IntentLevelCommandTemplateInputs {
-        phase_detail,
-        plan_path,
-        task_number,
-        dispatch_id: _dispatch_id,
-    } = inputs;
-
-    let mut next_action = None;
-    let recommended_command = match phase_detail {
-        "task_review_dispatch_required" => None,
-        "task_review_result_pending" => {
-            next_action = Some(String::from("wait for external review result"));
-            Some(None)
-        }
-        "task_closure_recording_ready" => {
-            next_action = Some(String::from("close current task"));
-            let task_number = task_number.unwrap_or_default();
-            Some(Some(format!(
-                "featureforge plan execution close-current-task --plan {plan_path} --task {task_number} --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]"
-            )))
-        }
-        "finish_completion_gate_ready" | "finish_review_gate_ready" => {
-            next_action = Some(String::from("finish branch"));
-            Some(None)
-        }
-        "branch_closure_recording_required_for_release_readiness" => {
-            next_action = Some(String::from("advance late stage"));
-            Some(Some(format!(
-                "featureforge plan execution advance-late-stage --plan {plan_path}"
-            )))
-        }
-        "release_readiness_recording_ready" => {
-            next_action = Some(String::from("advance late stage"));
-            Some(Some(format!(
-                "featureforge plan execution advance-late-stage --plan {plan_path} --result ready|blocked --summary-file <path>"
-            )))
-        }
-        "release_blocker_resolution_required" => {
-            next_action = Some(String::from("resolve release blocker"));
-            Some(Some(format!(
-                "featureforge plan execution advance-late-stage --plan {plan_path} --result ready|blocked --summary-file <path>"
-            )))
-        }
-        "final_review_dispatch_required" => None,
-        "final_review_outcome_pending" => {
-            next_action = Some(String::from("wait for external review result"));
-            Some(None)
-        }
-        "final_review_recording_ready" => {
-            next_action = Some(String::from("advance late stage"));
-            Some(Some(format!(
-                "featureforge plan execution advance-late-stage --plan {plan_path} --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>"
-            )))
-        }
-        "test_plan_refresh_required" => {
-            next_action = Some(String::from("refresh test plan"));
-            Some(None)
-        }
-        "qa_recording_required" => {
-            next_action = Some(String::from("run QA"));
-            Some(Some(format!(
-                "featureforge plan execution advance-late-stage --plan {plan_path} --result pass|fail --summary-file <path>"
-            )))
-        }
-        _ => None,
-    };
-
-    IntentLevelCommandTemplate {
-        next_action,
-        recommended_command,
-    }
-}
-
 pub(crate) fn normalize_summary_content(value: &str) -> String {
     let normalized_newlines = value.replace("\r\n", "\n").replace('\r', "\n");
     let trimmed_lines = normalized_newlines
@@ -339,9 +249,6 @@ pub(crate) fn current_repo_tracked_tree_sha(repo_root: &Path) -> Result<String, 
     // CLI would produce", including index semantics relied on by the runtime/test contracts.
     // Keep this boundary memoized at the ExecutionContext level and prefer in-process gix reads
     // around it so status/operator paths do not repeat the subprocess cost inside one command.
-    if !repo_has_tracked_worktree_deltas_for_review_state(&repo)? {
-        return git_write_tree(repo_root, None);
-    }
     let index_path = repo
         .open_index()
         .map_err(|error| {
@@ -383,49 +290,6 @@ pub(crate) fn current_repo_tracked_tree_sha(repo_root: &Path) -> Result<String, 
         ));
     }
     git_write_tree(repo_root, Some(&temp_index_path))
-}
-
-fn repo_has_tracked_worktree_deltas_for_review_state(
-    repo: &gix::Repository,
-) -> Result<bool, JsonFailure> {
-    let mut status_iter = repo
-        .status(gix::progress::Discard)
-        .map_err(|error| {
-            JsonFailure::new(
-                FailureClass::BranchDetectionFailed,
-                format!(
-                    "Could not prepare tracked worktree status for reviewed-state identity: {error}"
-                ),
-            )
-        })?
-        .untracked_files(gix::status::UntrackedFiles::None)
-        .index_worktree_rewrites(None)
-        .tree_index_track_renames(gix::status::tree_index::TrackRenames::Disabled)
-        .into_iter(Vec::<gix::bstr::BString>::new())
-        .map_err(|error| {
-            JsonFailure::new(
-                FailureClass::BranchDetectionFailed,
-                format!(
-                    "Could not determine tracked worktree changes for reviewed-state identity: {error}"
-                ),
-            )
-        })?;
-    for item in &mut status_iter {
-        let item = item.map_err(|error| {
-            JsonFailure::new(
-                FailureClass::BranchDetectionFailed,
-                format!(
-                    "Could not determine tracked worktree changes for reviewed-state identity: {error}"
-                ),
-            )
-        })?;
-        if let gix::status::Item::IndexWorktree(change) = item
-            && change.summary().is_some()
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn git_write_tree(repo_root: &Path, index_override: Option<&Path>) -> Result<String, JsonFailure> {
@@ -586,25 +450,18 @@ pub(crate) fn current_branch_closure_reviewed_tree_sha(
         .ok()
 }
 
-pub(crate) fn current_branch_closure_baseline_tree_sha(
-    context: &ExecutionContext,
-) -> Option<String> {
-    let branch_tree_sha = current_branch_closure_reviewed_tree_sha(context)?;
-    let current_tree_sha = context.current_tracked_tree_sha().ok()?;
-    (current_tree_sha == branch_tree_sha).then_some(branch_tree_sha)
-}
-
 fn current_branch_closure_allows_empty_lineage_late_stage_rerecord(
     context: &ExecutionContext,
 ) -> Result<bool, JsonFailure> {
-    let Some(identity) = validated_current_branch_closure_identity(context) else {
-        return Ok(false);
-    };
     let Some(authoritative_state) = load_authoritative_transition_state(context)? else {
         return Ok(false);
     };
-    let Some(record) = authoritative_state.branch_closure_record(&identity.branch_closure_id)
-    else {
+    let branch_closure_id = validated_current_branch_closure_identity(context)
+        .map(|identity| identity.branch_closure_id);
+    let Some(branch_closure_id) = branch_closure_id else {
+        return Ok(false);
+    };
+    let Some(record) = authoritative_state.branch_closure_record(&branch_closure_id) else {
         return Ok(false);
     };
     Ok(
@@ -654,17 +511,45 @@ pub(crate) struct BranchRerecordingAssessment {
     pub unsupported_reason: Option<BranchRerecordingUnsupportedReason>,
 }
 
+pub(crate) fn late_stage_missing_task_closure_baseline_bridge_supported(
+    assessment: &BranchRerecordingAssessment,
+) -> bool {
+    assessment.supported
+        || (assessment.unsupported_reason
+            == Some(BranchRerecordingUnsupportedReason::MissingTaskClosureBaseline)
+            && assessment.changed_paths.is_empty())
+}
+
 pub(crate) fn branch_closure_rerecording_assessment(
     context: &ExecutionContext,
 ) -> Result<BranchRerecordingAssessment, JsonFailure> {
     let current_records = current_branch_task_closure_records(context)?;
     let changed_paths = tracked_paths_changed_since_record_branch_closure_baseline(context)?;
+    let debug_enabled = std::env::var_os("FF_TMP_DEBUG_REROUTE").is_some();
+    let debug_branch_closure_id = validated_current_branch_closure_identity(context)
+        .map(|identity| identity.branch_closure_id);
     let empty_lineage_rerecord_allowed = if current_records.is_empty() {
         current_branch_closure_allows_empty_lineage_late_stage_rerecord(context)?
     } else {
         true
     };
+    if debug_enabled {
+        eprintln!(
+            "FF_TMP_DEBUG_REROUTE plan={} branch_id={:?} current_records={} changed_paths={:?} empty_lineage_allowed={}",
+            context.plan_rel,
+            debug_branch_closure_id,
+            current_records.len(),
+            changed_paths,
+            empty_lineage_rerecord_allowed
+        );
+    }
     if !empty_lineage_rerecord_allowed {
+        if debug_enabled {
+            eprintln!(
+                "FF_TMP_DEBUG_REROUTE unsupported=MissingTaskClosureBaseline plan={}",
+                context.plan_rel
+            );
+        }
         return Ok(BranchRerecordingAssessment {
             changed_paths,
             late_stage_surface: Vec::new(),
@@ -685,6 +570,12 @@ pub(crate) fn branch_closure_rerecording_assessment(
         });
     }
     let late_stage_surface = normalized_late_stage_surface(&context.plan_source)?;
+    if debug_enabled {
+        eprintln!(
+            "FF_TMP_DEBUG_REROUTE late_stage_surface={:?} plan={}",
+            late_stage_surface, context.plan_rel
+        );
+    }
     if late_stage_surface.is_empty() {
         return Ok(BranchRerecordingAssessment {
             changed_paths,
@@ -699,6 +590,14 @@ pub(crate) fn branch_closure_rerecording_assessment(
     let drift_confined_to_late_stage_surface = changed_paths
         .iter()
         .all(|path| path_matches_late_stage_surface(path, &late_stage_surface));
+    if debug_enabled {
+        eprintln!(
+            "FF_TMP_DEBUG_REROUTE supported={} drift_confined={} plan={}",
+            drift_confined_to_late_stage_surface,
+            drift_confined_to_late_stage_surface,
+            context.plan_rel
+        );
+    }
     Ok(BranchRerecordingAssessment {
         changed_paths,
         late_stage_surface,
@@ -1025,40 +924,66 @@ pub(crate) fn task_boundary_block_reason_code(status: &PlanExecutionStatus) -> O
     })
 }
 
+pub(crate) fn task_review_result_requires_verification_reason_codes<'a>(
+    reason_codes: impl IntoIterator<Item = &'a str>,
+) -> bool {
+    const TASK_VERIFICATION_REASON_CODES: &[&str] = &[
+        "prior_task_verification_missing",
+        "prior_task_verification_missing_legacy",
+        "task_verification_receipt_malformed",
+    ];
+    reason_codes
+        .into_iter()
+        .any(|reason_code| TASK_VERIFICATION_REASON_CODES.contains(&reason_code))
+}
+
 pub(crate) fn task_review_dispatch_task(status: &PlanExecutionStatus) -> Option<u32> {
-    let blocking_task = status.blocking_task?;
-    let reason_code = task_boundary_block_reason_code(status)?;
-    if reason_code == "prior_task_review_dispatch_missing" {
-        Some(blocking_task)
-    } else {
-        None
+    if status.blocking_step.is_some() || status.review_state_status == "stale_unreviewed" {
+        return None;
     }
+    if status
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
+    {
+        return None;
+    }
+    let blocking_task = status.blocking_task?;
+    status
+        .reason_codes
+        .iter()
+        .any(|reason_code| {
+            matches!(
+                reason_code.as_str(),
+                "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
+            )
+        })
+        .then_some(blocking_task)
 }
 
 pub(crate) fn task_review_result_pending_task(
     status: &PlanExecutionStatus,
     dispatch_id: Option<&str>,
 ) -> Option<u32> {
-    if status.blocking_step.is_some() {
+    if status.blocking_step.is_some() || status.review_state_status == "stale_unreviewed" {
         return None;
     }
     let blocking_task = status.blocking_task?;
-    let reason_code = task_boundary_block_reason_code(status)?;
-    let dispatch_id = dispatch_id?.trim();
-    if dispatch_id.is_empty() {
-        return None;
+    let dispatch_available = dispatch_id
+        .map(str::trim)
+        .is_some_and(|dispatch_id| !dispatch_id.is_empty());
+    let has_pending_review_or_verification_reason = status.reason_codes.iter().any(|reason_code| {
+        matches!(
+            reason_code.as_str(),
+            "prior_task_verification_missing"
+                | "prior_task_verification_missing_legacy"
+                | "task_verification_receipt_malformed"
+        )
+    });
+    if dispatch_available && has_pending_review_or_verification_reason {
+        return Some(blocking_task);
     }
-    matches!(
-        reason_code,
-        "prior_task_review_not_green"
-            | "task_review_not_independent"
-            | "task_review_receipt_malformed"
-            | "prior_task_verification_missing"
-            | "prior_task_verification_missing_legacy"
-            | "task_verification_receipt_malformed"
-            | "prior_task_review_dispatch_stale"
-    )
-    .then_some(blocking_task)
+    None
 }
 
 pub(crate) fn finish_requires_test_plan_refresh(gate_finish: Option<&GateResult>) -> bool {

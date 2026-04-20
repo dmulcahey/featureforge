@@ -15,11 +15,25 @@ node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 npm --prefix tests/brainstorm-server test
 cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
+cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test runtime_instruction_plan_review_contracts --test session_config_slug --test repo_safety --test runtime_root_cli --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
 ```
 ## Performance Budget
 
 `cargo test` with no extra args is the canonical full-suite latency budget for this repository. Treat roughly 3 to 4 minutes on a warm local build as the target. If a warm local run regresses past about 240 seconds, stop and profile before merging instead of normalizing the slowdown away.
+
+For day-to-day full-suite runs, prefer the sharded runner below. It compiles once, then runs isolated nextest shards in parallel from one archive, which removes parallel `cargo` lock contention and prevents shard-to-shard tempdir interference.
+
+```bash
+scripts/run-rust-tests-sharded.sh
+# explicit shard count
+scripts/run-rust-tests-sharded.sh 8
+# isolate more aggressively (lower per-shard contention)
+FEATUREFORGE_SHARD_THREADS=1 scripts/run-rust-tests-sharded.sh 8
+# run a focused subset with nextest-compatible filters
+scripts/run-rust-tests-sharded.sh 6 -- runtime_remediation_fs11_operator_begin_repair_share_one_next_action_engine
+```
+
+The runner writes logs and per-shard temp sandboxes under `${TMPDIR:-/tmp}/featureforge-nextest-sharded/`.
 
 When the suite slows down:
 
@@ -59,6 +73,7 @@ time -p cargo test --quiet --test plan_execution
 `tests/codex-runtime/*.test.mjs` covers:
 
 - generated skill-doc structure and freshness
+- explicit skill-doc generation contracts (`gen-skill-docs.unit`, `skill-doc-contracts`, `skill-doc-generation`)
 - active docs and archive layout fixtures
 - workflow-fixture invariants
 - routing and eval-document contract assertions
@@ -117,8 +132,37 @@ Editing workflow routing, runtime docs, or execution contracts:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test workflow_runtime --test workflow_shell_smoke --test plan_execution
+cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test runtime_instruction_plan_review_contracts --test workflow_runtime --test workflow_shell_smoke --test plan_execution
 ```
+
+Final-remediation verification also includes the Step 12 command sequence from the task-boundary gap-closure plan:
+
+```bash
+node scripts/gen-skill-docs.mjs
+node scripts/gen-agent-docs.mjs
+node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs
+cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test runtime_instruction_plan_review_contracts
+```
+
+If the repo's normal verification flow also expects these and they are available locally, then run:
+
+```bash
+cargo nextest run --test using_featureforge_skill --test runtime_root_cli --test upgrade_skill
+```
+
+Then complete the remaining manual Step 12 checks from the plan:
+
+- 12.4 Confirm the compiled-CLI smoke output keeps these ceilings:
+  - task closure happy path `<= 2` runtime-management commands
+  - internal-dispatch task closure `<= 2` runtime-management commands
+  - rebase / resume stale-boundary recovery `<= 3` runtime-management commands before implementation resumes
+  - stale release refresh `<= 3` runtime-management commands before the next real review step
+- 12.5 Search the fixed recovery / budget paths and confirm the normal path never requires hidden helper command names:
+  - `preflight`
+  - `record-review-dispatch`
+  - `gate-review`
+  - `rebuild-evidence`
+- 12.6 Run the FS-13 fixture and confirm the runtime surfaces the earliest stale boundary without any manual edit to `**Execution Note:**` lines.
 
 Editing runtime strategy-checkpoint, topology recommendation, or final-review deviation contracts:
 
