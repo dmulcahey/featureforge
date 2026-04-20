@@ -121,22 +121,25 @@ pub(crate) fn branch_contract_identity(
 }
 
 pub(crate) fn task_closure_contributes_to_branch_surface(
+    context: &ExecutionContext,
     current_record: &CurrentTaskClosureRecord,
 ) -> bool {
     current_record
         .effective_reviewed_surface_paths
         .iter()
-        .any(|surface_path| surface_path != NO_REPO_FILES_MARKER)
+        .filter(|surface_path| surface_path.as_str() != NO_REPO_FILES_MARKER)
+        .any(|surface_path| !is_runtime_owned_execution_control_plane_path(context, surface_path))
 }
 
 pub(crate) fn branch_source_task_closure_ids(
+    context: &ExecutionContext,
     current_records: &[CurrentTaskClosureRecord],
     late_stage_surface: Option<&[String]>,
 ) -> Vec<String> {
     let mut source_task_closure_ids = current_records
         .iter()
         .filter(|record| {
-            if !task_closure_contributes_to_branch_surface(record) {
+            if !task_closure_contributes_to_branch_surface(context, record) {
                 return false;
             }
             let Some(late_stage_surface) = late_stage_surface else {
@@ -145,7 +148,10 @@ pub(crate) fn branch_source_task_closure_ids(
             record
                 .effective_reviewed_surface_paths
                 .iter()
-                .filter(|surface_path| surface_path.as_str() != NO_REPO_FILES_MARKER)
+                .filter(|surface_path| {
+                    surface_path.as_str() != NO_REPO_FILES_MARKER
+                        && !is_runtime_owned_execution_control_plane_path(context, surface_path)
+                })
                 .any(|surface_path| {
                     !path_matches_late_stage_surface(surface_path, late_stage_surface)
                 })
@@ -155,6 +161,26 @@ pub(crate) fn branch_source_task_closure_ids(
     source_task_closure_ids.sort();
     source_task_closure_ids.dedup();
     source_task_closure_ids
+}
+
+fn normalized_runtime_control_plane_path(path: &str) -> Option<String> {
+    let mut normalized = path.trim().replace('\\', "/");
+    while let Some(stripped) = normalized.strip_prefix("./") {
+        normalized = stripped.to_owned();
+    }
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+pub(crate) fn is_runtime_owned_execution_control_plane_path(
+    context: &ExecutionContext,
+    path: &str,
+) -> bool {
+    let Some(normalized_path) = normalized_runtime_control_plane_path(path) else {
+        return false;
+    };
+    let normalized_plan_rel = normalized_runtime_control_plane_path(&context.plan_rel);
+    normalized_plan_rel.as_deref() == Some(normalized_path.as_str())
+        || normalized_path.starts_with("docs/featureforge/execution-evidence/")
 }
 
 pub(crate) fn normalized_late_stage_surface(plan_source: &str) -> Result<Vec<String>, JsonFailure> {
@@ -432,6 +458,21 @@ pub(crate) fn tracked_paths_changed_between(
     Ok(changed_paths)
 }
 
+pub(crate) fn tracked_paths_changed_between_excluding_runtime_control_plane(
+    context: &ExecutionContext,
+    baseline_tree_sha: &str,
+    current_tree_sha: &str,
+) -> Result<Vec<String>, JsonFailure> {
+    Ok(tracked_paths_changed_between(
+        &context.runtime.repo_root,
+        baseline_tree_sha,
+        current_tree_sha,
+    )?
+    .into_iter()
+    .filter(|path| !is_runtime_owned_execution_control_plane_path(context, path))
+    .collect())
+}
+
 pub(crate) fn current_branch_closure_reviewed_tree_sha(
     context: &ExecutionContext,
 ) -> Option<String> {
@@ -479,8 +520,8 @@ pub(crate) fn tracked_paths_changed_since_record_branch_closure_baseline(
         if current_tree_sha == branch_tree_sha {
             return Ok(Vec::new());
         }
-        return tracked_paths_changed_between(
-            &context.runtime.repo_root,
+        return tracked_paths_changed_between_excluding_runtime_control_plane(
+            context,
             &branch_tree_sha,
             &current_tree_sha,
         );
@@ -622,7 +663,7 @@ fn current_branch_task_closure_records(
     }
     Ok(still_current_task_closure_records(context)?
         .into_iter()
-        .filter(task_closure_contributes_to_branch_surface)
+        .filter(|record| task_closure_contributes_to_branch_surface(context, record))
         .collect())
 }
 
@@ -670,7 +711,7 @@ fn tracked_paths_changed_since_task_closure_records_baseline(
         let current_entry = current_entries.get(&path);
         let covering_entries = closure_tree_entries
             .iter()
-            .filter(|(record, _)| task_closure_record_covers_path(record, &path))
+            .filter(|(record, _)| task_closure_record_covers_path(context, record, &path))
             .map(|(_, entries)| entries.get(&path))
             .collect::<Vec<_>>();
         if !covering_entries.is_empty() {
@@ -695,7 +736,10 @@ fn tracked_paths_changed_since_task_closure_records_baseline(
         }
     }
 
-    Ok(changed_paths)
+    Ok(changed_paths
+        .into_iter()
+        .filter(|path| !is_runtime_owned_execution_control_plane_path(context, path))
+        .collect())
 }
 
 fn cached_tree_entries_for_tree_sha(
@@ -805,10 +849,20 @@ fn tree_from_sha<'repo>(
     })
 }
 
-fn task_closure_record_covers_path(current_record: &CurrentTaskClosureRecord, path: &str) -> bool {
+fn task_closure_record_covers_path(
+    context: &ExecutionContext,
+    current_record: &CurrentTaskClosureRecord,
+    path: &str,
+) -> bool {
+    if is_runtime_owned_execution_control_plane_path(context, path) {
+        return false;
+    }
     current_record
         .effective_reviewed_surface_paths
         .iter()
+        .filter(|surface_path| {
+            !is_runtime_owned_execution_control_plane_path(context, surface_path)
+        })
         .any(|surface_path| {
             path_matches_late_stage_surface(path, std::slice::from_ref(surface_path))
         })
@@ -938,8 +992,29 @@ pub(crate) fn task_review_result_requires_verification_reason_codes<'a>(
 }
 
 pub(crate) fn task_review_dispatch_task(status: &PlanExecutionStatus) -> Option<u32> {
-    if status.blocking_step.is_some() || status.review_state_status == "stale_unreviewed" {
+    if status.blocking_step.is_some() {
         return None;
+    }
+    let blocking_task = status.blocking_task?;
+    let closure_baseline_bridge_candidate = status
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
+        && status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == "prior_task_current_closure_missing");
+    let dispatch_missing_or_stale = status.reason_codes.iter().any(|reason_code| {
+        matches!(
+            reason_code.as_str(),
+            "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
+        )
+    });
+    if dispatch_missing_or_stale {
+        if closure_baseline_bridge_candidate {
+            return None;
+        }
+        return Some(blocking_task);
     }
     if status
         .reason_codes
@@ -948,24 +1023,14 @@ pub(crate) fn task_review_dispatch_task(status: &PlanExecutionStatus) -> Option<
     {
         return None;
     }
-    let blocking_task = status.blocking_task?;
-    status
-        .reason_codes
-        .iter()
-        .any(|reason_code| {
-            matches!(
-                reason_code.as_str(),
-                "prior_task_review_dispatch_missing" | "prior_task_review_dispatch_stale"
-            )
-        })
-        .then_some(blocking_task)
+    None
 }
 
 pub(crate) fn task_review_result_pending_task(
     status: &PlanExecutionStatus,
     dispatch_id: Option<&str>,
 ) -> Option<u32> {
-    if status.blocking_step.is_some() || status.review_state_status == "stale_unreviewed" {
+    if status.blocking_step.is_some() {
         return None;
     }
     let blocking_task = status.blocking_task?;
@@ -1072,7 +1137,18 @@ pub(crate) fn current_branch_closure_has_tracked_drift(
     else {
         return Ok(false);
     };
-    Ok(context.current_tracked_tree_sha()? != baseline_tree_sha)
+    let current_tree_sha = context.current_tracked_tree_sha()?;
+    if current_tree_sha == baseline_tree_sha {
+        return Ok(false);
+    }
+    Ok(
+        !tracked_paths_changed_between_excluding_runtime_control_plane(
+            context,
+            &baseline_tree_sha,
+            &current_tree_sha,
+        )?
+        .is_empty(),
+    )
 }
 
 pub(crate) fn public_review_state_stale_unreviewed_for_reroute(
@@ -1091,10 +1167,7 @@ pub(crate) fn public_review_state_stale_unreviewed_for_reroute(
 pub(crate) fn branch_closure_refresh_missing_current_closure(status: &PlanExecutionStatus) -> bool {
     status.current_release_readiness_state.is_none()
         && status.current_branch_closure_id.is_some()
-        && status
-            .current_branch_reviewed_state_id
-            .as_deref()
-            .is_some_and(|reviewed_state_id| reviewed_state_id != status.workspace_state_id)
+        && status.current_branch_meaningful_drift
 }
 
 pub(crate) fn late_stage_stale_unreviewed(

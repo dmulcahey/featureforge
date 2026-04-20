@@ -257,6 +257,111 @@ an additional lower-level runtime/shared-truth test.
 - `tests/workflow_runtime.rs::runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh`
 - `tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
 
+### FS-17 — Truthful replay must converge to closure recording
+
+**Broken pattern:**
+
+- task replay already completed truthfully
+- stale-unreviewed boundary remains
+- runtime falls back to generic execution reentry instead of closure recording
+
+**Expected fixed behavior:**
+
+- `phase_detail=task_closure_recording_ready`
+- recommended command routes to `close-current-task --task 1`
+- no second reopen for the same step
+
+**Primary tests:**
+
+- `tests/workflow_runtime.rs::fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready`
+- `tests/plan_execution.rs::fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
+
+### FS-18 — Cycle-break is task-scoped and clears after bound task reclose
+
+**Broken pattern:**
+
+- cycle-break stays effectively global
+- downstream begin remains blocked after the bound task is truthfully reclosed
+
+**Expected fixed behavior:**
+
+- cycle-break binding is task-scoped
+- bound cycle-break clears automatically after fresh current closure on that task
+- next task begin unblocks without reopening the repaired task again
+
+**Primary tests:**
+
+- `tests/workflow_runtime.rs::fs18_cycle_break_binding_is_task_scoped_not_global`
+- `tests/plan_execution.rs::fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
+
+### FS-19 — Superseded stale history must stop routing
+
+**Broken pattern:**
+
+- stale historical task closure remains unresolved even after newer current closure supersedes it
+
+**Expected fixed behavior:**
+
+- superseded stale historical closure no longer participates in unresolved-stale targeting
+
+**Primary tests:**
+
+- `tests/workflow_runtime.rs::fs19_superseded_stale_historical_task_closure_is_not_an_unresolved_stale_boundary`
+- `tests/contracts_execution_runtime_boundaries.rs::fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task`
+
+### FS-20 — Runtime-owned plan/evidence churn must not unwind upstream closure truth or late-stage chain
+
+**Broken pattern:**
+
+- reopening downstream stale work mutates approved plan / execution-evidence artifacts
+- upstream current task closure and late-stage chain get re-staled or nulled
+
+**Expected fixed behavior:**
+
+- upstream current task closure remains current
+- branch closure remains current when filtered drift is empty
+- late-stage chain is not unwound by runtime-owned plan/evidence-only churn
+
+**Primary tests:**
+
+- `tests/workflow_runtime.rs::fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_task_closure`
+- `tests/workflow_runtime.rs::fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_branch_closure`
+- `tests/workflow_runtime.rs::fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_execution_evidence_paths_changed`
+- `tests/workflow_shell_smoke.rs::fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure_when_only_plan_and_evidence_change`
+- `tests/workflow_shell_smoke.rs::fs20_late_stage_chain_is_not_unwound_by_runtime_owned_plan_and_execution_evidence_churn`
+
+### FS-21 — Resume advisory hints must be suppressed when preempted by earlier closure bridge
+
+**Broken pattern:**
+
+- `resume_task` / `resume_step` remain visible while earlier closure bridge is the legal next move
+
+**Expected fixed behavior:**
+
+- `resume_task` / `resume_step` are hidden when preempted
+- status/operator/repair all agree on `close-current-task --task 1`
+
+**Primary tests:**
+
+- `tests/workflow_runtime.rs::fs21_operator_status_and_exact_command_all_agree_on_close_current_task_when_bridge_is_ready`
+- `tests/workflow_shell_smoke.rs::fs21_resume_task_is_suppressed_when_earlier_closure_bridge_preempts_it`
+
+### FS-22 — Repair is bridge-first and non-destructive when closure bridge exists
+
+**Broken pattern:**
+
+- `repair-review-state` clears dispatch lineage or task-scope state before honoring available closure bridge
+
+**Expected fixed behavior:**
+
+- repair routes directly to `task_closure_recording_ready`
+- no destructive dispatch/task-scope cleanup in bridge case
+
+**Primary tests:**
+
+- `tests/workflow_runtime.rs::fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup`
+- `tests/plan_execution.rs::fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
+
 | Scenario | Source | Setup Summary | Expected Fixed Behavior | Probe Command Target (informational unless listed under Task 12 gates) |
 |---|---|---|---|---|
 | `FS-01` | session `03e9` | late-stage missing-current-closure with drift classification pressure | one consistent route across `operator`/`status`/`doctor`; no `repair already_current` contradiction | covered by prerelease-refresh stale-follow-up regressions; parity-probe budget `<=3` |
@@ -275,6 +380,12 @@ an additional lower-level runtime/shared-truth test.
 | `FS-14` | stuck-session replay | task execution is current but current task-closure baseline/projections are missing | routing surfaces `task_closure_recording_ready` and closure repair runs through `close-current-task` | `<=2` |
 | `FS-15` | stuck-session replay | after earlier repair, routing falsely targets a later stale task | stale-boundary targeting always selects earliest unresolved stale task | `<=2` |
 | `FS-16` | stuck-session replay | prior task has current positive closure but receipt projections drift or are regenerated later | next-task begin remains legal; projection refresh stays a closure/projection concern | `<=2` |
+| `FS-17` | churn convergence replay | truthful replay finished but runtime still falls back to execution reentry | replay converges through `task_closure_recording_ready` -> `close-current-task` with no second reopen | `<=2` |
+| `FS-18` | churn convergence replay | cycle-break treated as global sticky blocker | cycle-break stays task-scoped, clears after bound task reclose, and next-task begin unblocks | `<=3` |
+| `FS-19` | churn convergence replay | superseded stale history still selected as unresolved stale blocker | superseded stale history is ignored for stale-boundary routing | `<=2` |
+| `FS-20` | churn convergence replay | runtime-owned plan/evidence-only churn unwinds upstream closure and late-stage chain | upstream closure and late-stage chain stay current when filtered drift is empty | `<=2` |
+| `FS-21` | churn convergence replay | resume advisory hints remain visible while earlier closure bridge is authoritative | resume hints are suppressed; all surfaces route to close-current-task on the earlier task | `<=2` |
+| `FS-22` | churn convergence replay | repair performs destructive cleanup despite available closure bridge | repair stays non-destructive and routes bridge-first to closure recording | `<=2` |
 
 ## Coverage Map
 
@@ -344,6 +455,27 @@ an additional lower-level runtime/shared-truth test.
 - `FS-16`:
   - `tests/workflow_runtime.rs::runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh`
   - `tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
+- `FS-17`:
+  - `tests/workflow_runtime.rs::fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready`
+  - `tests/plan_execution.rs::fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
+- `FS-18`:
+  - `tests/workflow_runtime.rs::fs18_cycle_break_binding_is_task_scoped_not_global`
+  - `tests/plan_execution.rs::fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
+- `FS-19`:
+  - `tests/workflow_runtime.rs::fs19_superseded_stale_historical_task_closure_is_not_an_unresolved_stale_boundary`
+  - `tests/contracts_execution_runtime_boundaries.rs::fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task`
+- `FS-20`:
+  - `tests/workflow_runtime.rs::fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_task_closure`
+  - `tests/workflow_runtime.rs::fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_branch_closure`
+  - `tests/workflow_runtime.rs::fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_execution_evidence_paths_changed`
+  - `tests/workflow_shell_smoke.rs::fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure_when_only_plan_and_evidence_change`
+  - `tests/workflow_shell_smoke.rs::fs20_late_stage_chain_is_not_unwound_by_runtime_owned_plan_and_execution_evidence_churn`
+- `FS-21`:
+  - `tests/workflow_runtime.rs::fs21_operator_status_and_exact_command_all_agree_on_close_current_task_when_bridge_is_ready`
+  - `tests/workflow_shell_smoke.rs::fs21_resume_task_is_suppressed_when_earlier_closure_bridge_preempts_it`
+- `FS-22`:
+  - `tests/workflow_runtime.rs::fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup`
+  - `tests/plan_execution.rs::fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
 
 ## Function-Level Traceability
 
@@ -415,8 +547,31 @@ an additional lower-level runtime/shared-truth test.
 - `FS-16`
   - Shared begin-time closure authority: `tests/workflow_runtime.rs::runtime_remediation_fs16_current_positive_task_closure_allows_next_task_begin_even_if_receipts_need_projection_refresh`
   - Plan-execution begin closure authority independent of receipt projections: `tests/plan_execution.rs::runtime_remediation_fs16_begin_no_longer_reads_prior_task_dispatch_or_receipts`
+- `FS-17`
+  - Shared truthful-replay bridge convergence: `tests/workflow_runtime.rs::fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready`
+  - Plan-execution truthful-replay close-current-task budget: `tests/plan_execution.rs::fs17_close_current_task_converges_after_truthful_replay_without_second_reopen`
+- `FS-18`
+  - Shared cycle-break task-scoping: `tests/workflow_runtime.rs::fs18_cycle_break_binding_is_task_scoped_not_global`
+  - Plan-execution cycle-break clear and begin unblock: `tests/plan_execution.rs::fs18_begin_unblocks_next_task_after_cycle_break_task_reclosed`
+- `FS-19`
+  - Shared superseded-stale-history suppression: `tests/workflow_runtime.rs::fs19_superseded_stale_historical_task_closure_is_not_an_unresolved_stale_boundary`
+  - Direct-vs-compiled CLI stale-history suppression parity: `tests/contracts_execution_runtime_boundaries.rs::fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_task`
+- `FS-20`
+  - Shared task-closure freshness under runtime-owned churn: `tests/workflow_runtime.rs::fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_task_closure`
+  - Shared branch-closure freshness under runtime-owned churn: `tests/workflow_runtime.rs::fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_branch_closure`
+  - Shared filtered drift no-unwind guard: `tests/workflow_runtime.rs::fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_execution_evidence_paths_changed`
+  - Compiled CLI downstream-reopen churn guard: `tests/workflow_shell_smoke.rs::fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure_when_only_plan_and_evidence_change`
+  - Compiled CLI late-stage chain no-unwind guard: `tests/workflow_shell_smoke.rs::fs20_late_stage_chain_is_not_unwound_by_runtime_owned_plan_and_execution_evidence_churn`
+- `FS-21`
+  - Shared route parity for bridge-ready close-current-task preemption: `tests/workflow_runtime.rs::fs21_operator_status_and_exact_command_all_agree_on_close_current_task_when_bridge_is_ready`
+  - Compiled CLI resume-hint suppression when preempted: `tests/workflow_shell_smoke.rs::fs21_resume_task_is_suppressed_when_earlier_closure_bridge_preempts_it`
+- `FS-22`
+  - Shared bridge-first non-destructive repair routing: `tests/workflow_runtime.rs::fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup`
+  - Plan-execution dispatch-lineage preservation under bridge-first repair: `tests/plan_execution.rs::fs22_repair_review_state_does_not_clear_dispatch_lineage_when_close_current_task_bridge_exists`
 
 - Task 12 command-budget gates (compiled CLI):
+  - `fs17_close_current_task_converges_after_truthful_replay_without_second_reopen` (`tests/plan_execution.rs`) `<=2`
+  - `fs20_reopening_downstream_stale_task_does_not_unwind_upstream_current_closure_when_only_plan_and_evidence_change` (`tests/workflow_shell_smoke.rs`) upstream closure-refresh route count `<=1`
   - `task_close_happy_path_runtime_management_budget_is_capped` (`tests/workflow_shell_smoke.rs`) `<=2`
   - `task_close_internal_dispatch_runtime_management_budget_is_capped` (`tests/workflow_shell_smoke.rs`) `<=2`
   - `fs11_rebase_resume_recovery_budget_is_capped_without_hidden_helpers` (`tests/workflow_shell_smoke.rs`) `<=3`

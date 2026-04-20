@@ -1574,7 +1574,7 @@ fn derive_phase(
         return String::from("implementation_handoff");
     }
 
-    if execution_reentry_requires_review_state_repair(execution_status) {
+    if execution_reentry_requires_review_state_repair(None, execution_status) {
         return String::from("executing");
     }
 

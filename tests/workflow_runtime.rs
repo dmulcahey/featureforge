@@ -10795,6 +10795,64 @@ fn setup_runtime_fs11_fs15_next_action_fixture(repo: &Path, state: &Path, plan_r
     );
 }
 
+fn setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+    resume_overlay: Option<(u32, u32)>,
+) {
+    let dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let status_after_fixture = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-17/FS-21/FS-22 fixture status before stale history injection",
+    );
+    let execution_run_id = status_after_fixture["execution_run_id"]
+        .as_str()
+        .expect("FS-17/FS-21/FS-22 fixture status should expose execution_run_id")
+        .to_owned();
+    let branch = current_branch_name(repo);
+    let mut updates = vec![(
+        "task_closure_record_history",
+        json!({
+            "task-1-stale-history": {
+                "closure_record_id": "task-1-stale-history",
+                "task": 1,
+                "source_plan_path": plan_rel,
+                "source_plan_revision": 1,
+                "record_sequence": 7,
+                "record_status": "stale_unreviewed",
+                "closure_status": "stale_unreviewed",
+                "dispatch_id": dispatch_id,
+                "execution_run_id": execution_run_id,
+                "effective_reviewed_surface_paths": ["README.md"]
+            }
+        }),
+    )];
+    if let Some((resume_task, resume_step)) = resume_overlay {
+        updates.extend([
+            (
+                "current_open_step_state",
+                json!({
+                    "task": resume_task,
+                    "step": resume_step,
+                    "note_state": "Interrupted",
+                    "note_summary": "FS-21 interrupted downstream step should be preempted by stale Task 1 closure bridge.",
+                    "source_plan_path": plan_rel,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 42
+                }),
+            ),
+            ("resume_task", Value::from(u64::from(resume_task))),
+            ("resume_step", Value::from(u64::from(resume_step))),
+            ("active_task", Value::Null),
+            ("active_step", Value::Null),
+        ]);
+    }
+    update_authoritative_harness_state(repo, state, &branch, plan_rel, 1, &updates);
+}
+
 #[test]
 fn runtime_remediation_fs15_earliest_stale_boundary_beats_latest_overlay_target() {
     let (repo_dir, state_dir) = init_repo("runtime-remediation-fs15-earliest-stale-boundary");
@@ -11673,6 +11731,576 @@ fn runtime_remediation_fs15_repair_never_jumps_to_later_task_when_earlier_bounda
             "FS-15 repair command-follow parity must reopen Task 2 Step 1 when the routed command is not blocked, got {routed_follow_up:?}"
         );
     }
+}
+
+#[test]
+fn fs17_stale_unreviewed_truthful_replay_promotes_to_task_closure_recording_ready() {
+    let (repo_dir, state_dir) =
+        init_repo("runtime-remediation-fs17-stale-unreviewed-bridge-routing");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-04-08-runtime-fs17-stale-unreviewed-bridge.md";
+    setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(repo, state, plan_rel, None);
+
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "FS-17 workflow operator truthful replay convergence fixture",
+        ),
+        "FS-17 workflow operator truthful replay convergence fixture",
+    );
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-17 status truthful replay convergence fixture",
+    );
+    assert_public_route_parity(&operator_json, &status_json, None);
+    assert_eq!(
+        status_json["review_state_status"],
+        Value::from("stale_unreviewed"),
+        "FS-17 fixture must stay in stale_unreviewed while stale task-closure history is unresolved: {status_json:?}"
+    );
+    assert!(
+        status_json["reason_codes"].as_array().is_some_and(|codes| {
+            codes
+                .iter()
+                .any(|code| code == &Value::from("prior_task_current_closure_missing"))
+                && codes
+                    .iter()
+                    .any(|code| code == &Value::from("task_closure_baseline_repair_candidate"))
+        }),
+        "FS-17 fixture should expose missing-current-closure baseline bridge reason codes: {status_json:?}"
+    );
+    assert_eq!(
+        status_json["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-17 truthful replay recovery must route to task_closure_recording_ready instead of generic execution reentry: {status_json:?}"
+    );
+    let recommended_command = status_json["recommended_command"]
+        .as_str()
+        .expect("FS-17 status should expose a concrete closure-recording command");
+    assert!(
+        recommended_command.contains("close-current-task")
+            && recommended_command.contains("--task 1"),
+        "FS-17 truthful replay recovery must route through close-current-task --task 1, got {recommended_command}"
+    );
+    assert_ne!(
+        status_json["phase_detail"],
+        Value::from("execution_reentry_required"),
+        "FS-17 truthful replay recovery must not fall back to execution_reentry_required"
+    );
+}
+
+#[test]
+fn fs18_cycle_break_binding_is_task_scoped_not_global() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs18-cycle-break-task-scoped");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-04-09-runtime-fs18-cycle-break-task-scoped.md";
+    setup_runtime_fs11_fs15_next_action_fixture(repo, state, plan_rel);
+    let branch = current_branch_name(repo);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            ("strategy_state", Value::from("cycle_breaking")),
+            ("strategy_checkpoint_kind", Value::from("cycle_break")),
+            ("strategy_cycle_break_task", Value::from(1_u64)),
+            ("strategy_cycle_break_step", Value::from(1_u64)),
+            (
+                "strategy_cycle_break_checkpoint_fingerprint",
+                Value::from("fs18-cycle-break-task-1"),
+            ),
+        ],
+    );
+
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "FS-18 workflow operator cycle-break task binding fixture",
+        ),
+        "FS-18 workflow operator cycle-break task binding fixture",
+    );
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-18 status cycle-break task binding fixture",
+    );
+    assert_public_route_parity(&operator_json, &status_json, None);
+    assert_eq!(
+        operator_json["blocking_task"],
+        Value::from(2_u64),
+        "FS-18 Task-1 cycle-break binding must not globally block later Task-2 stale-boundary routing: {operator_json:?}"
+    );
+    let recommended_command = operator_json["recommended_command"]
+        .as_str()
+        .expect("FS-18 operator should expose recommended command");
+    assert!(
+        recommended_command.contains("--task 2"),
+        "FS-18 cycle-break routing should still target Task 2 after Task 1 is already repaired, got {recommended_command}"
+    );
+    assert!(
+        !recommended_command.contains("--task 1"),
+        "FS-18 cycle-break binding must not drag routing back to Task 1 once Task 1 is repaired, got {recommended_command}"
+    );
+}
+
+#[test]
+fn fs19_superseded_stale_historical_task_closure_is_not_an_unresolved_stale_boundary() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs19-workflow-runtime");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-04-06-runtime-fs19-workflow-runtime.md";
+    setup_runtime_fs11_fs15_next_action_fixture(repo, state, plan_rel);
+    let branch = current_branch_name(repo);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[
+            (
+                "task_closure_record_history",
+                json!({
+                    "task-1-stale": {
+                        "closure_record_id": "task-1-stale",
+                        "task": 1,
+                        "source_plan_path": plan_rel,
+                        "source_plan_revision": 1,
+                        "record_sequence": 8,
+                        "record_status": "stale_unreviewed",
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    },
+                    "task-1-current": {
+                        "closure_record_id": "task-1-current",
+                        "task": 1,
+                        "source_plan_path": plan_rel,
+                        "source_plan_revision": 1,
+                        "record_sequence": 22,
+                        "record_status": "current",
+                        "closure_status": "current",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    },
+                    "task-2-stale": {
+                        "closure_record_id": "task-2-stale",
+                        "task": 2,
+                        "source_plan_path": plan_rel,
+                        "source_plan_revision": 1,
+                        "record_sequence": 10,
+                        "record_status": "stale_unreviewed",
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    },
+                    "task-6-stale": {
+                        "closure_record_id": "task-6-stale",
+                        "task": 6,
+                        "source_plan_path": plan_rel,
+                        "source_plan_revision": 1,
+                        "record_sequence": 20,
+                        "record_status": "stale_unreviewed",
+                        "closure_status": "stale_unreviewed",
+                        "effective_reviewed_surface_paths": ["README.md"]
+                    }
+                }),
+            ),
+            ("superseded_task_closure_ids", json!(["task-1-stale"])),
+            (
+                "current_open_step_state",
+                json!({
+                    "task": 6,
+                    "step": 1,
+                    "note_state": "Interrupted",
+                    "note_summary": "FS-19 stale task 1 history should be superseded by current task 1 closure.",
+                    "source_plan_path": plan_rel,
+                    "source_plan_revision": 1,
+                    "authoritative_sequence": 30
+                }),
+            ),
+            ("resume_task", Value::from(6_u64)),
+            ("resume_step", Value::from(1_u64)),
+        ],
+    );
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-19 status should ignore superseded stale task 1 history",
+    );
+    assert_eq!(
+        status_json["blocking_task"],
+        Value::from(2_u64),
+        "FS-19 earliest unresolved stale task should move past superseded stale task 1 history"
+    );
+    assert_ne!(
+        status_json["blocking_task"],
+        Value::from(1_u64),
+        "FS-19 superseded stale task 1 history must not remain an unresolved stale boundary"
+    );
+
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "FS-19 operator stale-boundary target fixture",
+        ),
+        "FS-19 operator stale-boundary target fixture",
+    );
+    let recommended_command = operator_json["recommended_command"]
+        .as_str()
+        .expect("FS-19 operator should expose recommended command");
+    assert!(
+        recommended_command.contains("--task 2"),
+        "FS-19 operator should route to Task 2 after stale task 1 history is superseded, got {recommended_command}"
+    );
+    assert!(
+        !recommended_command.contains("--task 1"),
+        "FS-19 operator must not route back to superseded stale task 1 history, got {recommended_command}"
+    );
+}
+
+#[test]
+fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_task_closure() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs20-task-closure-freshness");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-04-07-runtime-fs20-task-closure-freshness.md";
+    let task1_dispatch_id = setup_runtime_fs14_fs16_task_boundary_fixture(repo, state, plan_rel);
+    let review_summary_path = repo.join("docs/featureforge/execution-evidence/fs20-review.md");
+    let verification_summary_path =
+        repo.join("docs/featureforge/execution-evidence/fs20-verification.md");
+    write_file(
+        &review_summary_path,
+        "FS-20 current closure should remain fresh when only runtime-owned paths changed.\n",
+    );
+    write_file(&verification_summary_path, "FS-20 verification summary.\n");
+    let close_task1 = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "close-current-task",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--dispatch-id",
+            &task1_dispatch_id,
+            "--review-result",
+            "pass",
+            "--review-summary-file",
+            review_summary_path
+                .to_str()
+                .expect("FS-20 review summary path should be utf-8"),
+            "--verification-result",
+            "pass",
+            "--verification-summary-file",
+            verification_summary_path
+                .to_str()
+                .expect("FS-20 verification summary path should be utf-8"),
+        ],
+        "FS-20 close-current-task should establish a current Task 1 closure",
+    );
+    assert_eq!(close_task1["action"], Value::from("recorded"));
+
+    let baseline_status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 baseline status before runtime-owned churn",
+    );
+    let evidence_path = repo.join(
+        baseline_status["evidence_path"]
+            .as_str()
+            .expect("FS-20 baseline status should expose evidence_path"),
+    );
+    let plan_path = repo.join(plan_rel);
+    let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
+    write_file(
+        &plan_path,
+        &format!("{plan_source}\n<!-- fs20 runtime-owned plan mutation -->\n"),
+    );
+    let evidence_source =
+        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
+    write_file(
+        &evidence_path,
+        &format!("{evidence_source}\n<!-- fs20 runtime-owned evidence mutation -->\n"),
+    );
+
+    let status_after_churn = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 status after runtime-owned churn",
+    );
+    assert!(
+        !status_after_churn["reason_codes"]
+            .as_array()
+            .expect("FS-20 status reason_codes should remain an array")
+            .iter()
+            .any(|code| code == &Value::from("prior_task_current_closure_stale")),
+        "FS-20 runtime-owned plan/evidence-only churn must not stale the current Task 1 closure: {status_after_churn:?}"
+    );
+    assert_ne!(
+        status_after_churn["blocking_task"],
+        Value::from(1_u64),
+        "FS-20 runtime-owned plan/evidence-only churn must not reblock Task 1 closure freshness"
+    );
+}
+
+#[test]
+fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_branch_closure() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs20-branch-closure-freshness");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let base_branch = expected_release_base_branch(repo);
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    let release_path = write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    publish_authoritative_release_truth(repo, state, plan_rel, &release_path, &base_branch);
+
+    let baseline_status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 baseline branch status before runtime-owned churn",
+    );
+    let baseline_branch_closure_id = baseline_status["current_branch_closure_id"]
+        .as_str()
+        .expect("FS-20 baseline status should expose current_branch_closure_id")
+        .to_owned();
+    let evidence_path = repo.join(
+        baseline_status["evidence_path"]
+            .as_str()
+            .expect("FS-20 baseline status should expose evidence_path"),
+    );
+    let plan_path = repo.join(plan_rel);
+    let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
+    write_file(
+        &plan_path,
+        &format!("{plan_source}\n<!-- fs20 branch runtime-owned plan mutation -->\n"),
+    );
+    let evidence_source =
+        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
+    write_file(
+        &evidence_path,
+        &format!("{evidence_source}\n<!-- fs20 branch runtime-owned evidence mutation -->\n"),
+    );
+
+    let status_after_churn = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 status should retain current branch closure after runtime-owned churn",
+    );
+    assert_eq!(
+        status_after_churn["current_branch_closure_id"],
+        Value::from(baseline_branch_closure_id),
+        "FS-20 runtime-owned plan/evidence churn must not null current_branch_closure_id"
+    );
+    assert!(
+        !status_after_churn["current_release_readiness_state"].is_null(),
+        "FS-20 runtime-owned plan/evidence churn must not drop release-readiness state"
+    );
+}
+
+#[test]
+fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_execution_evidence_paths_changed()
+ {
+    let (repo_dir, state_dir) =
+        init_repo("runtime-remediation-fs20-branch-closure-remains-current");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
+    let base_branch = expected_release_base_branch(repo);
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    write_branch_test_plan_artifact(repo, state, plan_rel, "no");
+    write_dispatched_branch_review_artifact(repo, state, plan_rel, &base_branch);
+    let release_path = write_branch_release_artifact(repo, state, plan_rel, &base_branch);
+    publish_authoritative_release_truth(repo, state, plan_rel, &release_path, &base_branch);
+
+    let baseline_status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 baseline branch-closure-current status",
+    );
+    let baseline_branch_closure_id = baseline_status["current_branch_closure_id"]
+        .as_str()
+        .expect("FS-20 baseline status should expose branch closure id")
+        .to_owned();
+    let baseline_release_state = baseline_status["current_release_readiness_state"].clone();
+    let baseline_final_state = baseline_status["current_final_review_state"].clone();
+    let baseline_qa_state = baseline_status["current_qa_state"].clone();
+    let evidence_path = repo.join(
+        baseline_status["evidence_path"]
+            .as_str()
+            .expect("FS-20 baseline status should expose evidence path"),
+    );
+    let plan_path = repo.join(plan_rel);
+    let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
+    write_file(
+        &plan_path,
+        &format!("{plan_source}\n<!-- fs20 branch-current runtime-owned plan mutation -->\n"),
+    );
+    let evidence_source =
+        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
+    write_file(
+        &evidence_path,
+        &format!(
+            "{evidence_source}\n<!-- fs20 branch-current runtime-owned evidence mutation -->\n"
+        ),
+    );
+
+    let status_after_churn = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-20 branch closure should remain current when only runtime-owned paths changed",
+    );
+    assert_eq!(
+        status_after_churn["current_branch_closure_id"],
+        Value::from(baseline_branch_closure_id),
+        "FS-20 branch closure should remain current when only runtime-owned plan/evidence paths changed"
+    );
+    assert_eq!(
+        status_after_churn["current_release_readiness_state"], baseline_release_state,
+        "FS-20 runtime-owned plan/evidence churn must not alter release-readiness state"
+    );
+    assert_eq!(
+        status_after_churn["current_final_review_state"], baseline_final_state,
+        "FS-20 runtime-owned plan/evidence churn must not alter final-review state"
+    );
+    assert_eq!(
+        status_after_churn["current_qa_state"], baseline_qa_state,
+        "FS-20 runtime-owned plan/evidence churn must not alter QA state"
+    );
+    assert_ne!(
+        status_after_churn["review_state_status"],
+        Value::from("missing_current_closure"),
+        "FS-20 runtime-owned plan/evidence churn must not produce missing_current_closure reroute"
+    );
+}
+
+#[test]
+fn fs21_operator_status_and_exact_command_all_agree_on_close_current_task_when_bridge_is_ready() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs21-route-parity-close-current");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-04-10-runtime-fs21-route-parity-close-current.md";
+    setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(repo, state, plan_rel, Some((2, 1)));
+
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "FS-21 workflow operator bridge-preempts-resume fixture",
+        ),
+        "FS-21 workflow operator bridge-preempts-resume fixture",
+    );
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-21 status bridge-preempts-resume fixture",
+    );
+    let repair_json = run_plan_execution_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "FS-21 repair-review-state bridge-preempts-resume fixture",
+    );
+    assert_public_route_parity(&operator_json, &status_json, None);
+    assert_eq!(
+        status_json["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-21 stale-boundary bridge fixture should route to task_closure_recording_ready: {status_json:?}"
+    );
+    assert!(status_json["resume_task"].is_null());
+    assert!(status_json["resume_step"].is_null());
+    let operator_command = operator_json["recommended_command"]
+        .as_str()
+        .expect("FS-21 operator should expose recommended command")
+        .to_owned();
+    assert!(
+        operator_command.contains("close-current-task") && operator_command.contains("--task 1"),
+        "FS-21 operator should route to close-current-task --task 1 when bridge preempts resume, got {operator_command}"
+    );
+    assert_eq!(
+        repair_json["phase_detail"],
+        Value::from("task_closure_recording_ready")
+    );
+    assert_eq!(
+        repair_json["recommended_command"],
+        Value::from(operator_command),
+        "FS-21 operator/status/repair surfaces must agree on the exact closure-recording command"
+    );
+}
+
+#[test]
+fn fs22_repair_review_state_prefers_non_destructive_closure_bridge_over_reentry_cleanup() {
+    let (repo_dir, state_dir) = init_repo("runtime-remediation-fs22-bridge-first-repair");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-04-11-runtime-fs22-bridge-first-repair.md";
+    setup_runtime_fs17_fs21_fs22_stale_task1_bridge_fixture(repo, state, plan_rel, None);
+
+    let repair_json = run_plan_execution_json(
+        repo,
+        state,
+        &["repair-review-state", "--plan", plan_rel],
+        "FS-22 repair-review-state bridge-first non-destructive fixture",
+    );
+    assert_eq!(repair_json["action"], Value::from("blocked"));
+    assert_eq!(
+        repair_json["phase_detail"],
+        Value::from("task_closure_recording_ready"),
+        "FS-22 repair-review-state must promote to task_closure_recording_ready when closure bridge is available: {repair_json:?}"
+    );
+    assert_eq!(
+        repair_json["required_follow_up"],
+        Value::Null,
+        "FS-22 closure bridge lane must not keep an execution_reentry follow-up"
+    );
+    let recommended_command = repair_json["recommended_command"]
+        .as_str()
+        .expect("FS-22 repair should expose recommended closure-recording command");
+    assert!(
+        recommended_command.contains("close-current-task")
+            && recommended_command.contains("--task 1"),
+        "FS-22 repair should route directly to close-current-task --task 1, got {recommended_command}"
+    );
+    let actions = repair_json["actions_performed"]
+        .as_array()
+        .expect("FS-22 repair should expose actions_performed array");
+    assert!(
+        actions.iter().all(|action| {
+            action.as_str().is_some_and(|action| {
+                !action.starts_with("cleared_task_review_dispatch_lineage")
+                    && !action.starts_with("cleared_current_task_closure_scope")
+                    && !action.starts_with("cleared_current_task_closure_task")
+            })
+        }),
+        "FS-22 bridge-first repair must not run destructive task-scope/dispatch-lineage cleanup actions: {repair_json:?}"
+    );
 }
 
 #[test]
@@ -12609,10 +13237,10 @@ fn runtime_remediation_fs13_hidden_gates_materialize_legacy_open_step_state_when
         ),
         "FS-13 operator should ignore legacy markdown open-step note when authoritative state is absent",
     );
-    let recommended_without_authority = operator_without_authoritative_open_step
-        ["recommended_command"]
-        .as_str()
-        .unwrap_or("");
+    let recommended_without_authority =
+        operator_without_authoritative_open_step["recommended_command"]
+            .as_str()
+            .unwrap_or("");
     assert!(
         !recommended_without_authority.contains("--task 1 --step 1"),
         "FS-13 operator must not surface Task 1 Step 1 solely from raw markdown when authoritative current_open_step_state is absent: {operator_without_authoritative_open_step:?}",

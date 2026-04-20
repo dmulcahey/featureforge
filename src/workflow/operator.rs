@@ -1392,9 +1392,17 @@ fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
                 )
             }
         }
-        "task_closure_recording_ready" => format!(
-            "Task {blocking_task} closure is ready to record/refresh. Record or refresh Task {blocking_task} closure now."
-        ),
+        "task_closure_recording_ready" => {
+            if operator_blocking_reason_present(context, "task_closure_baseline_bridge_ready") {
+                format!(
+                    "Task {blocking_task} execution replay is already complete enough to refresh closure truth. Record/refresh Task {blocking_task} closure now. Do not reopen the step again."
+                )
+            } else {
+                format!(
+                    "Task {blocking_task} closure is ready to record/refresh. Record or refresh Task {blocking_task} closure now."
+                )
+            }
+        }
         "execution_reentry_required" => {
             if operator_blocking_reason_present(context, "prior_task_review_not_green") {
                 format!(

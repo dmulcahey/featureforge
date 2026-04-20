@@ -37,8 +37,9 @@ use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionReentryCurrentTaskClosureTargets,
     ExecutionRuntime, PlanExecutionStatus, current_branch_closure_structural_review_state_reason,
     current_final_review_dispatch_authority_for_context,
-    current_task_review_dispatch_id_for_status, execution_reentry_current_task_closure_targets,
-    load_execution_context_for_exact_plan, load_execution_read_scope,
+    current_task_review_dispatch_id_for_status, earliest_unresolved_stale_task_from_closure_graph,
+    execution_reentry_current_task_closure_targets, load_execution_context_for_exact_plan,
+    load_execution_read_scope, stale_unreviewed_allows_task_closure_baseline_bridge,
     task_closure_baseline_repair_candidate, task_scope_structural_review_state_reason,
     unprojected_status_from_read_scope,
 };
@@ -99,6 +100,7 @@ pub struct RepairReviewStateOutput {
 enum RepairBlockerKind {
     TaskScopeStructural,
     UnrecoverableTaskScope,
+    TaskClosureBaselineBridge,
     StaleUnreviewed,
     MissingDerivedTaskScope,
     BranchScopeStructural,
@@ -133,6 +135,7 @@ struct RepairPlan {
 struct RepairAnalysisInputs<'a> {
     snapshot: &'a ReviewStateSnapshot,
     post_repair_next_action: Option<NextActionDecision>,
+    task_closure_baseline_bridge_target: Option<u32>,
     status_target_task: Option<u32>,
     task_scope_structural_blocking_record_present: bool,
     branch_rerecording_supported: bool,
@@ -603,6 +606,29 @@ fn task_scope_structural_blocking_record_present(status: &PlanExecutionStatus) -
     })
 }
 
+fn task_closure_baseline_bridge_target_task(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+) -> Result<Option<u32>, JsonFailure> {
+    if status.review_state_status != "stale_unreviewed" {
+        return Ok(None);
+    }
+    let Some(stale_task) = earliest_unresolved_stale_task_from_closure_graph(context, status)
+        .or(status.blocking_task)
+        .or(status.resume_task)
+        .or(status.active_task)
+    else {
+        return Ok(None);
+    };
+    if task_closure_baseline_repair_candidate(context, status, stale_task)?.is_none() {
+        return Ok(None);
+    }
+    if !stale_unreviewed_allows_task_closure_baseline_bridge(context, status, stale_task)? {
+        return Ok(None);
+    }
+    Ok(Some(stale_task))
+}
+
 fn analyze_repair_phase_bundle(
     phase_bundle: &RepairPhaseBundle,
     status_args: &StatusArgs,
@@ -615,12 +641,17 @@ fn analyze_repair_phase_bundle(
         .steps
         .iter()
         .all(|step| step.checked);
+    let task_closure_baseline_bridge_target = task_closure_baseline_bridge_target_task(
+        &phase_bundle.read_scope.context,
+        &phase_bundle.status,
+    )?;
     let repair_plan = analyze_repair_plan(RepairAnalysisInputs {
         snapshot: &phase_bundle.snapshot,
         post_repair_next_action: post_repair_next_action_from_phase_bundle(
             phase_bundle,
             status_args,
         ),
+        task_closure_baseline_bridge_target,
         status_target_task: phase_bundle
             .status
             .blocking_task
@@ -1146,6 +1177,8 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
         Some(RepairBlockerKind::TaskScopeStructural)
     } else if inputs.unrecoverable_task_scope_task.is_some() {
         Some(RepairBlockerKind::UnrecoverableTaskScope)
+    } else if inputs.task_closure_baseline_bridge_target.is_some() {
+        Some(RepairBlockerKind::TaskClosureBaselineBridge)
     } else if stale_unreviewed_execution_reentry_required {
         Some(RepairBlockerKind::StaleUnreviewed)
     } else if missing_derived_task_scope_repair_planned {
@@ -1174,6 +1207,12 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
         inputs.execution_reentry_targets,
         inputs.unrecoverable_task_scope_task,
     );
+    if matches!(
+        blocker_kind,
+        Some(RepairBlockerKind::TaskClosureBaselineBridge)
+    ) {
+        target_task = inputs.task_closure_baseline_bridge_target.or(target_task);
+    }
 
     let shared_required_follow_up = inputs
         .post_repair_next_action
@@ -1233,6 +1272,12 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
             }
             _ => {}
         }
+    }
+    if matches!(
+        blocker_kind,
+        Some(RepairBlockerKind::TaskClosureBaselineBridge)
+    ) {
+        required_follow_up = None;
     }
 
     let mut actions_to_perform = Vec::new();
@@ -1333,6 +1378,7 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
         ) => {
             actions_to_perform.push(RepairAction::ReentryBranch);
         }
+        Some(RepairBlockerKind::TaskClosureBaselineBridge) => {}
         _ => {}
     }
 
@@ -1341,14 +1387,60 @@ fn analyze_repair_plan(inputs: RepairAnalysisInputs<'_>) -> RepairPlan {
     } else {
         None
     };
+    let post_repair_next_action = if matches!(
+        blocker_kind,
+        Some(RepairBlockerKind::TaskClosureBaselineBridge)
+    ) {
+        bridge_task_closure_baseline_next_action(
+            inputs.post_repair_next_action,
+            target_task.or(inputs.task_closure_baseline_bridge_target),
+        )
+    } else {
+        inputs.post_repair_next_action
+    };
 
     RepairPlan {
         blocker_kind,
         target_task,
         target_step,
         actions_to_perform,
-        post_repair_next_action: inputs.post_repair_next_action,
+        post_repair_next_action,
     }
+}
+
+fn bridge_task_closure_baseline_next_action(
+    post_repair_next_action: Option<NextActionDecision>,
+    target_task: Option<u32>,
+) -> Option<NextActionDecision> {
+    let task_number = target_task?;
+    let mut decision = post_repair_next_action.unwrap_or(NextActionDecision {
+        kind: NextActionKind::CloseCurrentTask,
+        phase: String::from("executing"),
+        phase_detail: String::from("task_closure_recording_ready"),
+        review_state_status: String::from("stale_unreviewed"),
+        task_number: Some(task_number),
+        step_number: None,
+        blocking_task: Some(task_number),
+        blocking_reason_codes: Vec::new(),
+        recommended_command: None,
+    });
+    decision.kind = NextActionKind::CloseCurrentTask;
+    decision.phase = String::from("executing");
+    decision.phase_detail = String::from("task_closure_recording_ready");
+    decision.task_number = Some(task_number);
+    decision.step_number = None;
+    decision.blocking_task = Some(task_number);
+    decision.recommended_command = None;
+    if !decision
+        .blocking_reason_codes
+        .iter()
+        .any(|code| code == "task_closure_baseline_bridge_ready")
+    {
+        decision
+            .blocking_reason_codes
+            .push(String::from("task_closure_baseline_bridge_ready"));
+    }
+    Some(decision)
 }
 
 fn first_task_number(candidates: &[u32]) -> Option<u32> {
@@ -1383,6 +1475,9 @@ fn repair_blocker_target_task(
         Some(RepairBlockerKind::UnrecoverableTaskScope) => unrecoverable_task_scope_task
             .or(status_target_task)
             .or(shared_target_task),
+        Some(RepairBlockerKind::TaskClosureBaselineBridge) => shared_target_task
+            .or(status_target_task)
+            .or_else(|| first_task_number(&execution_reentry_targets.stale_tasks)),
         Some(RepairBlockerKind::StaleUnreviewed) => {
             first_task_number(&execution_reentry_targets.stale_tasks)
                 .or(status_target_task)
@@ -1652,6 +1747,7 @@ fn repair_blocker_metadata_suffix(plan: &RepairPlan) -> String {
     let blocker = match blocker_kind {
         RepairBlockerKind::TaskScopeStructural => "task_scope_structural",
         RepairBlockerKind::UnrecoverableTaskScope => "unrecoverable_task_scope",
+        RepairBlockerKind::TaskClosureBaselineBridge => "task_closure_baseline_bridge",
         RepairBlockerKind::StaleUnreviewed => "stale_unreviewed",
         RepairBlockerKind::MissingDerivedTaskScope => "missing_derived_task_scope",
         RepairBlockerKind::BranchScopeStructural => "branch_scope_structural",

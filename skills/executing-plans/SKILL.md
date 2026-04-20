@@ -197,6 +197,8 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - `task_closure_recording_ready` requires `recording_context.task_number`.
 - `release_readiness_recording_ready` and `release_blocker_resolution_required` require `recording_context.branch_closure_id`.
 - `final_review_recording_ready` requires `recording_context.branch_closure_id`.
+- Treat `resume_task` and `resume_step` in diagnostic status output as advisory-only fields; if they disagree with workflow/operator `recommended_command`, follow `recommended_command`.
+- When `phase_detail=task_closure_recording_ready`, replay is already complete enough for closure refresh; run `close-current-task` and do not reopen the same step again.
 - When workflow/operator reports `review_state_status` as stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
 - After `repair-review-state`, MUST follow the command returned in that command's `recommended_command` before any additional recording commands.
 - The returned `recommended_command` is authoritative for the immediate reroute.

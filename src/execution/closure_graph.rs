@@ -232,23 +232,29 @@ impl AuthoritativeClosureGraph {
         let mut stale_record_ids = self
             .evaluations
             .iter()
-            .filter(|(_, evaluation)| evaluation.freshness == ClosureFreshness::StaleUnreviewed)
+            .filter(|(record_id, evaluation)| {
+                evaluation.freshness == ClosureFreshness::StaleUnreviewed
+                    && !self.superseded_by.contains_key(record_id.as_str())
+            })
             .map(|(record_id, _)| record_id.clone())
             .collect::<Vec<_>>();
         for record_id in &self.stale_projection_only_record_ids {
-            append_unique(&mut stale_record_ids, record_id.clone());
+            if !self.superseded_by.contains_key(record_id.as_str()) {
+                append_unique(&mut stale_record_ids, record_id.clone());
+            }
         }
         stale_record_ids
     }
 
     pub(crate) fn earliest_unresolved_stale_task_number(&self) -> Option<u32> {
         self.evaluations
-            .values()
+            .iter()
             .filter(|evaluation| {
-                evaluation.identity.kind == ClosureKind::TaskClosure
-                    && evaluation.freshness == ClosureFreshness::StaleUnreviewed
+                evaluation.1.identity.kind == ClosureKind::TaskClosure
+                    && evaluation.1.freshness == ClosureFreshness::StaleUnreviewed
+                    && !self.superseded_by.contains_key(evaluation.0.as_str())
             })
-            .filter_map(|evaluation| evaluation.identity.task_number)
+            .filter_map(|evaluation| evaluation.1.identity.task_number)
             .min()
     }
 
@@ -497,7 +503,12 @@ impl AuthoritativeClosureGraph {
     fn apply_superseded_task_ids(&mut self, superseded_task_closure_ids: &[String]) {
         for superseded_record_id in superseded_task_closure_ids {
             if let Some(evaluation) = self.evaluations.get_mut(superseded_record_id)
-                && evaluation.freshness == ClosureFreshness::Current
+                && matches!(
+                    evaluation.freshness,
+                    ClosureFreshness::Current
+                        | ClosureFreshness::StaleUnreviewed
+                        | ClosureFreshness::Historical
+                )
             {
                 evaluation.freshness = ClosureFreshness::Superseded;
             }
@@ -598,13 +609,32 @@ impl AuthoritativeClosureGraph {
                 evaluation.identity.kind == ClosureKind::TaskClosure
                     && matches!(
                         evaluation.freshness,
-                        ClosureFreshness::Superseded | ClosureFreshness::Historical
+                        ClosureFreshness::Superseded
+                            | ClosureFreshness::Historical
+                            | ClosureFreshness::StaleUnreviewed
                     )
             })
             .filter_map(|evaluation| {
                 let task_number = evaluation.identity.task_number?;
                 let current_record_id = self.current_task_record_ids.get(&task_number)?;
-                (current_record_id != &evaluation.identity.record_id).then_some((
+                if current_record_id == &evaluation.identity.record_id {
+                    return None;
+                }
+                if evaluation.freshness == ClosureFreshness::StaleUnreviewed {
+                    let current_evaluation = self.evaluations.get(current_record_id.as_str())?;
+                    if current_evaluation.identity.authoritative_sequence
+                        <= evaluation.identity.authoritative_sequence
+                    {
+                        return None;
+                    }
+                    if !task_closure_has_same_plan_scope(evaluation, current_evaluation) {
+                        return None;
+                    }
+                    if !task_closure_surface_is_same_or_broader(current_evaluation, evaluation) {
+                        return None;
+                    }
+                }
+                Some((
                     evaluation.identity.record_id.clone(),
                     current_record_id.clone(),
                 ))
@@ -691,6 +721,69 @@ impl AuthoritativeClosureGraph {
             self.evaluations.insert(record_id, evaluation);
         }
     }
+}
+
+const NO_REPO_FILES_MARKER: &str = "__featureforge__/no-repo-files";
+
+fn normalized_task_surface_paths(paths: &[String]) -> Vec<String> {
+    let mut normalized = paths
+        .iter()
+        .map(|path| path.trim().replace('\\', "/"))
+        .map(|mut path| {
+            while let Some(stripped) = path.strip_prefix("./") {
+                path = stripped.to_owned();
+            }
+            path
+        })
+        .filter(|path| !path.is_empty() && path != NO_REPO_FILES_MARKER)
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn path_covers(canonical_path: &str, candidate_path: &str) -> bool {
+    canonical_path == candidate_path
+        || candidate_path
+            .strip_prefix(canonical_path)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn task_closure_surface_is_same_or_broader(
+    current: &ClosureEvaluation,
+    older: &ClosureEvaluation,
+) -> bool {
+    let current_surface = normalized_task_surface_paths(
+        current
+            .dependency_binding
+            .source_artifact_fingerprints
+            .as_slice(),
+    );
+    let older_surface = normalized_task_surface_paths(
+        older
+            .dependency_binding
+            .source_artifact_fingerprints
+            .as_slice(),
+    );
+    if older_surface.is_empty() {
+        return true;
+    }
+    if current_surface.is_empty() {
+        return false;
+    }
+    older_surface.iter().all(|path| {
+        current_surface
+            .iter()
+            .any(|candidate| path_covers(candidate, path))
+    })
+}
+
+fn task_closure_has_same_plan_scope(
+    older: &ClosureEvaluation,
+    current: &ClosureEvaluation,
+) -> bool {
+    older.identity.plan_path == current.identity.plan_path
+        && older.identity.plan_fingerprint == current.identity.plan_fingerprint
 }
 
 fn late_stage_candidate_closure_ids_from_signals(signals: &ClosureGraphSignals) -> Vec<String> {
