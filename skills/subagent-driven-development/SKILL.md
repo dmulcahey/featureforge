@@ -52,6 +52,8 @@ Per-skill instructions may add additional formatting rules on top of this baseli
 
 Execute plan by dispatching a fresh sub-agent or custom agent per task, with two-stage review after each (spec compliance first, then code quality), then task-scoped verification-before-completion before any next-task advancement. The runtime-selected topology still wins: when it chooses worktree-backed parallel execution, follow the worktree-first orchestration model and keep each task in its isolated workspace.
 
+Task packets must preserve the approved task contract from `review/plan-task-contract.md`. The packet's `Goal`, `Context`, indexed `CONSTRAINT_N` obligations, indexed `DONE_WHEN_N` obligations, covered requirements, and file scope are authoritative for implementers and reviewers; coordinator prose may add logistics but must not reinterpret or weaken them.
+
 **Why isolated agents:** You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
 
 **Core principle:** Fresh isolated agent per task + two-stage review (spec then quality) = high quality, fast iteration
@@ -344,6 +346,8 @@ If the question is already answered by the packet, answer directly from the pack
 - Build a task packet from the approved plan/spec pair before every implementation or review dispatch.
 - pass the packet verbatim to implementer and reviewers.
 - Treat packet content as the authoritative execution contract for that task slice; do not paraphrase or weaken requirement statements.
+- Reviewers must grade packet-assigned `DONE_WHEN_N` and `CONSTRAINT_N` obligations by ID and cite those IDs in findings.
+- Code-quality review must grade reuse expectations from packet constraints and fail avoidable duplicate implementation as a hard failure.
 - Controllers may add transient logistics such as branch, working directory, or base commit, but they may not add new semantic requirements.
 - If the packet does not answer it, the task is ambiguous and execution must stop or route back to review.
 
@@ -393,8 +397,22 @@ Implementer:
 
 [Dispatch spec compliance reviewer]
 Spec reviewer: ❌ Issues:
-  - Missing: Progress reporting (spec says "report every 100 items")
-  - Extra: Added --json flag (not requested)
+  ### Finding TASK_DONE_WHEN_UNMET
+  **Finding ID:** TASK_DONE_WHEN_UNMET
+  **Severity:** critical
+  **Task:** Task 2
+  **Violated Field or Obligation:** DONE_WHEN_1
+  **Evidence:** The packet requires progress reporting every 100 items, but the diff has no reporting call in the processing loop.
+  **Required Fix:** Add progress reporting at the packet-required interval.
+  **Hard Fail:** yes
+  ### Finding TASK2_SCOPE_EXTRA_JSON_FLAG
+  **Finding ID:** TASK2_SCOPE_EXTRA_JSON_FLAG
+  **Severity:** important
+  **Task:** Task 2
+  **Violated Field or Obligation:** PLAN_DEVIATION_FOUND
+  **Evidence:** The Task 2 packet does not request a `--json` flag, but the diff adds one.
+  **Required Fix:** Remove the unrequested `--json` flag from the Task 2 diff or route the scope expansion back through plan approval.
+  **Hard Fail:** no
 
 [Implementer fixes issues]
 Implementer: Removed --json flag, added progress reporting
@@ -403,7 +421,15 @@ Implementer: Removed --json flag, added progress reporting
 Spec reviewer: ✅ Spec compliant now
 
 [Dispatch code quality reviewer]
-Code reviewer: Strengths: Solid. Issues (Important): Magic number (100)
+Code reviewer: Issues:
+  ### Finding TASK2_PROGRESS_INTERVAL_CONSTANT
+  **Finding ID:** TASK2_PROGRESS_INTERVAL_CONSTANT
+  **Severity:** important
+  **Task:** Task 2
+  **Violated Field or Obligation:** PACKET_REUSE_SCOPE
+  **Evidence:** The diff repeats the reporting interval literal `100` instead of using a named constant.
+  **Required Fix:** Extract the interval into a named constant and use it at each reporting site.
+  **Hard Fail:** no
 
 [Implementer fixes]
 Implementer: Extracted PROGRESS_INTERVAL constant

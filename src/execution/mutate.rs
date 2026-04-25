@@ -6245,8 +6245,7 @@ mod unit_tests {
         let tempdir = TempDir::new().expect("tempdir should exist");
         runtime.state_dir = tempdir.path().join("state");
         fs::create_dir_all(&runtime.state_dir).expect("state dir should be creatable");
-        let plan_rel =
-            "docs/archive/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
+        let plan_rel = "tests/codex-runtime/fixtures/plan-contract/valid-plan.md";
         let plan_abs = repo_root.join(plan_rel);
         let plan_document = parse_plan_file(&plan_abs).expect("plan document should parse");
         let plan_source = fs::read_to_string(&plan_abs).expect("plan source should read");
@@ -6368,8 +6367,7 @@ mod unit_tests {
         runtime.state_dir = tempdir.path().join("state");
         fs::create_dir_all(&runtime.state_dir).expect("state dir should be creatable");
 
-        let plan_rel =
-            "docs/archive/featureforge/plans/2026-03-29-featureforge-project-memory-integration.md";
+        let plan_rel = "tests/codex-runtime/fixtures/plan-contract/valid-plan.md";
         let plan_abs = repo_root.join(plan_rel);
         let plan_document = parse_plan_file(&plan_abs).expect("plan document should parse");
         let plan_source = fs::read_to_string(&plan_abs).expect("plan source should read");
@@ -6826,6 +6824,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -6885,6 +6884,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -6963,6 +6963,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7036,6 +7037,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7100,6 +7102,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7156,6 +7159,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7212,6 +7216,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7267,6 +7272,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7321,6 +7327,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -7383,6 +7390,7 @@ mod unit_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,

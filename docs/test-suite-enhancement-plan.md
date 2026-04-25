@@ -14,7 +14,7 @@ The active contract surface already includes:
 
 The active deterministic suite and recommended commands now live in `docs/testing.md`.
 
-Use `cargo nextest run --test runtime_instruction_contracts` as part of the deterministic Rust contract subset when workflow docs or command surfaces change.
+Use `cargo nextest run --all-targets --all-features --no-fail-fast` as the deterministic Rust gate when workflow docs or command surfaces change. Targeted `cargo nextest run --test ...` commands are iteration aids only, not branch-proof verification.
 
 ## Near-Term Additions
 

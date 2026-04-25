@@ -65,6 +65,30 @@ pub fn normalize_repo_relative_path(input: &str) -> Result<String, DiagnosticErr
     Ok(parts.join("/"))
 }
 
+pub fn normalize_repo_relative_file_reference(input: &str) -> Result<String, DiagnosticError> {
+    normalize_repo_relative_path(&strip_file_reference_suffix(input))
+}
+
+fn strip_file_reference_suffix(input: &str) -> String {
+    let mut value = input.to_owned();
+    loop {
+        let bytes = value.as_bytes();
+        let mut end = bytes.len();
+        while end > 0 && bytes[end - 1].is_ascii_digit() {
+            end -= 1;
+        }
+        if end == bytes.len() || end == 0 {
+            break;
+        }
+        let separator = bytes[end - 1];
+        if separator != b':' && separator != b'-' {
+            break;
+        }
+        value.truncate(end - 1);
+    }
+    value
+}
+
 pub fn normalize_whitespace(value: &str) -> String {
     let mut normalized = String::new();
     for token in value.split_whitespace() {

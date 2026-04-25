@@ -1,5 +1,77 @@
 {
   "$defs": {
+    "ContractDiagnostic": {
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "PlanFidelityGateReport": {
+      "properties": {
+        "diagnostics": {
+          "items": {
+            "$ref": "#/$defs/ContractDiagnostic"
+          },
+          "type": "array"
+        },
+        "provenance_source": {
+          "type": "string"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "receipt_path": {
+          "type": "string"
+        },
+        "reviewer_stage": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "verified_execution_topology": {
+          "type": "boolean"
+        },
+        "verified_requirement_index": {
+          "type": "boolean"
+        },
+        "verified_spec_reference_fidelity": {
+          "type": "boolean"
+        },
+        "verified_task_contract": {
+          "type": "boolean"
+        },
+        "verified_task_determinism": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "state",
+        "receipt_path",
+        "reviewer_stage",
+        "provenance_source",
+        "verified_requirement_index",
+        "verified_execution_topology",
+        "verified_task_contract",
+        "verified_task_determinism",
+        "verified_spec_reference_fidelity",
+        "reason_codes",
+        "diagnostics"
+      ],
+      "type": "object"
+    },
     "WorkflowDiagnostic": {
       "properties": {
         "artifact": {
@@ -52,6 +124,16 @@
       "format": "uint",
       "minimum": 0,
       "type": "integer"
+    },
+    "plan_fidelity_receipt": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PlanFidelityGateReport"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "plan_path": {
       "type": "string"

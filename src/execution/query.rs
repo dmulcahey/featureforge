@@ -1178,6 +1178,7 @@ mod routing_helper_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,

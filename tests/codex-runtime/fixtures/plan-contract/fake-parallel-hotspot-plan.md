@@ -36,11 +36,17 @@ Task 1
 ## Task 1: Establish the plan contract
 
 **Spec Coverage:** REQ-001, REQ-002, DEC-001
-**Task Outcome:** The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
-**Plan Constraints:**
+**Goal:** The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-002, DEC-001.
+
+**Constraints:**
 - Preserve exact approved statements instead of paraphrasing them.
 - Keep markdown authoritative and fail closed on malformed structure.
-**Open Questions:** none
+
+**Done when:**
+- The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
 
 **Files:**
 - Create: `bin/featureforge`
@@ -53,11 +59,17 @@ Task 1
 ## Task 2: Dispatch exact packet-backed execution
 
 **Spec Coverage:** REQ-003, VERIFY-001
-**Task Outcome:** The first parallel lane emits exact task packets backed by approved artifacts and schema-readable evidence.
-**Plan Constraints:**
+**Goal:** The first parallel lane emits exact task packets backed by approved artifacts and schema-readable evidence.
+
+**Context:**
+- Spec Coverage: REQ-003, VERIFY-001.
+
+**Constraints:**
 - Do not invent controller-authored summary context.
 - Keep the hotspot write scope explicit and visible to review.
-**Open Questions:** none
+
+**Done when:**
+- The first parallel lane emits exact task packets backed by approved artifacts and schema-readable evidence.
 
 **Files:**
 - Modify: `src/contracts/plan.rs`
@@ -69,11 +81,17 @@ Task 1
 ## Task 3: Prove packet-backed execution handoffs
 
 **Spec Coverage:** REQ-003, NONGOAL-001, VERIFY-001
-**Task Outcome:** The second parallel lane proves prompt and shell handoffs against the same hotspot contract surface.
-**Plan Constraints:**
+**Goal:** The second parallel lane proves prompt and shell handoffs against the same hotspot contract surface.
+
+**Context:**
+- Spec Coverage: REQ-003, NONGOAL-001, VERIFY-001.
+
+**Constraints:**
 - Do not invent controller-authored summary context.
 - Keep the hotspot write scope explicit and visible to review.
-**Open Questions:** none
+
+**Done when:**
+- The second parallel lane proves prompt and shell handoffs against the same hotspot contract surface.
 
 **Files:**
 - Modify: `src/contracts/plan.rs`

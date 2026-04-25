@@ -23,7 +23,12 @@ Implementation sub-agent / custom agent:
     **Ask them now.** Raise any concerns before starting work.
     the packet is the authoritative task contract for that execution slice.
     do not reinterpret or weaken requirement statements.
-    if the packet says `Open Questions: none` and ambiguity remains, stop and escalate.
+    Treat the packet's `DONE_WHEN_N` obligations as the authoritative completion list.
+    Do not merge, split, rename, or reinterpret those obligations.
+    Objectively reviewable `Done when` bullets remain mandatory even when the evidence is diff inspection, reviewer inspection, or targeted test output rather than one command.
+    If the packet's `Goal`, `Context`, `Constraints`, or indexed `Done when`
+    obligations are missing, malformed, or still leave ambiguity unresolved,
+    stop and escalate.
 
     ## Authoritative Mutation Boundary
 

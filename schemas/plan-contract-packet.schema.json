@@ -3,13 +3,58 @@
   "title": "TaskPacket",
   "type": "object",
   "properties": {
+    "constraint_obligations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PacketObligation"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "context": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "done_when": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "done_when_obligations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PacketObligation"
+      }
+    },
+    "file_entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TaskPacketFileEntry"
+      }
+    },
+    "file_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "generated_at": {
+      "type": "string"
+    },
+    "goal": {
       "type": "string"
     },
     "markdown": {
       "type": "string"
     },
-    "open_questions": {
+    "packet_contract_version": {
       "type": "string"
     },
     "packet_fingerprint": {
@@ -53,6 +98,7 @@
     }
   },
   "required": [
+    "packet_contract_version",
     "plan_path",
     "plan_revision",
     "plan_fingerprint",
@@ -61,10 +107,59 @@
     "source_spec_fingerprint",
     "task_number",
     "task_title",
-    "open_questions",
+    "goal",
+    "context",
+    "constraints",
+    "constraint_obligations",
+    "done_when",
+    "done_when_obligations",
     "requirement_ids",
+    "file_entries",
+    "file_scope",
     "generated_at",
     "packet_fingerprint",
     "markdown"
-  ]
+  ],
+  "$defs": {
+    "PacketObligation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "index",
+        "text"
+      ]
+    },
+    "TaskPacketFileEntry": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "normalized_path": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "path",
+        "normalized_path"
+      ]
+    }
+  }
 }

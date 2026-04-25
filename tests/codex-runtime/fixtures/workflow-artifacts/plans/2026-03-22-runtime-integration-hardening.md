@@ -16,10 +16,16 @@
 ## Task 1: Harden route-time workflow validation
 
 **Spec Coverage:** REQ-001, REQ-004, VERIFY-001
-**Task Outcome:** Route-time helpers reject thin headers and surface structured diagnostics for approved-plan readiness.
-**Plan Constraints:**
+**Goal:** Route-time helpers reject thin headers and surface structured diagnostics for approved-plan readiness.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-004, VERIFY-001.
+
+**Constraints:**
 - Keep the fixture small while preserving the canonical task shape.
-**Open Questions:** none
+
+**Done when:**
+- Route-time helpers reject thin headers and surface structured diagnostics for approved-plan readiness.
 
 **Files:**
 - Test: `bash cargo test --test workflow_runtime`

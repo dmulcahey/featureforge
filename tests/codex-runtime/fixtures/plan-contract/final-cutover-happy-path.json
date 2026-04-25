@@ -1,0 +1,34 @@
+{
+  "fixture_kind": "final_cutover_happy_path",
+  "description": "Positive final-cutover fixture for the active approved-task contract.",
+  "plan_fixture": "valid-plan.md",
+  "spec_fixture": "valid-spec.md",
+  "expected_runtime": {
+    "contract_state": "valid",
+    "task_count": 3,
+    "packet_buildable_tasks": 3,
+    "task_contract_valid": true,
+    "task_goal_valid": true,
+    "task_context_sufficient": true,
+    "task_constraints_valid": true,
+    "task_done_when_deterministic": true,
+    "tasks_self_contained": true
+  },
+  "required_task_fields": [
+    "Spec Coverage",
+    "Goal",
+    "Context",
+    "Constraints",
+    "Done when",
+    "Files"
+  ],
+  "active_surfaces": [
+    "authoring",
+    "runtime-analyzer",
+    "task-packet",
+    "plan-fidelity-review",
+    "plan-eng-review",
+    "task-review",
+    "final-review"
+  ]
+}

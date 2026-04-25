@@ -115,7 +115,7 @@ Slug: lowercase, hyphens, max 60 chars (for example `skill-trigger-missed`). Ski
 - If any header line is missing or malformed, normalize the plan to this contract before continuing and treat it as `Draft`.
 - `writing-plans` is only valid while the plan remains `Draft`. An `Engineering Approved` plan must end with `**Last Reviewed By:** plan-eng-review`.
 - Read the source spec named in `**Source Spec:**` and confirm both the path and revision match the latest approved spec before approving execution.
-- Treat `Requirement Index`, `Requirement Coverage Matrix`, canonical `## Task N:` headings, `Spec Coverage`, `Task Outcome`, `Plan Constraints`, `Open Questions`, and `Files:` blocks as required plan contract surface for engineering approval.
+- Treat `Requirement Index`, `Requirement Coverage Matrix`, canonical `## Task N:` headings, `Spec Coverage`, `Goal`, `Context`, `Constraints`, `Done when`, and `Files:` blocks as required plan contract surface for engineering approval. `review/plan-task-contract.md` is the authoritative field, determinism, spec-reference, obligation-index, migration, and hard-fail reuse law.
 - When review decisions change the written plan, update the plan document before continuing.
 - **Protected-Branch Repo-Write Gate:**
 - Before editing the plan body or changing approval headers on disk, run the shared repo-safety preflight for the exact review-write scope:
@@ -289,6 +289,8 @@ Engineering approval must also fail closed unless `plan_fidelity_receipt.state =
 
 Engineering approval must also fail closed unless `execution_strategy_present`, `dependency_diagram_present`, `execution_topology_valid`, `serial_hazards_resolved`, `parallel_lane_ownership_valid`, and `parallel_workspace_isolation_valid` are all `true`.
 
+Engineering approval must also fail closed unless `task_contract_valid`, `task_goal_valid`, `task_context_sufficient`, `task_constraints_valid`, `task_done_when_deterministic`, and `tasks_self_contained` are all `true`.
+
 Treat `reason_codes` and `diagnostics` from `analyze-plan` as the authoritative contract feedback for approval law.
 
 Engineering approval must fail closed when `analyze-plan` reports:
@@ -300,7 +302,11 @@ Engineering approval must fail closed when `analyze-plan` reports:
 - unknown requirement IDs
 - uncovered requirement IDs
 - tasks without `Spec Coverage`
-- tasks with `Open Questions` not equal to `none`
+- missing task `Goal`, `Context`, `Constraints`, `Done when`, `Spec Coverage`, or `Files`
+- non-deterministic, non-atomic, or under-specified `Done when`
+- insufficient task `Context`, including missing spec/decision/non-goal references required by `review/plan-task-contract.md`
+- task scopes that are too broad, overlapping, or not self-contained enough for deterministic review
+- avoidable duplicate implementation of substantive production behavior where a shared implementation is the correct architectural choice
 - ambiguous wording
 - requirement weakening or widening
 - invalid task heading structure
@@ -310,7 +316,15 @@ Engineering approval must fail closed when `analyze-plan` reports:
 - parallel lanes that do not declare exact isolated workspace truth for the whole batch
 - fake-parallel hotspot files or unordered overlapping write scopes
 
-If `coverage_complete`, `open_questions_resolved`, `task_structure_valid`, `files_blocks_valid`, `execution_strategy_present`, `dependency_diagram_present`, `execution_topology_valid`, `serial_hazards_resolved`, `parallel_lane_ownership_valid`, or `parallel_workspace_isolation_valid` is not `true`, keep the plan in `Draft` and continue review or route back to `featureforge:writing-plans`.
+If `coverage_complete`, `task_structure_valid`, `files_blocks_valid`, `execution_strategy_present`, `dependency_diagram_present`, `execution_topology_valid`, `serial_hazards_resolved`, `parallel_lane_ownership_valid`, `parallel_workspace_isolation_valid`, `task_contract_valid`, `task_goal_valid`, `task_context_sufficient`, `task_constraints_valid`, `task_done_when_deterministic`, or `tasks_self_contained` is not `true`, keep the plan in `Draft` and continue review or route back to `featureforge:writing-plans`.
+
+Do not use legacy task-level `Open Questions` review as the primary approval model after cutover. Legacy `Task Outcome`, `Plan Constraints`, and task-level `Open Questions` are invalid through the task-contract analyzer and `review/plan-task-contract.md`; approval depends on the canonical `Goal`, `Context`, `Constraints`, `Done when`, `Spec Coverage`, and `Files` contract.
+
+Separately, use reviewer judgment against `review/plan-task-contract.md` for reuse and architecture hygiene that cannot be fully proven by structural booleans. Keep the plan in `Draft` when any task duplicates substantive production behavior without an approved exception, fails to name the shared implementation home when reuse is required, or is too broad or under-specified for two independent reviewers to reach the same verdict.
+
+The reuse gate is a hard approval gate, not advisory design feedback. When a task plans substantive parser, normalizer, validator, routing, eligibility, policy, prompt-assembly, state-transition, artifact-binding, or freshness behavior, the plan must either extend the named shared implementation home or name one approved exception category from `review/plan-task-contract.md` with its boundary rationale. Generated code, fixtures or test data, tiny test-only setup repetition, platform-specific adapters, controlled migration shims, and explicit layer-boundary separation are the only approved exception categories.
+
+For every concrete engineering-review issue, use the deterministic review finding shape from `review/plan-task-contract.md`: `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail: yes|no`. Do not use general feedback when a failed task field, analyzer boolean, packet-assigned obligation, or checklist law can be named. `Required Fix` must be the smallest repair delta needed to make the plan approvable without the next author paraphrasing reviewer prose into a new interpretation.
 
 In the review itself, answer these questions explicitly before approval:
 
@@ -322,6 +336,12 @@ In the review itself, answer these questions explicitly before approval:
 - Do parallel worktree batches declare exact isolation, either through one isolated worktree per task or an explicit matching worktree count, with no shared-worktree ambiguity?
 - Does `Dependency Diagram` match the claimed task ordering, merge-back seams, and reintegration points?
 - Are any parallel lanes only parallel on paper because they still share hotspot files without an explicit later serial seam?
+- Does each task's `Goal` describe one exact outcome rather than a bucket of work?
+- Does each task's `Context` eliminate interpretation drift for a fresh implementer and reviewer, including required spec references under `review/plan-task-contract.md`?
+- Does each `Done when` bullet state a pass/fail terminal condition that can be graded without reviewer invention?
+- Does the plan name the shared implementation home for substantive parser, normalization, validation, routing, eligibility, policy, prompt-assembly, state-transition, artifact-binding, or freshness logic when reuse is required?
+- Does any task set up a second implementation of behavior that should be centralized, and if so is there an explicit approved exception?
+- If an exception is claimed, does it name one approved exception category and explain why the duplicate shape stays inside that boundary?
 
 ## Review Sections
 

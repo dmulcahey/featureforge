@@ -51,10 +51,16 @@ Task 1 -> Task 2
 ## Task 1: Core flow
 
 **Spec Coverage:** REQ-001, REQ-004
-**Task Outcome:** Task 1 execution reaches a boundary gate before Task 2 starts.
-**Plan Constraints:**
+**Goal:** Task 1 execution reaches a boundary gate before Task 2 starts.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-004.
+
+**Constraints:**
 - Keep fixture inputs deterministic.
-**Open Questions:** none
+
+**Done when:**
+- Task 1 execution reaches a boundary gate before Task 2 starts.
 
 **Files:**
 - Modify: `tests/execution_query.rs`
@@ -65,10 +71,16 @@ Task 1 -> Task 2
 ## Task 2: Follow-on flow
 
 **Spec Coverage:** VERIFY-001
-**Task Outcome:** Task 2 should remain blocked until Task 1 closure requirements are met.
-**Plan Constraints:**
+**Goal:** Task 2 should remain blocked until Task 1 closure requirements are met.
+
+**Context:**
+- Spec Coverage: VERIFY-001.
+
+**Constraints:**
 - Preserve deterministic task-boundary diagnostics.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 should remain blocked until Task 1 closure requirements are met.
 
 **Files:**
 - Modify: `tests/execution_query.rs`

@@ -15,7 +15,9 @@ Be direct and terse. No compliments. No implementation work.
 Return:
 
 1. `Verdict:` `clear` or `issues_open`
-2. `Findings:` a numbered list of concrete issues
-3. `Tensions:` any places where the plan seems internally inconsistent, overbuilt, or strategically miscalibrated
+2. `Findings:` deterministic repair-packet findings using the shared shape from `review/plan-task-contract.md`
+3. `Tensions:` only for non-blocking strategic tension notes; do not put concrete contract failures here
 
-If there are no meaningful issues, say so plainly.
+Each concrete finding must include `Finding ID`, `Severity`, `Task`, `Violated Field or Obligation`, `Evidence`, `Required Fix`, and `Hard Fail: yes|no`. Use canonical `DONE_WHEN_N` or `CONSTRAINT_N` IDs when a packet-assigned obligation is violated. Do not use general feedback when a failed task field, analyzer boolean, packet obligation, or checklist law can be named.
+
+If there are no meaningful issues, say so plainly with `Findings: none`.

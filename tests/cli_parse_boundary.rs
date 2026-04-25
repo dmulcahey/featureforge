@@ -66,10 +66,16 @@ Fixture spec for CLI parse-boundary coverage.
 ## Task 1: Parse boundary
 
 **Spec Coverage:** REQ-001
-**Task Outcome:** Typed parse-boundary coverage stays explicit.
-**Plan Constraints:**
+**Goal:** Typed parse-boundary coverage stays explicit.
+
+**Context:**
+- Spec Coverage: REQ-001.
+
+**Constraints:**
 - Keep parse-boundary failures at the CLI layer.
-**Open Questions:** none
+
+**Done when:**
+- Typed parse-boundary coverage stays explicit.
 
 **Files:**
 - Modify: `tests/cli_parse_boundary.rs`

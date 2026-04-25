@@ -5,6 +5,7 @@ pub mod packet;
 pub mod plan;
 pub mod runtime;
 pub mod spec;
+pub mod task_contract;
 
 pub use harness::{
     BlockingEvidenceReference, DowngradeBlockingEvidence, DowngradeOperatorImpact,

@@ -1134,12 +1134,26 @@ fn task_packet_build_is_deterministic_for_fixed_timestamp() {
 
     assert_eq!(first.packet_fingerprint, second.packet_fingerprint);
     assert_eq!(first.markdown, second.markdown);
+    assert_eq!(first.packet_contract_version, "task-obligation-v2");
     assert_eq!(first.task_title, "Establish the plan contract");
+    assert_eq!(first.constraint_obligations[0].id, "CONSTRAINT_1");
+    assert_eq!(first.done_when_obligations[0].id, "DONE_WHEN_1");
+    assert_eq!(first.file_entries[0].action, "Create");
+    assert_eq!(first.file_entries[0].path, "bin/featureforge");
+    assert_eq!(first.file_entries[0].normalized_path, "bin/featureforge");
+    assert!(first.file_scope.contains(&String::from("bin/featureforge")));
     assert!(
         first
             .markdown
             .contains("Execution-bound specs must include a parseable `Requirement Index`")
     );
+    assert!(first.markdown.contains("## Task Contract"));
+    assert!(first.markdown.contains("- CONSTRAINT_1:"));
+    assert!(first.markdown.contains("- DONE_WHEN_1:"));
+    assert!(first.markdown.contains("### File Scope"));
+    assert!(!first.markdown.contains("## Original Task Block"));
+    assert!(!first.markdown.contains("**Constraints:**"));
+    assert!(!first.markdown.contains("**Done when:**"));
 }
 
 #[test]
@@ -1154,6 +1168,8 @@ fn contract_schema_files_are_generated_with_expected_titles() {
 
     assert!(analyze_schema.contains("\"title\": \"AnalyzePlanReport\""));
     assert!(packet_schema.contains("\"title\": \"TaskPacket\""));
+    assert!(packet_schema.contains("\"file_entries\""));
+    assert!(packet_schema.contains("\"file_scope\""));
 }
 
 #[test]

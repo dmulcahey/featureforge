@@ -19,7 +19,9 @@ description: Use when a draft FeatureForge implementation plan needs a first-cla
 - This stage must run with an independent fresh-context subagent.
 - The reviewer must be distinct from both `featureforge:writing-plans` and `featureforge:plan-eng-review`.
 - Use `skills/plan-fidelity-review/reviewer-prompt.md` when briefing the reviewer.
-- The reviewer verifies exact Requirement Index coverage and execution-topology fidelity for the current draft plan revision.
+- The reviewer verifies exact Requirement Index coverage, execution-topology fidelity, and task-contract fidelity for the current draft plan revision.
+- Task-contract fidelity is governed by `review/plan-task-contract.md`; missing required task fields, wrong field ordering, non-deterministic `Done when` bullets, insufficient `Context`, missing required spec references, and weak self-containment are review failures.
+- The runtime-owned receipt must record exactly these `Verified Surfaces`: `requirement_index`, `execution_topology`, `task_contract`, `task_determinism`, and `spec_reference_fidelity`.
 
 ## Review Artifact Contract
 
@@ -39,6 +41,7 @@ description: Use when a draft FeatureForge implementation plan needs a first-cla
   - `Verified Surfaces`
   - `Verified Requirement IDs`
 - `Review Verdict` must be `pass` for this gate to advance.
+- Receipts missing any required verified surface are stale or invalid for the expanded plan-fidelity gate, even if they verified requirement coverage and topology under an older receipt shape.
 
 ## Receipt Recording
 

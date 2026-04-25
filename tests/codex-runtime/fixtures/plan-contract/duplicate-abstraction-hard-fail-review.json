@@ -1,0 +1,39 @@
+{
+  "fixture_kind": "duplicate_abstraction_hard_fail_review",
+  "description": "Negative final-cutover fixture proving duplicate substantive implementation produces an obligation-tied hard-fail review finding.",
+  "task_packet": {
+    "task_number": 2,
+    "file_scope": [
+      "src/contracts/plan.rs",
+      "src/contracts/runtime.rs"
+    ],
+    "reuse_scope_obligation": "PACKET_REUSE_SCOPE",
+    "bad_diff_fixture": "duplicate-abstraction-bad-diff.patch"
+  },
+  "implementation_diff_facts": [
+    {
+      "path": "src/contracts/plan.rs",
+      "evidence_path": "tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch",
+      "line": 5,
+      "fact": "Adds a typed-plan duplicate task-intent grouping helper instead of using the shared task-contract helper."
+    },
+    {
+      "path": "src/contracts/runtime.rs",
+      "evidence_path": "tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch",
+      "line": 22,
+      "fact": "Adds a runtime duplicate task-intent grouping helper with the same grouping key and duplicate decision."
+    }
+  ],
+  "expected_review_finding": {
+    "finding_id": "TASK2_DUPLICATE_TASK_INTENT_GROUPING",
+    "severity": "critical",
+    "task": "Task 2",
+    "violated_field_or_obligation": "PACKET_REUSE_SCOPE",
+    "evidence": "tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch:5 and tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch:22 duplicate task-intent grouping for typed plan analysis and runtime analysis.",
+    "required_fix": "Move task-intent duplicate grouping into the shared task-contract layer and call that shared implementation from both typed plan parsing and runtime analysis.",
+    "hard_fail": true,
+    "shared_implementation_home": "src/contracts/task_contract.rs",
+    "why_duplication_is_harmful": "The typed parser and runtime analyzer can drift on which task goals are classified as duplicate or overlapping task intent."
+  },
+  "review_output": "### Finding TASK2_DUPLICATE_TASK_INTENT_GROUPING\n\n**Finding ID:** TASK2_DUPLICATE_TASK_INTENT_GROUPING\n**Severity:** critical\n**Task:** Task 2\n**Violated Field or Obligation:** PACKET_REUSE_SCOPE\n**Evidence:** tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch:5 and tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch:22 duplicate task-intent grouping for typed plan analysis and runtime analysis.\n**Required Fix:** Move task-intent duplicate grouping into the shared task-contract layer and call that shared implementation from both typed plan parsing and runtime analysis.\n**Hard Fail:** yes"
+}

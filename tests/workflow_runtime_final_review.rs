@@ -138,10 +138,16 @@ Task 1
 ## Task 1: Single Step Task
 
 **Spec Coverage:** REQ-001
-**Task Outcome:** The workspace is prepared for execution.
-**Plan Constraints:**
+**Goal:** The workspace is prepared for execution.
+
+**Context:**
+- Spec Coverage: REQ-001.
+
+**Constraints:**
 - Keep the fixture single-step and deterministic.
-**Open Questions:** none
+
+**Done when:**
+- The workspace is prepared for execution.
 
 **Files:**
 - Modify: `docs/example-output.md`
@@ -184,10 +190,16 @@ Task 1 -> Task 2
 ## Task 1: Boundary setup
 
 **Spec Coverage:** REQ-001
-**Task Outcome:** Task 1 produces review and verification closure evidence.
-**Plan Constraints:**
+**Goal:** Task 1 produces review and verification closure evidence.
+
+**Context:**
+- Spec Coverage: REQ-001.
+
+**Constraints:**
 - Keep fixture deterministic and local.
-**Open Questions:** none
+
+**Done when:**
+- Task 1 produces review and verification closure evidence.
 
 **Files:**
 - Modify: `docs/example-output.md`
@@ -197,10 +209,16 @@ Task 1 -> Task 2
 ## Task 2: Follow-on execution
 
 **Spec Coverage:** REQ-001
-**Task Outcome:** Follow-on task can run only after Task 1 closure evidence is present.
-**Plan Constraints:**
+**Goal:** Follow-on task can run only after Task 1 closure evidence is present.
+
+**Context:**
+- Spec Coverage: REQ-001.
+
+**Constraints:**
 - Preserve deterministic task-boundary gating behavior.
-**Open Questions:** none
+
+**Done when:**
+- Follow-on task can run only after Task 1 closure evidence is present.
 
 **Files:**
 - Modify: `docs/example-output.md`

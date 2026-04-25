@@ -59,10 +59,16 @@ Task 1 -> Task 2
 ## Task 1: Core flow
 
 **Spec Coverage:** REQ-001, REQ-004
-**Task Outcome:** Task 1 execution reaches a boundary gate before Task 2 starts.
-**Plan Constraints:**
+**Goal:** Task 1 execution reaches a boundary gate before Task 2 starts.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-004.
+
+**Constraints:**
 - Keep fixture inputs deterministic.
-**Open Questions:** none
+
+**Done when:**
+- Task 1 execution reaches a boundary gate before Task 2 starts.
 
 **Files:**
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`
@@ -73,10 +79,16 @@ Task 1 -> Task 2
 ## Task 2: Follow-on flow
 
 **Spec Coverage:** VERIFY-001
-**Task Outcome:** Task 2 should remain blocked until Task 1 closure requirements are met.
-**Plan Constraints:**
+**Goal:** Task 2 should remain blocked until Task 1 closure requirements are met.
+
+**Context:**
+- Spec Coverage: VERIFY-001.
+
+**Constraints:**
 - Preserve deterministic task-boundary diagnostics.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 should remain blocked until Task 1 closure requirements are met.
 
 **Files:**
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`
@@ -110,10 +122,16 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 ## Task 1: FS-15 task 1
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Establishes the earliest completed baseline.
-**Plan Constraints:**
+**Goal:** Establishes the earliest completed baseline.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep one step per task for deterministic reopen targeting.
-**Open Questions:** none
+
+**Done when:**
+- Establishes the earliest completed baseline.
 
 **Files:**
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`
@@ -123,10 +141,16 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 ## Task 2: FS-15 task 2
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Represents the earliest unresolved stale boundary.
-**Plan Constraints:**
+**Goal:** Represents the earliest unresolved stale boundary.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep one step per task for deterministic reopen targeting.
-**Open Questions:** none
+
+**Done when:**
+- Represents the earliest unresolved stale boundary.
 
 **Files:**
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`
@@ -136,10 +160,16 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 ## Task 3: FS-15 task 3
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Provides intermediate task numbering for stale-boundary ordering.
-**Plan Constraints:**
+**Goal:** Provides intermediate task numbering for stale-boundary ordering.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep one step per task for deterministic reopen targeting.
-**Open Questions:** none
+
+**Done when:**
+- Provides intermediate task numbering for stale-boundary ordering.
 
 **Files:**
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`
@@ -149,10 +179,16 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 ## Task 4: FS-15 task 4
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Provides intermediate task numbering for stale-boundary ordering.
-**Plan Constraints:**
+**Goal:** Provides intermediate task numbering for stale-boundary ordering.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep one step per task for deterministic reopen targeting.
-**Open Questions:** none
+
+**Done when:**
+- Provides intermediate task numbering for stale-boundary ordering.
 
 **Files:**
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`
@@ -162,10 +198,16 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 ## Task 5: FS-15 task 5
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Provides intermediate task numbering for stale-boundary ordering.
-**Plan Constraints:**
+**Goal:** Provides intermediate task numbering for stale-boundary ordering.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep one step per task for deterministic reopen targeting.
-**Open Questions:** none
+
+**Done when:**
+- Provides intermediate task numbering for stale-boundary ordering.
 
 **Files:**
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`
@@ -175,10 +217,16 @@ Task 1 -> Task 2 -> Task 3 -> Task 4 -> Task 5 -> Task 6
 ## Task 6: FS-15 task 6
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Represents the later stale overlay target that must not outrank Task 2.
-**Plan Constraints:**
+**Goal:** Represents the later stale overlay target that must not outrank Task 2.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep one step per task for deterministic reopen targeting.
-**Open Questions:** none
+
+**Done when:**
+- Represents the later stale overlay target that must not outrank Task 2.
 
 **Files:**
 - Modify: `tests/contracts_execution_runtime_boundaries.rs`

@@ -51,6 +51,8 @@ pub struct WorkflowRoute {
     pub contract_state: String,
     pub reason_codes: Vec<String>,
     pub diagnostics: Vec<WorkflowDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_fidelity_receipt: Option<crate::contracts::plan::PlanFidelityGateReport>,
     pub scan_truncated: bool,
     pub spec_candidate_count: usize,
     pub plan_candidate_count: usize,
@@ -524,6 +526,7 @@ fn resolve_route(
             contract_state: String::from("unknown"),
             reason_codes: vec![String::from("missing_expected_spec")],
             diagnostics: Vec::new(),
+            plan_fidelity_receipt: None,
             scan_truncated,
             spec_candidate_count: 0,
             plan_candidate_count: 0,
@@ -557,6 +560,7 @@ fn resolve_route(
                     "Repair the spec headers before treating the document as an approved workflow artifact.",
                 ),
             }],
+            plan_fidelity_receipt: None,
             scan_truncated,
             spec_candidate_count: malformed_spec_candidates.len(),
             plan_candidate_count: plan_candidates.len(),
@@ -577,6 +581,7 @@ fn resolve_route(
             contract_state: String::from("unknown"),
             reason_codes: Vec::new(),
             diagnostics: Vec::new(),
+            plan_fidelity_receipt: None,
             scan_truncated,
             spec_candidate_count: 0,
             plan_candidate_count: plan_candidates.len(),
@@ -626,6 +631,7 @@ fn resolve_route(
                 ),
                 remediation: String::from("Reduce spec ambiguity before proceeding."),
             }],
+            plan_fidelity_receipt: None,
             scan_truncated,
             spec_candidate_count,
             plan_candidate_count: plan_candidates.len(),
@@ -646,6 +652,7 @@ fn resolve_route(
             contract_state: String::from("unknown"),
             reason_codes: Vec::new(),
             diagnostics: Vec::new(),
+            plan_fidelity_receipt: None,
             scan_truncated,
             spec_candidate_count,
             plan_candidate_count: plan_candidates.len(),
@@ -711,6 +718,7 @@ fn resolve_route(
                     "Reduce plan ambiguity before treating the approved spec as ready for execution.",
                 ),
             }],
+            plan_fidelity_receipt: None,
             scan_truncated,
             spec_candidate_count,
             plan_candidate_count: ambiguous_plan_candidate_count,
@@ -813,6 +821,7 @@ fn resolve_route(
                     contract_state,
                     reason_codes: combined_reason_codes,
                     diagnostics: combined_diagnostics,
+                    plan_fidelity_receipt: Some(plan_fidelity_gate),
                     scan_truncated,
                     spec_candidate_count,
                     plan_candidate_count: 1,
@@ -831,6 +840,7 @@ fn resolve_route(
                 contract_state,
                 reason_codes,
                 diagnostics,
+                plan_fidelity_receipt: Some(plan_fidelity_gate),
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
@@ -860,6 +870,7 @@ fn resolve_route(
                 contract_state,
                 reason_codes: vec![String::from("implementation_ready")],
                 diagnostics: Vec::new(),
+                plan_fidelity_receipt: None,
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
@@ -880,6 +891,7 @@ fn resolve_route(
                 contract_state,
                 reason_codes,
                 diagnostics,
+                plan_fidelity_receipt: None,
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
@@ -899,6 +911,7 @@ fn resolve_route(
             contract_state,
             reason_codes,
             diagnostics,
+            plan_fidelity_receipt: None,
             scan_truncated,
             spec_candidate_count,
             plan_candidate_count: 1,
@@ -922,6 +935,7 @@ fn resolve_route(
             Vec::new()
         },
         diagnostics: Vec::new(),
+        plan_fidelity_receipt: None,
         scan_truncated,
         spec_candidate_count,
         plan_candidate_count: plan_candidates.len(),
@@ -1015,6 +1029,7 @@ pub(crate) fn explicit_plan_override_route(
         contract_state,
         reason_codes: Vec::new(),
         diagnostics: Vec::new(),
+        plan_fidelity_receipt: None,
         scan_truncated: resolved_route.scan_truncated,
         spec_candidate_count: resolved_route.spec_candidate_count,
         plan_candidate_count: 1,
@@ -1067,6 +1082,7 @@ pub(crate) fn explicit_plan_override_route(
                 next_skill: String::from(fidelity_next_skill),
                 reason_codes: combined_reason_codes,
                 diagnostics: combined_diagnostics,
+                plan_fidelity_receipt: Some(plan_fidelity_gate),
                 reason: reason.clone(),
                 note: reason,
                 ..base_route
@@ -1077,6 +1093,7 @@ pub(crate) fn explicit_plan_override_route(
             next_skill: String::from("featureforge:plan-eng-review"),
             reason_codes,
             diagnostics,
+            plan_fidelity_receipt: Some(plan_fidelity_gate),
             reason: reason.clone(),
             note: reason,
             ..base_route
@@ -1095,6 +1112,7 @@ pub(crate) fn explicit_plan_override_route(
             next_skill: String::new(),
             reason_codes: vec![String::from("implementation_ready")],
             diagnostics: Vec::new(),
+            plan_fidelity_receipt: None,
             reason: String::from("implementation_ready"),
             note: String::from("implementation_ready"),
             ..base_route
@@ -2020,41 +2038,37 @@ fn evaluate_plan_fidelity_gate(
     let plan = match parse_plan_file(&plan_abs) {
         Ok(plan) => plan,
         Err(_) => {
-            return crate::contracts::plan::PlanFidelityGateReport {
-                state: String::from("invalid"),
-                receipt_path: receipt_path.display().to_string(),
-                reviewer_stage: String::new(),
-                provenance_source: String::new(),
-                verified_requirement_index: false,
-                verified_execution_topology: false,
-                reason_codes: vec![String::from("plan_fidelity_verification_incomplete")],
-                diagnostics: vec![crate::contracts::plan::ContractDiagnostic {
+            return crate::contracts::plan::PlanFidelityGateReport::unverified(
+                "invalid",
+                receipt_path.display().to_string(),
+                String::new(),
+                String::new(),
+                vec![String::from("plan_fidelity_verification_incomplete")],
+                vec![crate::contracts::plan::ContractDiagnostic {
                     code: String::from("plan_fidelity_verification_incomplete"),
                     message: String::from(
                         "Plan-fidelity review cannot be validated until the draft plan parses cleanly.",
                     ),
                 }],
-            };
+            );
         }
     };
     let spec = match load_plan_fidelity_spec_document(&spec_abs) {
         Ok(spec) => spec,
         Err(_) => {
-            return crate::contracts::plan::PlanFidelityGateReport {
-                state: String::from("invalid"),
-                receipt_path: receipt_path.display().to_string(),
-                reviewer_stage: String::new(),
-                provenance_source: String::new(),
-                verified_requirement_index: false,
-                verified_execution_topology: false,
-                reason_codes: vec![String::from("plan_fidelity_verification_incomplete")],
-                diagnostics: vec![crate::contracts::plan::ContractDiagnostic {
+            return crate::contracts::plan::PlanFidelityGateReport::unverified(
+                "invalid",
+                receipt_path.display().to_string(),
+                String::new(),
+                String::new(),
+                vec![String::from("plan_fidelity_verification_incomplete")],
+                vec![crate::contracts::plan::ContractDiagnostic {
                     code: String::from("plan_fidelity_verification_incomplete"),
                     message: String::from(
                         "Plan-fidelity review cannot be validated until the source spec parses cleanly, including a parseable Requirement Index.",
                     ),
                 }],
-            };
+            );
         }
     };
 

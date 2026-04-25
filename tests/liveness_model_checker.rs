@@ -75,7 +75,7 @@ fn write_spec_and_plan(repo: &Path, total_tasks: u8, completed_tasks: u8) {
             "[ ]"
         };
         plan.push_str(&format!(
-            "\n## Task {task}: Liveness task {task}\n\n**Spec Coverage:** VERIFY-001\n**Task Outcome:** Runtime routes a legal public next step.\n**Plan Constraints:**\n- Keep one step per task.\n**Open Questions:** none\n\n**Files:**\n- Modify: `docs/liveness-task-{task}.md`\n\n- {checkbox} **Step 1: Execute task {task}**\n"
+            "\n## Task {task}: Liveness task {task}\n\n**Spec Coverage:** VERIFY-001\n**Goal:** Runtime routes a legal public next step.\n\n**Context:**\n- Spec Coverage: VERIFY-001.\n\n**Constraints:**\n- Keep one step per task.\n**Done when:**\n- Runtime routes a legal public next step.\n\n**Files:**\n- Modify: `docs/liveness-task-{task}.md`\n\n- {checkbox} **Step 1: Execute task {task}**\n"
         ));
     }
 

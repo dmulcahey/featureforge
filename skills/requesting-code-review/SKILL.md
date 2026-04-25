@@ -215,8 +215,14 @@ HEAD_SHA=$(git rev-parse HEAD)
 [Subagent returns]:
   Strengths: Clean architecture, real tests, checklist pass covered enum consumers
   Issues:
-    Important: Missing progress indicators
-    Minor: Magic number (100) for reporting interval
+    ### Finding FINAL_REVIEW_PROGRESS_INDICATORS
+    **Finding ID:** FINAL_REVIEW_PROGRESS_INDICATORS
+    **Severity:** important
+    **Task:** Task 2
+    **Violated Field or Obligation:** DONE_WHEN_1
+    **Evidence:** The final diff lacks progress reporting for the packet-required long-running deployment step.
+    **Required Fix:** Add progress indicators to the long-running deployment path and include evidence in the final-review response.
+    **Hard Fail:** no
   Assessment: Ready to proceed
 
 You: [Fix progress indicators]

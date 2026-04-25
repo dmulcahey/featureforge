@@ -4,12 +4,22 @@ use featureforge::paths::{
     RepoPath, atomic_publish_temp_path, branch_storage_key, harness_authoritative_artifact_path,
     harness_authoritative_artifact_publish_temp_path, harness_authoritative_artifacts_dir,
     harness_dependency_index_path, harness_state_path, harness_state_publish_temp_path,
+    normalize_repo_relative_file_reference,
 };
 
 #[test]
 fn repo_paths_normalize_backslashes_and_dot_segments() {
     let path = RepoPath::parse(r"docs\featureforge//specs/./new-spec.md").unwrap();
     assert_eq!(path.as_str(), "docs/featureforge/specs/new-spec.md");
+}
+
+#[test]
+fn repo_file_references_strip_line_suffixes_after_path_normalization() {
+    let path = normalize_repo_relative_file_reference(r".\src/contracts/packet.rs:371").unwrap();
+    assert_eq!(path, "src/contracts/packet.rs");
+
+    let path = normalize_repo_relative_file_reference("src/contracts/packet.rs-371").unwrap();
+    assert_eq!(path, "src/contracts/packet.rs");
 }
 
 #[test]

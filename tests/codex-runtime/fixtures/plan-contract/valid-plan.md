@@ -36,11 +36,17 @@ Task 1
 ## Task 1: Establish the plan contract
 
 **Spec Coverage:** REQ-001, REQ-002, DEC-001
-**Task Outcome:** The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
-**Plan Constraints:**
+**Goal:** The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-002, DEC-001.
+
+**Constraints:**
 - Preserve exact approved statements instead of paraphrasing them.
 - Keep markdown authoritative and fail closed on malformed structure.
-**Open Questions:** none
+
+**Done when:**
+- The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
 
 **Files:**
 - Create: `bin/featureforge`
@@ -53,11 +59,17 @@ Task 1
 ## Task 2: Dispatch exact packet-backed execution
 
 **Spec Coverage:** REQ-003, VERIFY-001
-**Task Outcome:** The CLI and packaged binary surfaces emit exact task packets backed by approved artifacts and schema-readable evidence.
-**Plan Constraints:**
+**Goal:** The CLI and packaged binary surfaces emit exact task packets backed by approved artifacts and schema-readable evidence.
+
+**Context:**
+- Spec Coverage: REQ-003, VERIFY-001.
+
+**Constraints:**
 - Do not invent controller-authored summary context.
 - Keep the CLI and packaged binary surfaces lane-owned and disjoint from prompt or shell-proof work.
-**Open Questions:** none
+
+**Done when:**
+- The CLI and packaged binary surfaces emit exact task packets backed by approved artifacts and schema-readable evidence.
 
 **Files:**
 - Create: `bin/prebuilt/windows-x64/featureforge.exe`
@@ -70,11 +82,17 @@ Task 1
 ## Task 3: Prove packet-backed execution handoffs
 
 **Spec Coverage:** REQ-003, NONGOAL-001, VERIFY-001
-**Task Outcome:** Execution prompts and shell-proof coverage consume exact packet-backed handoffs without controller-authored summaries.
-**Plan Constraints:**
+**Goal:** Execution prompts and shell-proof coverage consume exact packet-backed handoffs without controller-authored summaries.
+
+**Context:**
+- Spec Coverage: REQ-003, NONGOAL-001, VERIFY-001.
+
+**Constraints:**
 - Do not invent controller-authored summary context.
 - Keep prompt and shell-proof work disjoint from CLI and packaged-binary ownership.
-**Open Questions:** none
+
+**Done when:**
+- Execution prompts and shell-proof coverage consume exact packet-backed handoffs without controller-authored summaries.
 
 **Files:**
 - Modify: `skills/subagent-driven-development/implementer-prompt.md`

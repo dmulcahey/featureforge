@@ -7,7 +7,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::plan_execution::ExecutionTopologyArg;
-use crate::contracts::plan::{AnalyzePlanReport, PLAN_FIDELITY_REVIEW_STAGE, PlanDocument};
+use crate::contracts::plan::{
+    AnalyzePlanReport, PLAN_FIDELITY_REQUIRED_SURFACES, PLAN_FIDELITY_REVIEW_STAGE, PlanDocument,
+};
 use crate::contracts::spec::SpecDocument;
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::execution::harness::{
@@ -759,13 +761,14 @@ pub(crate) fn validate_plan_fidelity_review_artifact(
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    if !["requirement_index", "execution_topology"]
+    let required_surfaces = PLAN_FIDELITY_REQUIRED_SURFACES
         .iter()
-        .all(|surface| verified_surfaces.contains(surface))
-    {
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if verified_surfaces != required_surfaces {
         return Err(DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must verify both `requirement_index` and `execution_topology`.",
+            "Plan-fidelity review artifact must verify exactly `requirement_index`, `execution_topology`, `task_contract`, `task_determinism`, and `spec_reference_fidelity`.",
         ));
     }
     let verified_requirement_ids = artifact

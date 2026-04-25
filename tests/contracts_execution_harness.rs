@@ -106,11 +106,17 @@ fn write_approved_plan(repo: &Path) {
 ## Task 1: Harness artifact contracts
 
 **Spec Coverage:** REQ-001, REQ-002
-**Task Outcome:** The runtime can validate artifact provenance and traceability.
-**Plan Constraints:**
+**Goal:** The runtime can validate artifact provenance and traceability.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-002.
+
+**Constraints:**
 - Keep the slice focused on artifact contracts.
 - Preserve source-plan and source-spec traceability fields.
-**Open Questions:** none
+
+**Done when:**
+- The runtime can validate artifact provenance and traceability.
 
 **Files:**
 - Test: `tests/contracts_execution_harness.rs`

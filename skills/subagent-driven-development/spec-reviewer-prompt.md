@@ -40,6 +40,8 @@ Spec reviewer sub-agent / custom agent:
 
     **Missing requirements:**
     - Did they implement everything that was requested in the exact task packet?
+    - Grade every packet `DONE_WHEN_N` obligation as `pass` or `fail`.
+    - Grade every packet `CONSTRAINT_N` obligation as `pass` or `fail`.
     - Are there requirements they skipped or missed?
     - Did they claim something works but didn't actually implement it?
 
@@ -57,10 +59,27 @@ Spec reviewer sub-agent / custom agent:
     - Did they change behavior, requirements, or files outside the packet's approved scope?
     - If yes, report `PLAN_DEVIATION_FOUND` with concrete file:line evidence.
     - If the packet itself is insufficient to determine correctness, report `AMBIGUITY_ESCALATION_REQUIRED`.
+    - Every issue must include a stable finding ID and the exact violated obligation ID, such as `DONE_WHEN_2` or `CONSTRAINT_1`.
+    - Name the smallest corrective action needed to satisfy the violated obligation.
+    - Use the deterministic review finding shape from `review/plan-task-contract.md` for every issue:
+      - `Finding ID`
+      - `Severity`
+      - `Task`
+      - `Violated Field or Obligation`
+      - `Evidence`
+      - `Required Fix`
+      - `Hard Fail: yes|no`
+    - Do not use general feedback when a packet field or canonical obligation ID can be named.
 
     **Verify by reading code, not by trusting report.**
 
     Report:
     - ✅ Spec compliant (if everything matches after code inspection)
-    - ❌ Issues found: [list specifically what's missing or extra, with file:line references]
+    - ❌ Issues found: [deterministic repair-packet findings only; no essay-style reinterpretation]
+    - Obligation matrix:
+      - `DONE_WHEN_1: pass/fail`
+      - `DONE_WHEN_2: pass/fail`
+      - `CONSTRAINT_1: pass/fail`
+      - `PLAN_DEVIATION_FOUND: yes/no`
+      - `AMBIGUITY_ESCALATION_REQUIRED: yes/no`
 ```

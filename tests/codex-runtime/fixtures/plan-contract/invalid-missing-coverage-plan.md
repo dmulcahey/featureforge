@@ -31,11 +31,17 @@ Task 2
 ## Task 1: Establish the plan contract
 
 **Spec Coverage:** REQ-001, REQ-002, DEC-001
-**Task Outcome:** The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
-**Plan Constraints:**
+**Goal:** The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-002, DEC-001.
+
+**Constraints:**
 - Preserve exact approved statements instead of paraphrasing them.
 - Keep markdown authoritative and fail closed on malformed structure.
-**Open Questions:** none
+
+**Done when:**
+- The plan contract is represented as canonical traceability blocks that preserve exact approved wording.
 
 **Files:**
 - Create: `bin/featureforge`
@@ -48,11 +54,17 @@ Task 2
 ## Task 2: Dispatch exact packet-backed execution
 
 **Spec Coverage:** NONGOAL-001, VERIFY-001
-**Task Outcome:** Execution and review consume exact task packets built from approved artifacts with stale packet handling.
-**Plan Constraints:**
+**Goal:** Execution and review consume exact task packets built from approved artifacts with stale packet handling.
+
+**Context:**
+- Spec Coverage: NONGOAL-001, VERIFY-001.
+
+**Constraints:**
 - Do not invent controller-authored summary context.
 - Reject malformed file scope and normalized path traversal.
-**Open Questions:** none
+
+**Done when:**
+- Execution and review consume exact task packets built from approved artifacts with stale packet handling.
 
 **Files:**
 - Create: `bin/prebuilt/windows-x64/featureforge.exe`
