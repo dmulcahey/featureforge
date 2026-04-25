@@ -142,14 +142,32 @@ Fixture spec for execution-status benchmark coverage.
 - REQ-002 -> Task 1
 - VERIFY-001 -> Task 1
 
+## Execution Strategy
+
+- Execute Task 1 serially. The fixture exists only to keep execution-status benchmark setup deterministic.
+
+## Dependency Diagram
+
+```text
+Task 1
+```
+
 ## Task 1: Benchmark status
 
 **Spec Coverage:** REQ-001, REQ-002, VERIFY-001
-**Task Outcome:** Execution status can parse the approved plan and stay execution-clean.
-**Plan Constraints:**
+**Goal:** Execution status can parse the approved plan and stay execution-clean.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-002, VERIFY-001.
+- This benchmark fixture represents an active approved plan and must use the canonical task contract.
+
+**Constraints:**
 - Keep the fixture compact and deterministic.
 - Preserve canonical task and file-block structure.
-**Open Questions:** none
+
+**Done when:**
+- Execution status parses the approved plan without reporting active execution work.
+- The benchmark fixture stays compact and deterministic.
 
 **Files:**
 - Modify: `docs/example-output.md`

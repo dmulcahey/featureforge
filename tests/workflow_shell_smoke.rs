@@ -540,11 +540,17 @@ Task 1 -> Task 2
 ## Task 1: Core flow
 
 **Spec Coverage:** REQ-001, REQ-004
-**Task Outcome:** Core execution setup and validation are tracked with canonical execution-state evidence.
-**Plan Constraints:**
+**Goal:** Core execution setup and validation are tracked with canonical execution-state evidence.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-004.
+
+**Constraints:**
 - Preserve helper-owned execution-state invariants.
 - Keep execution evidence grounded in repo-visible artifacts.
-**Open Questions:** none
+
+**Done when:**
+- Core execution setup and validation are tracked with canonical execution-state evidence.
 
 **Files:**
 - Modify: `docs/example-output.md`
@@ -556,11 +562,17 @@ Task 1 -> Task 2
 ## Task 2: Repair flow
 
 **Spec Coverage:** REQ-004, VERIFY-001
-**Task Outcome:** Repair and handoff steps can reopen stale work without losing provenance.
-**Plan Constraints:**
+**Goal:** Repair and handoff steps can reopen stale work without losing provenance.
+
+**Context:**
+- Spec Coverage: REQ-004, VERIFY-001.
+
+**Constraints:**
 - Reuse the same approved plan and evidence path for repairs.
 - Keep repair flows fail-closed on stale or malformed state.
-**Open Questions:** none
+
+**Done when:**
+- Repair and handoff steps can reopen stale work without losing provenance.
 
 **Files:**
 - Modify: `docs/example-followup.md`
@@ -4376,10 +4388,16 @@ Task 1 -> Task 2
 ## Task 1: Core flow
 
 **Spec Coverage:** REQ-001, REQ-004
-**Task Outcome:** Task 1 execution reaches a boundary gate before Task 2 starts.
-**Plan Constraints:**
+**Goal:** Task 1 execution reaches a boundary gate before Task 2 starts.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-004.
+
+**Constraints:**
 - Keep fixture inputs deterministic.
-**Open Questions:** none
+
+**Done when:**
+- Task 1 execution reaches a boundary gate before Task 2 starts.
 
 **Files:**
 - Modify: `tests/workflow_shell_smoke.rs`
@@ -4390,10 +4408,16 @@ Task 1 -> Task 2
 ## Task 2: Follow-on flow
 
 **Spec Coverage:** VERIFY-001
-**Task Outcome:** Task 2 should remain blocked until Task 1 closure requirements are met.
-**Plan Constraints:**
+**Goal:** Task 2 should remain blocked until Task 1 closure requirements are met.
+
+**Context:**
+- Spec Coverage: VERIFY-001.
+
+**Constraints:**
 - Preserve deterministic task-boundary diagnostics.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 should remain blocked until Task 1 closure requirements are met.
 
 **Files:**
 - Modify: `tests/workflow_shell_smoke.rs`
@@ -4430,10 +4454,16 @@ Task 2 -> Task 3
 ## Task 2: Earliest stale boundary task
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Task 2 represents the earliest unresolved stale boundary.
-**Plan Constraints:**
+**Goal:** Task 2 represents the earliest unresolved stale boundary.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep one step per task to simplify command-target parity checks.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 represents the earliest unresolved stale boundary.
 
 **Files:**
 - Modify: `tests/workflow_shell_smoke.rs`
@@ -4443,10 +4473,16 @@ Task 2 -> Task 3
 ## Task 3: Forward resume overlay task
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Task 3 Step 6 is the forward resume overlay target that must not outrank Task 2.
-**Plan Constraints:**
+**Goal:** Task 3 Step 6 is the forward resume overlay target that must not outrank Task 2.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep six steps on Task 3 to preserve the exact Task 3 Step 6 contradiction shape.
-**Open Questions:** none
+
+**Done when:**
+- Task 3 Step 6 is the forward resume overlay target that must not outrank Task 2.
 
 **Files:**
 - Modify: `tests/workflow_shell_smoke.rs`

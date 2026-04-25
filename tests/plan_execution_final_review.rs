@@ -156,10 +156,16 @@ Task 1
 ## Task 1: Single Step Task
 
 **Spec Coverage:** REQ-001
-**Task Outcome:** The workspace is prepared for execution.
-**Plan Constraints:**
+**Goal:** The workspace is prepared for execution.
+
+**Context:**
+- Spec Coverage: REQ-001.
+
+**Constraints:**
 - Keep the fixture single-step and deterministic.
-**Open Questions:** none
+
+**Done when:**
+- The workspace is prepared for execution.
 
 **Files:**
 - Modify: `docs/example-output.md`

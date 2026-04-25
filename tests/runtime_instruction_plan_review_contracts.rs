@@ -59,6 +59,18 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
         root.join("skills/plan-fidelity-review/reviewer-prompt.md"),
         "**Reviewer Source:** fresh-context-subagent",
     );
+    assert_file_contains(
+        root.join("skills/plan-fidelity-review/reviewer-prompt.md"),
+        "**Verified Surfaces:** requirement_index, execution_topology, task_contract, task_determinism, spec_reference_fidelity",
+    );
+    assert_file_contains(
+        root.join("skills/plan-fidelity-review/reviewer-prompt.md"),
+        "TASK_DONE_WHEN_NON_DETERMINISTIC",
+    );
+    assert_file_contains(
+        root.join("skills/plan-fidelity-review/SKILL.md"),
+        "Receipts missing any required verified surface are stale or invalid for the expanded plan-fidelity gate",
+    );
     assert_file_not_contains(
         root.join("skills/plan-fidelity-review/reviewer-prompt.md"),
         "Reviewer Source: cross-model",
@@ -106,5 +118,25 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     assert_file_contains(
         root.join("skills/plan-eng-review/SKILL.md"),
         "If the matching plan-fidelity receipt is missing, stale, malformed, non-pass, or non-independent, stop and hand control back to `featureforge:plan-fidelity-review`.",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "Engineering approval must also fail closed unless `task_contract_valid`, `task_goal_valid`, `task_context_sufficient`, `task_constraints_valid`, `task_done_when_deterministic`, and `tasks_self_contained` are all `true`.",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "Do not use legacy task-level `Open Questions` review as the primary approval model after cutover.",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/SKILL.md"),
+        "fails to name the shared implementation home when reuse is required",
+    );
+    assert_file_contains(
+        root.join("skills/plan-eng-review/accelerated-reviewer-prompt.md"),
+        "preserving the normal engineering hard-fail law for `task_contract_valid`, `task_goal_valid`, `task_context_sufficient`, `task_constraints_valid`, `task_done_when_deterministic`, and `tasks_self_contained`",
+    );
+    assert_file_contains(
+        root.join("review/review-accelerator-packet-contract.md"),
+        "analyze-plan boolean snapshot for `task_contract_valid`, `task_goal_valid`, `task_context_sufficient`, `task_constraints_valid`, `task_done_when_deterministic`, and `tasks_self_contained`",
     );
 }

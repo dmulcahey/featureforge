@@ -27,9 +27,6 @@
     "files_blocks_valid": {
       "type": "boolean"
     },
-    "open_questions_resolved": {
-      "type": "boolean"
-    },
     "overlapping_write_scopes": {
       "type": "array",
       "items": {
@@ -98,12 +95,30 @@
       "format": "uint32",
       "minimum": 0
     },
+    "task_constraints_valid": {
+      "type": "boolean"
+    },
+    "task_context_sufficient": {
+      "type": "boolean"
+    },
+    "task_contract_valid": {
+      "type": "boolean"
+    },
     "task_count": {
       "type": "integer",
       "format": "uint",
       "minimum": 0
     },
+    "task_done_when_deterministic": {
+      "type": "boolean"
+    },
+    "task_goal_valid": {
+      "type": "boolean"
+    },
     "task_structure_valid": {
+      "type": "boolean"
+    },
+    "tasks_self_contained": {
       "type": "boolean"
     }
   },
@@ -118,7 +133,12 @@
     "task_count",
     "packet_buildable_tasks",
     "coverage_complete",
-    "open_questions_resolved",
+    "task_contract_valid",
+    "task_goal_valid",
+    "task_context_sufficient",
+    "task_constraints_valid",
+    "task_done_when_deterministic",
+    "tasks_self_contained",
     "task_structure_valid",
     "files_blocks_valid",
     "execution_strategy_present",
@@ -230,6 +250,15 @@
         },
         "verified_requirement_index": {
           "type": "boolean"
+        },
+        "verified_spec_reference_fidelity": {
+          "type": "boolean"
+        },
+        "verified_task_contract": {
+          "type": "boolean"
+        },
+        "verified_task_determinism": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -239,6 +268,9 @@
         "provenance_source",
         "verified_requirement_index",
         "verified_execution_topology",
+        "verified_task_contract",
+        "verified_task_determinism",
+        "verified_spec_reference_fidelity",
         "reason_codes",
         "diagnostics"
       ]

@@ -837,20 +837,11 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
 
     assert_contains(
         &readme_content,
-        "cargo nextest run --test workflow_runtime",
+        "cargo nextest run --all-targets --all-features --no-fail-fast",
         "README.md",
     );
-    assert_contains(
-        &readme_content,
-        "--test runtime_instruction_contracts --test using_featureforge_skill",
-        "README.md",
-    );
-    assert_contains(&readme_content, "--test runtime_root_cli", "README.md");
-    assert_contains(
-        &readme_content,
-        "--test powershell_wrapper_resolution --test upgrade_skill",
-        "README.md",
-    );
+    assert_contains(&readme_content, "more than 1100 tests", "README.md");
+    assert_contains(&readme_content, "--no-fail-fast", "README.md");
     assert_not_contains(
         &readme_content,
         "bash tests/differential/run_legacy_vs_rust.sh",
@@ -879,12 +870,12 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
 
     assert_contains(
         &docs_testing_content,
-        "--test runtime_instruction_contracts --test using_featureforge_skill",
+        "cargo nextest run --all-targets --all-features --no-fail-fast",
         "docs/testing.md",
     );
     assert_contains(
         &docs_testing_content,
-        "--test runtime_root_cli",
+        "more than 1100 tests",
         "docs/testing.md",
     );
     assert_contains(
@@ -894,7 +885,7 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
     );
     assert_contains(
         &docs_testing_content,
-        "--test packet_and_schema --test contracts_execution_runtime_boundaries",
+        "captures the full failure set",
         "docs/testing.md",
     );
     assert_contains(
@@ -927,7 +918,7 @@ fn runtime_instruction_docs_point_at_rust_as_the_primary_oracle() {
 }
 
 #[test]
-fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_step12_sequence() {
+fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_nextest_gate() {
     let root = repo_root();
     let readme_content = read_utf8(root.join("README.md"));
     let subagent_skill = read_utf8(root.join("skills/subagent-driven-development/SKILL.md"));
@@ -981,35 +972,40 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_st
     );
     assert_contains(
         &docs_testing_content,
-        "If the repo's normal verification flow also expects these and they are available locally, then run:",
+        "For branch proof, task-completion gates, plan-task review loops, and pre-merge verification, use the full Rust nextest suite instead:",
         "docs/testing.md",
     );
     assert_contains(
         &docs_testing_content,
-        "cargo nextest run --test using_featureforge_skill --test runtime_root_cli --test upgrade_skill",
+        "cargo nextest run --all-targets --all-features --no-fail-fast",
         "docs/testing.md",
     );
     assert_contains(
+        &docs_testing_content,
+        "Targeted `cargo nextest run --test ...` commands are local debugging tools only. Do not use them as the documented final gate.",
+        "docs/testing.md",
+    );
+    assert_not_contains(
         &docs_testing_content,
         "task closure happy path `<= 2` runtime-management commands",
         "docs/testing.md",
     );
-    assert_contains(
+    assert_not_contains(
         &docs_testing_content,
         "internal-dispatch task closure `<= 2` runtime-management commands",
         "docs/testing.md",
     );
-    assert_contains(
+    assert_not_contains(
         &docs_testing_content,
         "rebase / resume stale-boundary recovery `<= 3` runtime-management commands before implementation resumes",
         "docs/testing.md",
     );
-    assert_contains(
+    assert_not_contains(
         &docs_testing_content,
         "stale release refresh `<= 3` runtime-management commands before the next real review step",
         "docs/testing.md",
     );
-    assert_contains(
+    assert_not_contains(
         &docs_testing_content,
         "Run the FS-13 fixture and confirm the runtime surfaces the earliest stale boundary without any manual edit to `**Execution Note:**` lines.",
         "docs/testing.md",
@@ -1696,6 +1692,22 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     assert_file_contains(
         root.join("skills/writing-plans/SKILL.md"),
         "**QA Requirement:** required | not-required",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "`QA Requirement` is a plan-level finish-gating decision",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "atomic, binary, objectively reviewable, reviewable without interpretation drift",
+    );
+    assert_file_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "Legacy task fields such as `Task Outcome`, `Plan Constraints`, or task-level `Open Questions`",
+    );
+    assert_file_not_contains(
+        root.join("skills/writing-plans/SKILL.md"),
+        "**Open Questions:**",
     );
     assert_file_contains(
         root.join("skills/requesting-code-review/SKILL.md"),
@@ -2574,7 +2586,11 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("docs/test-suite-enhancement-plan.md"),
-        "cargo nextest run --test runtime_instruction_contracts",
+        "cargo nextest run --all-targets --all-features --no-fail-fast",
+    );
+    assert_file_contains(
+        root.join("docs/test-suite-enhancement-plan.md"),
+        "Targeted `cargo nextest run --test ...` commands are iteration aids only, not branch-proof verification.",
     );
     assert_file_not_contains(
         root.join("docs/test-suite-enhancement-plan.md"),

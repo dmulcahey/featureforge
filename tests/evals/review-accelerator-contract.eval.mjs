@@ -19,6 +19,8 @@ function readRepoFile(relPath) {
 testFn('review accelerator contract preserves explicit human authority and fail-closed boundaries', async () => {
   const ceoSkill = readRepoFile('skills/plan-ceo-review/SKILL.md');
   const engSkill = readRepoFile('skills/plan-eng-review/SKILL.md');
+  const engAcceleratedPrompt = readRepoFile('skills/plan-eng-review/accelerated-reviewer-prompt.md');
+  const packetContract = readRepoFile('review/review-accelerator-packet-contract.md');
   const readme = readRepoFile('README.md');
 
   const result = await runJsonJudgeEval({
@@ -38,6 +40,9 @@ Required checks:
 4. The system cannot automatically write CEO Approved or Engineering Approved as part of accelerated review.
 5. Only the main review agent may write authoritative artifacts or apply approved patches.
 6. Persisted-packet stale or regenerate language is present for fingerprint mismatch or equivalent source-change detection.
+7. Accelerated ENG packets preserve the normal engineering hard-fail law for weak task contracts, non-deterministic \`Done when\`, missing required spec references, broad or under-specified task scopes, and avoidable duplicate implementations.
+8. Accelerated ENG packet validation fails closed when the required analyze-plan boolean snapshot or reuse assessment is missing or contradicts the normal \`plan-eng-review\` approval gate.
+9. Accelerated ENG findings for concrete contract failures use deterministic repair-packet fields tied to the violated task field or canonical \`DONE_WHEN_N\` / \`CONSTRAINT_N\` obligation, including \`Finding ID\`, \`Severity\`, \`Task\`, \`Violated Field or Obligation\`, \`Evidence\`, \`Required Fix\`, and \`Hard Fail\`.
 
 Respond with JSON only:
 {"passed": true|false, "summary": "one sentence", "evidence": ["..."]}
@@ -47,6 +52,12 @@ ${ceoSkill}
 
 ENG skill doc:
 ${engSkill}
+
+ENG accelerated reviewer prompt:
+${engAcceleratedPrompt}
+
+Review accelerator packet contract:
+${packetContract}
 
 README excerpt:
 ${readme}`,

@@ -1,0 +1,33 @@
+diff --git a/src/contracts/plan.rs b/src/contracts/plan.rs
+--- a/src/contracts/plan.rs
++++ b/src/contracts/plan.rs
+@@
++fn detect_duplicate_task_intents(tasks: &[PlanTask]) -> Vec<Vec<u32>> {
++    let mut by_intent: BTreeMap<String, Vec<u32>> = BTreeMap::new();
++    for task in tasks {
++        let intent = normalize_whitespace(&task.goal).to_ascii_lowercase();
++        if !intent.is_empty() {
++            by_intent.entry(intent).or_default().push(task.number);
++        }
++    }
++    by_intent
++        .into_values()
++        .filter(|task_numbers| task_numbers.len() > 1)
++        .collect()
++}
+diff --git a/src/contracts/runtime.rs b/src/contracts/runtime.rs
+--- a/src/contracts/runtime.rs
++++ b/src/contracts/runtime.rs
+@@
++fn first_duplicate_task_intent(tasks: &[ParsedTask]) -> Option<Vec<u32>> {
++    let mut by_intent: BTreeMap<String, Vec<u32>> = BTreeMap::new();
++    for task in tasks {
++        let intent = normalize_whitespace(&task.goal).to_ascii_lowercase();
++        if !intent.is_empty() {
++            by_intent.entry(intent).or_default().push(task.number);
++        }
++    }
++    by_intent
++        .into_values()
++        .find(|task_numbers| task_numbers.len() > 1)
++}

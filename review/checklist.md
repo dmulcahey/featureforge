@@ -12,6 +12,21 @@ Use the FeatureForge severity taxonomy:
 
 ### Pass 1 — Critical
 
+#### Approved Task Contract & Reuse Law
+- For plan-routed work, apply `review/plan-task-contract.md` as the authoritative task-contract and reuse law.
+- Treat avoidable duplicate implementation of substantive production behavior as a hard fail when a shared implementation is practical and architecturally correct.
+- Require any duplicate-implementation exception to name one approved exception category from the shared contract and the boundary rationale.
+- Require findings to name the duplicated behavior, the shared home that should own it, why duplication is harmful, and the smallest defensible consolidation path.
+- Scope this hard-fail rule to substantive production behavior such as parsers, normalizers, validators, routing logic, eligibility logic, policy enforcement, prompt assembly, shared state transitions, artifact binding, and freshness decisions.
+- Fail the review when the same semantic rule, normalization, freshness decision, routing rule, or artifact-binding rule is implemented in multiple places instead of one shared helper or authoritative type.
+- Fail the review when a new local helper partially re-expresses behavior already available from an existing shared helper, central decision path, or authoritative contract type.
+- Fail the review when test-only, CLI-only, or adapter-only logic drifts from the production helper path even though that boundary is not what the test or adapter is exercising.
+- Do not apply this hard-fail rule to generated code, fixtures or test data, tiny test-only setup repetition, platform-specific adapters with an explicit boundary, compatibility shims in a controlled migration window, or deliberate architectural separation required by an explicit layer or boundary law.
+
+Examples:
+- Hard fail: a diff adds a second repo-relative path normalizer for review packets while `src/paths` already owns canonical normalization. The finding names the duplicated normalization behavior, `src/paths` as the shared home, the drift risk, and the smallest consolidation path.
+- Allowed exception: generated schema output repeats field names produced from one source template. The reviewer states the `generated code` exception and verifies the generated file points back to its source.
+
 #### SQL & Data Safety
 - String interpolation in SQL, even when the values were pre-coerced
 - TOCTOU check-then-set patterns that should be atomic
@@ -46,10 +61,9 @@ When the diff introduces a new enum value, status, tier, type, or constant famil
 - Strings that are duplicated in code and tests as control signals
 
 #### Shared Runtime Reuse & Convergence
-- The same semantic rule, normalization, freshness decision, routing rule, or artifact-binding rule implemented in multiple places instead of one shared helper or authoritative type
-- New local helpers that partially re-express behavior already available from an existing shared helper, central decision path, or authoritative contract type
-- Test-only, CLI-only, or adapter-only logic that drifts from the production helper path even though the boundary itself is not what the test is exercising
-- Any intentional duplication or divergence that is not documented inline with the boundary reason
+- The hard-fail reuse law is in Pass 1. Use this pass only to catch lower-risk convergence notes that do not duplicate substantive production behavior.
+- Repeated strings or tiny test setup that are harmless today but likely to become control signals
+- Inline boundary comments that should name an approved exception category more precisely even though the implementation is otherwise centralized
 
 #### Dead Code & Consistency
 - Assigned-but-unused values

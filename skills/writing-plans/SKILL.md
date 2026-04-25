@@ -194,6 +194,8 @@ This structure informs the task decomposition. Each task should produce self-con
 ---
 ```
 
+- `QA Requirement` is a plan-level finish-gating decision. It does not replace task-level `Done when` bullets, and task-level `Done when` bullets must not be used to infer whether QA is required.
+
 ## Task Structure
 
 ````markdown
@@ -205,11 +207,20 @@ This structure informs the task decomposition. Each task should produce self-con
 ## Task N: [Component Name]
 
 **Spec Coverage:** REQ-001, DEC-001
-**Task Outcome:** [One sentence describing what is true when this task is done]
-**Plan Constraints:**
-- [Constraint inherited from the approved spec or review]
-- [Constraint inherited from decomposition or file ownership]
-**Open Questions:** none
+**Goal:** [One sentence describing the exact outcome this task produces]
+
+**Context:**
+- [Why this task exists in the plan]
+- [Repo or architecture fact the implementer/reviewer must know]
+- [Spec, decision, or non-goal reference when required by review/plan-task-contract.md]
+
+**Constraints:**
+- [Hard rule inherited from the approved spec or review]
+- [Hard rule inherited from decomposition, file ownership, sequencing, or reuse law]
+
+**Done when:**
+- [Atomic, binary, objectively reviewable completion condition]
+- [Atomic, binary, objectively reviewable completion condition]
 
 **Files:**
 - Create: `exact/path/to/file.py`
@@ -250,8 +261,15 @@ git commit -m "feat: add specific feature"
 ````
 
 - `## Task N:` is canonical. Do not use `### Task N:`.
-- Every task must include `Spec Coverage`, `Task Outcome`, `Plan Constraints`, `Open Questions`, and a parseable `Files:` block.
-- Engineering-approved plans require `**Open Questions:** none` for every task.
+- Every task must include `Spec Coverage`, `Goal`, `Context`, `Constraints`, `Done when`, and a parseable `Files:` block in the order defined by `review/plan-task-contract.md`.
+- `Open Questions` is not part of the final approved task contract. Draft-only questions belong outside approved task bodies before approval.
+- `Goal` must be one sentence and describe one exact outcome rather than a bucket of related work.
+- `Context` must be a bullet list that makes the task self-contained enough for a fresh implementer and fresh reviewer to reach the same interpretation.
+- Add exact spec, decision, or non-goal references in `Context` only when one of the trigger conditions in `review/plan-task-contract.md` applies.
+- `Constraints` must be hard rules, including reuse law when the task must extend an existing parser, normalizer, validator, routing path, policy path, prompt assembly path, or other shared implementation. For example: `Extend the existing task-contract parser; do not add a second parser path.`
+- `Done when` bullets must be atomic, binary, objectively reviewable, reviewable without interpretation drift, and concrete. A bullet may be verified by diff inspection, targeted tests, or artifacts; it does not have to map to one command.
+- Do not bundle unrelated outcomes into one task when that would force reviewers to judge partial completion.
+- Step checklists after `Files` are optional execution aids, not required task-contract surface.
 - If a task touches a requirement, that id must appear in `Spec Coverage`.
 - Every execution-bound plan must include `## Execution Strategy` and `## Dependency Diagram`.
 - `## Execution Strategy` must assign every task exactly once to either an explicitly justified serial directive or an explicitly owned parallel worktree directive.
@@ -293,6 +311,16 @@ Task 9 -> Task 10
 - Use `Files:` blocks as concrete write-scope truth for every task.
 - If tasks share hotspot files, do not pretend they are parallel. Move the hotspot into an explicit later serial seam and name that seam in `## Execution Strategy`.
 - Do not serialize work just because one lane feels simpler. If a serial directive covers more than one task, the plan must prove a real hazard such as overlapping write scope or an explicit reintegration seam that cannot be isolated.
+
+## Invalid Task Shapes
+
+Reject these shapes during drafting instead of leaving them for review:
+
+- Legacy task fields such as `Task Outcome`, `Plan Constraints`, or task-level `Open Questions`.
+- Vague `Done when` bullets such as "the UX feels right" or "the implementation is robust".
+- `Context` that omits the existing abstraction, spec requirement, approved decision, non-goal, or repo-local architecture fact needed for a fresh implementer/reviewer to choose the same implementation path.
+- `Done when` bullets that depend on interpretation instead of objective evidence.
+- A task that mixes two architectural goals, such as "replace the parser and redesign the review workflow", when either half could be completed independently.
 
 ## Remember
 - Exact file paths always

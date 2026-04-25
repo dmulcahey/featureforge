@@ -211,10 +211,16 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 ## Task 1: Harness state fixture
 
 **Spec Coverage:** REQ-001
-**Task Outcome:** Harness state and storage fields are visible before execution starts.
-**Plan Constraints:**
+**Goal:** Harness state and storage fields are visible before execution starts.
+
+**Context:**
+- Spec Coverage: REQ-001.
+
+**Constraints:**
 - Keep the fixture focused on status and state surfaces.
-**Open Questions:** none
+
+**Done when:**
+- Harness state and storage fields are visible before execution starts.
 
 **Files:**
 - Test: `tests/execution_harness_state.rs`

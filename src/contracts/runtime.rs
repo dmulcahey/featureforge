@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::cli::plan_contract::{
     AnalyzePlanArgs, BuildTaskPacketArgs, LintArgs, PacketOutputFormat, PersistMode,
 };
+use crate::contracts::packet::{PacketObligation, build_task_packet_with_timestamp};
 use crate::contracts::plan::{
     AnalyzePlanReport, ContractDiagnostic, OverlappingWriteScope, PLAN_FIDELITY_RECEIPT_KIND,
     PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION, PlanDocument, PlanFidelityReceipt,
@@ -18,25 +19,18 @@ use crate::contracts::plan::{
     evaluate_plan_fidelity_receipt_at_path, parse_plan_file, plan_fidelity_receipt_path_for_repo,
 };
 use crate::contracts::spec::{SpecDocument, parse_spec_file};
+use crate::contracts::task_contract::{
+    TaskContractFields, TaskIntentSource, detect_duplicate_task_intents,
+    parse_task_contract_fields, parse_task_step_line, split_canonical_task_blocks,
+    validate_task_contract,
+};
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::git::discover_slug_identity;
 use crate::paths::{
     featureforge_state_dir, harness_branch_root, normalize_identifier_token,
-    normalize_repo_relative_path, normalize_whitespace, write_atomic,
+    normalize_repo_relative_file_reference, normalize_repo_relative_path, normalize_whitespace,
+    write_atomic,
 };
-
-const AMBIGUOUS_PHRASES: &[&str] = &[
-    "if needed",
-    "as appropriate",
-    "handle edge cases",
-    "clean up related code",
-    "support similar behavior",
-    "or equivalent",
-    "use a reasonable default",
-    "consider adding",
-    "if useful",
-    "etc.",
-];
 
 #[derive(Debug, Clone)]
 struct IndexedRequirement {
@@ -72,8 +66,10 @@ struct ParsedTask {
     title: String,
     block: String,
     spec_coverage_ids: Vec<String>,
-    plan_constraints: Vec<String>,
-    open_questions: String,
+    goal: String,
+    context: Vec<String>,
+    constraints: Vec<String>,
+    done_when: Vec<String>,
     file_entries: Vec<ParsedFileEntry>,
     file_scope: Vec<String>,
     steps_raw: Vec<String>,
@@ -89,7 +85,6 @@ struct LooseTask {
     number: u32,
     block: String,
     spec_coverage_raw: String,
-    open_questions: String,
 }
 
 #[derive(Debug, Clone)]
@@ -168,6 +163,7 @@ struct PacketFileEntry {
 #[derive(Debug, Clone, Serialize)]
 struct BuildTaskPacketSuccess {
     status: String,
+    packet_contract_version: String,
     plan_path: String,
     plan_revision: u32,
     plan_fingerprint: String,
@@ -182,8 +178,12 @@ struct BuildTaskPacketSuccess {
     file_scope: Vec<String>,
     requirement_ids: Vec<String>,
     requirement_statements: Vec<RequirementStatement>,
-    plan_constraints: Vec<String>,
-    open_questions: String,
+    goal: String,
+    context: Vec<String>,
+    constraints: Vec<String>,
+    constraint_obligations: Vec<PacketObligation>,
+    done_when: Vec<String>,
+    done_when_obligations: Vec<PacketObligation>,
     packet_timestamp: String,
     packet_fingerprint: String,
     persisted: bool,
@@ -202,11 +202,6 @@ struct PacketCacheMetadata {
     source_spec_fingerprint: String,
     task_number: u32,
     packet_fingerprint: String,
-}
-
-#[derive(Debug, Clone)]
-struct ParsedStep {
-    number: u32,
 }
 
 pub fn run_lint(args: &LintArgs) -> std::process::ExitCode {
@@ -428,20 +423,41 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
         });
     };
 
-    let plan_fingerprint = sha256_hex(plan_source.as_bytes());
-    let source_spec_fingerprint = sha256_hex(spec_source.as_bytes());
-    let packet_fingerprint = build_packet_fingerprint(
-        &plan_path,
-        headers.plan_revision,
-        &plan_fingerprint,
-        &headers.source_spec_path,
-        headers.source_spec_revision,
-        &source_spec_fingerprint,
-        task,
-    );
     let generated_at = Timestamp::now().to_string();
-    let requirement_statements = task
-        .spec_coverage_ids
+    let typed_spec = match parse_spec_file(&spec_abs) {
+        Ok(spec) => spec,
+        Err(error) => {
+            return emit_json_failure(JsonFailure {
+                error_class: String::from("SourceSpecUnavailable"),
+                message: error.message().to_owned(),
+            });
+        }
+    };
+    let typed_plan = match parse_plan_file(&plan_abs) {
+        Ok(plan) => plan,
+        Err(error) => {
+            return emit_json_failure(JsonFailure {
+                error_class: String::from("PlanContractInvalid"),
+                message: error.message().to_owned(),
+            });
+        }
+    };
+    let packet = match build_task_packet_with_timestamp(
+        &typed_spec,
+        &typed_plan,
+        args.task,
+        &generated_at,
+    ) {
+        Ok(packet) => packet,
+        Err(error) => {
+            return emit_json_failure(JsonFailure {
+                error_class: String::from("TaskPacketBuildFailed"),
+                message: error.message().to_owned(),
+            });
+        }
+    };
+    let requirement_statements = packet
+        .requirement_ids
         .iter()
         .filter_map(|requirement_id| {
             spec.requirement_index
@@ -454,18 +470,6 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
             statement: requirement.statement.clone(),
         })
         .collect::<Vec<_>>();
-    let packet_markdown = render_packet_markdown(&PacketMarkdownInput {
-        plan_path: &plan_path,
-        plan_revision: headers.plan_revision,
-        plan_fingerprint: &plan_fingerprint,
-        source_spec_path: &headers.source_spec_path,
-        source_spec_revision: headers.source_spec_revision,
-        source_spec_fingerprint: &source_spec_fingerprint,
-        task,
-        requirement_statements: &requirement_statements,
-        generated_at: &generated_at,
-        packet_fingerprint: &packet_fingerprint,
-    });
 
     let persisted = args.persist == PersistMode::Yes;
     let mut cache_status = String::from("ephemeral");
@@ -475,12 +479,12 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
         let metadata = PacketCacheMetadata {
             plan_path: plan_path.clone(),
             plan_revision: headers.plan_revision,
-            plan_fingerprint: plan_fingerprint.clone(),
+            plan_fingerprint: packet.plan_fingerprint.clone(),
             source_spec_path: headers.source_spec_path.clone(),
             source_spec_revision: headers.source_spec_revision,
-            source_spec_fingerprint: source_spec_fingerprint.clone(),
+            source_spec_fingerprint: packet.source_spec_fingerprint.clone(),
             task_number: args.task,
-            packet_fingerprint: packet_fingerprint.clone(),
+            packet_fingerprint: packet.packet_fingerprint.clone(),
         };
         if packet_cache_matches_current(&path, &metadata) {
             cache_status = String::from("reused");
@@ -491,7 +495,7 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
                 String::from("fresh")
             };
             if let Err(error) =
-                write_packet_cache(&path, &metadata, &generated_at, &packet_markdown)
+                write_packet_cache(&path, &metadata, &generated_at, &packet.markdown)
             {
                 return emit_json_failure(JsonFailure {
                     error_class: String::from("TaskPacketBuildFailed"),
@@ -507,12 +511,13 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
 
     let output = BuildTaskPacketSuccess {
         status: String::from("ok"),
-        plan_path,
-        plan_revision: headers.plan_revision,
-        plan_fingerprint,
-        source_spec_path: headers.source_spec_path,
-        source_spec_revision: headers.source_spec_revision,
-        source_spec_fingerprint,
+        packet_contract_version: packet.packet_contract_version.clone(),
+        plan_path: packet.plan_path.clone(),
+        plan_revision: packet.plan_revision,
+        plan_fingerprint: packet.plan_fingerprint.clone(),
+        source_spec_path: packet.source_spec_path.clone(),
+        source_spec_revision: packet.source_spec_revision,
+        source_spec_fingerprint: packet.source_spec_fingerprint.clone(),
         task_number: task.number,
         task_title: task.title.clone(),
         task_block: task.block.clone(),
@@ -527,20 +532,24 @@ pub fn run_build_task_packet(args: &BuildTaskPacketArgs) -> std::process::ExitCo
             })
             .collect(),
         file_scope: task.file_scope.clone(),
-        requirement_ids: task.spec_coverage_ids.clone(),
+        requirement_ids: packet.requirement_ids.clone(),
         requirement_statements,
-        plan_constraints: task.plan_constraints.clone(),
-        open_questions: task.open_questions.clone(),
+        goal: packet.goal.clone(),
+        context: packet.context.clone(),
+        constraints: packet.constraints.clone(),
+        constraint_obligations: packet.constraint_obligations.clone(),
+        done_when: packet.done_when.clone(),
+        done_when_obligations: packet.done_when_obligations.clone(),
         packet_timestamp: generated_at,
-        packet_fingerprint,
+        packet_fingerprint: packet.packet_fingerprint.clone(),
         persisted,
         cache_status,
         packet_path,
-        packet_markdown: packet_markdown.clone(),
+        packet_markdown: packet.markdown.clone(),
     };
 
     if args.format == PacketOutputFormat::Markdown {
-        println!("{packet_markdown}");
+        println!("{}", packet.markdown);
         std::process::ExitCode::SUCCESS
     } else {
         emit_json_value(&output)
@@ -637,22 +646,16 @@ fn validate_contract(
             }
             covered.insert(requirement_id.clone());
         }
-        if normalize_whitespace(&task.open_questions) != "none" {
+        let fields = task_contract_fields(task);
+        let validation =
+            validate_task_contract(task.number, &task.title, &task.spec_coverage_ids, &fields);
+        if let Some(diagnostic) = validation.diagnostics.first() {
             return Err(LintContractError {
-                error_class: String::from("TaskOpenQuestionsNotResolved"),
-                message: format!("Task {} has unresolved Open Questions.", task.number),
+                error_class: lint_error_class_for_reason(&diagnostic.code),
+                message: diagnostic.message.clone(),
             });
         }
         let lower_task = task.block.to_lowercase();
-        if let Some(phrase) = detect_ambiguous_task_wording(&lower_task) {
-            return Err(LintContractError {
-                error_class: String::from("AmbiguousTaskWording"),
-                message: format!(
-                    "Task {} uses ambiguous wording ('{}').",
-                    task.number, phrase
-                ),
-            });
-        }
         if let Some(message) =
             detect_requirement_weakening(&spec, task.number, &lower_task, &task.spec_coverage_ids)
         {
@@ -661,6 +664,16 @@ fn validate_contract(
                 message,
             });
         }
+    }
+
+    if let Some(task_numbers) = first_duplicate_task_intent(&plan.tasks) {
+        return Err(LintContractError {
+            error_class: String::from("DuplicateTaskIntent"),
+            message: format!(
+                "Tasks {:?} have duplicate or overlapping task intent that should be split or clarified.",
+                task_numbers
+            ),
+        });
     }
 
     for (requirement_id, task_numbers) in &matrix.entries {
@@ -724,7 +737,12 @@ fn analyze_contract(
         task_count: 0,
         packet_buildable_tasks: 0,
         coverage_complete: true,
-        open_questions_resolved: true,
+        task_contract_valid: true,
+        task_goal_valid: true,
+        task_context_sufficient: true,
+        task_constraints_valid: true,
+        task_done_when_deterministic: true,
+        tasks_self_contained: true,
         task_structure_valid: true,
         files_blocks_valid: true,
         execution_strategy_present: false,
@@ -737,16 +755,7 @@ fn analyze_contract(
         parallel_worktree_requirements: Vec::new(),
         reason_codes: Vec::new(),
         overlapping_write_scopes: Vec::new(),
-        plan_fidelity_receipt: crate::contracts::plan::PlanFidelityGateReport {
-            state: String::from("not_applicable"),
-            receipt_path: String::new(),
-            reviewer_stage: String::new(),
-            provenance_source: String::new(),
-            verified_requirement_index: false,
-            verified_execution_topology: false,
-            reason_codes: Vec::new(),
-            diagnostics: Vec::new(),
-        },
+        plan_fidelity_receipt: crate::contracts::plan::PlanFidelityGateReport::not_applicable(),
         diagnostics: Vec::new(),
     };
 
@@ -798,7 +807,12 @@ fn analyze_contract(
                 push_reason(&mut report, "malformed_files_block", &error.message);
             } else {
                 report.task_structure_valid = false;
-                push_reason(&mut report, "malformed_task_structure", &error.message);
+                apply_task_parse_error(&mut report, &error.error_class);
+                push_reason(
+                    &mut report,
+                    &reason_code_for_task_error(&error.error_class),
+                    &error.message,
+                );
             }
         }
     }
@@ -880,15 +894,6 @@ fn analyze_contract(
     let mut task_scopes = Vec::new();
     let mut covered = BTreeSet::new();
     for task in &loose_tasks {
-        if normalize_whitespace(&task.open_questions) != "none" {
-            report.open_questions_resolved = false;
-            push_reason(
-                &mut report,
-                "task_open_questions_not_resolved",
-                &format!("Task {} has unresolved Open Questions.", task.number),
-            );
-        }
-
         if full_plan.is_err() {
             match parse_task_block(&task.block) {
                 Ok(parsed) => {
@@ -901,7 +906,12 @@ fn analyze_contract(
                         push_reason(&mut report, "malformed_files_block", &error.message);
                     } else {
                         report.task_structure_valid = false;
-                        push_reason(&mut report, "malformed_task_structure", &error.message);
+                        apply_task_parse_error(&mut report, &error.error_class);
+                        push_reason(
+                            &mut report,
+                            &reason_code_for_task_error(&error.error_class),
+                            &error.message,
+                        );
                     }
                 }
             }
@@ -950,22 +960,30 @@ fn analyze_contract(
                     covered.insert(requirement_id.clone());
                 }
                 let lower_task = task.block.to_lowercase();
-                if let Some(phrase) = detect_ambiguous_task_wording(&lower_task) {
-                    push_reason(
-                        &mut report,
-                        "ambiguous_task_wording",
-                        &format!(
-                            "Task {} uses ambiguous wording ('{}').",
-                            task.number, phrase
-                        ),
-                    );
-                }
                 if let Some(message) =
                     detect_requirement_weakening(spec, task.number, &lower_task, &coverage_ids)
                 {
                     push_reason(&mut report, "requirement_weakening_detected", &message);
                 }
             }
+        }
+    }
+
+    if let Ok(plan) = &full_plan {
+        for task in &plan.tasks {
+            apply_task_contract_validation(&mut report, task);
+        }
+        if let Some(task_numbers) = first_duplicate_task_intent(&plan.tasks) {
+            report.task_contract_valid = false;
+            report.tasks_self_contained = false;
+            push_reason(
+                &mut report,
+                "duplicate_task_intent",
+                &format!(
+                    "Tasks {:?} have duplicate or overlapping task intent that should be split or clarified.",
+                    task_numbers
+                ),
+            );
         }
     }
 
@@ -1113,16 +1131,14 @@ fn apply_plan_fidelity_gate_to_report(
                     ),
                 });
             }
-            crate::contracts::plan::PlanFidelityGateReport {
-                state: String::from("invalid"),
-                receipt_path: receipt_path.display().to_string(),
-                reviewer_stage: String::new(),
-                provenance_source: String::new(),
-                verified_requirement_index: false,
-                verified_execution_topology: false,
-                reason_codes: vec![String::from("plan_fidelity_verification_incomplete")],
+            crate::contracts::plan::PlanFidelityGateReport::unverified(
+                "invalid",
+                receipt_path.display().to_string(),
+                String::new(),
+                String::new(),
+                vec![String::from("plan_fidelity_verification_incomplete")],
                 diagnostics,
-            }
+            )
         }
     };
     if gate.state != "pass" {
@@ -1307,57 +1323,14 @@ fn parse_plan(source: &str) -> Result<ParsedPlan, TaskParseError> {
 }
 
 fn parse_tasks(source: &str) -> Result<Vec<ParsedTask>, TaskParseError> {
-    let lines = source.lines().collect::<Vec<_>>();
-    let mut tasks = Vec::new();
-    let mut index = 0;
-    let mut seen_numbers = BTreeSet::new();
-    while index < lines.len() {
-        let line = lines[index];
-        if line.starts_with("### Task ") {
-            return Err(TaskParseError {
-                error_class: String::from("MalformedTaskStructure"),
-                message: String::from("Task headings must use canonical '## Task N:' form."),
-            });
-        }
-        if !line.starts_with("## Task ") {
-            index += 1;
-            continue;
-        }
-        let heading = line
-            .strip_prefix("## Task ")
-            .ok_or_else(|| TaskParseError {
-                error_class: String::from("MalformedTaskStructure"),
-                message: String::from("Task headings must use canonical '## Task N:' form."),
-            })?;
-        let (number, _) = heading.split_once(": ").ok_or_else(|| TaskParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: String::from("Task headings must use canonical '## Task N:' form."),
-        })?;
-        let number = number.parse::<u32>().map_err(|_| TaskParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: String::from("Task headings must use canonical '## Task N:' form."),
-        })?;
-        if !seen_numbers.insert(number) {
-            return Err(TaskParseError {
-                error_class: String::from("MalformedTaskStructure"),
-                message: String::from("Task numbers must be unique within the plan."),
-            });
-        }
-        let mut block = vec![line];
-        index += 1;
-        while index < lines.len() && !lines[index].starts_with("## Task ") {
-            if lines[index].starts_with("### Task ") {
-                return Err(TaskParseError {
-                    error_class: String::from("MalformedTaskStructure"),
-                    message: String::from("Task headings must use canonical '## Task N:' form."),
-                });
-            }
-            block.push(lines[index]);
-            index += 1;
-        }
-        tasks.push(parse_task_block(&block.join("\n"))?);
-    }
-    Ok(tasks)
+    split_canonical_task_blocks(source)
+        .map_err(|error| TaskParseError {
+            error_class: error.error_class,
+            message: error.message,
+        })?
+        .into_iter()
+        .map(|task| parse_task_block(&task.source))
+        .collect()
 }
 
 fn parse_task_block(block: &str) -> Result<ParsedTask, TaskParseError> {
@@ -1382,35 +1355,27 @@ fn parse_task_block(block: &str) -> Result<ParsedTask, TaskParseError> {
     })?;
 
     let mut spec_coverage_raw = None;
-    let mut task_outcome = None;
-    let mut plan_constraints = Vec::new();
-    let mut open_questions = None;
     let mut file_entries = Vec::new();
     let mut file_scope = Vec::new();
     let mut steps_raw = Vec::new();
     let mut step_numbers = BTreeSet::new();
-    let mut in_constraints = false;
     let mut in_files = false;
     let mut files_seen = false;
 
     for line in &lines[1..] {
         let normalized = normalize_whitespace(line);
-        if in_constraints {
-            if let Some(constraint) = line.strip_prefix("- ") {
-                plan_constraints.push(constraint.to_owned());
-                continue;
-            }
-            if normalized.is_empty() {
-                continue;
-            }
-            in_constraints = false;
-        }
 
         if in_files {
             if normalized.is_empty() {
                 continue;
             }
-            if is_step_line(line) {
+            if parse_task_step_line(line)
+                .map_err(|error| TaskParseError {
+                    error_class: error.error_class,
+                    message: error.message,
+                })?
+                .is_some()
+            {
                 in_files = false;
             } else {
                 if let Some(file_entry) = parse_file_entry(line, number)? {
@@ -1429,24 +1394,15 @@ fn parse_task_block(block: &str) -> Result<ParsedTask, TaskParseError> {
             spec_coverage_raw = Some(value.to_owned());
             continue;
         }
-        if let Some(value) = line.strip_prefix("**Task Outcome:** ") {
-            task_outcome = Some(value.to_owned());
-            continue;
-        }
-        if *line == "**Plan Constraints:**" {
-            in_constraints = true;
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("**Open Questions:** ") {
-            open_questions = Some(value.to_owned());
-            continue;
-        }
         if *line == "**Files:**" {
             files_seen = true;
             in_files = true;
             continue;
         }
-        if let Some(step) = parse_step_line(line) {
+        if let Some(step) = parse_task_step_line(line).map_err(|error| TaskParseError {
+            error_class: error.error_class,
+            message: error.message,
+        })? {
             if !files_seen {
                 return Err(TaskParseError {
                     error_class: String::from("MalformedTaskStructure"),
@@ -1467,42 +1423,26 @@ fn parse_task_block(block: &str) -> Result<ParsedTask, TaskParseError> {
         error_class: String::from("TaskMissingSpecCoverage"),
         message: format!("Task {} is missing Spec Coverage.", number),
     })?;
-    if task_outcome.is_none() {
-        return Err(TaskParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: format!("Task {} is missing Task Outcome.", number),
-        });
-    }
-    if plan_constraints.is_empty() {
-        return Err(TaskParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: format!("Task {} is missing Plan Constraints.", number),
-        });
-    }
-    let open_questions = open_questions.ok_or_else(|| TaskParseError {
-        error_class: String::from("MalformedTaskStructure"),
-        message: format!("Task {} is missing Open Questions.", number),
-    })?;
+    let contract_fields =
+        parse_task_contract_fields(number, &lines[1..]).map_err(|error| TaskParseError {
+            error_class: error.error_class,
+            message: error.message,
+        })?;
     if !files_seen || file_entries.is_empty() {
         return Err(TaskParseError {
             error_class: String::from("MalformedFilesBlock"),
             message: format!("Task {} is missing a parseable Files block.", number),
         });
     }
-    if steps_raw.is_empty() {
-        return Err(TaskParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: format!("Task {} must include at least one step.", number),
-        });
-    }
-
     Ok(ParsedTask {
         number,
         title: title.to_owned(),
         block: block.to_owned(),
         spec_coverage_ids: parse_task_coverage_ids(&spec_coverage_raw),
-        plan_constraints,
-        open_questions,
+        goal: contract_fields.goal,
+        context: contract_fields.context,
+        constraints: contract_fields.constraints,
+        done_when: contract_fields.done_when,
         file_entries,
         file_scope,
         steps_raw,
@@ -1514,7 +1454,6 @@ fn parse_loose_tasks(source: &str) -> Vec<LooseTask> {
     let mut current_number = None;
     let mut current_block = Vec::new();
     let mut current_spec_coverage = String::new();
-    let mut current_open_questions = String::new();
 
     for line in source.lines() {
         if let Some(rest) = line.strip_prefix("## Task ") {
@@ -1523,7 +1462,6 @@ fn parse_loose_tasks(source: &str) -> Vec<LooseTask> {
                     number,
                     block: current_block.join("\n"),
                     spec_coverage_raw: std::mem::take(&mut current_spec_coverage),
-                    open_questions: std::mem::take(&mut current_open_questions),
                 });
                 current_block.clear();
             }
@@ -1535,8 +1473,6 @@ fn parse_loose_tasks(source: &str) -> Vec<LooseTask> {
             current_block.push(line);
             if let Some(value) = line.strip_prefix("**Spec Coverage:** ") {
                 current_spec_coverage = value.to_owned();
-            } else if let Some(value) = line.strip_prefix("**Open Questions:** ") {
-                current_open_questions = value.to_owned();
             }
         }
     }
@@ -1546,7 +1482,6 @@ fn parse_loose_tasks(source: &str) -> Vec<LooseTask> {
             number,
             block: current_block.join("\n"),
             spec_coverage_raw: current_spec_coverage,
-            open_questions: current_open_questions,
         });
     }
 
@@ -1595,21 +1530,6 @@ fn parse_file_entry(
         path,
         normalized_path,
     }))
-}
-
-fn parse_step_line(line: &str) -> Option<ParsedStep> {
-    let trimmed = line.trim();
-    let rest = trimmed
-        .strip_prefix("- [ ] **Step ")
-        .or_else(|| trimmed.strip_prefix("- [x] **Step "))?;
-    let (number, _) = rest.split_once(": ")?;
-    Some(ParsedStep {
-        number: number.parse::<u32>().ok()?,
-    })
-}
-
-fn is_step_line(line: &str) -> bool {
-    line.trim_start().starts_with("- [ ] **Step ") || line.trim_start().starts_with("- [x] **Step ")
 }
 
 fn parse_coverage_matrix(source: &str) -> Result<CoverageMatrix, CoverageMatrixState> {
@@ -1678,13 +1598,6 @@ fn parse_task_coverage_ids(raw: &str) -> Vec<String> {
     values
 }
 
-fn detect_ambiguous_task_wording(lower_task: &str) -> Option<&'static str> {
-    AMBIGUOUS_PHRASES
-        .iter()
-        .copied()
-        .find(|phrase| lower_task.contains(phrase))
-}
-
 fn detect_requirement_weakening(
     spec: &SpecContract,
     task_number: u32,
@@ -1746,96 +1659,111 @@ fn extract_backtick_tokens(text: &str) -> Vec<String> {
     tokens
 }
 
-fn build_packet_fingerprint(
-    plan_path: &str,
-    plan_revision: u32,
-    plan_fingerprint: &str,
-    source_spec_path: &str,
-    source_spec_revision: u32,
-    source_spec_fingerprint: &str,
-    task: &ParsedTask,
-) -> String {
-    let mut body = String::new();
-    body.push_str(&format!("plan_path={plan_path}\n"));
-    body.push_str(&format!("plan_revision={plan_revision}\n"));
-    body.push_str(&format!("plan_fingerprint={plan_fingerprint}\n"));
-    body.push_str(&format!("source_spec_path={source_spec_path}\n"));
-    body.push_str(&format!("source_spec_revision={source_spec_revision}\n"));
-    body.push_str(&format!(
-        "source_spec_fingerprint={source_spec_fingerprint}\n"
-    ));
-    body.push_str(&format!("task_number={}\n", task.number));
-    body.push_str(&format!("task_title={}\n", task.title));
-    body.push_str("coverage=");
-    body.push_str(&task.spec_coverage_ids.join("\n"));
-    body.push('\n');
-    body.push_str("constraints=");
-    body.push_str(&task.plan_constraints.join("\n"));
-    body.push('\n');
-    body.push_str(&task.block);
-    sha256_hex(body.as_bytes())
+fn task_contract_fields(task: &ParsedTask) -> TaskContractFields {
+    TaskContractFields {
+        goal: task.goal.clone(),
+        context: task.context.clone(),
+        constraints: task.constraints.clone(),
+        done_when: task.done_when.clone(),
+    }
 }
 
-struct PacketMarkdownInput<'a> {
-    plan_path: &'a str,
-    plan_revision: u32,
-    plan_fingerprint: &'a str,
-    source_spec_path: &'a str,
-    source_spec_revision: u32,
-    source_spec_fingerprint: &'a str,
-    task: &'a ParsedTask,
-    requirement_statements: &'a [RequirementStatement],
-    generated_at: &'a str,
-    packet_fingerprint: &'a str,
+fn apply_task_contract_validation(report: &mut AnalyzePlanReport, task: &ParsedTask) {
+    let fields = task_contract_fields(task);
+    let validation =
+        validate_task_contract(task.number, &task.title, &task.spec_coverage_ids, &fields);
+    report.task_contract_valid &= validation.task_contract_valid;
+    report.task_goal_valid &= validation.task_goal_valid;
+    report.task_context_sufficient &= validation.task_context_sufficient;
+    report.task_constraints_valid &= validation.task_constraints_valid;
+    report.task_done_when_deterministic &= validation.task_done_when_deterministic;
+    report.tasks_self_contained &= validation.task_self_contained;
+    for diagnostic in validation.diagnostics {
+        push_reason(report, &diagnostic.code, &diagnostic.message);
+    }
 }
 
-fn render_packet_markdown(input: &PacketMarkdownInput<'_>) -> String {
-    let mut markdown = String::new();
-    markdown.push_str("## Task Packet\n\n");
-    markdown.push_str(&format!("**Plan Path:** `{}`\n", input.plan_path));
-    markdown.push_str(&format!("**Plan Revision:** {}\n", input.plan_revision));
-    markdown.push_str(&format!(
-        "**Plan Fingerprint:** `{}`\n",
-        input.plan_fingerprint
-    ));
-    markdown.push_str(&format!(
-        "**Source Spec Path:** `{}`\n",
-        input.source_spec_path
-    ));
-    markdown.push_str(&format!(
-        "**Source Spec Revision:** {}\n",
-        input.source_spec_revision
-    ));
-    markdown.push_str(&format!(
-        "**Source Spec Fingerprint:** `{}`\n",
-        input.source_spec_fingerprint
-    ));
-    markdown.push_str(&format!("**Task Number:** {}\n", input.task.number));
-    markdown.push_str(&format!("**Task Title:** {}\n", input.task.title));
-    markdown.push_str(&format!(
-        "**Open Questions:** {}\n",
-        input.task.open_questions
-    ));
-    markdown.push_str(&format!(
-        "**Packet Fingerprint:** `{}`\n",
-        input.packet_fingerprint
-    ));
-    markdown.push_str(&format!("**Generated At:** {}\n\n", input.generated_at));
-    markdown.push_str("## Covered Requirements\n\n");
-    for requirement in input.requirement_statements {
-        markdown.push_str(&format!(
-            "- [{}][{}] {}\n",
-            requirement.id, requirement.kind, requirement.statement
-        ));
+fn apply_task_parse_error(report: &mut AnalyzePlanReport, error_class: &str) {
+    match error_class {
+        "TaskMissingGoal" => {
+            report.task_contract_valid = false;
+            report.task_goal_valid = false;
+            report.tasks_self_contained = false;
+        }
+        "TaskMissingContext" => {
+            report.task_contract_valid = false;
+            report.task_context_sufficient = false;
+            report.tasks_self_contained = false;
+        }
+        "TaskMissingConstraints" => {
+            report.task_contract_valid = false;
+            report.task_constraints_valid = false;
+            report.tasks_self_contained = false;
+        }
+        "TaskMissingDoneWhen" => {
+            report.task_contract_valid = false;
+            report.task_done_when_deterministic = false;
+            report.tasks_self_contained = false;
+        }
+        "LegacyTaskField" => {
+            report.task_contract_valid = false;
+            report.task_goal_valid = false;
+            report.task_context_sufficient = false;
+            report.task_constraints_valid = false;
+            report.task_done_when_deterministic = false;
+            report.tasks_self_contained = false;
+        }
+        "TaskFieldOrder" | "DuplicateTaskField" => {
+            report.task_contract_valid = false;
+            report.tasks_self_contained = false;
+        }
+        "MalformedTaskContractField" => {
+            report.task_contract_valid = false;
+            report.tasks_self_contained = false;
+        }
+        _ => {}
     }
-    markdown.push_str("\n## Plan Constraints\n\n");
-    for constraint in &input.task.plan_constraints {
-        markdown.push_str(&format!("- {constraint}\n"));
+}
+
+fn first_duplicate_task_intent(tasks: &[ParsedTask]) -> Option<Vec<u32>> {
+    detect_duplicate_task_intents(tasks.iter().map(|task| TaskIntentSource {
+        number: task.number,
+        goal: &task.goal,
+    }))
+    .into_iter()
+    .next()
+}
+
+fn lint_error_class_for_reason(reason_code: &str) -> String {
+    match reason_code {
+        "task_missing_goal" => "TaskMissingGoal",
+        "task_goal_not_atomic" => "TaskGoalNotAtomic",
+        "task_missing_context" => "TaskMissingContext",
+        "task_missing_constraints" => "TaskMissingConstraints",
+        "task_missing_done_when" | "task_empty_done_when" => "TaskMissingDoneWhen",
+        "task_nondeterministic_done_when" => "TaskNonDeterministicDoneWhen",
+        "missing_spec_context" => "TaskMissingSpecContext",
+        "ambiguous_task_wording" => "AmbiguousTaskWording",
+        "task_not_self_contained" => "TaskNotSelfContained",
+        _ => "MalformedTaskStructure",
     }
-    markdown.push_str("\n## Task Block\n\n");
-    markdown.push_str(&input.task.block);
-    markdown.push('\n');
-    markdown
+    .to_owned()
+}
+
+fn reason_code_for_task_error(error_class: &str) -> String {
+    match error_class {
+        "TaskMissingGoal" => "task_missing_goal",
+        "TaskMissingContext" => "task_missing_context",
+        "TaskMissingConstraints" => "task_missing_constraints",
+        "TaskMissingDoneWhen" => "task_missing_done_when",
+        "LegacyTaskField" => "legacy_task_field",
+        "TaskFieldOrder" => "task_field_order_invalid",
+        "DuplicateTaskField" => "duplicate_task_field",
+        "MalformedTaskContractField" => "malformed_task_contract_field",
+        "TaskMissingSpecCoverage" => "task_missing_spec_coverage",
+        _ => "malformed_task_structure",
+    }
+    .to_owned()
 }
 
 fn packet_cache_path(plan_path: &str, task_number: u32) -> PathBuf {
@@ -2007,27 +1935,7 @@ fn normalize_cli_repo_path(raw: &str, label: &str) -> Result<String, JsonFailure
 }
 
 fn normalize_scope_path(raw: &str) -> Result<String, DiagnosticError> {
-    normalize_repo_relative_path(&strip_file_reference_suffix(raw))
-}
-
-fn strip_file_reference_suffix(raw: &str) -> String {
-    let mut value = raw.to_owned();
-    loop {
-        let bytes = value.as_bytes();
-        let mut end = bytes.len();
-        while end > 0 && bytes[end - 1].is_ascii_digit() {
-            end -= 1;
-        }
-        if end == bytes.len() || end == 0 {
-            break;
-        }
-        let separator = bytes[end - 1];
-        if separator != b':' && separator != b'-' {
-            break;
-        }
-        value.truncate(end - 1);
-    }
-    value
+    normalize_repo_relative_file_reference(raw)
 }
 
 fn is_requirement_id(value: &str) -> bool {

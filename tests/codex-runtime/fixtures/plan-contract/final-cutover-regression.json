@@ -1,0 +1,57 @@
+{
+  "fixture_kind": "final_cutover_regression",
+  "description": "End-to-end cutover regression matrix for the approved task contract and reuse hard-fail law.",
+  "scenarios": [
+    {
+      "id": "draft_plan_missing_context_fails_plan_fidelity_review",
+      "surface": "plan-fidelity-review",
+      "expected_finding_id": "TASK_MISSING_CONTEXT",
+      "runtime_boolean": "task_context_sufficient",
+      "runtime_reason_code": "task_missing_context"
+    },
+    {
+      "id": "draft_plan_scalar_legacy_plan_constraints_fails_runtime_parser",
+      "surface": "runtime-analyzer",
+      "runtime_reason_code": "legacy_task_field",
+      "invalid_examples": ["**Plan Constraints:** legacy scalar constraints must be quarantined."]
+    },
+    {
+      "id": "draft_plan_vague_done_when_fails_engineering_review",
+      "surface": "plan-eng-review",
+      "expected_analyzer_boolean": "task_done_when_deterministic",
+      "runtime_reason_code": "task_nondeterministic_done_when",
+      "invalid_examples": [
+        "The implementation is robust.",
+        "The implementation works.",
+        "The implementation works as expected.",
+        "The changes are ready for review."
+      ]
+    },
+    {
+      "id": "draft_plan_multi_sentence_goal_fails_runtime_parser",
+      "surface": "runtime-analyzer",
+      "expected_analyzer_boolean": "task_goal_valid",
+      "runtime_reason_code": "task_goal_not_atomic",
+      "invalid_examples": ["The plan contract is represented. It preserves approved wording."]
+    },
+    {
+      "id": "draft_plan_wrong_task_field_order_fails_runtime_parser",
+      "surface": "runtime-analyzer",
+      "required_field_order": ["Spec Coverage", "Goal", "Context", "Constraints", "Done when", "Files"],
+      "runtime_reason_code": "task_field_order_invalid"
+    },
+    {
+      "id": "valid_task_packet_reaches_implementation",
+      "surface": "task-packet-execution",
+      "expected_packet_contract_version": "task-obligation-v2",
+      "expected_packet_obligations": ["CONSTRAINT_1", "DONE_WHEN_1"]
+    },
+    {
+      "id": "duplicate_abstraction_fails_code_quality_and_final_review",
+      "surface": "code-quality-and-final-review",
+      "expected_obligation": "PACKET_REUSE_SCOPE",
+      "requires_shared_home": true,
+      "negative_review_fixture": "duplicate-abstraction-hard-fail-review.json"
+    }
+  ]
+}

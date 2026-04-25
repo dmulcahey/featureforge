@@ -15,14 +15,28 @@ node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 npm --prefix tests/brainstorm-server test
 cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test runtime_instruction_plan_review_contracts --test session_config_slug --test repo_safety --test runtime_root_cli --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
-cargo test --test liveness_model_checker
+cargo nextest run --all-targets --all-features --no-fail-fast
 ```
+
+For task-completion gates, plan-task review loops, and pre-merge verification,
+run the full Rust nextest suite. Do not replace it with targeted `--test ...`
+subsets when the goal is to prove the branch, because the full suite has more than 1100 tests and targeted shards can hide unrelated failures. Use targeted
+commands only while iterating on a known failure, then return to
+`cargo nextest run --all-targets --all-features --no-fail-fast` before claiming
+the task or branch is green. The `--no-fail-fast` flag is required so the run
+captures the full failure set instead of stopping at the first failed binary.
 ## Performance Budget
 
 `cargo test` with no extra args is the canonical full-suite latency budget for this repository. Treat roughly 3 to 4 minutes on a warm local build as the target. If a warm local run regresses past about 240 seconds, stop and profile before merging instead of normalizing the slowdown away.
 
-For day-to-day full-suite runs, prefer the sharded runner below. It compiles once, then runs isolated nextest shards in parallel from one archive, which removes parallel `cargo` lock contention and prevents shard-to-shard tempdir interference.
+Performance and profiling hardening from broader remediation reports is deliberately out of scope for the plan-review hardening cutover. Treat this section as maintenance guidance for test-suite health, not as evidence that benchmark or profiling work was implemented as part of the task-contract migration.
+
+For performance investigations or local iteration where you explicitly want the
+same full suite through a sharded runner, use the helper below. It compiles
+once, then runs isolated nextest shards in parallel from one archive, which
+removes parallel `cargo` lock contention and prevents shard-to-shard tempdir
+interference. The branch-verification command remains the plain full nextest
+suite above unless a user or CI job explicitly asks for the sharded helper.
 
 ```bash
 scripts/run-rust-tests-sharded.sh
@@ -133,50 +147,38 @@ Editing workflow routing, runtime docs, or execution contracts:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test runtime_instruction_plan_review_contracts --test workflow_runtime --test workflow_shell_smoke --test plan_execution
+cargo nextest run --all-targets --all-features --no-fail-fast
 ```
 
-Final-remediation verification also includes the Step 12 command sequence from the task-boundary gap-closure plan:
+Historical final-remediation plans used targeted Rust subsets while closing specific failures. For branch proof, task-completion gates, plan-task review loops, and pre-merge verification, use the full Rust nextest suite instead:
 
 ```bash
 node scripts/gen-skill-docs.mjs
 node scripts/gen-agent-docs.mjs
 node --test tests/codex-runtime/gen-skill-docs.unit.test.mjs tests/codex-runtime/skill-doc-contracts.test.mjs tests/codex-runtime/skill-doc-generation.test.mjs
-cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test runtime_instruction_plan_review_contracts
+node --test tests/evals/review-accelerator-contract.eval.mjs
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run --all-targets --all-features --no-fail-fast
 ```
 
-If the repo's normal verification flow also expects these and they are available locally, then run:
-
-```bash
-cargo nextest run --test using_featureforge_skill --test runtime_root_cli --test upgrade_skill
-```
-
-Then complete the remaining manual Step 12 checks from the plan:
-
-- 12.4 Confirm the compiled-CLI smoke output keeps these ceilings:
-  - task closure happy path `<= 2` runtime-management commands
-  - internal-dispatch task closure `<= 2` runtime-management commands
-  - rebase / resume stale-boundary recovery `<= 3` runtime-management commands before implementation resumes
-  - stale release refresh `<= 3` runtime-management commands before the next real review step
-- 12.5 Search the fixed recovery / budget paths and confirm the normal path recommends only public execution commands (`begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, `advance-late-stage`).
-- 12.6 Run the FS-13 fixture and confirm the runtime surfaces the earliest stale boundary without any manual edit to `**Execution Note:**` lines.
+Targeted `cargo nextest run --test ...` commands are local debugging tools only. Do not use them as the documented final gate.
 
 Editing runtime strategy-checkpoint, topology recommendation, or final-review deviation contracts:
 
 ```bash
-cargo nextest run --test plan_execution_topology --test plan_execution_final_review --test workflow_runtime_final_review --test contracts_execution_leases --test execution_harness_state
+cargo nextest run --all-targets --all-features --no-fail-fast
 ```
 
 Editing install or update surfaces:
 
 ```bash
-cargo nextest run --test session_config_slug --test update_and_install --test upgrade_skill
+cargo nextest run --all-targets --all-features --no-fail-fast
 ```
 
 Editing packaging or prebuilt artifact refresh flows:
 
 ```bash
-cargo nextest run --test powershell_wrapper_resolution --test workflow_shell_smoke --test workflow_runtime
+cargo nextest run --all-targets --all-features --no-fail-fast
 ```
 
 When checked-in prebuilt artifacts are part of the change, refresh and verify them explicitly:
@@ -193,7 +195,7 @@ If Homebrew `cargo`/`rustc` shadow rustup-managed toolchains on `PATH`, put the 
 Then rerun:
 
 ```bash
-cargo nextest run --test powershell_wrapper_resolution --test workflow_shell_smoke --test workflow_runtime
+cargo nextest run --all-targets --all-features --no-fail-fast
 ```
 
 ## Repo Fixtures

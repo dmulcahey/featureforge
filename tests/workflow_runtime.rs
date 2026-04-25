@@ -27,7 +27,7 @@ use dir_tree_support::copy_dir_recursive;
 use featureforge::cli::plan_execution::{
     RecordReviewDispatchArgs, ReviewDispatchScopeArg, StatusArgs as PlanExecutionStatusArgs,
 };
-use featureforge::contracts::plan::parse_plan_file;
+use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
 use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::final_review::resolve_release_base_branch;
 use featureforge::execution::observability::{
@@ -1929,10 +1929,16 @@ Task 1 -> Task 2 -> Task 6
 ## Task 1: FS-15 earlier repair target
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Recreates the earlier repair transition before stale-boundary targeting continues.
-**Plan Constraints:**
+**Goal:** Recreates the earlier repair transition before stale-boundary targeting continues.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep each task to one step for deterministic stale-target routing assertions.
-**Open Questions:** none
+
+**Done when:**
+- Recreates the earlier repair transition before stale-boundary targeting continues.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -1942,10 +1948,16 @@ Task 1 -> Task 2 -> Task 6
 ## Task 2: FS-15 earliest stale boundary
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Task 2 represents the earliest unresolved stale boundary.
-**Plan Constraints:**
+**Goal:** Task 2 represents the earliest unresolved stale boundary.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep each task to one step for deterministic stale-target routing assertions.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 represents the earliest unresolved stale boundary.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -1955,10 +1967,16 @@ Task 1 -> Task 2 -> Task 6
 ## Task 6: FS-15 later stale overlay target
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Task 6 represents the later stale overlay that must not outrank Task 2.
-**Plan Constraints:**
+**Goal:** Task 6 represents the later stale overlay that must not outrank Task 2.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep each task to one step for deterministic stale-target routing assertions.
-**Open Questions:** none
+
+**Done when:**
+- Task 6 represents the later stale overlay that must not outrank Task 2.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -1998,10 +2016,16 @@ Task 2 -> Task 3
 ## Task 2: Earliest stale boundary task
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Task 2 remains the earliest unresolved stale boundary.
-**Plan Constraints:**
+**Goal:** Task 2 remains the earliest unresolved stale boundary.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep one step for deterministic stale-boundary reopen targeting.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 remains the earliest unresolved stale boundary.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -2011,10 +2035,16 @@ Task 2 -> Task 3
 ## Task 3: Forward resume overlay task
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Task 3 Step 6 is the forward overlay target that must never outrank Task 2.
-**Plan Constraints:**
+**Goal:** Task 3 Step 6 is the forward overlay target that must never outrank Task 2.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep six steps to preserve the exact Task 3 Step 6 contradiction shape.
-**Open Questions:** none
+
+**Done when:**
+- Task 3 Step 6 is the forward overlay target that must never outrank Task 2.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -2061,10 +2091,16 @@ Task 1 -> Task 2
 ## Task 1: Core flow
 
 **Spec Coverage:** REQ-001, REQ-004
-**Task Outcome:** Task 1 execution reaches a boundary gate before Task 2 starts.
-**Plan Constraints:**
+**Goal:** Task 1 execution reaches a boundary gate before Task 2 starts.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-004.
+
+**Constraints:**
 - Keep fixture inputs deterministic.
-**Open Questions:** none
+
+**Done when:**
+- Task 1 execution reaches a boundary gate before Task 2 starts.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -2075,10 +2111,16 @@ Task 1 -> Task 2
 ## Task 2: Follow-on flow
 
 **Spec Coverage:** VERIFY-001
-**Task Outcome:** Task 2 should remain blocked until Task 1 closure requirements are met.
-**Plan Constraints:**
+**Goal:** Task 2 should remain blocked until Task 1 closure requirements are met.
+
+**Context:**
+- Spec Coverage: VERIFY-001.
+
+**Constraints:**
 - Preserve deterministic task-boundary diagnostics.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 should remain blocked until Task 1 closure requirements are met.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -2900,7 +2942,7 @@ fn canonical_workflow_status_routes_draft_plan_to_eng_review_after_matching_pass
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -2913,7 +2955,7 @@ fn canonical_workflow_status_routes_draft_plan_to_eng_review_after_matching_pass
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-019d",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
 
@@ -2944,6 +2986,32 @@ fn canonical_workflow_status_routes_draft_plan_to_eng_review_after_matching_pass
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert_eq!(status_json["plan_fidelity_receipt"]["state"], "pass");
+    assert!(
+        status_json["plan_fidelity_receipt"]["verified_requirement_index"]
+            .as_bool()
+            .expect("requirement index verification should be present")
+    );
+    assert!(
+        status_json["plan_fidelity_receipt"]["verified_execution_topology"]
+            .as_bool()
+            .expect("execution topology verification should be present")
+    );
+    assert!(
+        status_json["plan_fidelity_receipt"]["verified_task_contract"]
+            .as_bool()
+            .expect("task contract verification should be present")
+    );
+    assert!(
+        status_json["plan_fidelity_receipt"]["verified_task_determinism"]
+            .as_bool()
+            .expect("task determinism verification should be present")
+    );
+    assert!(
+        status_json["plan_fidelity_receipt"]["verified_spec_reference_fidelity"]
+            .as_bool()
+            .expect("spec reference fidelity verification should be present")
+    );
     assert!(
         !status_json["reason_codes"]
             .as_array()
@@ -2966,7 +3034,7 @@ fn canonical_workflow_status_normalizes_dot_slash_source_spec_paths() {
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `./docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `./docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -2979,7 +3047,7 @@ fn canonical_workflow_status_normalizes_dot_slash_source_spec_paths() {
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-dot-slash-spec",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
     let receipt_json = run_workflow_plan_fidelity_json(
@@ -3023,7 +3091,7 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3036,7 +3104,7 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-019d",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
 
@@ -3057,7 +3125,7 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
 
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 2\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the revised draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The revised draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the revised draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 2\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the revised draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The revised draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The revised draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the revised draft plan**\n",
     );
 
     let status_json = parse_json(
@@ -3097,7 +3165,7 @@ fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_to_plan_
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
 
     let status_json = parse_json(
@@ -3123,6 +3191,32 @@ fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_to_plan_
         status_json["diagnostics"][0]["code"],
         "missing_plan_fidelity_receipt"
     );
+    assert_eq!(status_json["plan_fidelity_receipt"]["state"], "missing");
+    assert!(
+        !status_json["plan_fidelity_receipt"]["verified_requirement_index"]
+            .as_bool()
+            .expect("requirement index verification should be present")
+    );
+    assert!(
+        !status_json["plan_fidelity_receipt"]["verified_execution_topology"]
+            .as_bool()
+            .expect("execution topology verification should be present")
+    );
+    assert!(
+        !status_json["plan_fidelity_receipt"]["verified_task_contract"]
+            .as_bool()
+            .expect("task contract verification should be present")
+    );
+    assert!(
+        !status_json["plan_fidelity_receipt"]["verified_task_determinism"]
+            .as_bool()
+            .expect("task determinism verification should be present")
+    );
+    assert!(
+        !status_json["plan_fidelity_receipt"]["verified_spec_reference_fidelity"]
+            .as_bool()
+            .expect("spec reference fidelity verification should be present")
+    );
 }
 
 #[test]
@@ -3138,7 +3232,7 @@ fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_rec
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3151,7 +3245,7 @@ fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_rec
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-independent",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
     let receipt_json = run_workflow_plan_fidelity_json(
@@ -3222,7 +3316,7 @@ fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_receipt_to
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3235,7 +3329,7 @@ fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_receipt_to
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-non-pass-gate",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
     let receipt_json = run_workflow_plan_fidelity_json(
@@ -3306,7 +3400,7 @@ fn canonical_workflow_status_routes_draft_plan_with_malformed_fidelity_receipt_t
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3319,7 +3413,7 @@ fn canonical_workflow_status_routes_draft_plan_with_malformed_fidelity_receipt_t
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-malformed-gate",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
     let receipt_json = run_workflow_plan_fidelity_json(
@@ -3380,7 +3474,7 @@ fn workflow_plan_fidelity_record_rejects_incomplete_verification_artifacts() {
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3433,7 +3527,7 @@ fn workflow_plan_fidelity_record_rejects_non_pass_verdicts() {
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3446,7 +3540,7 @@ fn workflow_plan_fidelity_record_rejects_non_pass_verdicts() {
             review_verdict: "clear",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-non-pass",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
 
@@ -3486,7 +3580,7 @@ fn workflow_plan_fidelity_record_normalizes_dot_slash_review_targets() {
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `./docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `./docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3499,7 +3593,7 @@ fn workflow_plan_fidelity_record_normalizes_dot_slash_review_targets() {
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-dot-slash-targets",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
     replace_in_file(
@@ -3541,7 +3635,7 @@ fn workflow_plan_fidelity_record_rejects_stale_review_artifact_fingerprints() {
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3554,7 +3648,7 @@ fn workflow_plan_fidelity_record_rejects_stale_review_artifact_fingerprints() {
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-stale-fingerprint",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
     replace_in_file(
@@ -3599,7 +3693,7 @@ fn workflow_plan_fidelity_record_resolves_repo_relative_paths_from_subdirectorie
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3612,7 +3706,7 @@ fn workflow_plan_fidelity_record_resolves_repo_relative_paths_from_subdirectorie
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-subdir",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
     fs::create_dir_all(repo.join("src/runtime")).expect("subdirectory should exist");
@@ -3648,7 +3742,7 @@ fn workflow_plan_fidelity_record_rejects_malformed_spec_requirement_index() {
     );
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3661,7 +3755,7 @@ fn workflow_plan_fidelity_record_rejects_malformed_spec_requirement_index() {
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-malformed-spec",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
 
@@ -3716,7 +3810,7 @@ fn workflow_plan_fidelity_record_rejects_invalid_ceo_review_provenance_on_source
     );
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3729,7 +3823,7 @@ fn workflow_plan_fidelity_record_rejects_invalid_ceo_review_provenance_on_source
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-invalid-spec-reviewer",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
 
@@ -3780,7 +3874,7 @@ fn workflow_plan_fidelity_record_rejects_out_of_repo_source_spec_paths() {
     write_minimal_plan_fidelity_spec(repo, spec_path);
     write_file(
         &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `../external/docs/featureforge/specs/outside-spec.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The draft plan is ready for engineering review.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `../external/docs/featureforge/specs/outside-spec.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3793,7 +3887,7 @@ fn workflow_plan_fidelity_record_rejects_out_of_repo_source_spec_paths() {
             review_verdict: "pass",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-external-source-spec",
-            verified_surfaces: &["requirement_index", "execution_topology"],
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
 
@@ -3898,7 +3992,7 @@ fn canonical_workflow_status_refresh_accepts_active_implementation_target_specs(
     write_file(
         &repo.join(plan_rel),
         &format!(
-            "# Runtime Shift Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_rel}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Route the active implementation target\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** Workflow status resolves the April implementation-target spec.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Recognize the active implementation target**\n"
+            "# Runtime Shift Plan\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `{spec_rel}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Route the active implementation target\n\n**Spec Coverage:** REQ-001\n**Goal:** Workflow status resolves the April implementation-target spec.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- Workflow status resolves the April implementation-target spec.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Recognize the active implementation target**\n"
         ),
     );
 
@@ -3929,7 +4023,7 @@ fn canonical_workflow_status_routes_lone_stale_approved_plan_as_stale() {
     );
     write_file(
         &repo.join("docs/featureforge/plans/2026-01-22-document-review-system.md"),
-        "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The plan remains structurally valid while its source-spec path goes stale.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
+        "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec path goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec path goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
     );
 
     let status_json = parse_json(
@@ -3964,7 +4058,7 @@ fn canonical_workflow_status_routes_stale_source_revision_as_stale() {
     );
     write_file(
         &repo.join("docs/featureforge/plans/2026-01-22-document-review-system.md"),
-        "# Approved Plan, Stale Source Revision\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source revision case\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The plan remains structurally valid while its source-spec revision goes stale.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source revision**\n",
+        "# Approved Plan, Stale Source Revision\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source revision case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec revision goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec revision goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source revision**\n",
     );
 
     let status_json = parse_json(
@@ -5657,7 +5751,7 @@ fn canonical_workflow_phase_routes_enabled_stale_plan_to_plan_writing() {
     );
     write_file(
         &repo.join("docs/featureforge/plans/2026-01-22-document-review-system.md"),
-        "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Task Outcome:** The plan remains structurally valid while its source-spec path goes stale.\n**Plan Constraints:**\n- Keep the fixture minimal.\n**Open Questions:** none\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
+        "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec path goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec path goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
     );
     let phase_json = parse_json(
         &run_rust_featureforge_with_env(
@@ -7342,10 +7436,16 @@ Task 1 -> Task 2
 ## Task 1: Core flow
 
 **Spec Coverage:** REQ-001, REQ-004
-**Task Outcome:** Task 1 execution reaches a boundary gate before Task 2 starts.
-**Plan Constraints:**
+**Goal:** Task 1 execution reaches a boundary gate before Task 2 starts.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-004.
+
+**Constraints:**
 - Keep fixture inputs deterministic.
-**Open Questions:** none
+
+**Done when:**
+- Task 1 execution reaches a boundary gate before Task 2 starts.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -7356,10 +7456,16 @@ Task 1 -> Task 2
 ## Task 2: Follow-on flow
 
 **Spec Coverage:** VERIFY-001
-**Task Outcome:** Task 2 should remain blocked until Task 1 closure requirements are met.
-**Plan Constraints:**
+**Goal:** Task 2 should remain blocked until Task 1 closure requirements are met.
+
+**Context:**
+- Spec Coverage: VERIFY-001.
+
+**Constraints:**
 - Preserve deterministic task-boundary diagnostics.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 should remain blocked until Task 1 closure requirements are met.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -7659,10 +7765,16 @@ Task 1 -> Task 2
 ## Task 1: Core flow
 
 **Spec Coverage:** REQ-001, REQ-004
-**Task Outcome:** Task 1 reaches task-boundary closure gate before Task 2 starts.
-**Plan Constraints:**
+**Goal:** Task 1 reaches task-boundary closure gate before Task 2 starts.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-004.
+
+**Constraints:**
 - Keep fixture input deterministic.
-**Open Questions:** none
+
+**Done when:**
+- Task 1 reaches task-boundary closure gate before Task 2 starts.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`
@@ -7672,10 +7784,16 @@ Task 1 -> Task 2
 ## Task 2: Follow-on flow
 
 **Spec Coverage:** VERIFY-001
-**Task Outcome:** Task 2 remains blocked until task-boundary closure is satisfied.
-**Plan Constraints:**
+**Goal:** Task 2 remains blocked until task-boundary closure is satisfied.
+
+**Context:**
+- Spec Coverage: VERIFY-001.
+
+**Constraints:**
 - Preserve task-boundary diagnostics.
-**Open Questions:** none
+
+**Done when:**
+- Task 2 remains blocked until task-boundary closure is satisfied.
 
 **Files:**
 - Modify: `tests/workflow_runtime.rs`

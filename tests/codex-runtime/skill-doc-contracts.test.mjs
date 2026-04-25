@@ -129,6 +129,35 @@ function assertOrderedSubstrings(content, label, needles) {
   }
 }
 
+function listRepoFiles(dir = REPO_ROOT) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relPath = path.relative(REPO_ROOT, fullPath);
+    if (
+      entry.isDirectory()
+      && [
+        '.git',
+        'target',
+        'node_modules',
+        'docs/archive',
+        'docs/featureforge/archive',
+        'docs/project_notes',
+        'tests/codex-runtime/fixtures/plan-contract/transition-only',
+      ].some((prefix) => relPath === prefix || relPath.startsWith(`${prefix}${path.sep}`))
+    ) {
+      continue;
+    }
+    if (entry.isDirectory()) {
+      files.push(...listRepoFiles(fullPath));
+    } else if (entry.isFile()) {
+      files.push(relPath);
+    }
+  }
+  return files;
+}
+
 function buildTimedHookPatterns(timings, targetPattern, gapPattern = '[^.\\n]{0,160}') {
   const obligationPattern = '(?:must|always|required|requires|should|need(?:s)? to|have(?:s)? to|ought to)';
   const imperativeActionPattern = '(?:consult|search|update|use|record)';
@@ -737,9 +766,25 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(writingPlans, /## Dependency Diagram/);
   assert.match(writingPlans, /\*\*QA Requirement:\*\* required \| not-required/);
   assert.match(writingPlans, /\*\*Spec Coverage:\*\*/);
-  assert.match(writingPlans, /\*\*Task Outcome:\*\*/);
-  assert.match(writingPlans, /\*\*Plan Constraints:\*\*/);
-  assert.match(writingPlans, /\*\*Open Questions:\*\* none/);
+  assert.match(writingPlans, /\*\*Goal:\*\*/);
+  assert.match(writingPlans, /\*\*Context:\*\*/);
+  assert.match(writingPlans, /\*\*Constraints:\*\*/);
+  assert.match(writingPlans, /\*\*Done when:\*\*/);
+  assert.doesNotMatch(writingPlans, /\*\*Task Outcome:\*\*/);
+  assert.doesNotMatch(writingPlans, /\*\*Plan Constraints:\*\*/);
+  assert.doesNotMatch(writingPlans, /\*\*Open Questions:\*\*/);
+  assert.match(writingPlans, /`QA Requirement` is a plan-level finish-gating decision/);
+  assert.match(writingPlans, /task-level `Done when` bullets must not be used to infer whether QA is required/);
+  assert.match(writingPlans, /self-contained enough for a fresh implementer and fresh reviewer/);
+  assert.match(writingPlans, /only when one of the trigger conditions in `review\/plan-task-contract\.md` applies/);
+  assert.match(writingPlans, /Extend the existing task-contract parser; do not add a second parser path\./);
+  assert.match(writingPlans, /atomic, binary, objectively reviewable, reviewable without interpretation drift/);
+  assert.match(writingPlans, /Do not bundle unrelated outcomes into one task when that would force reviewers to judge partial completion\./);
+  assert.match(writingPlans, /Step checklists after `Files` are optional execution aids, not required task-contract surface\./);
+  assert.match(writingPlans, /Legacy task fields such as `Task Outcome`, `Plan Constraints`, or task-level `Open Questions`/);
+  assert.match(writingPlans, /Vague `Done when` bullets such as "the UX feels right" or "the implementation is robust"/);
+  assert.match(writingPlans, /A task that mixes two architectural goals/);
+  assert.match(writingPlans, /review\/plan-task-contract\.md/);
   assert.match(writingPlans, /"\$_FEATUREFORGE_BIN" plan contract lint/);
   assert.match(writingPlans, /create .* worktrees? and run Tasks .* in parallel/i);
   assert.match(writingPlans, /Task \d+ owns /);
@@ -755,17 +800,54 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(planEngReview, /serial_hazards_resolved/);
   assert.match(planEngReview, /parallel_lane_ownership_valid/);
   assert.match(planEngReview, /parallel_workspace_isolation_valid/);
+  assert.match(planEngReview, /task_contract_valid/);
+  assert.match(planEngReview, /task_goal_valid/);
+  assert.match(planEngReview, /task_context_sufficient/);
+  assert.match(planEngReview, /task_constraints_valid/);
+  assert.match(planEngReview, /task_done_when_deterministic/);
+  assert.match(planEngReview, /tasks_self_contained/);
   assert.match(planEngReview, /missing, stale, or non-buildable for the approved plan revision/);
   assert.match(planEngReview, /Requirement Index/);
   assert.match(planEngReview, /Requirement Coverage Matrix/);
   assert.match(planEngReview, /Execution Strategy/);
   assert.match(planEngReview, /Dependency Diagram/);
-  assert.match(planEngReview, /tasks with `Open Questions` not equal to `none`/);
+  assert.match(planEngReview, /missing task `Goal`, `Context`, `Constraints`, `Done when`, `Spec Coverage`, or `Files`/);
+  assert.doesNotMatch(planEngReview, /until the runtime analyzer exposes dedicated task-contract booleans/);
+  assert.match(planEngReview, /Do not use legacy task-level `Open Questions` review as the primary approval model after cutover/);
+  assert.match(planEngReview, /avoidable duplicate implementation of substantive production behavior/);
+  assert.match(planEngReview, /fails to name the shared implementation home when reuse is required/);
   assert.match(planEngReview, /invalid `Files:` block structure/);
   assert.match(planEngReview, /fake-parallel hotspot files/i);
   assert.match(planEngReview, /exact isolated workspace truth/i);
   assert.match(planEngReview, /Does the `Requirement Coverage Matrix` cover every approved requirement without orphaned or over-broad tasks\?/);
   assert.match(planEngReview, /Do `Files:` blocks stay within the minimum file scope needed for the covered requirements, or do they signal file-scope drift that should be split or reapproved\?/);
+
+  const acceleratedEngPrompt = readUtf8(path.join(REPO_ROOT, 'skills/plan-eng-review/accelerated-reviewer-prompt.md'));
+  assert.match(acceleratedEngPrompt, /preserving the normal engineering hard-fail law/);
+  assert.match(acceleratedEngPrompt, /task_done_when_deterministic/);
+  assert.match(acceleratedEngPrompt, /rejecting weak task contracts, non-deterministic `Done when`, missing required spec references/);
+  assert.match(acceleratedEngPrompt, /naming the existing shared implementation home when reuse is required/);
+
+  const acceleratorPacketContract = readUtf8(path.join(REPO_ROOT, 'review/review-accelerator-packet-contract.md'));
+  assert.match(acceleratorPacketContract, /## ENG hard-fail fields/);
+  assert.match(acceleratorPacketContract, /analyze-plan boolean snapshot for `task_contract_valid`, `task_goal_valid`, `task_context_sufficient`, `task_constraints_valid`, `task_done_when_deterministic`, and `tasks_self_contained`/);
+  assert.match(acceleratorPacketContract, /deterministic `Done when` assessment/);
+  assert.match(acceleratorPacketContract, /reuse assessment that names the existing shared implementation home/);
+
+  const planFidelityReview = readUtf8(getSkillPath('plan-fidelity-review'));
+  assert.match(planFidelityReview, /task-contract fidelity/);
+  assert.match(planFidelityReview, /review\/plan-task-contract\.md/);
+  assert.match(planFidelityReview, /runtime-owned receipt must record exactly these `Verified Surfaces`/);
+  assert.match(planFidelityReview, /task_contract/);
+  assert.match(planFidelityReview, /task_determinism/);
+  assert.match(planFidelityReview, /spec_reference_fidelity/);
+
+  const planFidelityPrompt = readUtf8(path.join(REPO_ROOT, 'skills/plan-fidelity-review/reviewer-prompt.md'));
+  assert.match(planFidelityPrompt, /verify every task against the approved task contract in `review\/plan-task-contract\.md`/);
+  assert.match(planFidelityPrompt, /\*\*Verified Surfaces:\*\* requirement_index, execution_topology, task_contract, task_determinism, spec_reference_fidelity/);
+  assert.match(planFidelityPrompt, /TASK_MISSING_GOAL/);
+  assert.match(planFidelityPrompt, /TASK_DONE_WHEN_NON_DETERMINISTIC/);
+  assert.match(planFidelityPrompt, /TASK_SPEC_REFERENCE_REQUIRED/);
 
   const executingPlans = readUtf8(getSkillPath('executing-plans'));
   assert.match(executingPlans, /build the canonical task packet/);
@@ -1020,12 +1102,19 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(implementerPrompt, /## Task Packet/);
   assert.match(implementerPrompt, /the packet is the authoritative task contract for that execution slice/);
   assert.match(implementerPrompt, /do not reinterpret or weaken requirement statements/);
-  assert.match(implementerPrompt, /if the packet says `Open Questions: none` and ambiguity remains, stop and escalate/);
+  assert.match(implementerPrompt, /Treat the packet's `DONE_WHEN_N` obligations as the authoritative completion list/);
+  assert.match(implementerPrompt, /Objectively reviewable `Done when` bullets remain mandatory/);
+  assert.match(implementerPrompt, /If the packet's `Goal`, `Context`, `Constraints`, or indexed `Done when`/);
   assert.match(implementerPrompt, /Prepare the change for coordinator-owned git actions; do not create commits, merges, or pushes yourself/);
   assert.doesNotMatch(implementerPrompt, /Commit your work/);
 
   const specReviewerPrompt = readUtf8(path.join(REPO_ROOT, 'skills/subagent-driven-development/spec-reviewer-prompt.md'));
   assert.match(specReviewerPrompt, /the exact task packet/);
+  assert.match(specReviewerPrompt, /Grade every packet `DONE_WHEN_N` obligation as `pass` or `fail`/);
+  assert.match(specReviewerPrompt, /Grade every packet `CONSTRAINT_N` obligation as `pass` or `fail`/);
+  assert.match(specReviewerPrompt, /Every issue must include a stable finding ID and the exact violated obligation ID/);
+  assert.match(specReviewerPrompt, /DONE_WHEN_1: pass\/fail/);
+  assert.match(specReviewerPrompt, /CONSTRAINT_1: pass\/fail/);
   assert.match(specReviewerPrompt, /PLAN_DEVIATION_FOUND/);
   assert.match(specReviewerPrompt, /AMBIGUITY_ESCALATION_REQUIRED/);
 
@@ -1033,6 +1122,385 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   assert.match(codeQualityPrompt, /TASK_PACKET/);
   assert.match(codeQualityPrompt, /work outside planned file decomposition/);
   assert.match(codeQualityPrompt, /new files or abstractions outside packet scope/);
+  assert.match(codeQualityPrompt, /Did the change reuse the planned shared implementation named by the task packet/);
+  assert.match(codeQualityPrompt, /Treat avoidable duplicate implementation as a hard failure/);
+  assert.match(codeQualityPrompt, /violated packet obligation ID, such as `CONSTRAINT_2` or `DONE_WHEN_1`/);
+  assert.match(codeQualityPrompt, /Return a reuse assessment matrix with pass\/fail rows/);
+  assert.match(codeQualityPrompt, /PACKET_REUSE_SCOPE/);
+  assert.match(codeQualityPrompt, /Reuse Assessment Matrix/);
+
+  assert.match(executingPlans, /indexed `CONSTRAINT_N` obligations/);
+  assert.match(executingPlans, /indexed `DONE_WHEN_N` obligations/);
+  assert.match(executingPlans, /Separate-session handoffs must paste the helper-built packet verbatim/);
+});
+
+test('active task fixtures no longer use legacy approved-task field headers', () => {
+  const legacyFields = ['Task Outcome', 'Plan Constraints', 'Open Questions'];
+  const legacyMarkers = legacyFields.map((field) => `**${field}:**`);
+  const [taskOutcomeMarker, planConstraintsMarker, openQuestionsMarker] = legacyMarkers;
+  const searchableExtensions = new Set([
+    '.md',
+    '.md.tmpl',
+    '.mjs',
+    '.rs',
+    '.toml',
+    '.json',
+    '.txt',
+    '.sh',
+  ]);
+  const allowedLegacyHeaderLines = new Map([
+    [
+      'src/contracts/task_contract.rs',
+      new Set([
+        `    trimmed.starts_with("${taskOutcomeMarker}")`,
+        `        || trimmed.starts_with("${planConstraintsMarker}")`,
+        `        || trimmed.starts_with("${openQuestionsMarker}")`,
+      ]),
+    ],
+    [
+      'tests/contracts_spec_plan.rs',
+      new Set([
+        `    assert!(!markdown.contains("${openQuestionsMarker}"));`,
+        `        "**Goal:** The plan contract is represented as canonical traceability blocks that preserve exact approved wording.\\n${planConstraintsMarker} legacy scalar constraints must be quarantined.",`,
+      ]),
+    ],
+    [
+      'tests/codex-runtime/fixtures/plan-contract/final-cutover-regression.json',
+      new Set([
+        `      "invalid_examples": ["${planConstraintsMarker} legacy scalar constraints must be quarantined."]`,
+      ]),
+    ],
+    [
+      'tests/codex-runtime/skill-doc-contracts.test.mjs',
+      new Set([
+        `        || trimmed.starts_with("${planConstraintsMarker}")`,
+        `        \`        "**Goal:** The plan contract is represented as canonical traceability blocks that preserve exact approved wording.\\\\n\${planConstraintsMarker} legacy scalar constraints must be quarantined.",\`,`,
+        `        \`      "invalid_examples": ["\${planConstraintsMarker} legacy scalar constraints must be quarantined."]\`,`,
+        `    '${planConstraintsMarker} legacy scalar constraints must be quarantined.',`,
+      ]),
+    ],
+    [
+      'tests/runtime_instruction_contracts.rs',
+      new Set([`        "${openQuestionsMarker}",`]),
+    ],
+  ]);
+  const transitionOnlyReadme = readUtf8(
+    path.join(REPO_ROOT, 'tests/codex-runtime/fixtures/plan-contract/transition-only/README.md'),
+  );
+  const transitionOnlyLegacyFixture = readUtf8(
+    path.join(
+      REPO_ROOT,
+      'tests/codex-runtime/fixtures/plan-contract/transition-only/invalid-open-questions-plan.md',
+    ),
+  );
+
+  assert.match(transitionOnlyReadme, /transition-only negative fixtures/);
+  assert.match(transitionOnlyReadme, /not active approved-plan examples/);
+  assert.doesNotMatch(transitionOnlyLegacyFixture, /\*\*Task Outcome:\*\*/);
+  assert.doesNotMatch(transitionOnlyLegacyFixture, /\*\*Plan Constraints:\*\*/);
+  assert.match(transitionOnlyLegacyFixture, /\*\*Open Questions:\*\*/);
+
+  const offenders = [];
+  for (const relPath of listRepoFiles()) {
+    const extension = path.extname(relPath);
+    if (!searchableExtensions.has(extension) && !relPath.endsWith('.md.tmpl')) {
+      continue;
+    }
+    const content = readUtf8(path.join(REPO_ROOT, relPath));
+    const allowedLines = allowedLegacyHeaderLines.get(relPath) ?? new Set();
+    const lines = content.split('\n');
+    for (const [index, line] of lines.entries()) {
+      for (const marker of legacyMarkers) {
+        if (line.includes(marker) && !allowedLines.has(line)) {
+          offenders.push(`${relPath}:${index + 1}: ${marker}`);
+        }
+      }
+    }
+  }
+
+  assert.deepEqual(offenders, []);
+});
+
+test('reuse hard-fail law is critical, scoped, and example-backed across reviewer surfaces', () => {
+  const checklist = readUtf8(path.join(REPO_ROOT, 'review/checklist.md'));
+  const contract = readUtf8(path.join(REPO_ROOT, 'review/plan-task-contract.md'));
+  const planEngReview = readUtf8(getSkillPath('plan-eng-review'));
+  const finalReviewBriefing = readUtf8(path.join(REPO_ROOT, 'skills/requesting-code-review/code-reviewer.md'));
+  const reviewerAgentSource = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.instructions.md'));
+  const generatedReviewerAgent = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.md'));
+  const generatedCodexAgent = readUtf8(path.join(REPO_ROOT, '.codex/agents/code-reviewer.toml'));
+
+  const criticalSection = checklist.slice(
+    checklist.indexOf('### Pass 1 — Critical'),
+    checklist.indexOf('### Pass 2 — Important or Minor'),
+  );
+  assert.match(criticalSection, /Treat avoidable duplicate implementation of substantive production behavior as a hard fail/);
+  assert.match(criticalSection, /same semantic rule, normalization, freshness decision, routing rule, or artifact-binding rule is implemented in multiple places/);
+  assert.match(criticalSection, /new local helper partially re-expresses behavior already available from an existing shared helper/);
+  assert.match(criticalSection, /test-only, CLI-only, or adapter-only logic drifts from the production helper path/);
+  assert.match(criticalSection, /generated code, fixtures or test data, tiny test-only setup repetition/);
+  assert.match(criticalSection, /Hard fail: a diff adds a second repo-relative path normalizer/);
+  assert.match(criticalSection, /Allowed exception: generated schema output repeats field names/);
+
+  assert.match(contract, /## Reuse Hard-Fail Law/);
+  assert.match(contract, /Reviewer examples:/);
+  assert.match(contract, /Hard fail: a task adds a second parser, normalizer, validator, router/);
+  assert.match(contract, /Allowed exception: generated code, fixtures, tiny test-only setup/);
+  assert.match(contract, /The reviewer states the exact exception category/);
+
+  assert.match(planEngReview, /The reuse gate is a hard approval gate, not advisory design feedback/);
+  assert.match(planEngReview, /must either extend the named shared implementation home or name one approved exception category/);
+  assert.match(planEngReview, /Generated code, fixtures or test data, tiny test-only setup repetition/);
+  assert.match(planEngReview, /If an exception is claimed, does it name one approved exception category/);
+
+  for (const content of [finalReviewBriefing, reviewerAgentSource, generatedReviewerAgent, generatedCodexAgent]) {
+    assert.match(content, /block landing unless the diff names one approved exception category|Treat avoidable duplicate implementation of substantive production behavior as a hard fail/);
+    assert.match(content, /duplicated behavior, the shared implementation home, why duplication is harmful|shared implementation home, why duplication is harmful/);
+    assert.match(content, /parsers, normalizers, validators, routing logic, eligibility logic/);
+    assert.match(content, /Example hard fail: a diff adds a second repo-relative path normalizer/);
+    assert.match(content, /Example allowed exception: generated schema output repeats field names/);
+  }
+});
+
+test('review prompts use deterministic repair-packet findings tied to obligations', () => {
+  const contract = readUtf8(path.join(REPO_ROOT, 'review/plan-task-contract.md'));
+  const planFidelityPrompt = readUtf8(path.join(REPO_ROOT, 'skills/plan-fidelity-review/reviewer-prompt.md'));
+  const planEngReview = readUtf8(getSkillPath('plan-eng-review'));
+  const acceleratedEngPrompt = readUtf8(path.join(REPO_ROOT, 'skills/plan-eng-review/accelerated-reviewer-prompt.md'));
+  const acceleratorPacketContract = readUtf8(path.join(REPO_ROOT, 'review/review-accelerator-packet-contract.md'));
+  const specReviewerPrompt = readUtf8(path.join(REPO_ROOT, 'skills/subagent-driven-development/spec-reviewer-prompt.md'));
+  const codeQualityPrompt = readUtf8(path.join(REPO_ROOT, 'skills/subagent-driven-development/code-quality-reviewer-prompt.md'));
+  const finalReviewBriefing = readUtf8(path.join(REPO_ROOT, 'skills/requesting-code-review/code-reviewer.md'));
+  const planEngOutsideVoice = readUtf8(path.join(REPO_ROOT, 'skills/plan-eng-review/outside-voice-prompt.md'));
+  const subagentDrivenDevelopment = readUtf8(getSkillPath('subagent-driven-development'));
+  const requestingCodeReview = readUtf8(getSkillPath('requesting-code-review'));
+  const reviewerAgentSource = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.instructions.md'));
+  const generatedReviewerAgent = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.md'));
+  const generatedCodexAgent = readUtf8(path.join(REPO_ROOT, '.codex/agents/code-reviewer.toml'));
+  const acceleratorEval = readUtf8(path.join(REPO_ROOT, 'tests/evals/review-accelerator-contract.eval.mjs'));
+
+  assert.match(contract, /## Deterministic Review Finding Shape/);
+  assert.match(contract, /\*\*Finding ID:\*\* <stable-finding-id>/);
+  assert.match(contract, /\*\*Violated Field or Obligation:\*\*/);
+  assert.match(contract, /\*\*Required Fix:\*\*/);
+  assert.match(contract, /\*\*Hard Fail:\*\* yes \| no/);
+  assert.match(contract, /`Required Fix` is the repair packet/);
+  assert.match(contract, /DONE_WHEN_N/);
+  assert.match(contract, /CONSTRAINT_N/);
+  assert.match(contract, /PLAN_DEVIATION_FOUND/);
+  assert.match(contract, /AMBIGUITY_ESCALATION_REQUIRED/);
+  assert.match(contract, /PACKET_REUSE_SCOPE/);
+  assert.match(contract, /Prompt-local obligation names are invalid/);
+  assert.match(contract, /Example failed finding/);
+
+  for (const content of [
+    planFidelityPrompt,
+    planEngReview,
+    acceleratedEngPrompt,
+    acceleratorPacketContract,
+    specReviewerPrompt,
+    codeQualityPrompt,
+    finalReviewBriefing,
+    planEngOutsideVoice,
+    subagentDrivenDevelopment,
+    requestingCodeReview,
+    reviewerAgentSource,
+    generatedReviewerAgent,
+    generatedCodexAgent,
+  ]) {
+    assert.match(content, /Finding ID/);
+    assert.match(content, /Severity/);
+    assert.match(content, /Task/);
+    assert.match(content, /Violated Field or Obligation/);
+    assert.match(content, /Evidence/);
+    assert.match(content, /Required Fix/);
+    assert.match(content, /Hard Fail/);
+  }
+
+  assert.match(planFidelityPrompt, /do not replace field-specific findings with broad advice/);
+  assert.match(planEngReview, /Do not use general feedback when a failed task field, analyzer boolean, packet-assigned obligation, or checklist law can be named/);
+  assert.match(acceleratedEngPrompt, /obligation-tied, delta-oriented repair findings instead of general advice/);
+  assert.match(acceleratorPacketContract, /Do not use general advice when the packet can name the violated field/);
+  assert.match(specReviewerPrompt, /deterministic repair-packet findings only; no essay-style reinterpretation/);
+  assert.match(codeQualityPrompt, /deterministic repair-packet findings/);
+  assert.match(finalReviewBriefing, /Keep `Required Fix` as the smallest acceptable repair delta/);
+  assert.match(planEngOutsideVoice, /Findings: none/);
+  assert.match(planEngOutsideVoice, /Tensions:` only for non-blocking strategic tension notes/);
+  assert.match(subagentDrivenDevelopment, /### Finding TASK_DONE_WHEN_UNMET/);
+  assert.match(subagentDrivenDevelopment, /### Finding TASK2_SCOPE_EXTRA_JSON_FLAG/);
+  assert.match(subagentDrivenDevelopment, /\*\*Violated Field or Obligation:\*\* PLAN_DEVIATION_FOUND/);
+  assert.match(subagentDrivenDevelopment, /\*\*Violated Field or Obligation:\*\* PACKET_REUSE_SCOPE/);
+  assert.match(subagentDrivenDevelopment, /\*\*Required Fix:\*\* Add progress reporting at the packet-required interval\./);
+  assert.match(subagentDrivenDevelopment, /\*\*Required Fix:\*\* Remove the unrequested `--json` flag from the Task 2 diff or route the scope expansion back through plan approval\./);
+  assert.doesNotMatch(subagentDrivenDevelopment, /Add progress reporting at the packet-required interval and remove the unrequested `--json` flag/);
+  assert.match(subagentDrivenDevelopment, /### Finding TASK2_PROGRESS_INTERVAL_CONSTANT/);
+  assert.doesNotMatch(subagentDrivenDevelopment, /Missing: Progress reporting/);
+  assert.doesNotMatch(subagentDrivenDevelopment, /Issues \(Important\): Magic number/);
+  assert.match(requestingCodeReview, /### Finding FINAL_REVIEW_PROGRESS_INDICATORS/);
+  assert.doesNotMatch(requestingCodeReview, /Important: Missing progress indicators/);
+  assert.doesNotMatch(requestingCodeReview, /Minor: Magic number \(100\)/);
+  assert.match(reviewerAgentSource, /Keep `Required Fix` delta-oriented so the next repair step can be executed without reinterpretation/);
+  assert.match(generatedReviewerAgent, /Keep `Required Fix` delta-oriented so the next repair step can be executed without reinterpretation/);
+  assert.match(generatedCodexAgent, /Keep `Required Fix` delta-oriented so the next repair step can be executed without reinterpretation/);
+  assert.match(acceleratorEval, /deterministic repair-packet fields tied to the violated task field/);
+});
+
+test('final cutover fixtures pin active contract, review law, and happy path', () => {
+  const regression = JSON.parse(
+    readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/fixtures/plan-contract/final-cutover-regression.json')),
+  );
+  const happyPath = JSON.parse(
+    readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/fixtures/plan-contract/final-cutover-happy-path.json')),
+  );
+  const planFidelityPrompt = readUtf8(path.join(REPO_ROOT, 'skills/plan-fidelity-review/reviewer-prompt.md'));
+  const planEngReview = readUtf8(getSkillPath('plan-eng-review'));
+  const executingPlans = readUtf8(getSkillPath('executing-plans'));
+  const subagentDrivenDevelopment = readUtf8(getSkillPath('subagent-driven-development'));
+  const codeQualityPrompt = readUtf8(path.join(REPO_ROOT, 'skills/subagent-driven-development/code-quality-reviewer-prompt.md'));
+  const finalReviewBriefing = readUtf8(path.join(REPO_ROOT, 'skills/requesting-code-review/code-reviewer.md'));
+  const validPlan = readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/fixtures/plan-contract/valid-plan.md'));
+
+  assert.equal(regression.fixture_kind, 'final_cutover_regression');
+  assert.deepEqual(
+    regression.scenarios.map((scenario) => scenario.id),
+    [
+      'draft_plan_missing_context_fails_plan_fidelity_review',
+      'draft_plan_scalar_legacy_plan_constraints_fails_runtime_parser',
+      'draft_plan_vague_done_when_fails_engineering_review',
+      'draft_plan_multi_sentence_goal_fails_runtime_parser',
+      'draft_plan_wrong_task_field_order_fails_runtime_parser',
+      'valid_task_packet_reaches_implementation',
+      'duplicate_abstraction_fails_code_quality_and_final_review',
+    ],
+  );
+
+  const missingContext = regression.scenarios[0];
+  assert.equal(missingContext.expected_finding_id, 'TASK_MISSING_CONTEXT');
+  assert.equal(missingContext.runtime_boolean, 'task_context_sufficient');
+  assert.equal(missingContext.runtime_reason_code, 'task_missing_context');
+  assert.match(planFidelityPrompt, /TASK_MISSING_CONTEXT/);
+  assert.match(planFidelityPrompt, /Verified Surfaces.*task_contract.*task_determinism.*spec_reference_fidelity/s);
+
+  const scalarLegacyPlanConstraints = regression.scenarios[1];
+  assert.equal(scalarLegacyPlanConstraints.surface, 'runtime-analyzer');
+  assert.equal(scalarLegacyPlanConstraints.runtime_reason_code, 'legacy_task_field');
+  assert.deepEqual(scalarLegacyPlanConstraints.invalid_examples, [
+    '**Plan Constraints:** legacy scalar constraints must be quarantined.',
+  ]);
+
+  const vagueDoneWhen = regression.scenarios[2];
+  assert.equal(vagueDoneWhen.expected_analyzer_boolean, 'task_done_when_deterministic');
+  assert.equal(vagueDoneWhen.runtime_reason_code, 'task_nondeterministic_done_when');
+  assert.deepEqual(vagueDoneWhen.invalid_examples, [
+    'The implementation is robust.',
+    'The implementation works.',
+    'The implementation works as expected.',
+    'The changes are ready for review.',
+  ]);
+  assert.match(planEngReview, /task_done_when_deterministic/);
+  assert.match(planEngReview, /keep the plan in `Draft`/);
+  assert.match(planEngReview, /non-deterministic, non-atomic, or under-specified `Done when`/);
+
+  const multiSentenceGoal = regression.scenarios[3];
+  assert.equal(multiSentenceGoal.surface, 'runtime-analyzer');
+  assert.equal(multiSentenceGoal.expected_analyzer_boolean, 'task_goal_valid');
+  assert.equal(multiSentenceGoal.runtime_reason_code, 'task_goal_not_atomic');
+  assert.deepEqual(multiSentenceGoal.invalid_examples, [
+    'The plan contract is represented. It preserves approved wording.',
+  ]);
+
+  const wrongFieldOrder = regression.scenarios[4];
+  assert.equal(wrongFieldOrder.surface, 'runtime-analyzer');
+  assert.deepEqual(wrongFieldOrder.required_field_order, happyPath.required_task_fields);
+  assert.equal(wrongFieldOrder.runtime_reason_code, 'task_field_order_invalid');
+
+  const packetScenario = regression.scenarios[5];
+  assert.equal(packetScenario.expected_packet_contract_version, 'task-obligation-v2');
+  assert.deepEqual(packetScenario.expected_packet_obligations, ['CONSTRAINT_1', 'DONE_WHEN_1']);
+  assert.match(executingPlans, /build the canonical task packet/);
+  assert.match(subagentDrivenDevelopment, /Task packets must preserve the approved task contract/);
+  assert.match(subagentDrivenDevelopment, /indexed `CONSTRAINT_N` obligations/);
+  assert.match(subagentDrivenDevelopment, /indexed `DONE_WHEN_N` obligations/);
+
+  const duplicateScenario = regression.scenarios[6];
+  assert.equal(duplicateScenario.expected_obligation, 'PACKET_REUSE_SCOPE');
+  assert.equal(duplicateScenario.requires_shared_home, true);
+  assert.equal(duplicateScenario.negative_review_fixture, 'duplicate-abstraction-hard-fail-review.json');
+  const duplicateReviewFixture = JSON.parse(
+    readUtf8(path.join(REPO_ROOT, 'tests/codex-runtime/fixtures/plan-contract', duplicateScenario.negative_review_fixture)),
+  );
+  assert.equal(duplicateReviewFixture.fixture_kind, 'duplicate_abstraction_hard_fail_review');
+  assert.equal(duplicateReviewFixture.task_packet.reuse_scope_obligation, 'PACKET_REUSE_SCOPE');
+  assert.deepEqual(duplicateReviewFixture.task_packet.file_scope, [
+    'src/contracts/plan.rs',
+    'src/contracts/runtime.rs',
+  ]);
+  assert.deepEqual(
+    duplicateReviewFixture.implementation_diff_facts.map((fact) => fact.path),
+    ['src/contracts/plan.rs', 'src/contracts/runtime.rs'],
+  );
+  assert.deepEqual(
+    duplicateReviewFixture.implementation_diff_facts.map((fact) => `${fact.evidence_path}:${fact.line}`),
+    [
+      'tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch:5',
+      'tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch:22',
+    ],
+  );
+  assert.deepEqual(duplicateReviewFixture.expected_review_finding, {
+    finding_id: 'TASK2_DUPLICATE_TASK_INTENT_GROUPING',
+    severity: 'critical',
+    task: 'Task 2',
+    violated_field_or_obligation: 'PACKET_REUSE_SCOPE',
+    evidence: 'tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch:5 and tests/codex-runtime/fixtures/plan-contract/duplicate-abstraction-bad-diff.patch:22 duplicate task-intent grouping for typed plan analysis and runtime analysis.',
+    required_fix: 'Move task-intent duplicate grouping into the shared task-contract layer and call that shared implementation from both typed plan parsing and runtime analysis.',
+    hard_fail: true,
+    shared_implementation_home: 'src/contracts/task_contract.rs',
+    why_duplication_is_harmful: 'The typed parser and runtime analyzer can drift on which task goals are classified as duplicate or overlapping task intent.',
+  });
+  assert.match(duplicateReviewFixture.review_output, /### Finding TASK2_DUPLICATE_TASK_INTENT_GROUPING/);
+  assert.match(duplicateReviewFixture.review_output, /\*\*Violated Field or Obligation:\*\* PACKET_REUSE_SCOPE/);
+  assert.match(duplicateReviewFixture.review_output, /\*\*Severity:\*\* critical/);
+  assert.match(duplicateReviewFixture.review_output, /\*\*Hard Fail:\*\* yes/);
+  assert.match(duplicateReviewFixture.review_output, /shared task-contract layer/);
+  assert.match(codeQualityPrompt, /PACKET_REUSE_SCOPE/);
+  assert.match(codeQualityPrompt, /Treat avoidable duplicate implementation as a hard failure/);
+  assert.match(finalReviewBriefing, /block landing unless the diff names one approved exception category/);
+  assert.match(finalReviewBriefing, /shared implementation home, why duplication is harmful/);
+
+  assert.equal(happyPath.fixture_kind, 'final_cutover_happy_path');
+  assert.equal(happyPath.plan_fixture, 'valid-plan.md');
+  assert.equal(happyPath.spec_fixture, 'valid-spec.md');
+  assert.deepEqual(happyPath.expected_runtime, {
+    contract_state: 'valid',
+    task_count: 3,
+    packet_buildable_tasks: 3,
+    task_contract_valid: true,
+    task_goal_valid: true,
+    task_context_sufficient: true,
+    task_constraints_valid: true,
+    task_done_when_deterministic: true,
+    tasks_self_contained: true,
+  });
+  assert.deepEqual(happyPath.required_task_fields, [
+    'Spec Coverage',
+    'Goal',
+    'Context',
+    'Constraints',
+    'Done when',
+    'Files',
+  ]);
+  assert.deepEqual(happyPath.active_surfaces, [
+    'authoring',
+    'runtime-analyzer',
+    'task-packet',
+    'plan-fidelity-review',
+    'plan-eng-review',
+    'task-review',
+    'final-review',
+  ]);
+  for (const field of happyPath.required_task_fields) {
+    assert.match(validPlan, new RegExp(`\\*\\*${field}:\\*\\*`));
+  }
 });
 
 test('repo-writing workflow skills document the protected-branch repo-safety gate consistently', () => {
@@ -1857,6 +2325,24 @@ test('release-facing docs point at docs/testing.md as the canonical validation e
       readUtf8(path.join(REPO_ROOT, relativePath)),
       /docs\/testing\.md/,
       `${relativePath} should point readers at docs/testing.md for the canonical validation matrix`,
+    );
+  }
+
+  for (const relativePath of [
+    'README.md',
+    'docs/testing.md',
+    'docs/test-suite-enhancement-plan.md',
+  ]) {
+    const content = readUtf8(path.join(REPO_ROOT, relativePath));
+    assert.match(
+      content,
+      /cargo nextest run --all-targets --all-features --no-fail-fast/,
+      `${relativePath} should document the full no-fail-fast Rust gate`,
+    );
+    assert.doesNotMatch(
+      content,
+      /^cargo nextest run --test\b/m,
+      `${relativePath} should not present targeted nextest commands as a documented final gate`,
     );
   }
 });

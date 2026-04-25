@@ -3671,10 +3671,10 @@ fn load_execution_context_with_policies(
         ));
     }
 
-    let plan_document = parse_plan_file(&plan_abs).map_err(|_| {
+    let plan_document = parse_plan_file(&plan_abs).map_err(|error| {
         JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
-            "Approved plan headers are missing or malformed.",
+            format!("Approved plan headers are missing or malformed: {error}"),
         )
     })?;
     if plan_document.workflow_state != "Engineering Approved" {

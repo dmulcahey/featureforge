@@ -590,11 +590,17 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 ## Task 1: Core flow
 
 **Spec Coverage:** REQ-001, REQ-002, VERIFY-001
-**Task Outcome:** Core execution setup and validation are tracked with canonical execution-state evidence.
-**Plan Constraints:**
+**Goal:** Core execution setup and validation are tracked with canonical execution-state evidence.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-002, VERIFY-001.
+
+**Constraints:**
 - Preserve helper-owned execution-state invariants.
 - Keep execution evidence grounded in repo-visible artifacts.
-**Open Questions:** none
+
+**Done when:**
+- Core execution setup and validation are tracked with canonical execution-state evidence.
 
 **Files:**
 - Modify: `docs/example-output.md`
@@ -606,11 +612,17 @@ fn write_plan(repo: &Path, execution_mode: &str) {
 ## Task 2: Repair flow
 
 **Spec Coverage:** REQ-003, VERIFY-001
-**Task Outcome:** Repair and handoff steps can reopen stale work without losing provenance.
-**Plan Constraints:**
+**Goal:** Repair and handoff steps can reopen stale work without losing provenance.
+
+**Context:**
+- Spec Coverage: REQ-003, VERIFY-001.
+
+**Constraints:**
 - Reuse the same approved plan and evidence path for repairs.
 - Keep repair flows fail-closed on stale or malformed state.
-**Open Questions:** none
+
+**Done when:**
+- Repair and handoff steps can reopen stale work without losing provenance.
 
 **Files:**
 - Modify: `docs/example-output.md`
@@ -644,10 +656,16 @@ fn write_second_approved_plan_same_spec(repo: &Path, execution_mode: &str) {
 ## Task 1: Alternate flow
 
 **Spec Coverage:** REQ-001
-**Task Outcome:** Alternate approved plan candidate for ambiguity coverage.
-**Plan Constraints:**
+**Goal:** Alternate approved plan candidate for ambiguity coverage.
+
+**Context:**
+- Spec Coverage: REQ-001.
+
+**Constraints:**
 - Keep the fixture minimal.
-**Open Questions:** none
+
+**Done when:**
+- Alternate approved plan candidate for ambiguity coverage.
 
 **Files:**
 - Test: `tests/plan_execution.rs`
@@ -680,11 +698,17 @@ fn write_independent_plan(repo: &Path) {
 ## Task 1: Build parser slice
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** The parser slice can be implemented independently with its own file scope.
-**Plan Constraints:**
+**Goal:** The parser slice can be implemented independently with its own file scope.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep parser changes isolated from formatter scope.
 - Use canonical repo-relative file paths in the task contract.
-**Open Questions:** none
+
+**Done when:**
+- The parser slice can be implemented independently with its own file scope.
 
 **Files:**
 - Modify: `src/parser-slice.sh`
@@ -696,11 +720,17 @@ fn write_independent_plan(repo: &Path) {
 ## Task 2: Build formatter slice
 
 **Spec Coverage:** REQ-002, VERIFY-001
-**Task Outcome:** The formatter slice remains independently executable in the same approved plan revision.
-**Plan Constraints:**
+**Goal:** The formatter slice remains independently executable in the same approved plan revision.
+
+**Context:**
+- Spec Coverage: REQ-002, VERIFY-001.
+
+**Constraints:**
 - Keep formatter changes isolated from parser scope.
 - Preserve canonical task packet scope data.
-**Open Questions:** none
+
+**Done when:**
+- The formatter slice remains independently executable in the same approved plan revision.
 
 **Files:**
 - Modify: `src/formatter-slice.sh`
@@ -734,10 +764,16 @@ fn write_single_step_plan(repo: &Path, execution_mode: &str) {
 ## Task 1: Single-step fixture
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Single-step fixtures isolate completion and review behavior.
-**Plan Constraints:**
+**Goal:** Single-step fixtures isolate completion and review behavior.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep the fixture to one step.
-**Open Questions:** none
+
+**Done when:**
+- Single-step fixtures isolate completion and review behavior.
 
 **Files:**
 - Modify: `docs/example-output.md`
@@ -796,10 +832,16 @@ fn write_two_step_shared_file_plan(repo: &Path, execution_mode: &str) {
 ## Task 1: Shared file flow
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Later completed steps can supersede earlier file proofs for the same repo file.
-**Plan Constraints:**
+**Goal:** Later completed steps can supersede earlier file proofs for the same repo file.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep both steps on the same repo-visible file.
-**Open Questions:** none
+
+**Done when:**
+- Later completed steps can supersede earlier file proofs for the same repo file.
 
 **Files:**
 - Modify: `docs/example-output.md`
@@ -21588,10 +21630,16 @@ fn rebuild_evidence_noop_and_partial_failures() {
 ## Task 1: Mixed batch flow
 
 **Spec Coverage:** REQ-001, VERIFY-001
-**Task Outcome:** Two stale steps can be replayed in one continue-on-error batch.
-**Plan Constraints:**
+**Goal:** Two stale steps can be replayed in one continue-on-error batch.
+
+**Context:**
+- Spec Coverage: REQ-001, VERIFY-001.
+
+**Constraints:**
 - Keep each step on its own repo-visible file.
-**Open Questions:** none
+
+**Done when:**
+- Two stale steps can be replayed in one continue-on-error batch.
 
 **Files:**
 - Modify: `docs/example-output.md`

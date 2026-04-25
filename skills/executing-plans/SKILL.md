@@ -166,6 +166,11 @@ For each task:
 ```
 
 2. treat it as the exact task contract for that execution segment. Coordinator-added logistics may clarify branch, cwd, or base commit, but they may not reinterpret approved requirements.
+   - The packet's `Goal`, `Context`, indexed `CONSTRAINT_N` obligations, indexed `DONE_WHEN_N` obligations, covered requirements, and file scope are authoritative.
+   - `CONSTRAINT_N` obligations must be checked by task reviewers and must not be softened into advice.
+   - `Done when` obligations must not be reinterpreted or replaced with prose summaries; objectively reviewable obligations remain mandatory even when verified by diff inspection or targeted evidence rather than one command.
+   - Separate-session handoffs must paste the helper-built packet verbatim and may not replace it with a coordinator-written summary.
+   - If packet content conflicts with `review/plan-task-contract.md`, stop and route back to plan review instead of guessing.
 3. Use the approved plan checklist as the human-visible step-progress projection for the task's steps; the event log remains authoritative for routing and gates.
 4. Follow each step exactly (plan has bite-sized steps).
 5. Run verifications as specified.

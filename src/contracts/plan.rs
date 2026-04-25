@@ -8,9 +8,19 @@ use sha2::{Digest, Sha256};
 
 use crate::contracts::headers;
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
+use crate::contracts::task_contract::{
+    TaskContractFields, TaskIntentSource, detect_duplicate_task_intents,
+    parse_task_contract_fields, parse_task_step_line, split_canonical_task_blocks,
+    validate_task_contract,
+};
 use crate::diagnostics::{DiagnosticError, FailureClass};
+use crate::execution::topology::{
+    parse_plan_fidelity_review_artifact, validate_plan_fidelity_review_artifact,
+};
 use crate::git::discover_slug_identity;
-use crate::paths::{RepoPath, featureforge_state_dir, harness_branch_root};
+use crate::paths::{
+    RepoPath, featureforge_state_dir, harness_branch_root, normalize_repo_relative_file_reference,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PlanStep {
@@ -29,9 +39,10 @@ pub struct PlanTask {
     pub number: u32,
     pub title: String,
     pub spec_coverage: Vec<String>,
-    pub task_outcome: String,
-    pub plan_constraints: Vec<String>,
-    pub open_questions: String,
+    pub goal: String,
+    pub context: Vec<String>,
+    pub constraints: Vec<String>,
+    pub done_when: Vec<String>,
     pub files: Vec<TaskFileEntry>,
     pub steps: Vec<PlanStep>,
 }
@@ -53,10 +64,16 @@ pub struct PlanDocument {
     pub source: String,
 }
 
-pub const PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION: u32 = 2;
+pub const PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION: u32 = 3;
 pub const PLAN_FIDELITY_RECEIPT_KIND: &str = "plan_fidelity_receipt";
 pub const PLAN_FIDELITY_REVIEW_STAGE: &str = "featureforge:plan-fidelity-review";
-pub const PLAN_FIDELITY_REQUIRED_SURFACES: [&str; 2] = ["requirement_index", "execution_topology"];
+pub const PLAN_FIDELITY_REQUIRED_SURFACES: [&str; 5] = [
+    "requirement_index",
+    "execution_topology",
+    "task_contract",
+    "task_determinism",
+    "spec_reference_fidelity",
+];
 pub const PLAN_FIDELITY_DISTINCT_STAGES: [&str; 2] =
     ["featureforge:writing-plans", "featureforge:plan-eng-review"];
 
@@ -99,8 +116,47 @@ pub struct PlanFidelityGateReport {
     pub provenance_source: String,
     pub verified_requirement_index: bool,
     pub verified_execution_topology: bool,
+    pub verified_task_contract: bool,
+    pub verified_task_determinism: bool,
+    pub verified_spec_reference_fidelity: bool,
     pub reason_codes: Vec<String>,
     pub diagnostics: Vec<ContractDiagnostic>,
+}
+
+impl PlanFidelityGateReport {
+    pub fn not_applicable() -> Self {
+        Self::unverified(
+            "not_applicable",
+            String::new(),
+            String::new(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    pub fn unverified(
+        state: &str,
+        receipt_path: String,
+        reviewer_stage: String,
+        provenance_source: String,
+        reason_codes: Vec<String>,
+        diagnostics: Vec<ContractDiagnostic>,
+    ) -> Self {
+        Self {
+            state: state.to_owned(),
+            receipt_path,
+            reviewer_stage,
+            provenance_source,
+            verified_requirement_index: false,
+            verified_execution_topology: false,
+            verified_task_contract: false,
+            verified_task_determinism: false,
+            verified_spec_reference_fidelity: false,
+            reason_codes,
+            diagnostics,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -134,7 +190,12 @@ pub struct AnalyzePlanReport {
     pub task_count: usize,
     pub packet_buildable_tasks: usize,
     pub coverage_complete: bool,
-    pub open_questions_resolved: bool,
+    pub task_contract_valid: bool,
+    pub task_goal_valid: bool,
+    pub task_context_sufficient: bool,
+    pub task_constraints_valid: bool,
+    pub task_done_when_deterministic: bool,
+    pub tasks_self_contained: bool,
     pub task_structure_valid: bool,
     pub files_blocks_valid: bool,
     pub execution_strategy_present: bool,
@@ -225,9 +286,58 @@ pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePla
         );
     }
 
-    let open_questions_resolved = plan.tasks.iter().all(|task| task.open_questions == "none");
     let task_structure_valid = true;
     let files_blocks_valid = plan.tasks.iter().all(|task| !task.files.is_empty());
+    let mut task_contract_valid = true;
+    let mut task_goal_valid = true;
+    let mut task_context_sufficient = true;
+    let mut task_constraints_valid = true;
+    let mut task_done_when_deterministic = true;
+    let mut tasks_self_contained = true;
+    for task in &plan.tasks {
+        let fields = TaskContractFields {
+            goal: task.goal.clone(),
+            context: task.context.clone(),
+            constraints: task.constraints.clone(),
+            done_when: task.done_when.clone(),
+        };
+        let validation =
+            validate_task_contract(task.number, &task.title, &task.spec_coverage, &fields);
+        task_contract_valid &= validation.task_contract_valid;
+        task_goal_valid &= validation.task_goal_valid;
+        task_context_sufficient &= validation.task_context_sufficient;
+        task_constraints_valid &= validation.task_constraints_valid;
+        task_done_when_deterministic &= validation.task_done_when_deterministic;
+        tasks_self_contained &= validation.task_self_contained;
+        for diagnostic in validation.diagnostics {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                &diagnostic.code,
+                &diagnostic.message,
+            );
+        }
+    }
+    let duplicate_intents =
+        detect_duplicate_task_intents(plan.tasks.iter().map(|task| TaskIntentSource {
+            number: task.number,
+            goal: &task.goal,
+        }));
+    if !duplicate_intents.is_empty() {
+        task_contract_valid = false;
+        tasks_self_contained = false;
+        for tasks in duplicate_intents {
+            push_diagnostic(
+                &mut diagnostics,
+                &mut reason_codes,
+                "duplicate_task_intent",
+                &format!(
+                    "Tasks {:?} have duplicate or overlapping task intent that should be split or clarified.",
+                    tasks
+                ),
+            );
+        }
+    }
     let packet_buildable_tasks = plan
         .tasks
         .iter()
@@ -280,7 +390,12 @@ pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePla
         task_count: plan.tasks.len(),
         packet_buildable_tasks,
         coverage_complete,
-        open_questions_resolved,
+        task_contract_valid,
+        task_goal_valid,
+        task_context_sufficient,
+        task_constraints_valid,
+        task_done_when_deterministic,
+        tasks_self_contained,
         task_structure_valid,
         files_blocks_valid,
         execution_strategy_present: topology.execution_strategy_present,
@@ -293,16 +408,7 @@ pub fn analyze_documents(spec: &SpecDocument, plan: &PlanDocument) -> AnalyzePla
         parallel_worktree_requirements: topology.parallel_worktree_requirements,
         reason_codes,
         overlapping_write_scopes,
-        plan_fidelity_receipt: PlanFidelityGateReport {
-            state: String::from("not_applicable"),
-            receipt_path: String::new(),
-            reviewer_stage: String::new(),
-            provenance_source: String::new(),
-            verified_requirement_index: false,
-            verified_execution_topology: false,
-            reason_codes: Vec::new(),
-            diagnostics: Vec::new(),
-        },
+        plan_fidelity_receipt: PlanFidelityGateReport::not_applicable(),
         diagnostics,
     }
 }
@@ -327,16 +433,14 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
                 "missing_plan_fidelity_receipt",
                 "Plan-fidelity receipt is missing for the current draft plan.",
             );
-            return PlanFidelityGateReport {
-                state: String::from("missing"),
-                receipt_path: receipt_path_string,
-                reviewer_stage: String::new(),
-                provenance_source: String::new(),
-                verified_requirement_index: false,
-                verified_execution_topology: false,
+            return PlanFidelityGateReport::unverified(
+                "missing",
+                receipt_path_string,
+                String::new(),
+                String::new(),
                 reason_codes,
                 diagnostics,
-            };
+            );
         }
         Err(error) => {
             push_diagnostic(
@@ -348,16 +452,14 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
                     receipt_path.display()
                 ),
             );
-            return PlanFidelityGateReport {
-                state: String::from("malformed"),
-                receipt_path: receipt_path_string,
-                reviewer_stage: String::new(),
-                provenance_source: String::new(),
-                verified_requirement_index: false,
-                verified_execution_topology: false,
+            return PlanFidelityGateReport::unverified(
+                "malformed",
+                receipt_path_string,
+                String::new(),
+                String::new(),
                 reason_codes,
                 diagnostics,
-            };
+            );
         }
     };
 
@@ -370,16 +472,14 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
                 "malformed_plan_fidelity_receipt",
                 &format!("Plan-fidelity receipt is not valid json: {error}"),
             );
-            return PlanFidelityGateReport {
-                state: String::from("malformed"),
-                receipt_path: receipt_path_string,
-                reviewer_stage: String::new(),
-                provenance_source: String::new(),
-                verified_requirement_index: false,
-                verified_execution_topology: false,
+            return PlanFidelityGateReport::unverified(
+                "malformed",
+                receipt_path_string,
+                String::new(),
+                String::new(),
                 reason_codes,
                 diagnostics,
-            };
+            );
         }
     };
 
@@ -392,16 +492,14 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
             "malformed_plan_fidelity_receipt",
             "Plan-fidelity receipt has an unsupported schema version or receipt kind.",
         );
-        return PlanFidelityGateReport {
-            state: String::from("malformed"),
-            receipt_path: receipt_path_string,
-            reviewer_stage: receipt.reviewer_provenance.review_stage,
-            provenance_source: receipt.reviewer_provenance.reviewer_source,
-            verified_requirement_index: false,
-            verified_execution_topology: false,
+        return PlanFidelityGateReport::unverified(
+            "malformed",
+            receipt_path_string,
+            receipt.reviewer_provenance.review_stage,
+            receipt.reviewer_provenance.reviewer_source,
             reason_codes,
             diagnostics,
-        };
+        );
     }
 
     let spec_fingerprint = sha256_hex(spec.source.as_bytes());
@@ -459,6 +557,33 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
                                 "plan_fidelity_review_artifact_fingerprint_mismatch",
                                 "Plan-fidelity receipt review artifact fingerprint does not match the current artifact contents.",
                             );
+                        }
+                        match parse_plan_fidelity_review_artifact(
+                            &review_artifact_abs,
+                            review_artifact_path.as_str(),
+                        )
+                        .and_then(|artifact| {
+                            validate_plan_fidelity_review_artifact(&artifact, plan, spec)?;
+                            if receipt_artifact_binding_matches(&receipt, &artifact) {
+                                Ok(())
+                            } else {
+                                Err(DiagnosticError::new(
+                                    FailureClass::InstructionParseFailed,
+                                    "Plan-fidelity receipt does not match the bound review artifact verification headers.",
+                                ))
+                            }
+                        }) {
+                            Ok(()) => {}
+                            Err(error) => {
+                                push_diagnostic(
+                                    &mut diagnostics,
+                                    &mut reason_codes,
+                                    "plan_fidelity_review_artifact_invalid",
+                                    &format!(
+                                        "Plan-fidelity receipt review artifact is invalid: {error}"
+                                    ),
+                                );
+                            }
                         }
                     }
                     Err(_) => {
@@ -529,26 +654,63 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
         .iter()
         .map(|requirement| requirement.id.clone())
         .collect::<BTreeSet<_>>();
+    let expected_surfaces = PLAN_FIDELITY_REQUIRED_SURFACES
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
     let verified_requirement_index = checked_surfaces.contains("requirement_index")
         && verified_requirement_ids == expected_requirement_ids;
     let verified_execution_topology = checked_surfaces.contains("execution_topology");
-    if !verified_requirement_index {
-        push_diagnostic(
-            &mut diagnostics,
-            &mut reason_codes,
+    let verified_task_contract = checked_surfaces.contains("task_contract");
+    let verified_task_determinism = checked_surfaces.contains("task_determinism");
+    let verified_spec_reference_fidelity = checked_surfaces.contains("spec_reference_fidelity");
+
+    for (verified, code, message) in [
+        (
+            verified_requirement_index,
             "plan_fidelity_receipt_missing_requirement_index_check",
             "Plan-fidelity receipt must prove the reviewer checked the full Requirement Index.",
-        );
+        ),
+        (
+            verified_execution_topology,
+            "plan_fidelity_receipt_missing_execution_topology_check",
+            "Plan-fidelity receipt must prove the reviewer checked the draft plan's execution-topology claims.",
+        ),
+        (
+            verified_task_contract,
+            "plan_fidelity_receipt_missing_task_contract_check",
+            "Plan-fidelity receipt must prove the reviewer checked every task against the approved task contract.",
+        ),
+        (
+            verified_task_determinism,
+            "plan_fidelity_receipt_missing_task_determinism_check",
+            "Plan-fidelity receipt must prove the reviewer checked deterministic task completion obligations.",
+        ),
+        (
+            verified_spec_reference_fidelity,
+            "plan_fidelity_receipt_missing_spec_reference_fidelity_check",
+            "Plan-fidelity receipt must prove the reviewer checked task-level spec-reference fidelity.",
+        ),
+    ] {
+        if !verified {
+            push_diagnostic(&mut diagnostics, &mut reason_codes, code, message);
+        }
     }
-    if !verified_execution_topology {
+    if !checked_surfaces.is_subset(&expected_surfaces) {
         push_diagnostic(
             &mut diagnostics,
             &mut reason_codes,
-            "plan_fidelity_receipt_missing_execution_topology_check",
-            "Plan-fidelity receipt must prove the reviewer checked the draft plan's execution-topology claims.",
+            "plan_fidelity_receipt_unexpected_verified_surface",
+            "Plan-fidelity receipt must use the exact required verified-surface set.",
         );
     }
-    if !verified_requirement_index || !verified_execution_topology {
+    if checked_surfaces != expected_surfaces
+        || !verified_requirement_index
+        || !verified_execution_topology
+        || !verified_task_contract
+        || !verified_task_determinism
+        || !verified_spec_reference_fidelity
+    {
         push_diagnostic(
             &mut diagnostics,
             &mut reason_codes,
@@ -572,9 +734,25 @@ pub fn evaluate_plan_fidelity_receipt_at_path(
         provenance_source: provenance.reviewer_source.clone(),
         verified_requirement_index,
         verified_execution_topology,
+        verified_task_contract,
+        verified_task_determinism,
+        verified_spec_reference_fidelity,
         reason_codes,
         diagnostics,
     }
+}
+
+fn receipt_artifact_binding_matches(
+    receipt: &PlanFidelityReceipt,
+    artifact: &crate::execution::topology::PlanFidelityReviewArtifact,
+) -> bool {
+    receipt.verdict == artifact.review_verdict
+        && receipt.reviewer_provenance.review_stage == artifact.review_stage
+        && receipt.reviewer_provenance.reviewer_source == artifact.reviewer_source
+        && receipt.reviewer_provenance.reviewer_id == artifact.reviewer_id
+        && receipt.reviewer_provenance.distinct_from_stages == artifact.distinct_from_stages
+        && receipt.verification.checked_surfaces == artifact.verified_surfaces
+        && receipt.verification.verified_requirement_ids == artifact.verified_requirement_ids
 }
 
 pub fn parse_plan_source(path: &Path, source: String) -> Result<PlanDocument, DiagnosticError> {
@@ -696,15 +874,10 @@ fn parse_coverage_matrix(source: &str) -> Result<BTreeMap<String, Vec<u32>>, Dia
 }
 
 fn parse_tasks(source: &str) -> Result<Vec<PlanTask>, DiagnosticError> {
-    let task_chunks = source
-        .split("\n## Task ")
-        .skip(1)
-        .map(|chunk| format!("## Task {chunk}"))
-        .collect::<Vec<_>>();
-
-    task_chunks
+    split_canonical_task_blocks(source)
+        .map_err(|error| DiagnosticError::new(FailureClass::InstructionParseFailed, error.message))?
         .into_iter()
-        .map(|chunk| parse_task_chunk(&chunk))
+        .map(|task| parse_task_chunk(&task.source))
         .collect()
 }
 
@@ -720,21 +893,23 @@ fn parse_task_chunk(chunk: &str) -> Result<PlanTask, DiagnosticError> {
 
     let block = lines.collect::<Vec<_>>();
     let spec_coverage = parse_csv_field(&block, "Spec Coverage")?;
-    let task_outcome = parse_scalar_field(&block, "Task Outcome")?;
-    let plan_constraints = parse_bullets_after_field(&block, "Plan Constraints");
-    let open_questions = parse_scalar_field(&block, "Open Questions")?;
+    let task_number = number
+        .parse::<u32>()
+        .map_err(|_| missing_header("Task number"))?;
+    let contract_fields = parse_task_contract_fields(task_number, &block).map_err(|error| {
+        DiagnosticError::new(FailureClass::InstructionParseFailed, error.message)
+    })?;
     let files = parse_file_entries(&block)?;
     let steps = parse_steps(&block)?;
 
     Ok(PlanTask {
-        number: number
-            .parse::<u32>()
-            .map_err(|_| missing_header("Task number"))?,
+        number: task_number,
         title: title.to_owned(),
         spec_coverage,
-        task_outcome,
-        plan_constraints,
-        open_questions,
+        goal: contract_fields.goal,
+        context: contract_fields.context,
+        constraints: contract_fields.constraints,
+        done_when: contract_fields.done_when,
         files,
         steps,
     })
@@ -757,35 +932,15 @@ fn parse_csv_field(lines: &[&str], field: &str) -> Result<Vec<String>, Diagnosti
         .collect())
 }
 
-fn parse_bullets_after_field(lines: &[&str], field: &str) -> Vec<String> {
-    let target = format!("**{field}:**");
-    let mut collecting = false;
-    let mut values = Vec::new();
-    for line in lines {
-        if *line == target {
-            collecting = true;
-            continue;
-        }
-        if collecting && line.starts_with("**") {
-            break;
-        }
-        if collecting {
-            let trimmed = line.trim();
-            if let Some(value) = trimmed.strip_prefix("- ") {
-                values.push(value.to_owned());
-            }
-        }
-    }
-    values
-}
-
 fn parse_file_entries(lines: &[&str]) -> Result<Vec<TaskFileEntry>, DiagnosticError> {
     let mut collecting = false;
+    let mut files_seen = false;
     let mut files = Vec::new();
 
     for line in lines {
         if *line == "**Files:**" {
             collecting = true;
+            files_seen = true;
             continue;
         }
         if collecting && is_plan_step_prefix(line.trim()) {
@@ -799,7 +954,10 @@ fn parse_file_entries(lines: &[&str]) -> Result<Vec<TaskFileEntry>, DiagnosticEr
             continue;
         }
         let Some(rest) = trimmed.strip_prefix("- ") else {
-            continue;
+            return Err(DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                format!("Malformed files block entry: {trimmed}"),
+            ));
         };
         let (action, path) = rest.split_once(": ").ok_or_else(|| {
             DiagnosticError::new(
@@ -822,16 +980,24 @@ fn parse_file_entries(lines: &[&str]) -> Result<Vec<TaskFileEntry>, DiagnosticEr
                 format!("Malformed files block entry: {trimmed}"),
             ));
         }
-        let normalized = RepoPath::parse(path.trim_matches('`')).map_err(|_| {
-            DiagnosticError::new(
-                FailureClass::InstructionParseFailed,
-                format!("Malformed files block entry: {trimmed}"),
-            )
-        })?;
+        let normalized =
+            normalize_repo_relative_file_reference(path.trim_matches('`')).map_err(|_| {
+                DiagnosticError::new(
+                    FailureClass::InstructionParseFailed,
+                    format!("Malformed files block entry: {trimmed}"),
+                )
+            })?;
         files.push(TaskFileEntry {
             action: action.to_owned(),
-            path: normalized.as_str().to_owned(),
+            path: normalized,
         });
+    }
+
+    if !files_seen || files.is_empty() {
+        return Err(DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            String::from("Task is missing a parseable Files block."),
+        ));
     }
 
     Ok(files)
@@ -863,32 +1029,9 @@ fn is_plan_step_prefix(line: &str) -> bool {
 }
 
 fn parse_plan_step_line(line: &str) -> Result<Option<(u32, String)>, DiagnosticError> {
-    if !is_plan_step_prefix(line) {
-        return Ok(None);
-    }
-    let rest = line
-        .strip_prefix("- [")
-        .expect("step prefix should be present after is_plan_step_prefix");
-    let mark = rest
-        .chars()
-        .next()
-        .expect("step mark should be present after is_plan_step_prefix");
-    let rest = &rest[mark.len_utf8()..];
-    let rest = rest
-        .strip_prefix("] **Step ")
-        .expect("step body should be present after is_plan_step_prefix");
-    let (number, text) = rest.split_once(": ").ok_or_else(|| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            format!("Malformed step entry: {line}"),
-        )
-    })?;
-    Ok(Some((
-        number
-            .parse::<u32>()
-            .map_err(|_| missing_header("Step number"))?,
-        text.trim_end_matches("**").to_owned(),
-    )))
+    parse_task_step_line(line)
+        .map(|step| step.map(|step| (step.number, step.text)))
+        .map_err(|error| DiagnosticError::new(FailureClass::InstructionParseFailed, error.message))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

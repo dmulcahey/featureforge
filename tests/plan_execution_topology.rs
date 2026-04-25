@@ -103,10 +103,16 @@ Task 1    Task 2
 ## Task 1: Independent Task A
 
 **Spec Coverage:** REQ-001, REQ-002
-**Task Outcome:** Task A is isolated.
-**Plan Constraints:**
+**Goal:** Task A is isolated.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-002.
+
+**Constraints:**
 - Keep Task 1 independent.
-**Open Questions:** none
+
+**Done when:**
+- Task A is isolated.
 
 **Files:**
 - Modify: `docs/task-a.md`
@@ -116,10 +122,16 @@ Task 1    Task 2
 ## Task 2: Independent Task B
 
 **Spec Coverage:** REQ-002
-**Task Outcome:** Task B is isolated.
-**Plan Constraints:**
+**Goal:** Task B is isolated.
+
+**Context:**
+- Spec Coverage: REQ-002.
+
+**Constraints:**
 - Keep Task 2 independent.
-**Open Questions:** none
+
+**Done when:**
+- Task B is isolated.
 
 **Files:**
 - Modify: `docs/task-b.md`
@@ -161,10 +173,16 @@ Task 1
 ## Task 1: Single Step Task
 
 **Spec Coverage:** REQ-001, REQ-002
-**Task Outcome:** The workspace is prepared for execution.
-**Plan Constraints:**
+**Goal:** The workspace is prepared for execution.
+
+**Context:**
+- Spec Coverage: REQ-001, REQ-002.
+
+**Constraints:**
 - Keep the fixture single-step and deterministic.
-**Open Questions:** none
+
+**Done when:**
+- The workspace is prepared for execution.
 
 **Files:**
 - Modify: `docs/example-output.md`
