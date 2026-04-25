@@ -1,18 +1,124 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::contracts::harness::{
     ExecutionTopologyDowngradeRecord, WORKTREE_LEASE_VERSION, WorktreeLease, WorktreeLeaseState,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::event_log::load_reduced_authoritative_state_for_state_path;
 use crate::execution::harness::INITIAL_AUTHORITATIVE_SEQUENCE;
 use crate::execution::observability::validate_execution_topology_downgrade_record;
 use crate::execution::state::ExecutionContext;
+use crate::execution::transitions::hydrate_missing_review_projection_summary_payload;
 use crate::paths::{harness_authoritative_artifacts_dir, harness_branch_root, harness_state_path};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReducedAuthoritativeStateCacheStamp {
+    state_file: Option<FileCacheStamp>,
+    event_log: Option<FileCacheStamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileCacheStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    ctime: i64,
+    #[cfg(unix)]
+    ctime_nsec: i64,
+}
+
+#[derive(Debug, Clone)]
+struct CachedReducedAuthoritativeStatePayload {
+    stamp: ReducedAuthoritativeStateCacheStamp,
+    state_payload: Option<Value>,
+}
+
+fn reduced_authoritative_state_payload_cache()
+-> &'static Mutex<BTreeMap<PathBuf, CachedReducedAuthoritativeStatePayload>> {
+    static CACHE: OnceLock<Mutex<BTreeMap<PathBuf, CachedReducedAuthoritativeStatePayload>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn file_cache_stamp(metadata: &fs::Metadata) -> FileCacheStamp {
+    FileCacheStamp {
+        modified: metadata.modified().ok(),
+        len: metadata.len(),
+        #[cfg(unix)]
+        inode: std::os::unix::fs::MetadataExt::ino(metadata),
+        #[cfg(unix)]
+        ctime: std::os::unix::fs::MetadataExt::ctime(metadata),
+        #[cfg(unix)]
+        ctime_nsec: std::os::unix::fs::MetadataExt::ctime_nsec(metadata),
+    }
+}
+
+fn metadata_cache_stamp(path: &Path) -> Option<FileCacheStamp> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    Some(file_cache_stamp(&metadata))
+}
+
+fn events_log_path_for_state_path(state_path: &Path) -> PathBuf {
+    state_path.with_file_name("events.jsonl")
+}
+
+fn reduced_authoritative_state_cache_stamp(
+    state_path: &Path,
+) -> ReducedAuthoritativeStateCacheStamp {
+    ReducedAuthoritativeStateCacheStamp {
+        state_file: metadata_cache_stamp(state_path),
+        event_log: metadata_cache_stamp(&events_log_path_for_state_path(state_path)),
+    }
+}
+
+fn load_cached_reduced_authoritative_state_for_state_path(
+    state_path: &Path,
+) -> Result<Option<Value>, JsonFailure> {
+    let expected_stamp = reduced_authoritative_state_cache_stamp(state_path);
+    if let Some(cached) = reduced_authoritative_state_payload_cache()
+        .lock()
+        .expect("reduced authoritative state cache lock should not be poisoned")
+        .get(state_path)
+        .filter(|cached| cached.stamp == expected_stamp)
+        .cloned()
+    {
+        return Ok(cached.state_payload);
+    }
+
+    let mut state_payload = load_reduced_authoritative_state_for_state_path(state_path)?;
+    if let Some(payload) = state_payload.as_mut() {
+        hydrate_missing_review_projection_summary_payload(state_path, payload)?;
+    }
+    let refreshed_stamp = reduced_authoritative_state_cache_stamp(state_path);
+    let mut cache = reduced_authoritative_state_payload_cache()
+        .lock()
+        .expect("reduced authoritative state cache lock should not be poisoned");
+    if refreshed_stamp.event_log.is_some() {
+        cache.insert(
+            state_path.to_path_buf(),
+            CachedReducedAuthoritativeStatePayload {
+                stamp: refreshed_stamp,
+                state_payload: state_payload.clone(),
+            },
+        );
+    } else {
+        cache.remove(state_path);
+    }
+    Ok(state_payload)
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct StrategyReviewDispatchLineageRecord {
@@ -20,6 +126,8 @@ pub(crate) struct StrategyReviewDispatchLineageRecord {
     pub(crate) dispatch_id: Option<String>,
     #[serde(default)]
     pub(crate) reviewed_state_id: Option<String>,
+    #[serde(default)]
+    pub(crate) semantic_reviewed_state_id: Option<String>,
     #[serde(default)]
     pub(crate) source_task: Option<u32>,
     #[serde(default)]
@@ -139,54 +247,14 @@ pub(crate) fn load_status_authoritative_overlay_checked(
     context: &ExecutionContext,
 ) -> Result<Option<StatusAuthoritativeOverlay>, JsonFailure> {
     let state_path = authoritative_state_path(context);
-    let metadata = match fs::symlink_metadata(&state_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Could not inspect authoritative harness state {}: {error}",
-                    state_path.display()
-                ),
-            ));
-        }
+    let Some(payload) = load_cached_reduced_authoritative_state_for_state_path(&state_path)? else {
+        return Ok(None);
     };
-    if metadata.file_type().is_symlink() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state path must not be a symlink in {}.",
-                state_path.display()
-            ),
-        ));
-    }
-    if !metadata.is_file() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state must be a regular file in {}.",
-                state_path.display()
-            ),
-        ));
-    }
-
-    // Authoritative overlay truth can change multiple times during one in-process command loop.
-    // Read fresh on every call so rewrites cannot leak stale routing or gate state.
-    let source = fs::read_to_string(&state_path).map_err(|error| {
+    let overlay: StatusAuthoritativeOverlay = serde_json::from_value(payload).map_err(|error| {
         JsonFailure::new(
             FailureClass::MalformedExecutionState,
             format!(
-                "Could not read authoritative harness state {}: {error}",
-                state_path.display()
-            ),
-        )
-    })?;
-    let overlay: StatusAuthoritativeOverlay = serde_json::from_str(&source).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state is malformed in {}: {error}",
+                "Authoritative reduced state is malformed in {}: {error}",
                 state_path.display()
             ),
         )
@@ -218,55 +286,14 @@ pub(crate) fn load_preflight_authoritative_state(
     context: &ExecutionContext,
 ) -> Result<Option<PreflightAuthoritativeState>, JsonFailure> {
     let state_path = authoritative_state_path(context);
-    let metadata = match fs::symlink_metadata(&state_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Could not inspect authoritative harness state {}: {error}",
-                    state_path.display()
-                ),
-            ));
-        }
+    let Some(payload) = load_cached_reduced_authoritative_state_for_state_path(&state_path)? else {
+        return Ok(None);
     };
-    if metadata.file_type().is_symlink() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state path must not be a symlink in {}.",
-                state_path.display()
-            ),
-        ));
-    }
-    if !metadata.is_file() {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state must be a regular file in {}.",
-                state_path.display()
-            ),
-        ));
-    }
-
-    let source = match fs::read_to_string(&state_path) {
-        Ok(source) => source,
-        Err(error) => {
-            return Err(JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Could not read authoritative harness state {}: {error}",
-                    state_path.display()
-                ),
-            ));
-        }
-    };
-    let overlay = serde_json::from_str(&source).map_err(|error| {
+    let overlay = serde_json::from_value(payload).map_err(|error| {
         JsonFailure::new(
             FailureClass::MalformedExecutionState,
             format!(
-                "Authoritative harness state is malformed in {}: {error}",
+                "Authoritative reduced state is malformed in {}: {error}",
                 state_path.display()
             ),
         )

@@ -80,7 +80,7 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 8. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
 9. Run `featureforge workflow operator --plan <approved-plan-path>` before starting execution.
 10. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution through compatibility helpers.
-11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and use the approved plan checklist as the human-visible execution progress projection while runtime-owned execution state remains authoritative for routing and gates.
+11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and use the approved plan checklist as the human-visible execution progress projection while the event log remains authoritative for routing and gates.
 12. Treat execution start as a hard gate, not a reminder:
    - no code edits and no test edits are allowed after workflow/operator confirms the current execution preflight handoff and before the first `begin` for the active step
    - no repo mutation is allowed until that first `begin` is recorded
@@ -101,11 +101,11 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 - uses the workflow/operator execution-start handoff instead of separate compatibility-helper choreography before execution starts
 - calls `begin` before starting work on a plan step
 - calls `complete` after each completed step
-- calls `note` when work is interrupted or blocked
-- `record-contract`, `record-evaluation`, `record-handoff`, `begin`, `note`, `complete`, `reopen`, and `transfer` are authoritative helper mutation commands.
+- reports interruptions or blockers in the handoff/status surface instead of invoking a removed execution-note command
+- `record-contract`, `record-evaluation`, `record-handoff`, `begin`, removed `note`, `complete`, `reopen`, and `transfer` are authoritative helper mutation boundaries.
 - Coordinators and subagents may prepare candidate artifacts (for example task packets, coverage matrix context, and handoff drafts), but they must not directly invoke these commands; the runtime helper owns and executes execution-state mutations.
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:executing-plans`
-- The approved plan checklist is the human-visible execution progress projection. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
+- The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 
@@ -166,7 +166,7 @@ For each task:
 ```
 
 2. treat it as the exact task contract for that execution segment. Coordinator-added logistics may clarify branch, cwd, or base commit, but they may not reinterpret approved requirements.
-3. Use the approved plan checklist as the human-visible step-progress projection for the task's steps; runtime-owned execution state remains authoritative for routing and gates.
+3. Use the approved plan checklist as the human-visible step-progress projection for the task's steps; the event log remains authoritative for routing and gates.
 4. Follow each step exactly (plan has bite-sized steps).
 5. Run verifications as specified.
 6. After the implementation steps for a task are complete, enforce the mandatory task-boundary closure loop before beginning the next task:
@@ -204,7 +204,7 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - The returned `recommended_command` is authoritative for the immediate reroute.
 - Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required.
 - Keep compatibility/debug-only runtime primitives out of the normal path unless explicitly debugging a compatibility boundary.
-- Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.
+- Hidden compatibility/debug command entrypoints are removed from the public CLI; normal routing must use public commands only.
 - In `*_dispatch_required` lanes, request the review and keep rerouting through workflow/operator; do not expand the normal path into low-level dispatch-lineage management.
 - MUST NOT manually edit runtime-owned execution records.
 - MUST NOT manually edit `**Execution Note:**` lines to recover runtime state.

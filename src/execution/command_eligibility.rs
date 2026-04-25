@@ -8,15 +8,6 @@ fn normalize_public_follow_up(follow_up: &str) -> Option<String> {
     shared_normalize_public_follow_up_alias(Some(follow_up)).map(str::to_owned)
 }
 
-fn override_follow_up_for_operator(operator: &ExecutionRoutingState) -> Option<String> {
-    match operator.follow_up_override.as_str() {
-        "record_handoff" | "record_pivot" => {
-            normalize_public_follow_up(operator.follow_up_override.as_str())
-        }
-        _ => None,
-    }
-}
-
 pub(crate) fn operator_requires_review_state_repair(operator: &ExecutionRoutingState) -> bool {
     shared_required_follow_up_from_routing(operator).as_deref() == Some("repair_review_state")
 }
@@ -30,7 +21,7 @@ pub(crate) fn blocked_follow_up_for_operator(operator: &ExecutionRoutingState) -
 pub(crate) fn close_current_task_required_follow_up(
     operator: &ExecutionRoutingState,
 ) -> Option<String> {
-    override_follow_up_for_operator(operator).or_else(|| blocked_follow_up_for_operator(operator))
+    blocked_follow_up_for_operator(operator)
 }
 
 pub(crate) fn late_stage_required_follow_up(
@@ -70,7 +61,5 @@ pub(crate) fn release_readiness_required_follow_up(
 }
 
 pub(crate) fn negative_result_follow_up(operator: &ExecutionRoutingState) -> Option<String> {
-    override_follow_up_for_operator(operator)
-        .or_else(|| blocked_follow_up_for_operator(operator))
-        .or_else(|| Some(String::from("execution_reentry")))
+    blocked_follow_up_for_operator(operator)
 }

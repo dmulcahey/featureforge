@@ -2,15 +2,23 @@ use std::path::Path;
 use std::process::{ExitStatus, Output};
 
 use clap::Parser;
-use featureforge::cli::plan_execution::{InternalPlanExecutionCommand, PlanExecutionCommand};
+use featureforge::cli::plan_execution::{
+    GateContractArgs, GateEvaluatorArgs, GateHandoffArgs, PlanExecutionCommand,
+    RebuildEvidenceArgs, RecommendArgs, RecordBranchClosureArgs, RecordContractArgs,
+    RecordEvaluationArgs, RecordFinalReviewArgs, RecordHandoffArgs, RecordQaArgs,
+    RecordReleaseReadinessArgs, RecordReviewDispatchArgs, StatusArgs,
+};
 use featureforge::cli::{Cli, Command as RootCommand, PlanCommand};
 use featureforge::diagnostics::JsonFailure;
 use featureforge::execution::mutate;
 use featureforge::execution::review_state;
 use featureforge::execution::state::ExecutionRuntime;
+use serde::Serialize;
+use serde_json::Value;
 
 struct DirectPlanExecutionSuccess {
     stdout: Vec<u8>,
+    stderr: Vec<u8>,
     exit_code: u8,
 }
 
@@ -25,7 +33,7 @@ pub fn try_run_plan_execution_output_direct(
             Some(Ok(output)) => Some(output_with_code(
                 i32::from(output.exit_code),
                 output.stdout,
-                Vec::new(),
+                output.stderr,
             )),
             Some(Err(failure)) => Some(output_with_code(
                 1,
@@ -35,6 +43,186 @@ pub fn try_run_plan_execution_output_direct(
             None => None,
         },
     )
+}
+
+#[allow(dead_code)]
+pub fn run_runtime_topology_recommendation_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecommendArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.topology_recommendation(args))
+}
+
+#[allow(dead_code)]
+pub fn run_runtime_preflight_gate_json(
+    repo: &Path,
+    state: &Path,
+    args: &StatusArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.preflight_gate(args))
+}
+
+#[allow(dead_code)]
+pub fn run_runtime_review_gate_json(
+    repo: &Path,
+    state: &Path,
+    args: &StatusArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.review_gate(args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_gate_contract_json(
+    repo: &Path,
+    state: &Path,
+    args: &GateContractArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.gate_contract(args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_record_contract_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecordContractArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.record_contract(args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_gate_evaluator_json(
+    repo: &Path,
+    state: &Path,
+    args: &GateEvaluatorArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.gate_evaluator(args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_record_evaluation_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecordEvaluationArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.record_evaluation(args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_gate_handoff_json(
+    repo: &Path,
+    state: &Path,
+    args: &GateHandoffArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.gate_handoff(args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_record_handoff_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecordHandoffArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.record_handoff(args))
+}
+
+#[allow(dead_code)]
+pub fn run_runtime_finish_gate_json(
+    repo: &Path,
+    state: &Path,
+    args: &StatusArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.finish_gate(args))
+}
+
+#[allow(dead_code)]
+pub fn run_runtime_review_dispatch_authority_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecordReviewDispatchArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(runtime.record_review_dispatch_authority(args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_rebuild_evidence_json(
+    repo: &Path,
+    state: &Path,
+    args: &RebuildEvidenceArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(mutate::rebuild_evidence(&runtime, args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_record_branch_closure_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecordBranchClosureArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(mutate::record_branch_closure(&runtime, args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_record_release_readiness_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecordReleaseReadinessArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(mutate::record_release_readiness(&runtime, args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_record_final_review_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecordFinalReviewArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(mutate::record_final_review(&runtime, args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_record_qa_json(
+    repo: &Path,
+    state: &Path,
+    args: &RecordQaArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(mutate::record_qa(&runtime, args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_explain_review_state_json(
+    repo: &Path,
+    state: &Path,
+    args: &StatusArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(review_state::explain_review_state(&runtime, args))
+}
+
+#[allow(dead_code)]
+pub fn run_internal_reconcile_review_state_json(
+    repo: &Path,
+    state: &Path,
+    args: &StatusArgs,
+) -> Result<Value, String> {
+    let runtime = execution_runtime(repo, state)?;
+    runtime_value(review_state::reconcile_review_state(&runtime, args))
 }
 
 fn try_run_plan_execution_result_direct(
@@ -63,12 +251,6 @@ fn try_run_plan_execution_result_direct(
         return Ok(None);
     };
     let command = plan_execution_cli.command;
-    if matches!(
-        &command,
-        PlanExecutionCommand::RebuildEvidence(args) if !args.json
-    ) {
-        return Ok(None);
-    }
     let runtime = match execution_runtime(repo, state) {
         Ok(runtime) => runtime,
         Err(_) => {
@@ -127,6 +309,7 @@ fn execute_plan_execution_command_json(
         ($expr:expr) => {
             DirectPlanExecutionSuccess {
                 stdout: json_line(&$expr).expect("plan execution command output should serialize"),
+                stderr: Vec::new(),
                 exit_code: 0,
             }
         };
@@ -134,62 +317,22 @@ fn execute_plan_execution_command_json(
 
     match command {
         PlanExecutionCommand::Status(args) => Ok(to_json!(runtime.status(&args)?)),
-        PlanExecutionCommand::Recommend(args) => Ok(to_json!(runtime.recommend(&args)?)),
-        PlanExecutionCommand::Preflight(args) => Ok(to_json!(runtime.preflight(&args)?)),
-        PlanExecutionCommand::Internal(internal) => match internal.command {
-            InternalPlanExecutionCommand::ReconcileReviewState(args) => Ok(to_json!(
-                review_state::reconcile_review_state(runtime, &args)?
-            )),
-        },
-        PlanExecutionCommand::RebuildEvidence(args) => {
-            let output = mutate::rebuild_evidence(runtime, &args)?;
-            Ok(DirectPlanExecutionSuccess {
-                exit_code: output.exit_code(),
-                stdout: json_line(&output).expect("plan execution command output should serialize"),
-            })
-        }
-        PlanExecutionCommand::GateContract(args) => Ok(to_json!(runtime.gate_contract(&args)?)),
-        PlanExecutionCommand::RecordContract(args) => Ok(to_json!(runtime.record_contract(&args)?)),
-        PlanExecutionCommand::GateEvaluator(args) => Ok(to_json!(runtime.gate_evaluator(&args)?)),
-        PlanExecutionCommand::RecordEvaluation(args) => {
-            Ok(to_json!(runtime.record_evaluation(&args)?))
-        }
-        PlanExecutionCommand::GateHandoff(args) => Ok(to_json!(runtime.gate_handoff(&args)?)),
-        PlanExecutionCommand::RecordHandoff(args) => Ok(to_json!(runtime.record_handoff(&args)?)),
-        PlanExecutionCommand::GateReview(args) => Ok(to_json!(runtime.gate_review(&args)?)),
-        PlanExecutionCommand::RecordReviewDispatch(args) => {
-            Ok(to_json!(runtime.record_review_dispatch(&args)?))
-        }
         PlanExecutionCommand::RepairReviewState(args) => Ok(to_json!(
             review_state::repair_review_state_command(runtime, &args)?
         )),
-        PlanExecutionCommand::ExplainReviewState(args) => Ok(to_json!(
-            review_state::explain_review_state(runtime, &args)?
-        )),
-        PlanExecutionCommand::GateFinish(args) => Ok(to_json!(runtime.gate_finish(&args)?)),
         PlanExecutionCommand::CloseCurrentTask(args) => {
             Ok(to_json!(mutate::close_current_task(runtime, &args)?))
-        }
-        PlanExecutionCommand::RecordBranchClosure(args) => {
-            Ok(to_json!(mutate::record_branch_closure(runtime, &args)?))
-        }
-        PlanExecutionCommand::RecordReleaseReadiness(args) => {
-            Ok(to_json!(mutate::record_release_readiness(runtime, &args)?))
         }
         PlanExecutionCommand::AdvanceLateStage(args) => {
             Ok(to_json!(mutate::advance_late_stage(runtime, &args)?))
         }
-        PlanExecutionCommand::RecordFinalReview(args) => {
-            Ok(to_json!(mutate::record_final_review(runtime, &args)?))
-        }
-        PlanExecutionCommand::RecordQa(args) => Ok(to_json!(mutate::record_qa(runtime, &args)?)),
         PlanExecutionCommand::Begin(args) => Ok(to_json!(mutate::begin(runtime, &args)?)),
-        PlanExecutionCommand::Note(args) => Ok(to_json!(mutate::note(runtime, &args)?)),
         PlanExecutionCommand::Complete(args) => Ok(to_json!(mutate::complete(runtime, &args)?)),
         PlanExecutionCommand::Reopen(args) => Ok(to_json!(mutate::reopen(runtime, &args)?)),
         PlanExecutionCommand::Transfer(args) => Ok(to_json!(mutate::transfer(runtime, &args)?)),
     }
 }
+
 fn output_with_code(code: i32, stdout: Vec<u8>, stderr: Vec<u8>) -> Output {
     Output {
         status: exit_status(code),
@@ -198,10 +341,27 @@ fn output_with_code(code: i32, stdout: Vec<u8>, stderr: Vec<u8>) -> Output {
     }
 }
 
-fn json_line<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+fn json_line<T: Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
     let mut encoded = serde_json::to_vec(value)?;
     encoded.push(b'\n');
     Ok(encoded)
+}
+
+fn runtime_value<T: Serialize>(result: Result<T, JsonFailure>) -> Result<Value, String> {
+    result
+        .map_err(|failure| {
+            serde_json::to_string(&failure).unwrap_or_else(|_| {
+                format!(
+                    "{{\"error_class\":\"{:?}\",\"message\":\"{}\"}}",
+                    failure.error_class, failure.message
+                )
+            })
+        })
+        .and_then(|value| {
+            serde_json::to_value(value).map_err(|error| {
+                format!("direct runtime helper output should serialize to json value: {error}")
+            })
+        })
 }
 
 #[cfg(unix)]

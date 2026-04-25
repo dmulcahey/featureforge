@@ -518,7 +518,7 @@ test('execution and review skill docs keep candidate artifacts and downstream ga
     [subagentSkill, 'skills/subagent-driven-development/SKILL.md'],
     [implementerPrompt, 'skills/subagent-driven-development/implementer-prompt.md'],
   ]) {
-    for (const command of ['record-contract', 'record-evaluation', 'record-handoff', 'begin', 'note', 'complete', 'reopen', 'transfer']) {
+    for (const command of ['record-contract', 'record-evaluation', 'record-handoff', 'begin', 'complete', 'reopen', 'transfer']) {
       assertForbidsDirectHelperCommandMutation(content, command, label);
     }
   }
@@ -589,12 +589,12 @@ test('execution workflow skills reference the plan-execution helper contract', (
     assert.match(content, /Provides the approved plan and the execution preflight handoff/);
     assert.match(content, /calls `begin` before starting work on a plan step/);
     assert.match(content, /calls `complete` after each completed step/);
-    assert.match(content, /calls `note` when work is interrupted or blocked/);
+    assert.match(content, /reports interruptions or blockers in the handoff\/status surface instead of invoking a removed execution-note command/);
   }
   const executingPlans = readUtf8(getSkillPath('executing-plans'));
   assert.match(
     executingPlans,
-    /The approved plan checklist is the human-visible execution progress projection\. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces\./,
+    /The approved plan checklist is the human-visible execution progress projection\. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces\./,
   );
   assert.doesNotMatch(
     executingPlans,
@@ -603,7 +603,7 @@ test('execution workflow skills reference the plan-execution helper contract', (
   const subagentDrivenDevelopment = readUtf8(getSkillPath('subagent-driven-development'));
   assert.match(
     subagentDrivenDevelopment,
-    /The approved plan checklist is the human-visible execution progress projection\. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces\./,
+    /The approved plan checklist is the human-visible execution progress projection\. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces\./,
   );
   assert.doesNotMatch(
     subagentDrivenDevelopment,
@@ -1344,7 +1344,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /If `\$_FEATUREFORGE_BIN` is available and an approved plan path is already known, call `\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing\. Otherwise call `\$_FEATUREFORGE_BIN workflow status --refresh` only to discover the current approved `plan_path`, then immediately route through workflow\/operator\. Do not route directly from `workflow status` fields\./,
+    /If `\$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `\$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing\. If no approved plan path is known, resolve the plan path through the normal planning\/review handoff rather than calling removed workflow status surfaces\./,
   );
   assert.doesNotMatch(usingFeatureForge, /If the JSON result is not `implementation_ready` and contains a non-empty `next_skill`, use that route as compatibility fallback\./);
   assert.match(
@@ -1369,7 +1369,7 @@ test('workflow handoff skills make terminal ownership explicit', () => {
   );
   assert.match(
     usingFeatureForge,
-    /Keep hidden compatibility\/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` out of the normal path; do not route to them for normal workflow progression\./,
+    /Hidden compatibility\/debug command entrypoints are removed from the public CLI; keep normal progression on public commands only\./,
   );
   assert.doesNotMatch(
     usingFeatureForge,
@@ -1655,7 +1655,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     readme,
-    /`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility\/debug projection-regeneration helper\. It does not mutate authoritative execution truth\./,
+    /compatibility\/debug command boundaries \(`gate-\*`, low-level `record-\*`\) must not be required in the normal path/,
   );
   assert.match(
     readme,
@@ -1677,7 +1677,7 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   );
   assert.match(
     readme,
-    /Compatibility\/debug helpers remain available only for exceptional or contract-boundary cases and are not part of the normal path\./,
+    /compatibility\/debug command boundaries \(`gate-\*`, low-level `record-\*`\) must not be required in the normal path/,
   );
   assert.doesNotMatch(
     readme,
@@ -1937,10 +1937,11 @@ test('active docs describe the post-session-entry routing contract', () => {
     /workflow handoff --json.*session_entry.*needs_user_choice.*bypassed.*session_entry_gate.*continue_outside_featureforge.*schema_version.*2/is,
     'RELEASE-NOTES.md should enumerate the workflow handoff output removals and new schema version',
   );
-  assert.match(
-    releaseNotes,
-    /workflow status --refresh.*needs_user_choice.*bypassed.*session_entry_unresolved.*session_entry_bypassed.*schema_version.*3/is,
-    'RELEASE-NOTES.md should enumerate the workflow status output removals and retained route schema version',
+  const activeReleaseNotes = releaseNotes.split('Historical note:')[0] ?? releaseNotes;
+  assert.doesNotMatch(
+    activeReleaseNotes,
+    /workflow status --refresh/is,
+    'RELEASE-NOTES.md should not document removed workflow status as an active command',
   );
   assert.match(
     releaseNotes,

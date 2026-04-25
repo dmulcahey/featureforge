@@ -1,19 +1,35 @@
 #[path = "support/bin.rs"]
 mod bin_support;
+#[path = "support/dir_tree.rs"]
+mod dir_tree_support;
 #[path = "support/files.rs"]
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
+#[allow(dead_code)]
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/repo_template.rs"]
 mod repo_template_support;
+#[path = "support/runtime_json.rs"]
+mod runtime_json_support;
+#[path = "support/runtime_phase_handoff.rs"]
+mod runtime_phase_handoff_support;
 
 use bin_support::compiled_featureforge_path;
+use dir_tree_support::copy_dir_recursive;
+use featureforge::contracts::plan::parse_plan_file;
 use featureforge::execution::final_review::{
     parse_final_review_receipt, resolve_release_base_branch,
 };
+use featureforge::execution::semantic_identity::{
+    branch_definition_identity_for_context, task_definition_identity_for_task,
+};
 use featureforge::execution::state::current_head_sha as runtime_current_head_sha;
+use featureforge::execution::state::hash_contract_plan;
+use featureforge::execution::state::load_execution_context;
 use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::{
     branch_storage_key, harness_authoritative_artifact_path, harness_state_path,
@@ -22,6 +38,8 @@ use files_support::write_file;
 use json_support::parse_json;
 use process_support::{run, run_checked};
 use repo_template_support::populate_repo_from_template;
+use runtime_json_support::{discover_execution_runtime, plan_execution_status_json};
+use runtime_phase_handoff_support::{workflow_handoff_json, workflow_phase_json};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -231,26 +249,50 @@ fn repo_slug(repo: &Path) -> String {
     discover_slug_identity(repo).repo_slug
 }
 
-fn branch_contract_identity(
-    plan_rel: &str,
-    plan_revision: u32,
-    repo_slug: &str,
-    branch_name: &str,
-    base_branch: &str,
-) -> String {
-    let payload = format!(
-        "branch-contract\n{plan_rel}\n{plan_revision}\n{repo_slug}\n{branch_name}\n{base_branch}"
+fn branch_contract_identity(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
+    let runtime = discover_execution_runtime(
+        repo,
+        state_dir,
+        "workflow_runtime_final_review semantic identity fixture",
     );
-    format!("branch-contract-{}", &sha256_hex(payload.as_bytes())[..16])
+    let context = load_execution_context(&runtime, Path::new(plan_rel))
+        .expect("workflow_runtime_final_review semantic branch identity fixture should load execution context");
+    branch_definition_identity_for_context(&context)
 }
 
-fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
-    let mut payload = String::from(prefix);
-    for part in parts {
-        payload.push('\n');
-        payload.push_str(part);
-    }
-    format!("{prefix}-{}", &sha256_hex(payload.as_bytes())[..16])
+fn task_contract_identity(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    task_number: u32,
+) -> String {
+    let runtime = discover_execution_runtime(
+        repo,
+        state_dir,
+        "workflow_runtime_final_review semantic identity fixture",
+    );
+    let context = load_execution_context(&runtime, Path::new(plan_rel))
+        .expect("workflow_runtime_final_review semantic task identity fixture should load execution context");
+    task_definition_identity_for_task(&context, task_number)
+        .expect("workflow_runtime_final_review semantic task identity fixture should compute")
+        .expect("workflow_runtime_final_review semantic task identity fixture should exist")
+}
+
+fn semantic_workspace_tree_id(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
+    let runtime = discover_execution_runtime(
+        repo,
+        state_dir,
+        "workflow_runtime_final_review semantic workspace fixture",
+    );
+    plan_execution_status_json(
+        &runtime,
+        plan_rel,
+        false,
+        "workflow_runtime_final_review semantic workspace fixture",
+    )["semantic_workspace_tree_id"]
+        .as_str()
+        .expect("workflow_runtime_final_review semantic workspace fixture should expose semantic workspace tree id")
+        .to_owned()
 }
 
 fn project_artifact_dir(repo: &Path, state: &Path) -> PathBuf {
@@ -259,27 +301,25 @@ fn project_artifact_dir(repo: &Path, state: &Path) -> PathBuf {
 
 fn execution_contract_plan_hash(repo: &Path) -> String {
     let source = fs::read_to_string(repo.join(PLAN_REL)).expect("plan should be readable");
-    let mut output = Vec::new();
-    for line in source.lines() {
-        if line.starts_with("**Execution Mode:** ") {
-            output.push(String::from("**Execution Mode:** none"));
-            continue;
-        }
-        if line.starts_with("- [x]") {
-            output.push(line.replacen("- [x]", "- [ ]", 1));
-            continue;
-        }
-        output.push(line.to_owned());
-    }
-    sha256_hex(format!("{}\n", output.join("\n")).as_bytes())
+    hash_contract_plan(&source)
 }
 
 fn expected_packet_fingerprint(repo: &Path, task: u32, step: u32) -> String {
-    let plan_fingerprint = execution_contract_plan_hash(repo);
+    let plan_document =
+        parse_plan_file(repo.join(PLAN_REL)).expect("plan should parse for packet fingerprint");
+    let task_definition_identity = plan_document
+        .tasks
+        .iter()
+        .find(|candidate| candidate.number == task)
+        .map(serde_json::to_string)
+        .transpose()
+        .expect("task should serialize for packet fingerprint")
+        .map(|serialized| format!("task_def:{}", sha256_hex(serialized.as_bytes())))
+        .expect("task should exist for packet fingerprint");
     let spec_fingerprint =
         sha256_hex(&fs::read(repo.join(SPEC_REL)).expect("spec should be readable"));
     let payload = format!(
-        "plan_path={PLAN_REL}\nplan_revision=1\nplan_fingerprint={plan_fingerprint}\nsource_spec_path={SPEC_REL}\nsource_spec_revision=1\nsource_spec_fingerprint={spec_fingerprint}\ntask_number={task}\nstep_number={step}\n"
+        "plan_path={PLAN_REL}\nplan_revision=1\ntask_definition_identity={task_definition_identity}\nsource_spec_path={SPEC_REL}\nsource_spec_revision=1\nsource_spec_fingerprint={spec_fingerprint}\ntask_number={task}\nstep_number={step}\n"
     );
     sha256_hex(payload.as_bytes())
 }
@@ -288,8 +328,7 @@ fn write_single_step_v2_completed_attempt(repo: &Path, packet_fingerprint: &str)
     let evidence_path = repo.join(
         "docs/featureforge/execution-evidence/2026-03-17-example-execution-plan-r1-evidence.md",
     );
-    let plan_fingerprint =
-        sha256_hex(&fs::read(repo.join(PLAN_REL)).expect("plan should be readable"));
+    let plan_fingerprint = execution_contract_plan_hash(repo);
     let spec_fingerprint =
         sha256_hex(&fs::read(repo.join(SPEC_REL)).expect("spec should be readable"));
     write_file(&repo.join("docs/example-output.md"), "verified output\n");
@@ -359,13 +398,18 @@ fn write_test_plan_artifact(repo: &Path, state: &Path, browser_required: &str) -
     let head_sha = current_head_sha(repo);
     let artifact_path = project_artifact_dir(repo, state)
         .join(format!("tester-{safe_branch}-test-plan-20260322-170500.md"));
-    write_file(
-        &artifact_path,
-        &format!(
-            "# Test Plan\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Head SHA:** {head_sha}\n**Browser QA Required:** {browser_required}\n**Generated By:** featureforge:plan-eng-review\n**Generated At:** 2026-03-22T17:05:00Z\n",
-            repo_slug(repo)
-        ),
+    let source = format!(
+        "# Test Plan\n**Source Plan:** `{PLAN_REL}`\n**Source Plan Revision:** 1\n**Branch:** {branch}\n**Repo:** {}\n**Head SHA:** {head_sha}\n**Browser QA Required:** {browser_required}\n**Generated By:** featureforge:plan-eng-review\n**Generated At:** 2026-03-22T17:05:00Z\n",
+        repo_slug(repo)
     );
+    write_file(&artifact_path, &source);
+    let authoritative_path = harness_authoritative_artifact_path(
+        state,
+        &repo_slug(repo),
+        &branch,
+        &format!("test-plan-{}.md", sha256_hex(source.as_bytes())),
+    );
+    write_file(&authoritative_path, &source);
     artifact_path
 }
 
@@ -490,16 +534,18 @@ fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&st
         &state_path,
         &serde_json::to_string(&payload).expect("harness state payload should serialize"),
     );
+    featureforge::execution::event_log::sync_fixture_event_log_for_tests(&state_path, &payload)
+        .expect("authoritative final-review fixture update should sync typed event authority");
 }
 
 fn seed_current_branch_closure_truth(repo: &Path, state: &Path) {
     let branch = branch_name(repo);
     let base_branch = expected_base_branch(repo);
     let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
+    let semantic_reviewed_state_id = semantic_workspace_tree_id(repo, state, PLAN_REL);
     let execution_run_id = String::from("run-fixture");
-    let branch_contract_identity =
-        branch_contract_identity(PLAN_REL, 1, &repo_slug(repo), &branch, &base_branch);
-    let task_contract_identity = deterministic_record_id("task-contract", &[PLAN_REL, "1", "1"]);
+    let branch_contract_identity = branch_contract_identity(repo, state, PLAN_REL);
+    let task_contract_identity = task_contract_identity(repo, state, PLAN_REL, 1);
     update_authoritative_harness_state(
         repo,
         state,
@@ -522,6 +568,7 @@ fn seed_current_branch_closure_truth(repo: &Path, state: &Path) {
                     "branch-release-closure": {
                         "branch_closure_id": "branch-release-closure",
                         "reviewed_state_id": reviewed_state_id,
+                        "semantic_reviewed_state_id": semantic_reviewed_state_id,
                         "contract_identity": branch_contract_identity,
                         "source_plan_path": PLAN_REL,
                         "source_plan_revision": 1,
@@ -546,6 +593,7 @@ fn seed_current_branch_closure_truth(repo: &Path, state: &Path) {
                         "source_plan_revision": 1,
                         "execution_run_id": execution_run_id.clone(),
                         "reviewed_state_id": reviewed_state_id.clone(),
+                        "semantic_reviewed_state_id": semantic_reviewed_state_id.clone(),
                         "contract_identity": task_contract_identity.clone(),
                         "effective_reviewed_surface_paths": ["README.md"],
                         "review_result": "pass",
@@ -566,6 +614,7 @@ fn seed_current_branch_closure_truth(repo: &Path, state: &Path) {
                         "source_plan_revision": 1,
                         "execution_run_id": execution_run_id,
                         "reviewed_state_id": reviewed_state_id.clone(),
+                        "semantic_reviewed_state_id": semantic_reviewed_state_id,
                         "contract_identity": task_contract_identity,
                         "effective_reviewed_surface_paths": ["README.md"],
                         "review_result": "pass",
@@ -766,6 +815,9 @@ fn run_featureforge_with_env(
         .current_dir(repo)
         .env("FEATUREFORGE_STATE_DIR", state_dir)
         .args(args);
+    if let Some(value) = std::env::var_os("FEATUREFORGE_DEBUG_FS02") {
+        command.env("FEATUREFORGE_DEBUG_FS02", value);
+    }
     for (key, value) in env {
         command.env(key, value);
     }
@@ -781,21 +833,41 @@ fn run_plan_execution(repo: &Path, state_dir: &Path, args: &[&str], context: &st
     run_featureforge_with_env(repo, state_dir, command_args.as_slice(), &[], context)
 }
 
-fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
-    run_plan_execution(
+fn run_internal_preflight(repo: &Path, state_dir: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::run_runtime_preflight_gate_json(
         repo,
         state_dir,
-        &[
-            "record-review-dispatch",
-            "--plan",
-            plan_rel,
-            "--scope",
-            "task",
-            "--task",
-            "1",
-        ],
-        "record task-boundary review dispatch lineage for final-review fixture",
-    );
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: PathBuf::from(plan_rel),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("internal preflight helper should succeed")
+}
+
+fn run_internal_gate_finish(repo: &Path, state_dir: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::run_runtime_finish_gate_json(
+        repo,
+        state_dir,
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: PathBuf::from(plan_rel),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("internal gate-finish helper should succeed")
+}
+
+fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
+    let _ = plan_execution_direct_support::run_runtime_review_dispatch_authority_json(
+        repo,
+        state_dir,
+        &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+            plan: PathBuf::from(plan_rel),
+            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            task: Some(1),
+        },
+    )
+    .expect("internal record-review-dispatch helper should succeed");
     run_plan_execution(
         repo,
         state_dir,
@@ -1101,27 +1173,12 @@ fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
     let release_path = write_release_readiness_artifact(repo, state, &base_branch);
     publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
 
-    let phase_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "phase", "--json"],
-        &[],
-        "workflow phase for final-review-focused shard",
-    );
-    let handoff_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "handoff", "--json"],
-        &[],
-        "workflow handoff for final-review-focused shard",
-    );
-    let gate_finish_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "gate", "finish", "--plan", PLAN_REL, "--json"],
-        &[],
-        "workflow finish gate for final-review-focused shard",
-    );
+    let runtime =
+        discover_execution_runtime(repo, state, "workflow_runtime final-review-focused shard");
+    let phase_json = workflow_phase_json(&runtime, "workflow_runtime final-review-focused shard");
+    let handoff_json =
+        workflow_handoff_json(&runtime, "workflow_runtime final-review-focused shard");
+    let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
 
     assert_eq!(
         phase_json["phase"], "final_review_pending",
@@ -1135,7 +1192,7 @@ fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
     );
     assert_eq!(
         handoff_json["recommendation_reason"],
-        "Finish readiness requires a current final-review milestone for the current branch closure."
+        "Authoritative final review truth is missing for review readiness."
     );
     assert_eq!(gate_finish_json["allowed"], false);
     assert_eq!(gate_finish_json["failure_class"], "ReviewArtifactNotFresh");
@@ -1164,12 +1221,7 @@ fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary final-review fixture execution",
     );
-    let preflight = run_plan_execution(
-        repo,
-        state,
-        &["preflight", "--plan", PLAN_REL],
-        "preflight for task-boundary final-review fixture execution",
-    );
+    let preflight = run_internal_preflight(repo, state, PLAN_REL);
     assert_eq!(preflight["allowed"], true);
 
     let begin_task1 = run_plan_execution(
@@ -1234,20 +1286,16 @@ fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
         1,
         &strategy_checkpoint_fingerprint,
     );
-    run_plan_execution(
+    let _ = plan_execution_direct_support::run_runtime_review_dispatch_authority_json(
         repo,
         state,
-        &[
-            "record-review-dispatch",
-            "--plan",
-            PLAN_REL,
-            "--scope",
-            "task",
-            "--task",
-            "1",
-        ],
-        "record task review dispatch before task 2 begin for task-boundary final-review fixture",
-    );
+        &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+            plan: PathBuf::from(PLAN_REL),
+            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            task: Some(1),
+        },
+    )
+    .expect("internal record-review-dispatch helper should succeed");
 
     let status_before_task2 = run_plan_execution(
         repo,
@@ -1312,32 +1360,17 @@ fn workflow_phase_keeps_branch_completion_when_review_receipt_head_drifts() {
     );
     publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
 
-    let phase_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "phase", "--json"],
-        &[],
-        "workflow phase for stale-review-focused shard",
-    );
-    let handoff_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "handoff", "--json"],
-        &[],
-        "workflow handoff for stale-review-focused shard",
-    );
-    let gate_finish_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "gate", "finish", "--plan", PLAN_REL, "--json"],
-        &[],
-        "workflow finish gate for stale-review-focused shard",
-    );
-    let status_json = run_plan_execution(
-        repo,
-        state,
-        &["status", "--plan", PLAN_REL],
-        "plan execution status for stale-review-focused shard",
+    let runtime =
+        discover_execution_runtime(repo, state, "workflow_runtime stale-review-focused shard");
+    let phase_json = workflow_phase_json(&runtime, "workflow_runtime stale-review-focused shard");
+    let handoff_json =
+        workflow_handoff_json(&runtime, "workflow_runtime stale-review-focused shard");
+    let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+    let status_json = plan_execution_status_json(
+        &runtime,
+        PLAN_REL,
+        false,
+        "workflow_runtime stale-review-focused shard",
     );
 
     assert_eq!(phase_json["phase"], "ready_for_branch_completion");
@@ -1368,32 +1401,25 @@ fn workflow_phase_keeps_branch_completion_when_reviewer_source_text_regresses() 
     );
     publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
 
-    let phase_json = run_featureforge_with_env(
+    let runtime = discover_execution_runtime(
         repo,
         state,
-        &["workflow", "phase", "--json"],
-        &[],
-        "workflow phase for non-independent-reviewer-source shard",
+        "workflow_runtime non-independent-reviewer-source shard",
     );
-    let handoff_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "handoff", "--json"],
-        &[],
-        "workflow handoff for non-independent-reviewer-source shard",
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "workflow_runtime non-independent-reviewer-source shard",
     );
-    let gate_finish_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "gate", "finish", "--plan", PLAN_REL, "--json"],
-        &[],
-        "workflow finish gate for non-independent-reviewer-source shard",
+    let handoff_json = workflow_handoff_json(
+        &runtime,
+        "workflow_runtime non-independent-reviewer-source shard",
     );
-    let status_json = run_plan_execution(
-        repo,
-        state,
-        &["status", "--plan", PLAN_REL],
-        "plan execution status for non-independent-reviewer-source shard",
+    let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+    let status_json = plan_execution_status_json(
+        &runtime,
+        PLAN_REL,
+        false,
+        "workflow_runtime non-independent-reviewer-source shard",
     );
 
     assert_eq!(phase_json["phase"], "ready_for_branch_completion");
@@ -1421,32 +1447,25 @@ fn workflow_phase_keeps_branch_completion_when_reviewer_artifact_is_unreadable()
     fs::remove_file(&reviewer_artifact_path).expect("reviewer artifact should remove");
     publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
 
-    let phase_json = run_featureforge_with_env(
+    let runtime = discover_execution_runtime(
         repo,
         state,
-        &["workflow", "phase", "--json"],
-        &[],
-        "workflow phase for unreadable-reviewer-artifact shard",
+        "workflow_runtime unreadable-reviewer-artifact shard",
     );
-    let handoff_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "handoff", "--json"],
-        &[],
-        "workflow handoff for unreadable-reviewer-artifact shard",
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "workflow_runtime unreadable-reviewer-artifact shard",
     );
-    let gate_finish_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "gate", "finish", "--plan", PLAN_REL, "--json"],
-        &[],
-        "workflow finish gate for unreadable-reviewer-artifact shard",
+    let handoff_json = workflow_handoff_json(
+        &runtime,
+        "workflow_runtime unreadable-reviewer-artifact shard",
     );
-    let status_json = run_plan_execution(
-        repo,
-        state,
-        &["status", "--plan", PLAN_REL],
-        "plan execution status for unreadable-reviewer-artifact shard",
+    let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+    let status_json = plan_execution_status_json(
+        &runtime,
+        PLAN_REL,
+        false,
+        "workflow_runtime unreadable-reviewer-artifact shard",
     );
 
     assert_eq!(phase_json["phase"], "ready_for_branch_completion");
@@ -1521,53 +1540,53 @@ fn workflow_phase_keeps_branch_completion_for_non_authoritative_reviewer_failure
         },
     ];
 
-    for case in cases {
-        let fixture_name = format!("workflow-runtime-{}", case.name);
-        let (repo_dir, state_dir) = init_repo(&fixture_name);
-        let repo = repo_dir.path();
-        let state = state_dir.path();
+    let (template_repo_dir, template_state_dir) =
+        init_repo("workflow-runtime-reviewer-failure-template");
+    let template_repo = template_repo_dir.path();
+    let template_state = template_state_dir.path();
+    write_approved_spec(template_repo);
+    write_single_step_plan(template_repo, "featureforge:executing-plans");
+    mark_all_plan_steps_checked(template_repo);
+    write_single_step_v2_completed_attempt(
+        template_repo,
+        &expected_packet_fingerprint(template_repo, 1, 1),
+    );
+    write_test_plan_artifact(template_repo, template_state, "no");
+    let template_base_branch = expected_base_branch(template_repo);
+    let template_release_path =
+        write_release_readiness_artifact(template_repo, template_state, &template_base_branch);
+    publish_authoritative_release_truth(
+        template_repo,
+        template_state,
+        &template_release_path,
+        &template_base_branch,
+    );
+    let repo_dir = TempDir::new().expect("repo tempdir should exist");
+    let state_dir = TempDir::new().expect("state tempdir should exist");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
 
-        write_approved_spec(repo);
-        write_single_step_plan(repo, "featureforge:executing-plans");
-        mark_all_plan_steps_checked(repo);
-        write_single_step_v2_completed_attempt(repo, &expected_packet_fingerprint(repo, 1, 1));
-        write_test_plan_artifact(repo, state, "no");
+    for case in cases {
+        copy_dir_recursive(template_repo, repo);
+        copy_dir_recursive(template_state, state);
+
         let base_branch = expected_base_branch(repo);
         let review_path = write_code_review_artifact(repo, state, &base_branch);
-        let release_path = write_release_readiness_artifact(repo, state, &base_branch);
-        publish_authoritative_release_truth(repo, state, &release_path, &base_branch);
         (case.mutate)(repo, state, &review_path, &base_branch);
         publish_authoritative_final_review_truth(repo, state, &review_path, &base_branch);
 
-        let phase_json = run_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[],
-            &format!("workflow phase for {}", case.name),
-        );
-        let handoff_json = run_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[],
-            &format!("workflow handoff for {}", case.name),
-        );
-        let gate_finish_json = run_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "gate", "finish", "--plan", PLAN_REL, "--json"],
-            &[],
-            &format!("workflow finish gate for {}", case.name),
-        );
-        let status_json = run_plan_execution(
-            repo,
-            state,
-            &["status", "--plan", PLAN_REL],
-            &format!("plan execution status for {}", case.name),
+        let runtime =
+            discover_execution_runtime(repo, state, "workflow_runtime reviewer failure family");
+        let handoff_json =
+            workflow_handoff_json(&runtime, "workflow_runtime reviewer failure family");
+        let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+        let status_json = plan_execution_status_json(
+            &runtime,
+            PLAN_REL,
+            false,
+            "workflow_runtime reviewer failure family",
         );
 
-        assert_eq!(phase_json["phase"], case.expected_phase, "{}", case.name);
         assert_eq!(handoff_json["phase"], case.expected_phase, "{}", case.name);
         assert_eq!(status_json["phase"], case.expected_phase, "{}", case.name);
         assert_eq!(
@@ -1606,11 +1625,13 @@ fn document_release_precedes_final_review_after_release_truth_stales() {
         ],
     );
 
-    let phase_json = run_featureforge_with_env(
+    let runtime = discover_execution_runtime(
         repo,
         state,
-        &["workflow", "phase", "--json"],
-        &[],
+        "workflow runtime for release-before-final-review regression",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase for release-before-final-review regression",
     );
     let operator_json = run_featureforge_with_env(
@@ -1620,12 +1641,9 @@ fn document_release_precedes_final_review_after_release_truth_stales() {
         &[],
         "workflow operator for release-before-final-review regression",
     );
-    let doctor_json = run_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "doctor", "--json"],
-        &[],
-        "workflow doctor for release-before-final-review regression",
+    let handoff_json = workflow_handoff_json(
+        &runtime,
+        "workflow handoff for release-before-final-review regression",
     );
     let status_json = run_plan_execution(
         repo,
@@ -1636,13 +1654,13 @@ fn document_release_precedes_final_review_after_release_truth_stales() {
 
     assert_eq!(phase_json["phase"], "document_release_pending");
     assert_eq!(operator_json["phase"], "document_release_pending");
-    assert_eq!(doctor_json["phase"], "document_release_pending");
+    assert_eq!(handoff_json["phase"], "document_release_pending");
     assert_eq!(status_json["phase"], "document_release_pending");
     assert_eq!(phase_json["next_action"], "advance late stage");
     assert_eq!(operator_json["phase"], status_json["phase"]);
     assert_eq!(operator_json["phase_detail"], status_json["phase_detail"]);
-    assert_eq!(doctor_json["phase"], operator_json["phase"]);
-    assert_eq!(doctor_json["phase_detail"], operator_json["phase_detail"]);
+    assert_eq!(handoff_json["phase"], operator_json["phase"]);
+    assert_eq!(handoff_json["phase_detail"], operator_json["phase_detail"]);
     let phase_detail = status_json["phase_detail"]
         .as_str()
         .expect("release-precedence regression should include phase_detail");
@@ -1669,7 +1687,7 @@ fn document_release_precedes_final_review_after_release_truth_stales() {
         Value::from(expected_command.clone())
     );
     assert_eq!(
-        doctor_json["recommended_command"],
+        handoff_json["recommended_command"],
         Value::from(expected_command)
     );
 }

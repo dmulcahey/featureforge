@@ -174,26 +174,10 @@ fn plan_execution_note_rejects_unknown_states_at_parse_boundary() {
     let output = run_featureforge(
         repo,
         state,
-        &[
-            "plan",
-            "execution",
-            "note",
-            "--plan",
-            PLAN_REL,
-            "--task",
-            "1",
-            "--step",
-            "1",
-            "--state",
-            "paused",
-            "--message",
-            "fixture note",
-            "--expect-execution-fingerprint",
-            "ignored-for-parse-boundary",
-        ],
-        "plan execution note invalid state",
+        &["plan", "execution", "note"],
+        "plan execution note removed",
     );
-    let json = parse_failure_json(&output, "plan execution note invalid state");
+    let json = parse_failure_json(&output, "plan execution note removed");
 
     assert_eq!(
         json["error_class"],
@@ -202,9 +186,8 @@ fn plan_execution_note_rejects_unknown_states_at_parse_boundary() {
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
-    assert!(message.contains("possible values"));
-    assert!(message.contains("blocked"));
-    assert!(message.contains("interrupted"));
+    assert!(message.contains("unrecognized subcommand"));
+    assert!(message.contains("note"));
 }
 
 #[test]
@@ -240,9 +223,7 @@ fn plan_execution_recommend_rejects_unknown_strategy_flags_at_parse_boundary() {
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
-    assert!(message.contains("possible values"));
-    assert!(message.contains("available"));
-    assert!(message.contains("unavailable"));
+    assert!(message.contains("unrecognized subcommand 'recommend'"));
 }
 
 #[test]
@@ -278,12 +259,16 @@ fn plan_execution_task3_commands_require_their_artifact_flags_at_parse_boundary(
             .as_str()
             .expect("failure message should stay a string");
         assert!(
-            message.contains("required arguments were not provided"),
-            "command {command_name} should be parsed and fail because a required argument is missing, got: {message}"
+            message.contains("unrecognized subcommand"),
+            "removed command {command_name} should fail as unknown, got: {message}"
         );
         assert!(
-            message.contains(required_flag),
-            "command {command_name} should require {required_flag}, got: {message}"
+            message.contains(command_name),
+            "removed command {command_name} should be named in the parse-boundary error, got: {message}"
+        );
+        assert!(
+            !message.contains(required_flag),
+            "removed command {command_name} should not parse into legacy flag validation, got: {message}"
         );
     }
 }
@@ -318,8 +303,7 @@ fn plan_execution_record_review_dispatch_requires_scope_at_parse_boundary() {
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
-    assert!(message.contains("required arguments were not provided"));
-    assert!(message.contains("--scope"));
+    assert!(message.contains("unrecognized subcommand 'record-review-dispatch'"));
 }
 
 #[test]
@@ -352,10 +336,7 @@ fn plan_execution_record_release_readiness_requires_primitive_arguments_at_parse
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
-    assert!(message.contains("required arguments were not provided"));
-    assert!(message.contains("--branch-closure-id"));
-    assert!(message.contains("--result"));
-    assert!(message.contains("--summary-file"));
+    assert!(message.contains("unrecognized subcommand 'record-release-readiness'"));
 }
 
 #[test]
@@ -388,13 +369,7 @@ fn plan_execution_record_final_review_requires_primitive_arguments_at_parse_boun
     let message = json["message"]
         .as_str()
         .expect("failure message should stay a string");
-    assert!(message.contains("required arguments were not provided"));
-    assert!(message.contains("--branch-closure-id"));
-    assert!(message.contains("--dispatch-id"));
-    assert!(message.contains("--reviewer-source"));
-    assert!(message.contains("--reviewer-id"));
-    assert!(message.contains("--result"));
-    assert!(message.contains("--summary-file"));
+    assert!(message.contains("unrecognized subcommand 'record-final-review'"));
 }
 
 #[test]
@@ -518,6 +493,50 @@ fn session_entry_command_is_removed_from_active_cli_surface() {
         .expect("failure message should stay a string");
     assert!(message.contains("unrecognized subcommand"));
     assert!(message.contains("session-entry"));
+}
+
+#[test]
+fn workflow_hidden_compatibility_commands_are_removed_from_active_cli_surface() {
+    let (repo_dir, state_dir) = init_repo("cli-boundary-workflow-hidden-commands");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+
+    for command in [
+        ["workflow", "resolve"].as_slice(),
+        [
+            "workflow",
+            "expect",
+            "--artifact",
+            "spec",
+            "--path",
+            SPEC_REL,
+        ]
+        .as_slice(),
+        ["workflow", "sync", "--artifact", "spec"].as_slice(),
+        ["workflow", "next"].as_slice(),
+        ["workflow", "artifacts"].as_slice(),
+        ["workflow", "explain"].as_slice(),
+        ["workflow", "phase", "--json"].as_slice(),
+        ["workflow", "doctor", "--json"].as_slice(),
+        ["workflow", "handoff", "--json"].as_slice(),
+    ] {
+        let output = run_featureforge(
+            repo,
+            state,
+            command,
+            "workflow hidden compatibility command parse boundary",
+        );
+        let json = parse_failure_json(&output, "workflow hidden compatibility command");
+
+        assert_eq!(
+            json["error_class"],
+            Value::String(String::from("InvalidCommandInput"))
+        );
+        let message = json["message"]
+            .as_str()
+            .expect("failure message should stay a string");
+        assert!(message.contains("unrecognized subcommand"));
+    }
 }
 
 #[cfg(unix)]

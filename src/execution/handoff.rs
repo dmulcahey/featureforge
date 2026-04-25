@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::event_log::load_reduced_authoritative_state_for_state_path;
 use crate::git::sha256_hex;
 use crate::paths::harness_state_path;
 
@@ -32,23 +33,29 @@ pub(crate) struct WorkflowTransferRecordInput<'a> {
     pub reason: &'a str,
 }
 
+#[cfg(test)]
 pub(crate) fn current_workflow_transfer_record_exists(
     state_dir: &Path,
     identity: WorkflowTransferRecordIdentity<'_>,
 ) -> bool {
-    let Some(checkpoint) = authoritative_handoff_checkpoint(state_dir, identity) else {
-        return false;
-    };
+    current_workflow_transfer_record_path(state_dir, identity).is_some()
+}
+
+pub(crate) fn current_workflow_transfer_record_path(
+    state_dir: &Path,
+    identity: WorkflowTransferRecordIdentity<'_>,
+) -> Option<PathBuf> {
+    let checkpoint = authoritative_handoff_checkpoint(state_dir, identity)?;
     if checkpoint.handoff_required {
-        return false;
+        return None;
     }
     if !workflow_transfer_record_matches_decision(&checkpoint.path, identity) {
-        return false;
+        return None;
     }
     let Ok(record_source) = fs::read_to_string(&checkpoint.path) else {
-        return false;
+        return None;
     };
-    sha256_hex(record_source.as_bytes()) == checkpoint.fingerprint
+    (sha256_hex(record_source.as_bytes()) == checkpoint.fingerprint).then_some(checkpoint.path)
 }
 
 pub(crate) fn latest_matching_workflow_transfer_record(
@@ -225,8 +232,9 @@ fn authoritative_handoff_checkpoint(
     identity: WorkflowTransferRecordIdentity<'_>,
 ) -> Option<HandoffCheckpoint> {
     let state_path = harness_state_path(state_dir, identity.repo_slug, identity.branch_name);
-    let source = fs::read_to_string(state_path).ok()?;
-    let payload: Value = serde_json::from_str(&source).ok()?;
+    let payload = load_reduced_authoritative_state_for_state_path(&state_path)
+        .ok()
+        .flatten()?;
     let root = payload.as_object()?;
     let path = root
         .get("last_handoff_path")

@@ -31,14 +31,15 @@ use crate::workflow::manifest::{
     recover_slug_changed_manifest, recover_slug_changed_manifest_read_only, save_manifest,
 };
 use crate::workflow::markdown_scan::markdown_files_under;
-use crate::workflow::operator::WorkflowOperator;
+use crate::workflow::operator::{WorkflowHandoff, WorkflowOperator};
 
 const ACTIVE_SPEC_ROOT: &str = "docs/featureforge/specs";
 const ACTIVE_PLAN_ROOT: &str = "docs/featureforge/plans";
 const ACTIVE_IMPLEMENTATION_TARGET_INDEX: &str =
     "docs/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md";
 const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
-const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 2;
+const WORKFLOW_HANDOFF_SCHEMA_VERSION: u32 = 3;
+const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowRoute {
@@ -1218,9 +1219,17 @@ pub fn record_plan_fidelity_receipt(
     current_dir: &Path,
     args: &PlanFidelityRecordArgs,
 ) -> Result<PlanFidelityRecord, DiagnosticError> {
+    let state_dir = featureforge_state_dir();
+    record_plan_fidelity_receipt_with_state_dir(current_dir, &state_dir, args)
+}
+
+pub fn record_plan_fidelity_receipt_with_state_dir(
+    current_dir: &Path,
+    state_dir: &Path,
+    args: &PlanFidelityRecordArgs,
+) -> Result<PlanFidelityRecord, DiagnosticError> {
     let slug_identity = discover_slug_identity(current_dir);
     let repo_root = slug_identity.repo_root.clone();
-    let state_dir = featureforge_state_dir();
     let plan_path = normalize_repo_path(&args.plan)?;
     let plan_abs = repo_root.join(&plan_path);
     let plan = parse_plan_file(&plan_abs)?;
@@ -1248,7 +1257,7 @@ pub fn record_plan_fidelity_receipt(
             verified_requirement_ids: &review_artifact.verified_requirement_ids,
         });
     let receipt_path = plan_fidelity_receipt_path(
-        &state_dir,
+        state_dir,
         &slug_identity.repo_slug,
         &slug_identity.branch_name,
     );
@@ -1290,7 +1299,7 @@ pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
     })?;
 
     let status_schema = workflow_route_schema_json("workflow status")?;
-    let resolve_schema = workflow_route_schema_json("workflow resolve")?;
+    let handoff_schema = workflow_handoff_schema_json("workflow handoff")?;
     let operator_schema = workflow_operator_schema_json("workflow operator")?;
 
     fs::write(
@@ -1304,13 +1313,13 @@ pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), Diagno
         )
     })?;
     fs::write(
-        output_dir.join("workflow-resolve.schema.json"),
-        resolve_schema,
+        output_dir.join("workflow-handoff.schema.json"),
+        handoff_schema,
     )
     .map_err(|err| {
         DiagnosticError::new(
             FailureClass::InstructionParseFailed,
-            format!("Could not write workflow-resolve schema: {err}"),
+            format!("Could not write workflow-handoff schema: {err}"),
         )
     })?;
     fs::write(
@@ -1362,6 +1371,22 @@ fn workflow_operator_schema_json(schema_label: &str) -> Result<String, Diagnosti
     })
 }
 
+fn workflow_handoff_schema_json(schema_label: &str) -> Result<String, DiagnosticError> {
+    let mut schema = serde_json::to_value(schema_for!(WorkflowHandoff)).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize {schema_label} schema: {err}"),
+        )
+    })?;
+    lock_workflow_handoff_schema_version(&mut schema)?;
+    serde_json::to_string_pretty(&schema).map_err(|err| {
+        DiagnosticError::new(
+            FailureClass::InstructionParseFailed,
+            format!("Could not serialize {schema_label} schema: {err}"),
+        )
+    })
+}
+
 fn lock_workflow_route_schema_version(
     schema: &mut serde_json::Value,
 ) -> Result<(), DiagnosticError> {
@@ -1400,6 +1425,27 @@ fn lock_workflow_operator_schema_version(
     schema_version.insert(
         String::from("const"),
         serde_json::Value::from(WORKFLOW_OPERATOR_SCHEMA_VERSION),
+    );
+    Ok(())
+}
+
+fn lock_workflow_handoff_schema_version(
+    schema: &mut serde_json::Value,
+) -> Result<(), DiagnosticError> {
+    let schema_version = schema
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|properties| properties.get_mut("schema_version"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| {
+            DiagnosticError::new(
+                FailureClass::InstructionParseFailed,
+                "WorkflowHandoff schema is missing the schema_version property.",
+            )
+        })?;
+    schema_version.insert(
+        String::from("const"),
+        serde_json::Value::from(WORKFLOW_HANDOFF_SCHEMA_VERSION),
     );
     Ok(())
 }

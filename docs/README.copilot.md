@@ -59,7 +59,7 @@ Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-re
 - `using-featureforge` is the human-readable entry router that consults `featureforge workflow` directly from repo-visible artifacts.
 - `featureforge:project-memory` is an opt-in supportive memory skill for `docs/project_notes/*`; use it only for explicit memory-oriented requests or later follow-up updates, not as a default workflow stage or gate
 - generated skill preambles always invoke the packaged install binary under `~/.featureforge/install/bin/` (`featureforge` on Unix, `featureforge.exe` on Windows), and that runtime resolves the active root through `featureforge repo runtime-root --path` before update checks or contributor-mode reads
-- the generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; use `featureforge workflow status --refresh` only to discover the approved plan path, then route with workflow/operator
+- the generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; if no approved plan path is known, resolve it through the normal planning/review handoff, then route with workflow/operator
 - `featureforge plan contract` compiles approved markdown into exact execution and review inputs
 - workflow/operator and approved-plan execution metadata select the execution owner skill before work starts; do not route from status-only compatibility fields
 - task closure is task-boundary gated: Task `N+1` may begin only after Task `N` has a current positive task-closure record; dedicated-independent fresh-context review loops and task verification are inputs to `featureforge plan execution close-current-task --plan <approved-plan-path> ...`; keep normal progression on operator-led intent-level commands and do not require low-level review-dispatch primitives in the normal path
@@ -72,8 +72,7 @@ Accelerated review is an opt-in branch inside `plan-ceo-review` and `plan-eng-re
 - `featureforge plan execution status --plan <approved-plan-path>` surfaces runtime strategy checkpoint state (`strategy_state`, `strategy_checkpoint_kind`, `last_strategy_checkpoint_fingerprint`, `strategy_reset_required`)
 - for workflow-routed terminal sequencing, run `featureforge:document-release` before terminal `featureforge:requesting-code-review`, then continue to `featureforge:qa-only` (when required) and `featureforge:finishing-a-development-branch`
 - compatibility/debug command boundaries (low-level `record-*` and related compatibility commands) must not be required in the normal path; normal progression stays on `workflow operator`, `close-current-task`, and `advance-late-stage`
-- hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` remain out-of-normal-path diagnostics/helpers only
-- `featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.
+- hidden compatibility/debug commands have been removed from the public CLI surface; normal routing and recommendations must use public commands only
 
 Runtime strategy checkpointing is execution-owned, not planning-owned. The runtime records:
 

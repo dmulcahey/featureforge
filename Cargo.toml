@@ -1,6 +1,6 @@
 [package]
 name = "featureforge"
-version = "1.9.1"
+version = "1.10.0"
 edition = "2024"
 rust-version = "1.94"
 publish = false
@@ -12,6 +12,9 @@ name = "featureforge"
 
 [workspace]
 resolver = "2"
+
+[features]
+internal-test-support = []
 
 [workspace.dependencies]
 assert_cmd = "2.2.0"

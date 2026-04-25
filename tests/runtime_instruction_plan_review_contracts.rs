@@ -41,11 +41,11 @@ fn skill_docs_route_plan_review_through_independent_fidelity_gate() {
     );
     assert_file_contains(
         root.join("skills/plan-fidelity-review/SKILL.md"),
-        "\"$_FEATUREFORGE_BIN\" workflow plan-fidelity record --plan",
+        "Do not call removed workflow helper commands from this skill.",
     );
-    assert_file_contains(
+    assert_file_not_contains(
         root.join("skills/plan-fidelity-review/SKILL.md"),
-        "--review-artifact",
+        "workflow plan-fidelity record",
     );
     assert_file_not_contains(
         root.join("skills/plan-fidelity-review/SKILL.md"),

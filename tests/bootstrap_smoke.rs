@@ -88,7 +88,6 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
         for command in [
             "status",
             "begin",
-            "note",
             "complete",
             "reopen",
             "transfer",
@@ -108,7 +107,6 @@ fn plan_execution_help_surface_hides_low_level_compatibility_commands() {
             "Intent-level task-closure command.",
             "Intent-level late-stage progression command.",
             "Execution step start recorder.",
-            "Execution interruption/block note recorder.",
             "Execution step completion recorder.",
             "Execution task reopen recorder.",
             "Execution handoff transfer recorder.",
@@ -195,15 +193,14 @@ fn workflow_help_surface_hides_compatibility_only_commands() {
         );
         let stdout =
             String::from_utf8(output.stdout).expect("workflow help stdout should be utf-8");
-        for command in ["status", "operator", "record-pivot", "plan-fidelity"] {
-            assert!(
-                stdout
-                    .lines()
-                    .any(|line| line.trim_start().starts_with(command)),
-                "workflow --help should expose `{command}` for binary {}, got:\n{stdout}",
-                binary.display()
-            );
-        }
+        let command = "operator";
+        assert!(
+            stdout
+                .lines()
+                .any(|line| line.trim_start().starts_with(command)),
+            "workflow --help should expose `{command}` for binary {}, got:\n{stdout}",
+            binary.display()
+        );
         for compatibility_only in [
             "resolve",
             "expect",
@@ -229,51 +226,28 @@ fn workflow_help_surface_hides_compatibility_only_commands() {
 }
 
 #[test]
-fn workflow_direct_help_labels_non_normal_commands() {
+fn workflow_record_pivot_help_is_removed_from_public_surface() {
     for binary in featureforge_help_binaries() {
-        let record_pivot = std::process::Command::new(&binary)
+        let output = std::process::Command::new(&binary)
             .args(["workflow", "record-pivot", "--help"])
             .output()
             .unwrap_or_else(|error| {
                 panic!(
-                    "workflow record-pivot --help should run for binary {}: {error}",
+                    "workflow record-pivot --help should execute for binary {}: {error}",
                     binary.display()
                 )
             });
         assert!(
-            record_pivot.status.success(),
-            "expected workflow record-pivot --help to succeed for binary {}, got {:?}",
+            !output.status.success(),
+            "workflow record-pivot --help should be rejected for binary {}, got {:?}",
             binary.display(),
-            record_pivot.status
+            output.status
         );
-        let record_pivot_stdout = String::from_utf8(record_pivot.stdout)
-            .expect("workflow record-pivot help stdout should be utf-8");
+        let stderr = String::from_utf8(output.stderr)
+            .expect("workflow record-pivot help stderr should be utf-8");
         assert!(
-            record_pivot_stdout.contains("Expert-only workflow pivot record emitter."),
-            "workflow record-pivot --help should label the command as expert-only for binary {}, got:\n{record_pivot_stdout}",
-            binary.display()
-        );
-
-        let preflight = std::process::Command::new(&binary)
-            .args(["workflow", "preflight", "--help"])
-            .output()
-            .unwrap_or_else(|error| {
-                panic!(
-                    "workflow preflight --help should run for binary {}: {error}",
-                    binary.display()
-                )
-            });
-        assert!(
-            preflight.status.success(),
-            "expected workflow preflight --help to succeed for binary {}, got {:?}",
-            binary.display(),
-            preflight.status
-        );
-        let preflight_stdout = String::from_utf8(preflight.stdout)
-            .expect("workflow preflight help stdout should be utf-8");
-        assert!(
-            preflight_stdout.contains("Compatibility-only execution preflight helper."),
-            "workflow preflight --help should label the command as compatibility-only for binary {}, got:\n{preflight_stdout}",
+            stderr.contains("unrecognized subcommand 'record-pivot'"),
+            "workflow record-pivot --help should fail with unknown-subcommand for binary {}, got:\n{stderr}",
             binary.display()
         );
     }
@@ -299,19 +273,24 @@ fn direct_compatibility_command_help_marks_non_normal_flow_usage() {
                         binary.display()
                     )
                 });
-            assert!(
-                output.status.success(),
-                "expected plan execution {compatibility_command} --help to succeed for binary {}, got {:?}",
-                binary.display(),
-                output.status
-            );
             let stdout = String::from_utf8(output.stdout)
-                .expect("compatibility command help stdout should be utf-8");
-            assert!(
-                stdout.contains("Compatibility/debug"),
-                "direct compatibility command help should explicitly mark non-normal flow usage for `{compatibility_command}` on binary {}, got:\n{stdout}",
-                binary.display()
-            );
+                .expect("compatibility command stdout should be utf-8");
+            let stderr = String::from_utf8(output.stderr)
+                .expect("compatibility command stderr should be utf-8");
+            let combined = format!("{stdout}\n{stderr}");
+            if output.status.success() {
+                assert!(
+                    stdout.contains("Compatibility/debug"),
+                    "legacy compatibility command `{compatibility_command}` should remain explicitly marked as non-normal flow for binary {}, got:\n{stdout}",
+                    binary.display()
+                );
+            } else {
+                assert!(
+                    combined.contains("unrecognized subcommand"),
+                    "removed compatibility command `{compatibility_command}` should fail as unknown for binary {}, got:\n{combined}",
+                    binary.display()
+                );
+            }
         }
     }
 }

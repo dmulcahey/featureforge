@@ -58,7 +58,6 @@ pub(crate) struct ClosureEvaluation {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ClosureGraphSignals {
-    pub(crate) current_task_closure_ids: Vec<String>,
     pub(crate) current_branch_closure_id: Option<String>,
     pub(crate) overlay_current_branch_closure_id: Option<String>,
     pub(crate) finish_review_gate_pass_branch_closure_id: Option<String>,
@@ -77,16 +76,6 @@ impl ClosureGraphSignals {
         missing_current_closure_stale_provenance: bool,
         stale_reason_codes: Vec<String>,
     ) -> Self {
-        let current_task_closure_ids = authoritative_state
-            .map(|state| {
-                state
-                    .current_task_closure_results()
-                    .into_values()
-                    .map(|record| record.closure_record_id.trim().to_owned())
-                    .filter(|record_id| !record_id.is_empty())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
         let current_branch_closure_id = authoritative_state
             .and_then(|state| state.bound_current_branch_closure_identity())
             .map(|identity| identity.branch_closure_id);
@@ -94,12 +83,21 @@ impl ClosureGraphSignals {
             .and_then(AuthoritativeTransitionState::finish_review_gate_pass_branch_closure_id);
         let current_final_review_branch_closure_id = authoritative_state
             .and_then(AuthoritativeTransitionState::current_final_review_record)
-            .map(|record| record.branch_closure_id);
+            .map(|record| record.branch_closure_id)
+            .or_else(|| {
+                authoritative_state
+                    .and_then(AuthoritativeTransitionState::current_final_review_branch_closure_id)
+                    .map(str::to_owned)
+            });
         let current_qa_branch_closure_id = authoritative_state
             .and_then(AuthoritativeTransitionState::current_browser_qa_record)
-            .map(|record| record.branch_closure_id);
+            .map(|record| record.branch_closure_id)
+            .or_else(|| {
+                authoritative_state
+                    .and_then(AuthoritativeTransitionState::current_qa_branch_closure_id)
+                    .map(str::to_owned)
+            });
         Self {
-            current_task_closure_ids,
             current_branch_closure_id,
             overlay_current_branch_closure_id: overlay_current_branch_closure_id
                 .map(str::trim)
@@ -804,9 +802,6 @@ fn late_stage_candidate_closure_ids_from_signals(signals: &ClosureGraphSignals) 
         }
         closure_ids.insert(closure_id.to_owned());
     }
-    if closure_ids.is_empty() {
-        closure_ids.extend(signals.current_task_closure_ids.iter().cloned());
-    }
     closure_ids.into_iter().collect()
 }
 
@@ -972,6 +967,39 @@ mod tests {
                 .stale_reason_codes
                 .iter()
                 .any(|code| code == "files_proven_drifted")
+        );
+    }
+
+    #[test]
+    fn does_not_project_late_stage_staleness_onto_current_task_closures_without_bound_targets() {
+        let snapshot = ClosureHistorySnapshot {
+            task_closure_record_history: BTreeMap::from([(
+                String::from("task-1-current"),
+                task_status("task-1-current", 1, "current", 7),
+            )]),
+            ..ClosureHistorySnapshot::default()
+        };
+        let signals = ClosureGraphSignals {
+            late_stage_stale_unreviewed: true,
+            stale_reason_codes: vec![String::from("final_review_state_stale")],
+            ..ClosureGraphSignals::default()
+        };
+
+        let graph = AuthoritativeClosureGraph::from_snapshot(&snapshot, &signals);
+        let current = graph
+            .current_task_closure(1)
+            .expect("current task closure should remain bound when no late-stage target ids exist");
+
+        assert_eq!(current.identity.record_id, "task-1-current");
+        assert_eq!(current.freshness, ClosureFreshness::Current);
+        assert!(
+            graph.stale_unreviewed_record_ids().is_empty(),
+            "late-stage stale projections must not reclassify current task closures when no branch/final-review/qa target ids are bound"
+        );
+        assert_eq!(
+            graph.earliest_unresolved_stale_task_number(),
+            None,
+            "late-stage stale projections without bound late-stage targets must not manufacture an execution stale-boundary task"
         );
     }
 

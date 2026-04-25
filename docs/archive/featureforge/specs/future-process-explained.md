@@ -247,9 +247,6 @@ featureforge workflow operator --plan docs/featureforge/plans/<plan>.md
 # if recommended_command is begin:
 featureforge plan execution begin --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --execution-mode <mode> --expect-execution-fingerprint <fingerprint>
 
-# auxiliary blocked/interrupted logging, not the routed recommended_command:
-featureforge plan execution note --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --state blocked|interrupted --message "<status note>" --expect-execution-fingerprint <fingerprint>
-
 featureforge workflow operator --plan docs/featureforge/plans/<plan>.md
 # if recommended_command is complete:
 featureforge plan execution complete --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --source <source> --claim <claim> --manual-verify-summary <summary> --expect-execution-fingerprint <fingerprint>
@@ -807,7 +804,7 @@ This table is a multi-step operator playbook. It is not the literal `recommended
 
 | phase | typical command bundle |
 | --- | --- |
-| `executing` | `featureforge workflow operator --plan <path>`, then the exact routed execution command returned in `recommended_command` (`begin`, `complete`, or `reopen`); `featureforge plan execution note --plan <path> --state blocked|interrupted ... --expect-execution-fingerprint <fingerprint>` remains auxiliary blocked/interrupted logging and is not the routed `recommended_command` |
+| `executing` | `featureforge workflow operator --plan <path>`, then the exact routed execution command returned in `recommended_command` (`begin`, `complete`, or `reopen`) |
 | review dispatch checkpoint | `featureforge plan execution record-review-dispatch --plan <path> --scope task --task <n>` or `featureforge plan execution record-review-dispatch --plan <path> --scope final-review`, then wait while workflow/operator reports the corresponding external-review-pending phase detail |
 | task closure | `featureforge plan execution close-current-task --plan <path> --task <n> --dispatch-id ... --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` |
 | review-state repair | `featureforge plan execution status --plan <path>`, then `featureforge plan execution repair-review-state --plan <path>`, then follow its exact returned `recommended_command`; rerun `featureforge workflow operator --plan <path>` next only when the repair command itself returns that as the immediate reroute or after completing the returned follow-up step |
@@ -930,7 +927,6 @@ featureforge workflow operator --plan docs/featureforge/plans/my-plan.md
 featureforge plan execution status --plan docs/featureforge/plans/my-plan.md
 
 featureforge plan execution begin --plan docs/featureforge/plans/my-plan.md --task 1 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint <fingerprint-1>
-featureforge plan execution note --plan docs/featureforge/plans/my-plan.md --task 1 --step 1 --state blocked --message "waiting on parser clarification" --expect-execution-fingerprint <fingerprint-2>
 featureforge plan execution complete --plan docs/featureforge/plans/my-plan.md --task 1 --step 1 --source featureforge:executing-plans --claim "implemented parser support" --manual-verify-summary "verified parser support" --expect-execution-fingerprint <fingerprint-2>
 
 featureforge plan execution record-review-dispatch --plan docs/featureforge/plans/my-plan.md --scope task --task 1

@@ -27,8 +27,10 @@ This file is project-local guidance for agents working in `featureforge`. It app
 ## Shared Truth
 
 - When the same workspace state is visible to multiple surfaces, derive that truth once in shared runtime helpers and project from there. Do not let `workflow/status`, `workflow/operator`, execution query/state, repair/reconcile, and mutators recompute the same routing or review-state truth independently.
+- When the same semantic rule, normalization, binding check, freshness decision, or path-selection rule appears in more than one place, stop and centralize it behind a shared helper or authoritative type instead of adding another local implementation.
 - The default expectation is convergence across all surfaces. Divergence is only acceptable when it is required for functionality or explicit boundary testing.
 - Any intentional divergence must be documented with a nearby code comment explaining why the boundary requires it and why the shared helper path is not being used there.
+- Tests should normally consume the same shared helper/runtime path as production code for semantic decisions. If a test helper intentionally duplicates behavior for boundary coverage, document that boundary and keep the duplicated logic minimal.
 
 ## Performance Discipline
 
@@ -89,9 +91,11 @@ This file is project-local guidance for agents working in `featureforge`. It app
 - Before calling work complete, verify both implementation correctness and workflow correctness.
 - Fresh independent review is preferred for material workflow or trust-boundary changes.
 - If a reviewer finds real issues, fix them in code or tests; do not paper over them with policy exceptions.
+- Reviews should explicitly look for reused-vs-duplicated implementations of the same runtime truth. Treat duplicated semantic logic, normalization rules, routing rules, or artifact-binding checks as a drift risk unless the boundary requires independence and that reason is documented inline.
 - Reviews for this repository should explicitly check for three recurring failure modes:
 - Reviews should treat any direct-helper vs real-CLI divergence as a bug unless the divergence is required for a boundary test and documented inline.
   - duplicate truth derivation across surfaces that should share a single authoritative decision
+  - duplicated semantic logic or normalization that should be encoded once and reused across runtime, CLI, docs, and tests
   - repeated immutable IO or missed memoization in runtime hot paths
   - semantic tests that still shell out even though the subprocess boundary is not part of the contract under test
   - git subprocess usage or repeated repo discovery in runtime/test hot paths where a shared helper or `gix` path could preserve semantics with less IO

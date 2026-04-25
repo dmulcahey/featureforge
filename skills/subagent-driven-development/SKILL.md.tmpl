@@ -82,7 +82,7 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - The returned `recommended_command` is authoritative for the immediate reroute.
 - Use `featureforge plan execution status --plan <approved-plan-path>` only when additional diagnostics are required.
 - Keep compatibility/debug-only runtime primitives out of the normal path unless explicitly debugging a compatibility boundary.
-- Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.
+- Hidden compatibility/debug command entrypoints are removed from the public CLI; normal routing must use public commands only.
 - In `*_dispatch_required` lanes, request the review and keep rerouting through workflow/operator; do not expand the normal path into low-level dispatch-lineage management.
 - MUST NOT manually edit runtime-owned execution records.
 - MUST NOT manually edit `**Execution Note:**` lines to recover runtime state.
@@ -185,9 +185,9 @@ Before dispatching any implementation subagent:
 - uses the workflow/operator execution-start handoff instead of separate compatibility-helper choreography before dispatching implementation subagents
 - calls `begin` before starting work on a plan step
 - calls `complete` after each completed step
-- calls `note` when work is interrupted or blocked
+- reports interruptions or blockers in the handoff/status surface instead of invoking a removed execution-note command
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:subagent-driven-development`
-- The approved plan checklist is the human-visible execution progress projection. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
+- The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 
@@ -218,7 +218,7 @@ Before dispatching any implementation subagent:
 - Implementer helpers/subagents must not directly invoke `record-evaluation`; the coordinator/runtime/harness owns this authoritative mutation command.
 - Implementer helpers/subagents must not directly invoke `record-handoff`; the coordinator/runtime/harness owns this authoritative mutation command.
 - Implementer helpers/subagents must not directly invoke `begin`; the coordinator/runtime helper owns this authoritative execution-state mutation.
-- Implementer helpers/subagents must not directly invoke `note`; the coordinator/runtime helper owns this authoritative execution-state mutation.
+- Implementer helpers/subagents must not directly invoke removed `note`; the coordinator/runtime helper owns interruption and execution-state mutation boundaries.
 - Implementer helpers/subagents must not directly invoke `complete`; the coordinator/runtime helper owns this authoritative execution-state mutation.
 - Implementer helpers/subagents must not directly invoke `reopen`; the coordinator/runtime helper owns this authoritative execution-state mutation.
 - Implementer helpers/subagents must not directly invoke `transfer`; the coordinator/runtime helper owns this authoritative execution-state mutation.

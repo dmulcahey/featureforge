@@ -1,5 +1,57 @@
 {
   "$defs": {
+    "Blocker": {
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "details": {
+          "type": "string"
+        },
+        "next_public_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope_key": {
+          "type": "string"
+        },
+        "scope_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "scope_type",
+        "scope_key",
+        "details"
+      ],
+      "type": "object"
+    },
+    "NextPublicAction": {
+      "properties": {
+        "args_template": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
     "WorkflowOperatorCommandKindSchema": {
       "enum": [
         "begin",
@@ -31,14 +83,6 @@
         "step_id"
       ],
       "type": "object"
-    },
-    "WorkflowOperatorFollowUpOverrideSchema": {
-      "enum": [
-        "none",
-        "record_handoff",
-        "record_pivot"
-      ],
-      "type": "string"
     },
     "WorkflowOperatorNextActionSchema": {
       "enum": [
@@ -137,6 +181,15 @@
         "clean",
         "stale_unreviewed",
         "missing_current_closure"
+      ],
+      "type": "string"
+    },
+    "WorkflowOperatorStateKindSchema": {
+      "enum": [
+        "actionable_public_command",
+        "waiting_external_input",
+        "terminal",
+        "blocked_runtime_bug"
       ],
       "type": "string"
     }
@@ -301,6 +354,12 @@
         "null"
       ]
     },
+    "blockers": {
+      "items": {
+        "$ref": "#/$defs/Blocker"
+      },
+      "type": "array"
+    },
     "blocking_reason_codes": {
       "items": {
         "type": "string"
@@ -336,11 +395,18 @@
         "null"
       ]
     },
-    "follow_up_override": {
-      "$ref": "#/$defs/WorkflowOperatorFollowUpOverrideSchema"
-    },
     "next_action": {
       "$ref": "#/$defs/WorkflowOperatorNextActionSchema"
+    },
+    "next_public_action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NextPublicAction"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "phase": {
       "$ref": "#/$defs/WorkflowOperatorPhaseSchema"
@@ -361,6 +427,12 @@
         }
       ]
     },
+    "raw_workspace_tree_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "recommended_command": {
       "type": "string"
     },
@@ -371,14 +443,20 @@
       "$ref": "#/$defs/WorkflowOperatorReviewStateStatusSchema"
     },
     "schema_version": {
-      "const": 2,
+      "const": 3,
       "format": "uint32",
-      "maximum": 2,
-      "minimum": 2,
+      "maximum": 3,
+      "minimum": 3,
       "type": "integer"
+    },
+    "semantic_workspace_tree_id": {
+      "type": "string"
     },
     "spec_path": {
       "type": "string"
+    },
+    "state_kind": {
+      "$ref": "#/$defs/WorkflowOperatorStateKindSchema"
     }
   },
   "required": [
@@ -386,8 +464,10 @@
     "phase",
     "phase_detail",
     "review_state_status",
-    "follow_up_override",
     "next_action",
+    "blocking_reason_codes",
+    "state_kind",
+    "semantic_workspace_tree_id",
     "spec_path",
     "plan_path"
   ],

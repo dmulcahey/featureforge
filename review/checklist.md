@@ -45,6 +45,12 @@ When the diff introduces a new enum value, status, tier, type, or constant famil
 - Bare literals repeated across files without a shared definition
 - Strings that are duplicated in code and tests as control signals
 
+#### Shared Runtime Reuse & Convergence
+- The same semantic rule, normalization, freshness decision, routing rule, or artifact-binding rule implemented in multiple places instead of one shared helper or authoritative type
+- New local helpers that partially re-express behavior already available from an existing shared helper, central decision path, or authoritative contract type
+- Test-only, CLI-only, or adapter-only logic that drifts from the production helper path even though the boundary itself is not what the test is exercising
+- Any intentional duplication or divergence that is not documented inline with the boundary reason
+
 #### Dead Code & Consistency
 - Assigned-but-unused values
 - Comments or docs that now describe the wrong behavior

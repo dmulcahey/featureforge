@@ -22,14 +22,16 @@ Seven layers matter:
 - `featureforge plan contract` owns semantic traceability between approved specs, approved plans, and derived task packets.
 - `featureforge plan execution` owns execution state after an approved plan is handed off.
 
-Repo-visible artifacts remain authoritative:
+Execution authority is event-only:
 
 - for this repository's shipped work packages, approved specs and plans are preserved under `docs/archive/featureforge/specs/*.md` and `docs/archive/featureforge/plans/*.md`
 - for new FeatureForge-managed project work, approved specs and plans still live under `docs/featureforge/specs/*.md` and `docs/featureforge/plans/*.md`
-- the approved plan checklist is the human-visible execution progress projection; runtime-owned execution state remains authoritative for operator routing and gates
-- runtime-owned reviewed-closure, milestone, and strategy state is authoritative for routing and gates
-- execution evidence plus release/review markdown artifacts are derived operator handoff surfaces, not the primary gate-truth source
-- branch-scoped local state lives under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
+- the approved plan checklist is the human-visible execution progress projection; the event log remains authoritative for operator routing and gates
+- once plan execution starts, branch execution truth is the append-only event log under the harness branch root (`execution-harness/events.jsonl`)
+- `state.json`, approved-plan checklist marks, execution evidence, release/readiness/review/QA markdown, and strategy displays are deterministic projections/read models
+- deleting or regenerating those projections must not change operator routing, status, review-state repair, or mutator legality
+- runtime-owned reviewed-closure, milestone, dispatch-lineage, and strategy facts are reduced from the event log for routing and gates
+- branch-scoped local projections live under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 
 ## Installation
 
@@ -70,15 +72,10 @@ Planning chain in plain language:
 
 `brainstorming -> plan-ceo-review -> writing-plans -> plan-fidelity-review -> plan-eng-review -> implementation`
 
-The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; use `featureforge workflow status --refresh` only to discover the approved plan path, then route with workflow/operator.
+The generated `using-featureforge` skill routes through `featureforge workflow operator --plan <approved-plan-path>` directly when an approved plan path is already known; if no approved plan path is known, resolve it through the normal planning/review handoff, then route with workflow/operator.
 
 Execution starts from an engineering-approved plan and the exact approved plan path.
-Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command for the current phase. The normal public execution surface is `begin`, `note`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`. Compatibility/debug helpers remain available only for exceptional or contract-boundary cases and are not part of the normal path.
-Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.
-
-`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.
-
-`rebuild-evidence` remains a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth and is not part of normal public routing.
+Use `featureforge workflow operator --plan <approved-plan-path>` as the normal routing authority, then follow the recommended intent-level command for the current phase. The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`.
 
 When workflow/operator reports stale or missing closure context, run `featureforge plan execution repair-review-state --plan <approved-plan-path>` directly.
 
@@ -124,7 +121,7 @@ Execution strategy checkpoints are runtime-owned execution state, not planning-s
 
 The approved plan path/revision remains fixed during execution. Runtime strategy may adjust topology, lane/worktree allocation, and remediation order without sending the workflow back to planning stages.
 
-The runtime records checkpoint history in authoritative harness state (`strategy_checkpoints`) and surfaces checkpoint status in `plan execution status`. Authoritative unit-review receipts are validated against the active `last_strategy_checkpoint_fingerprint`.
+The runtime records checkpoint history in the authoritative event log and renders `strategy_checkpoints` into projection state for `plan execution status`. Unit-review receipts are validated against the reduced active `last_strategy_checkpoint_fingerprint`.
 
 Use `featureforge plan execution status --plan <approved-plan-path>` to inspect:
 
@@ -163,6 +160,7 @@ node scripts/gen-agent-docs.mjs --check
 node --test tests/codex-runtime/*.test.mjs
 cargo nextest run --test workflow_runtime --test workflow_shell_smoke --test contracts_spec_plan --test runtime_instruction_contracts --test using_featureforge_skill --test session_config_slug --test repo_safety --test update_and_install --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
 cargo nextest run --test runtime_root_cli
+cargo test --test liveness_model_checker
 ```
 
 Full Rust suite without parallel cargo lock contention (single archive build + isolated shards):

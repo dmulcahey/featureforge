@@ -1,7 +1,9 @@
 //! Execution runtime ownership map:
 //! - query owns the authoritative review-state read model
-//! - recording owns authoritative reviewed-closure and milestone writes
-//! - review_state owns explain/reconcile intent adapters over those boundaries
+//! - event_log owns append-only authoritative execution history and legacy migration
+//! - reducer owns `RuntimeState = reduce(EventLog, SemanticWorkspaceSnapshot)`
+//! - router owns `RouteDecision = route(RuntimeState)`
+//! - query/review_state project read models and repair adapters from that shared core
 
 use std::path::Path;
 
@@ -10,7 +12,9 @@ pub mod closure_graph;
 pub mod command_eligibility;
 pub mod current_truth;
 pub mod dependency_index;
+pub mod event_log;
 pub mod final_review;
+pub mod follow_up;
 pub mod gates;
 pub mod handoff;
 pub mod harness;
@@ -21,7 +25,10 @@ pub mod observability;
 pub mod projection_renderer;
 pub mod query;
 pub mod recording;
+pub mod reducer;
 pub mod review_state;
+pub mod router;
+pub mod semantic_identity;
 pub mod state;
 pub mod topology;
 pub mod transitions;

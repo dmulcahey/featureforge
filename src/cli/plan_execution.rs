@@ -25,144 +25,28 @@ pub enum PlanExecutionCommand {
     #[command(about = "Diagnostic routing status query.")]
     Status(StatusArgs),
     #[command(
-        hide = true,
-        about = "Compatibility/debug recommendation helper (not part of normal plan execution flow)."
-    )]
-    Recommend(RecommendArgs),
-    #[command(
-        hide = true,
-        about = "Compatibility/debug preflight helper (not part of normal plan execution flow)."
-    )]
-    Preflight(StatusArgs),
-    #[command(name = "internal", hide = true)]
-    Internal(InternalPlanExecutionCli),
-    #[command(
-        name = "rebuild-evidence",
-        hide = true,
-        about = "Compatibility/debug projection-regeneration helper (not part of normal plan execution flow)."
-    )]
-    RebuildEvidence(RebuildEvidenceArgs),
-    #[command(
-        name = "gate-contract",
-        hide = true,
-        about = "Compatibility/debug contract gate (internal workflow boundary)."
-    )]
-    GateContract(GateContractArgs),
-    #[command(
-        name = "record-contract",
-        hide = true,
-        about = "Compatibility/debug contract recorder (internal workflow boundary)."
-    )]
-    RecordContract(RecordContractArgs),
-    #[command(
-        name = "gate-evaluator",
-        hide = true,
-        about = "Compatibility/debug evaluator gate (internal workflow boundary)."
-    )]
-    GateEvaluator(GateEvaluatorArgs),
-    #[command(
-        name = "record-evaluation",
-        hide = true,
-        about = "Compatibility/debug evaluator recorder (internal workflow boundary)."
-    )]
-    RecordEvaluation(RecordEvaluationArgs),
-    #[command(
-        name = "gate-handoff",
-        hide = true,
-        about = "Compatibility/debug handoff gate (internal workflow boundary)."
-    )]
-    GateHandoff(GateHandoffArgs),
-    #[command(
-        name = "record-handoff",
-        hide = true,
-        about = "Compatibility/debug handoff recorder (internal workflow boundary)."
-    )]
-    RecordHandoff(RecordHandoffArgs),
-    #[command(
-        name = "gate-review",
-        hide = true,
-        about = "Compatibility/debug finish-review checkpoint gate (internal workflow boundary)."
-    )]
-    GateReview(StatusArgs),
-    #[command(
-        name = "record-review-dispatch",
-        hide = true,
-        about = "Compatibility/debug review-dispatch primitive (normal flow uses close-current-task/advance-late-stage)."
-    )]
-    RecordReviewDispatch(RecordReviewDispatchArgs),
-    #[command(
         name = "repair-review-state",
         about = "Intent-level review-state repair command."
     )]
     RepairReviewState(StatusArgs),
-    #[command(
-        name = "explain-review-state",
-        hide = true,
-        about = "Compatibility/debug review-state explainer (internal diagnostics)."
-    )]
-    ExplainReviewState(StatusArgs),
-    #[command(
-        name = "gate-finish",
-        hide = true,
-        about = "Compatibility/debug finish-completion gate (internal workflow boundary)."
-    )]
-    GateFinish(StatusArgs),
     #[command(
         name = "close-current-task",
         about = "Intent-level task-closure command."
     )]
     CloseCurrentTask(CloseCurrentTaskArgs),
     #[command(
-        name = "record-branch-closure",
-        hide = true,
-        about = "Compatibility/debug branch-closure primitive (normal flow uses advance-late-stage)."
-    )]
-    RecordBranchClosure(RecordBranchClosureArgs),
-    #[command(
-        name = "record-release-readiness",
-        hide = true,
-        about = "Compatibility/debug release-readiness primitive (normal flow uses advance-late-stage)."
-    )]
-    RecordReleaseReadiness(RecordReleaseReadinessArgs),
-    #[command(
         name = "advance-late-stage",
         about = "Intent-level late-stage progression command."
     )]
     AdvanceLateStage(AdvanceLateStageArgs),
-    #[command(
-        name = "record-final-review",
-        hide = true,
-        about = "Compatibility/debug final-review primitive (normal flow uses advance-late-stage)."
-    )]
-    RecordFinalReview(RecordFinalReviewArgs),
-    #[command(
-        name = "record-qa",
-        hide = true,
-        about = "Compatibility/debug QA primitive (normal flow uses advance-late-stage)."
-    )]
-    RecordQa(RecordQaArgs),
     #[command(about = "Execution step start recorder.")]
     Begin(BeginArgs),
-    #[command(about = "Execution interruption/block note recorder.")]
-    Note(NoteArgs),
     #[command(about = "Execution step completion recorder.")]
     Complete(CompleteArgs),
     #[command(about = "Execution task reopen recorder.")]
     Reopen(ReopenArgs),
     #[command(about = "Execution handoff transfer recorder.")]
     Transfer(TransferArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct InternalPlanExecutionCli {
-    #[command(subcommand)]
-    pub command: InternalPlanExecutionCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum InternalPlanExecutionCommand {
-    #[command(name = "reconcile-review-state")]
-    ReconcileReviewState(StatusArgs),
 }
 
 #[derive(Debug, Clone, Args)]

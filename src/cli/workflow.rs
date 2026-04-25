@@ -10,39 +10,8 @@ pub struct WorkflowCli {
 
 #[derive(Debug, Subcommand)]
 pub enum WorkflowCommand {
-    #[command(about = "Workflow status query.")]
-    Status(StatusArgs),
-    #[command(hide = true, about = "Compatibility-only workflow resolution helper.")]
-    Resolve,
-    #[command(hide = true, about = "Compatibility-only workflow expectation helper.")]
-    Expect(ExpectArgs),
-    #[command(hide = true, about = "Compatibility-only workflow sync helper.")]
-    Sync(SyncArgs),
-    #[command(about = "Expert-only plan-fidelity review helper.")]
-    PlanFidelity(WorkflowPlanFidelityCli),
-    #[command(hide = true, about = "Compatibility-only workflow next-step helper.")]
-    Next,
-    #[command(hide = true, about = "Compatibility-only workflow artifact helper.")]
-    Artifacts,
-    #[command(hide = true, about = "Compatibility-only workflow explanation helper.")]
-    Explain,
-    #[command(hide = true, about = "Compatibility-only workflow phase helper.")]
-    Phase(PhaseArgs),
-    #[command(hide = true, about = "Compatibility-only workflow doctor helper.")]
-    Doctor(DoctorArgs),
-    #[command(hide = true, about = "Compatibility-only workflow handoff helper.")]
-    Handoff(JsonModeArgs),
     #[command(about = "Workflow operator: the normal public routing authority.")]
     Operator(OperatorArgs),
-    #[command(
-        name = "record-pivot",
-        about = "Expert-only workflow pivot record emitter."
-    )]
-    RecordPivot(RecordPivotArgs),
-    #[command(hide = true, about = "Compatibility-only execution preflight helper.")]
-    Preflight(PlanArgs),
-    #[command(hide = true, about = "Compatibility-only workflow gate helper.")]
-    Gate(WorkflowGateCli),
 }
 
 #[derive(Debug, Args)]
@@ -111,16 +80,6 @@ pub struct OperatorArgs {
     pub plan: PathBuf,
     #[arg(long = "external-review-result-ready", default_value_t = false)]
     pub external_review_result_ready: bool,
-    #[arg(long, default_value_t = false)]
-    pub json: bool,
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct RecordPivotArgs {
-    #[arg(long)]
-    pub plan: PathBuf,
-    #[arg(long)]
-    pub reason: String,
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }
