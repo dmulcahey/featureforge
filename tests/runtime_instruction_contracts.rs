@@ -720,11 +720,6 @@ fn future_process_explained_uses_current_execution_command_shapes() {
     );
     assert_contains(
         &content,
-        "featureforge plan execution note --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --state blocked|interrupted --message \"<status note>\" --expect-execution-fingerprint <fingerprint>",
-        label,
-    );
-    assert_contains(
-        &content,
         "featureforge plan execution reopen --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --source <source> --reason <reason> --expect-execution-fingerprint <fingerprint>",
         label,
     );
@@ -746,7 +741,7 @@ fn future_process_explained_uses_current_execution_command_shapes() {
     );
     assert_not_contains(
         &content,
-        "featureforge plan execution note --plan docs/featureforge/plans/<plan>.md --task <n> --step <step-id> --message \"<progress note>\"",
+        "featureforge plan execution note --plan docs/featureforge/plans/<plan>.md",
         label,
     );
 }
@@ -941,7 +936,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_st
 
     assert_contains(
         &readme_content,
-        "the approved plan checklist is the human-visible execution progress projection; runtime-owned execution state remains authoritative for operator routing and gates",
+        "the approved plan checklist is the human-visible execution progress projection; the event log remains authoritative for operator routing and gates",
         "README.md",
     );
     assert_not_contains(
@@ -951,7 +946,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_st
     );
     assert_contains(
         &subagent_skill,
-        "The approved plan checklist is the human-visible execution progress projection. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.",
+        "The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.",
         "skills/subagent-driven-development/SKILL.md",
     );
     assert_not_contains(
@@ -961,7 +956,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_st
     );
     assert_contains(
         &executing_plans_skill,
-        "The approved plan checklist is the human-visible execution progress projection. Runtime-owned execution state remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.",
+        "The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.",
         "skills/executing-plans/SKILL.md",
     );
     assert_not_contains(
@@ -1603,7 +1598,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is already known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. Otherwise call `$_FEATUREFORGE_BIN workflow status --refresh` only to discover the current approved `plan_path`, then immediately route through workflow/operator. Do not route directly from `workflow status` fields.",
+        "If `$_FEATUREFORGE_BIN` is available and an approved plan path is known, call `$_FEATUREFORGE_BIN workflow operator --plan <approved-plan-path> --json` directly for routing. If no approved plan path is known, resolve the plan path through the normal planning/review handoff rather than calling removed workflow status surfaces.",
     );
     assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1635,7 +1630,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/using-featureforge/SKILL.md"),
-        "Keep hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` out of the normal path; do not route to them for normal workflow progression.",
+        "Hidden compatibility/debug command entrypoints are removed from the public CLI; keep normal progression on public commands only.",
     );
     assert_file_not_contains(
         root.join("skills/using-featureforge/SKILL.md"),
@@ -1764,7 +1759,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
-        "Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.",
+        "Hidden compatibility/debug command entrypoints are removed from the public CLI; normal routing must use public commands only.",
     );
     assert_file_contains(
         root.join("skills/executing-plans/SKILL.md"),
@@ -1856,7 +1851,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
-        "Hidden compatibility/debug commands `preflight`, `record-review-dispatch`, `gate-review`, and `rebuild-evidence` are never part of the normal path.",
+        "Hidden compatibility/debug command entrypoints are removed from the public CLI; normal routing must use public commands only.",
     );
     assert_file_contains(
         root.join("skills/subagent-driven-development/SKILL.md"),
@@ -1946,7 +1941,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
-        "If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge workflow record-pivot --plan <path> --reason <reason>`; do not guess from test-plan prose.",
+        "If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge plan execution repair-review-state --plan <path>`; do not guess from test-plan prose.",
     );
     assert_file_contains(
         root.join("skills/finishing-a-development-branch/SKILL.md"),
@@ -2425,7 +2420,7 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("README.md"),
-        "Compatibility/debug helpers remain available only for exceptional or contract-boundary cases and are not part of the normal path.",
+        "The public execution surface is `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, and `advance-late-stage`.",
     );
     assert_file_contains(
         root.join("README.md"),
@@ -2433,12 +2428,9 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("README.md"),
-        "`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` is a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth.",
+        "compatibility/debug command boundaries (`gate-*`, low-level `record-*`) must not be required in the normal path",
     );
-    assert_file_contains(
-        root.join("README.md"),
-        "`rebuild-evidence` remains a compatibility/debug projection-regeneration helper. It does not mutate authoritative execution truth and is not part of normal public routing.",
-    );
+    assert_file_not_contains(root.join("README.md"), "plan execution rebuild-evidence");
     assert_file_not_contains(
         root.join("README.md"),
         "`featureforge plan execution rebuild-evidence --plan <approved-plan-path>` replays rebuildable execution-evidence targets from the current approved plan and refreshes helper-owned closure receipts against the current runtime state.",
@@ -2477,6 +2469,14 @@ fn workflow_sequencing_contracts_and_fixtures_are_documented_consistently() {
     );
     assert_file_contains(
         root.join("schemas/workflow-operator.schema.json"),
+        "\"advance late stage\"",
+    );
+    assert_file_not_contains(
+        root.join("schemas/workflow-handoff.schema.json"),
+        "\"record branch closure\"",
+    );
+    assert_file_contains(
+        root.join("schemas/workflow-handoff.schema.json"),
         "\"advance late stage\"",
     );
     assert_file_not_contains(

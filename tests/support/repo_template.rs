@@ -26,6 +26,19 @@ fn template_repo_root() -> &'static Path {
         .as_path()
 }
 
+pub fn populate_repo_from_template(destination: &Path) {
+    if !destination.exists() {
+        fs::create_dir_all(destination).expect("destination should be creatable");
+    }
+    let mut entries = fs::read_dir(destination).expect("destination directory should be readable");
+    assert!(
+        entries.next().is_none(),
+        "destination repository path should be empty before template copy: {}",
+        destination.display()
+    );
+    copy_dir_recursive(template_repo_root(), destination);
+}
+
 fn copy_dir_recursive(source: &Path, destination: &Path) {
     fs::create_dir_all(destination).expect("destination directory should be creatable");
     for entry in fs::read_dir(source).expect("source directory should be readable") {
@@ -42,17 +55,4 @@ fn copy_dir_recursive(source: &Path, destination: &Path) {
                 .unwrap_or_else(|error| panic!("failed to copy {:?}: {error}", source_path));
         }
     }
-}
-
-pub fn populate_repo_from_template(destination: &Path) {
-    if !destination.exists() {
-        fs::create_dir_all(destination).expect("destination should be creatable");
-    }
-    let mut entries = fs::read_dir(destination).expect("destination directory should be readable");
-    assert!(
-        entries.next().is_none(),
-        "destination repository path should be empty before template copy: {}",
-        destination.display()
-    );
-    copy_dir_recursive(template_repo_root(), destination);
 }

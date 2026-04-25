@@ -54,17 +54,22 @@ fi
 if (( $# > 0 )) && [[ "$1" == "--" ]]; then
   shift
 fi
-NEXTTEST_FILTERS=("$@")
+NEXTTEST_FILTERS=()
+if (( $# > 0 )); then
+  NEXTTEST_FILTERS=("$@")
+fi
 
-for arg in "${NEXTTEST_FILTERS[@]}"; do
-  case "$arg" in
-    --package|--workspace|--exclude|--all|--lib|--bin|--bins|--example|--examples|--test|--tests|--bench|--benches|--all-targets|--features|--all-features|--no-default-features|--build-jobs|--release|--cargo-profile|--target|--target-dir|--unit-graph|--timings|--frozen|--locked|--offline|--cargo-message-format|--cargo-quiet|--cargo-verbose|--ignore-rust-version|--future-incompat-report|-Z)
-      echo "unsupported filter argument in archive mode: '$arg'" >&2
-      echo "use nextest test-name filters or -E expressions after '--'." >&2
-      exit 2
-      ;;
-  esac
-done
+if (( ${#NEXTTEST_FILTERS[@]} > 0 )); then
+  for arg in "${NEXTTEST_FILTERS[@]}"; do
+    case "$arg" in
+      --package|--workspace|--exclude|--all|--lib|--bin|--bins|--example|--examples|--test|--tests|--bench|--benches|--all-targets|--features|--all-features|--no-default-features|--build-jobs|--release|--cargo-profile|--target|--target-dir|--unit-graph|--timings|--frozen|--locked|--offline|--cargo-message-format|--cargo-quiet|--cargo-verbose|--ignore-rust-version|--future-incompat-report|-Z)
+        echo "unsupported filter argument in archive mode: '$arg'" >&2
+        echo "use nextest test-name filters or -E expressions after '--'." >&2
+        exit 2
+        ;;
+    esac
+  done
+fi
 
 THREADS_PER_SHARD="${FEATUREFORGE_SHARD_THREADS:-1}"
 NEXTEST_PROFILE="${FEATUREFORGE_SHARD_PROFILE:-default}"
@@ -123,20 +128,25 @@ for shard in $(seq 1 "$SHARDS"); do
   mkdir -p "$shard_tmp"
   (
     set -euo pipefail
+    nextest_args=(
+      nextest run
+      --archive-file "$ARCHIVE_FILE"
+      --workspace-remap "$ROOT_DIR"
+      --profile "$NEXTEST_PROFILE"
+      --partition "count:${shard}/${SHARDS}"
+      --retries "$RETRIES"
+      --test-threads "$THREADS_PER_SHARD"
+      --no-tests pass
+      --no-fail-fast
+      --status-level fail
+      --final-status-level fail
+      --show-progress none
+    )
+    if (( ${#NEXTTEST_FILTERS[@]} > 0 )); then
+      nextest_args+=("${NEXTTEST_FILTERS[@]}")
+    fi
     TMPDIR="$shard_tmp" TEMP="$shard_tmp" TMP="$shard_tmp" \
-      cargo nextest run \
-        --archive-file "$ARCHIVE_FILE" \
-        --workspace-remap "$ROOT_DIR" \
-        --profile "$NEXTEST_PROFILE" \
-        --partition "count:${shard}/${SHARDS}" \
-        --retries "$RETRIES" \
-        --test-threads "$THREADS_PER_SHARD" \
-        --no-tests pass \
-        --no-fail-fast \
-        --status-level fail \
-        --final-status-level fail \
-        --show-progress none \
-        "${NEXTTEST_FILTERS[@]}"
+      cargo "${nextest_args[@]}"
   ) >"$log_file" 2>&1 &
   pid="$!"
   pids+=("$pid")

@@ -12,7 +12,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-use featureforge::cli::plan_execution::StatusArgs;
+use featureforge::cli::plan_execution::{RecordReviewDispatchArgs, StatusArgs};
 use featureforge::execution::query::{
     ExecutionRoutingState, query_review_state, query_workflow_execution_state,
     query_workflow_routing_state_for_runtime,
@@ -98,6 +98,25 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
+fn run_runtime_preflight_gate_json(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+    context: &str,
+) -> Value {
+    let runtime = execution_runtime(repo, state);
+    let args = StatusArgs {
+        plan: PathBuf::from(plan_rel),
+        external_review_result_ready: false,
+    };
+    serde_json::to_value(
+        runtime
+            .preflight_gate(&args)
+            .unwrap_or_else(|error| panic!("{context} should succeed: {:?}", error)),
+    )
+    .unwrap_or_else(|error| panic!("{context} should serialize to json: {error}"))
+}
+
 fn run_workflow_operator_json(
     repo: &Path,
     state: &Path,
@@ -158,10 +177,9 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
         routing.qa_requirement.as_deref(),
         "routing QA requirement should match workflow/operator",
     );
-    assert_eq!(
-        operator["follow_up_override"],
-        Value::from(routing.follow_up_override.clone()),
-        "routing follow-up override should match workflow/operator",
+    assert!(
+        operator.get("follow_up_override").is_none(),
+        "routing output should not expose legacy follow_up_override",
     );
     assert_eq!(
         operator
@@ -264,10 +282,10 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before active-context fixture begin",
     );
-    let preflight = run_plan_execution_json(
+    let preflight = run_runtime_preflight_gate_json(
         repo,
         state,
-        &["preflight", "--plan", PLAN_REL],
+        PLAN_REL,
         "preflight for active-context fixture",
     );
     assert_eq!(
@@ -309,10 +327,10 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary fixture execution",
     );
-    let preflight = run_plan_execution_json(
+    let preflight = run_runtime_preflight_gate_json(
         repo,
         state,
-        &["preflight", "--plan", PLAN_REL],
+        PLAN_REL,
         "preflight for task-boundary fixture execution",
     );
     assert_eq!(
@@ -546,20 +564,18 @@ fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
-    let dispatch = run_plan_execution_json(
+    let dispatch = featureforge_support::run_runtime_review_dispatch_authority_json(
         repo,
         state,
-        &[
-            "record-review-dispatch",
-            "--plan",
-            PLAN_REL,
-            "--scope",
-            "task",
-            "--task",
-            "1",
-        ],
-        "execution query routing recording-context fixture dispatch",
-    );
+        &RecordReviewDispatchArgs {
+            plan: PathBuf::from(PLAN_REL),
+            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            task: Some(1),
+        },
+    )
+    .unwrap_or_else(|error| {
+        panic!("execution query routing recording-context fixture dispatch should succeed: {error}")
+    });
     assert_eq!(dispatch["allowed"], Value::Bool(true));
 
     let plan = PathBuf::from(PLAN_REL);

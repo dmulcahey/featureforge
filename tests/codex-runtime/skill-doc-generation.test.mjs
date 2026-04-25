@@ -239,14 +239,15 @@ test('checked-in downstream review and QA references stay harness-aware', () => 
   assertHarnessAndGateAware(qaTaxonomy, 'qa/references/issue-taxonomy.md');
 });
 
-test('workflow-status ambiguity snapshot stays checked in and is covered by workflow_runtime', () => {
-  const workflowRuntime = readUtf8(path.join(REPO_ROOT, 'tests/workflow_runtime.rs'));
+test('removed workflow-status command is not required by generated docs', () => {
+  const generatedDocs = listGeneratedSkills()
+    .map((skill) => readUtf8(path.join(SKILLS_DIR, skill, 'SKILL.md')))
+    .join('\n');
   const fixture = JSON.parse(readUtf8(path.join(REPO_ROOT, 'tests/fixtures/differential/workflow-status.json')));
 
-  assert.match(workflowRuntime, /canonical_workflow_status_ambiguous_specs_matches_checked_in_snapshot/);
-  assert.match(workflowRuntime, /tests\/fixtures\/differential\/workflow-status\.json/);
-  assert.match(workflowRuntime, /"workflow", "status", "--refresh"/);
-  assert.doesNotMatch(workflowRuntime, /run_legacy_vs_rust/);
+  assert.doesNotMatch(generatedDocs, /workflow status --refresh/);
+  assert.doesNotMatch(generatedDocs, /"workflow", "status", "--refresh"/);
+  assert.doesNotMatch(generatedDocs, /run_legacy_vs_rust/);
 
   assert.equal(typeof fixture.status, 'string');
   assert.equal(Array.isArray(fixture.reason_codes), true);

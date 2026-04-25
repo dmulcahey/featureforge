@@ -14,10 +14,17 @@ use sha2::{Digest, Sha256};
 
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::current_truth::parse_late_stage_surface_only_branch_surface;
+use crate::execution::event_log::{
+    append_typed_state_event_for_state_path,
+    append_typed_state_event_for_state_path_with_step_hint,
+    ensure_event_log_migrated_from_legacy_state, load_reduced_authoritative_state,
+    load_reduced_authoritative_state_for_state_path,
+};
 use crate::execution::gates::{
     ActiveContractState, GateAuthorityState, require_active_contract_state,
 };
 use crate::execution::leases::process_is_running;
+use crate::execution::semantic_identity::semantic_workspace_snapshot;
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, GateState, NoteState, latest_attempted_step_for_task,
     task_completion_lineage_fingerprint,
@@ -69,6 +76,16 @@ impl StrategyCheckpointCycleState {
 
 pub(crate) struct StepWriteAuthorityGuard {
     lock_path: PathBuf,
+}
+
+struct TaskDispatchLineageUpsertInput<'a> {
+    task: u32,
+    execution_run_id: &'a str,
+    source_step: u32,
+    strategy_checkpoint_fingerprint: &'a str,
+    task_completion_lineage_fingerprint: &'a str,
+    reviewed_state_id: &'a str,
+    semantic_reviewed_state_id: Option<&'a str>,
 }
 
 impl Drop for StepWriteAuthorityGuard {
@@ -224,8 +241,14 @@ pub(crate) struct AuthoritativeTransitionState {
     dirty: bool,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct AuthoritativePersistOutcome {
+    pub(crate) authoritative_event_committed: bool,
+    pub(crate) projection_refresh_failure: Option<JsonFailure>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AuthoritativeStateCacheStamp {
+struct FileCacheStamp {
     modified: Option<SystemTime>,
     len: u64,
     #[cfg(unix)]
@@ -234,6 +257,12 @@ struct AuthoritativeStateCacheStamp {
     ctime: i64,
     #[cfg(unix)]
     ctime_nsec: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AuthoritativeStateCacheStamp {
+    state_projection: Option<FileCacheStamp>,
+    event_log: Option<FileCacheStamp>,
 }
 
 #[derive(Debug, Clone)]
@@ -250,8 +279,8 @@ fn authoritative_state_payload_cache()
     CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-fn authoritative_state_cache_stamp(metadata: &fs::Metadata) -> AuthoritativeStateCacheStamp {
-    AuthoritativeStateCacheStamp {
+fn file_cache_stamp(metadata: &fs::Metadata) -> FileCacheStamp {
+    FileCacheStamp {
         modified: metadata.modified().ok(),
         len: metadata.len(),
         #[cfg(unix)]
@@ -263,6 +292,25 @@ fn authoritative_state_cache_stamp(metadata: &fs::Metadata) -> AuthoritativeStat
     }
 }
 
+fn metadata_cache_stamp(path: &Path) -> Option<FileCacheStamp> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    Some(file_cache_stamp(&metadata))
+}
+
+fn events_log_path_for_state_path(state_path: &Path) -> PathBuf {
+    state_path.with_file_name("events.jsonl")
+}
+
+fn authoritative_state_cache_stamp(state_path: &Path) -> AuthoritativeStateCacheStamp {
+    AuthoritativeStateCacheStamp {
+        state_projection: metadata_cache_stamp(state_path),
+        event_log: metadata_cache_stamp(&events_log_path_for_state_path(state_path)),
+    }
+}
+
 fn invalidate_authoritative_state_payload_cache(state_path: &Path) {
     authoritative_state_payload_cache()
         .lock()
@@ -270,32 +318,11 @@ fn invalidate_authoritative_state_payload_cache(state_path: &Path) {
         .remove(state_path);
 }
 
-fn refresh_authoritative_state_payload_cache(state_path: &Path, state_payload: &Value) {
-    let metadata = match fs::symlink_metadata(state_path) {
-        Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_file() => metadata,
-        _ => {
-            invalidate_authoritative_state_payload_cache(state_path);
-            return;
-        }
-    };
-    let gate_state: GateAuthorityState = match serde_json::from_value(state_payload.clone()) {
-        Ok(gate_state) => gate_state,
-        Err(_) => {
-            invalidate_authoritative_state_payload_cache(state_path);
-            return;
-        }
-    };
-    authoritative_state_payload_cache()
-        .lock()
-        .expect("authoritative state payload cache lock should not be poisoned")
-        .insert(
-            state_path.to_path_buf(),
-            CachedAuthoritativeStatePayload {
-                stamp: authoritative_state_cache_stamp(&metadata),
-                state_payload: state_payload.clone(),
-                gate_state,
-            },
-        );
+fn strip_top_level_null_fields(mut payload: Value) -> Value {
+    if let Some(object) = payload.as_object_mut() {
+        object.retain(|_, value| !value.is_null());
+    }
+    payload
 }
 
 pub(crate) struct BranchClosureResultRecord<'a> {
@@ -306,6 +333,7 @@ pub(crate) struct BranchClosureResultRecord<'a> {
     pub(crate) branch_name: &'a str,
     pub(crate) base_branch: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) contract_identity: &'a str,
     pub(crate) effective_reviewed_branch_surface: &'a str,
     pub(crate) source_task_closure_ids: &'a [String],
@@ -323,6 +351,7 @@ pub(crate) struct ReleaseReadinessResultRecord<'a> {
     pub(crate) branch_name: &'a str,
     pub(crate) base_branch: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) result: &'a str,
     pub(crate) release_docs_fingerprint: Option<&'a str>,
     pub(crate) summary: &'a str,
@@ -346,6 +375,7 @@ pub(crate) struct FinalReviewMilestoneRecord<'a> {
     pub(crate) branch_name: &'a str,
     pub(crate) base_branch: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) summary: &'a str,
     pub(crate) summary_hash: &'a str,
 }
@@ -359,6 +389,7 @@ pub(crate) struct BrowserQaResultRecord<'a> {
     pub(crate) branch_name: &'a str,
     pub(crate) base_branch: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) result: &'a str,
     pub(crate) browser_qa_fingerprint: Option<&'a str>,
     pub(crate) source_test_plan_fingerprint: Option<&'a str>,
@@ -373,6 +404,7 @@ pub(crate) struct TaskClosureResultRecord<'a> {
     pub(crate) closure_record_id: &'a str,
     pub(crate) execution_run_id: Option<&'a str>,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) contract_identity: &'a str,
     pub(crate) effective_reviewed_surface_paths: &'a [String],
     pub(crate) review_result: &'a str,
@@ -385,6 +417,7 @@ pub(crate) struct TaskClosureNegativeResultRecord<'a> {
     pub(crate) task: u32,
     pub(crate) dispatch_id: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) contract_identity: &'a str,
     pub(crate) review_result: &'a str,
     pub(crate) review_summary_hash: &'a str,
@@ -401,6 +434,7 @@ pub(crate) struct CurrentTaskClosureRecord {
     pub(crate) source_plan_revision: Option<u32>,
     pub(crate) execution_run_id: Option<String>,
     pub(crate) reviewed_state_id: String,
+    pub(crate) semantic_reviewed_state_id: Option<String>,
     pub(crate) contract_identity: String,
     pub(crate) effective_reviewed_surface_paths: Vec<String>,
     pub(crate) review_result: String,
@@ -425,6 +459,7 @@ pub(crate) struct BranchClosureRecord {
     pub(crate) branch_name: String,
     pub(crate) base_branch: String,
     pub(crate) reviewed_state_id: String,
+    pub(crate) semantic_reviewed_state_id: Option<String>,
     pub(crate) contract_identity: String,
     pub(crate) _effective_reviewed_branch_surface: String,
     pub(crate) source_task_closure_ids: Vec<String>,
@@ -435,6 +470,7 @@ pub(crate) struct BranchClosureRecord {
 pub(crate) struct CurrentBranchClosureIdentity {
     pub(crate) branch_closure_id: String,
     pub(crate) reviewed_state_id: String,
+    pub(crate) semantic_reviewed_state_id: Option<String>,
     pub(crate) contract_identity: String,
 }
 
@@ -442,6 +478,7 @@ pub(crate) struct CurrentBranchClosureIdentity {
 pub(crate) struct TaskClosureNegativeResult {
     pub(crate) dispatch_id: String,
     pub(crate) reviewed_state_id: String,
+    pub(crate) semantic_reviewed_state_id: Option<String>,
     pub(crate) contract_identity: String,
     pub(crate) review_result: String,
     pub(crate) review_summary_hash: String,
@@ -469,6 +506,7 @@ pub(crate) struct CurrentReleaseReadinessRecord {
     pub(crate) branch_name: String,
     pub(crate) base_branch: String,
     pub(crate) reviewed_state_id: String,
+    pub(crate) semantic_reviewed_state_id: Option<String>,
     pub(crate) result: String,
     pub(crate) release_docs_fingerprint: Option<String>,
     pub(crate) summary: String,
@@ -493,6 +531,7 @@ pub(crate) struct CurrentFinalReviewRecord {
     pub(crate) branch_name: String,
     pub(crate) base_branch: String,
     pub(crate) reviewed_state_id: String,
+    pub(crate) semantic_reviewed_state_id: Option<String>,
     pub(crate) summary: String,
     pub(crate) summary_hash: String,
 }
@@ -507,6 +546,7 @@ pub(crate) struct CurrentBrowserQaRecord {
     pub(crate) branch_name: String,
     pub(crate) base_branch: String,
     pub(crate) reviewed_state_id: String,
+    pub(crate) semantic_reviewed_state_id: Option<String>,
     pub(crate) result: String,
     pub(crate) browser_qa_fingerprint: Option<String>,
     pub(crate) source_test_plan_fingerprint: Option<String>,
@@ -587,6 +627,173 @@ pub(crate) fn classify_review_state_field(field: &str) -> Option<PersistedReview
 }
 
 impl AuthoritativeTransitionState {
+    pub(crate) fn from_reduced_event_payload(
+        state_path: PathBuf,
+        state_payload: Value,
+    ) -> Result<Self, JsonFailure> {
+        let gate_state: GateAuthorityState = serde_json::from_value(strip_top_level_null_fields(
+            state_payload.clone(),
+        ))
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Authoritative reduced state is malformed for {}: {error}",
+                    state_path.display()
+                ),
+            )
+        })?;
+        let mut authoritative_state = Self {
+            state_path,
+            state_payload,
+            phase: gate_state.harness_phase,
+            active_contract: None,
+            dirty: false,
+        };
+        authoritative_state.hydrate_missing_review_projection_summary_fields()?;
+        authoritative_state.dirty = false;
+        Ok(authoritative_state)
+    }
+
+    fn projection_summary_state_value(&self, field: &str) -> Option<&str> {
+        self.state_payload
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn projection_summary_string_value(&self, field: &str) -> Option<&str> {
+        self.state_payload
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn hydrate_missing_review_projection_summary_fields(&mut self) -> Result<(), JsonFailure> {
+        let has_current_branch_closure = self.bound_current_branch_closure_identity().is_some();
+        let release_state_missing = self
+            .projection_summary_state_value("release_docs_state")
+            .is_none();
+        let final_state_missing = self
+            .projection_summary_state_value("final_review_state")
+            .is_none();
+        let browser_state_missing = self
+            .projection_summary_state_value("browser_qa_state")
+            .is_none();
+        let release_fingerprint_missing = self
+            .projection_summary_string_value("last_release_docs_artifact_fingerprint")
+            .is_none();
+        let final_fingerprint_missing = self
+            .projection_summary_string_value("last_final_review_artifact_fingerprint")
+            .is_none();
+        let browser_fingerprint_missing = self
+            .projection_summary_string_value("last_browser_qa_artifact_fingerprint")
+            .is_none();
+
+        if release_state_missing || final_state_missing || browser_state_missing {
+            let default_state = if has_current_branch_closure {
+                "missing"
+            } else {
+                "not_required"
+            };
+            let root = self.root_object_mut()?;
+            if release_state_missing {
+                root.insert(
+                    String::from("release_docs_state"),
+                    Value::String(default_state.to_owned()),
+                );
+            }
+            if final_state_missing {
+                root.insert(
+                    String::from("final_review_state"),
+                    Value::String(default_state.to_owned()),
+                );
+            }
+            if browser_state_missing {
+                root.insert(
+                    String::from("browser_qa_state"),
+                    Value::String(default_state.to_owned()),
+                );
+            }
+            self.dirty = true;
+        }
+
+        if release_fingerprint_missing {
+            self.root_object_mut()?.insert(
+                String::from("last_release_docs_artifact_fingerprint"),
+                Value::Null,
+            );
+            self.dirty = true;
+        }
+        if final_fingerprint_missing {
+            self.root_object_mut()?.insert(
+                String::from("last_final_review_artifact_fingerprint"),
+                Value::Null,
+            );
+            self.dirty = true;
+        }
+        if browser_fingerprint_missing {
+            self.root_object_mut()?.insert(
+                String::from("last_browser_qa_artifact_fingerprint"),
+                Value::Null,
+            );
+            self.dirty = true;
+        }
+
+        let should_restore_release = release_state_missing
+            || self.projection_summary_state_value("release_docs_state") == Some("fresh");
+        if should_restore_release {
+            let _ = self.restore_current_release_readiness_overlay_fields()?;
+        }
+
+        let should_restore_final = final_state_missing
+            || self.projection_summary_state_value("final_review_state") == Some("fresh");
+        if should_restore_final {
+            let _ = self.restore_current_final_review_overlay_fields()?;
+        }
+
+        let should_restore_browser = browser_state_missing
+            || self.projection_summary_state_value("browser_qa_state") == Some("fresh");
+        if should_restore_browser {
+            let _ = self.restore_current_browser_qa_overlay_fields()?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn has_authoritative_execution_progress(&self) -> bool {
+        fn non_empty_object_field(payload: &Value, key: &str) -> bool {
+            payload
+                .get(key)
+                .and_then(Value::as_object)
+                .is_some_and(|entries| !entries.is_empty())
+        }
+
+        self.state_payload
+            .get("current_open_step_state")
+            .is_some_and(|value| !value.is_null())
+            || non_empty_object_field(&self.state_payload, "current_task_closure_records")
+            || non_empty_object_field(&self.state_payload, "task_closure_record_history")
+            || non_empty_object_field(&self.state_payload, "task_closure_negative_result_records")
+            || non_empty_object_field(&self.state_payload, "strategy_review_dispatch_lineage")
+            || non_empty_object_field(
+                &self.state_payload,
+                "strategy_review_dispatch_lineage_history",
+            )
+            || json_string(&self.state_payload, "current_task_review_dispatch_id").is_some()
+            || json_string(&self.state_payload, "current_branch_closure_id").is_some()
+            || non_empty_object_field(&self.state_payload, "branch_closure_records")
+            || json_string(&self.state_payload, "current_release_readiness_record_id").is_some()
+            || non_empty_object_field(&self.state_payload, "release_readiness_record_history")
+            || json_string(&self.state_payload, "current_final_review_record_id").is_some()
+            || json_string(&self.state_payload, "current_final_review_dispatch_id").is_some()
+            || non_empty_object_field(&self.state_payload, "final_review_record_history")
+            || json_string(&self.state_payload, "current_qa_record_id").is_some()
+            || non_empty_object_field(&self.state_payload, "browser_qa_record_history")
+    }
+
     pub(crate) fn apply_note_reset_policy(
         &mut self,
         note_state: NoteState,
@@ -679,24 +886,6 @@ impl AuthoritativeTransitionState {
             Value::String(record_fingerprint.to_owned()),
         );
         self.phase = Some(String::from("executing"));
-        self.dirty = true;
-        Ok(())
-    }
-
-    pub(crate) fn record_runtime_pivot_checkpoint(
-        &mut self,
-        record_path: &str,
-        record_fingerprint: &str,
-    ) -> Result<(), JsonFailure> {
-        let root = self.root_object_mut()?;
-        root.insert(
-            String::from("last_pivot_path"),
-            Value::String(record_path.to_owned()),
-        );
-        root.insert(
-            String::from("last_pivot_fingerprint"),
-            Value::String(record_fingerprint.to_owned()),
-        );
         self.dirty = true;
         Ok(())
     }
@@ -891,14 +1080,17 @@ impl AuthoritativeTransitionState {
                 {
                     let reviewed_state_id =
                         format!("git_tree:{}", context.current_tracked_tree_sha()?);
-                    self.upsert_task_dispatch_lineage(
+                    let semantic_reviewed_state_id =
+                        semantic_workspace_snapshot(context)?.semantic_workspace_tree_id;
+                    self.upsert_task_dispatch_lineage(TaskDispatchLineageUpsertInput {
                         task,
-                        &execution_run_id,
-                        step,
-                        &strategy_checkpoint_fingerprint,
-                        &task_completion_lineage,
-                        &reviewed_state_id,
-                    )?;
+                        execution_run_id: &execution_run_id,
+                        source_step: step,
+                        strategy_checkpoint_fingerprint: &strategy_checkpoint_fingerprint,
+                        task_completion_lineage_fingerprint: &task_completion_lineage,
+                        reviewed_state_id: &reviewed_state_id,
+                        semantic_reviewed_state_id: Some(semantic_reviewed_state_id.as_str()),
+                    })?;
                 }
             } else {
                 let branch_closure_id = self
@@ -1438,13 +1630,17 @@ impl AuthoritativeTransitionState {
 
     fn upsert_task_dispatch_lineage(
         &mut self,
-        task: u32,
-        execution_run_id: &str,
-        source_step: u32,
-        strategy_checkpoint_fingerprint: &str,
-        task_completion_lineage_fingerprint: &str,
-        reviewed_state_id: &str,
+        input: TaskDispatchLineageUpsertInput<'_>,
     ) -> Result<(), JsonFailure> {
+        let TaskDispatchLineageUpsertInput {
+            task,
+            execution_run_id,
+            source_step,
+            strategy_checkpoint_fingerprint,
+            task_completion_lineage_fingerprint,
+            reviewed_state_id,
+            semantic_reviewed_state_id,
+        } = input;
         self.clear_task_closure_negative_result(task)?;
         let lineage_key = format!("task-{task}");
         let _ = self.archive_task_dispatch_lineage_record(task, "historical")?;
@@ -1470,6 +1666,7 @@ impl AuthoritativeTransitionState {
             "execution_run_id": execution_run_id,
             "dispatch_id": strategy_checkpoint_fingerprint,
             "reviewed_state_id": reviewed_state_id,
+            "semantic_reviewed_state_id": semantic_reviewed_state_id,
             "source_task": task,
             "source_step": source_step,
             "strategy_checkpoint_fingerprint": strategy_checkpoint_fingerprint,
@@ -1527,9 +1724,14 @@ impl AuthoritativeTransitionState {
         });
         self.final_review_dispatch_lineage_history_mut()?
             .insert(record_id.clone(), record_payload.clone());
-        self.root_object_mut()?.insert(
+        let root = self.root_object_mut()?;
+        root.insert(
             String::from("final_review_dispatch_lineage"),
             record_payload,
+        );
+        root.insert(
+            String::from("current_final_review_dispatch_id"),
+            Value::String(strategy_checkpoint_fingerprint.to_owned()),
         );
         self.dirty = true;
         Ok(())
@@ -1570,17 +1772,20 @@ impl AuthoritativeTransitionState {
             return Ok(());
         };
         let reviewed_state_id = format!("git_tree:{}", context.current_tracked_tree_sha()?);
+        let semantic_reviewed_state_id =
+            semantic_workspace_snapshot(context)?.semantic_workspace_tree_id;
         let Some(execution_run_id) = self.execution_run_id_opt() else {
             return Ok(());
         };
-        self.upsert_task_dispatch_lineage(
+        self.upsert_task_dispatch_lineage(TaskDispatchLineageUpsertInput {
             task,
-            &execution_run_id,
+            execution_run_id: &execution_run_id,
             source_step,
-            &strategy_checkpoint_fingerprint,
-            &task_completion_lineage_fingerprint,
-            &reviewed_state_id,
-        )
+            strategy_checkpoint_fingerprint: &strategy_checkpoint_fingerprint,
+            task_completion_lineage_fingerprint: &task_completion_lineage_fingerprint,
+            reviewed_state_id: &reviewed_state_id,
+            semantic_reviewed_state_id: Some(semantic_reviewed_state_id.as_str()),
+        })
     }
 
     fn clear_task_review_dispatch_lineage_with_record_status(
@@ -2022,11 +2227,16 @@ impl AuthoritativeTransitionState {
                 "Current release-readiness record is missing reviewed_state_id.",
             )
         })?;
+        let semantic_reviewed_state_id = json_string(&payload, "semantic_reviewed_state_id");
         let Some(current_identity) = self.recoverable_current_branch_closure_identity() else {
             return Ok(false);
         };
         if current_identity.branch_closure_id != branch_closure_id
-            || current_identity.reviewed_state_id != reviewed_state_id
+            || !late_stage_record_matches_current_branch_identity(
+                &current_identity,
+                &reviewed_state_id,
+                semantic_reviewed_state_id.as_deref(),
+            )
         {
             return Ok(false);
         }
@@ -2105,11 +2315,16 @@ impl AuthoritativeTransitionState {
                 "Current final-review record is missing reviewed_state_id.",
             )
         })?;
+        let semantic_reviewed_state_id = json_string(&payload, "semantic_reviewed_state_id");
         let Some(current_identity) = self.recoverable_current_branch_closure_identity() else {
             return Ok(false);
         };
         if current_identity.branch_closure_id != branch_closure_id
-            || current_identity.reviewed_state_id != reviewed_state_id
+            || !late_stage_record_matches_current_branch_identity(
+                &current_identity,
+                &reviewed_state_id,
+                semantic_reviewed_state_id.as_deref(),
+            )
         {
             return Ok(false);
         }
@@ -2241,11 +2456,16 @@ impl AuthoritativeTransitionState {
                 "Current browser QA record is missing reviewed_state_id.",
             )
         })?;
+        let semantic_reviewed_state_id = json_string(&payload, "semantic_reviewed_state_id");
         let Some(current_identity) = self.recoverable_current_branch_closure_identity() else {
             return Ok(false);
         };
         if current_identity.branch_closure_id != branch_closure_id
-            || current_identity.reviewed_state_id != reviewed_state_id
+            || !late_stage_record_matches_current_branch_identity(
+                &current_identity,
+                &reviewed_state_id,
+                semantic_reviewed_state_id.as_deref(),
+            )
         {
             return Ok(false);
         }
@@ -2363,6 +2583,14 @@ impl AuthoritativeTransitionState {
             "superseded_branch_closure_ids": record.superseded_branch_closure_ids,
             "record_sequence": record_sequence,
         });
+        if let Some(semantic_reviewed_state_id) = record.semantic_reviewed_state_id
+            && let Some(payload_object) = payload.as_object_mut()
+        {
+            payload_object.insert(
+                String::from("semantic_reviewed_state_id"),
+                Value::String(semantic_reviewed_state_id.to_owned()),
+            );
+        }
         if let Some(branch_closure_fingerprint) = record.branch_closure_fingerprint
             && let Some(payload_object) = payload.as_object_mut()
         {
@@ -2443,6 +2671,7 @@ impl AuthoritativeTransitionState {
                 "branch_name": record.branch_name,
                 "base_branch": record.base_branch,
                 "reviewed_state_id": record.reviewed_state_id,
+                "semantic_reviewed_state_id": record.semantic_reviewed_state_id,
                 "result": record.result,
                 "release_docs_fingerprint": record.release_docs_fingerprint,
                 "summary": record.summary,
@@ -2609,6 +2838,7 @@ impl AuthoritativeTransitionState {
                 "branch_name": record.branch_name,
                 "base_branch": record.base_branch,
                 "reviewed_state_id": record.reviewed_state_id,
+                "semantic_reviewed_state_id": record.semantic_reviewed_state_id,
                 "dispatch_id": record.dispatch_id,
                 "reviewer_source": record.reviewer_source,
                 "reviewer_id": record.reviewer_id,
@@ -2760,6 +2990,7 @@ impl AuthoritativeTransitionState {
                 "branch_name": record.branch_name,
                 "base_branch": record.base_branch,
                 "reviewed_state_id": record.reviewed_state_id,
+                "semantic_reviewed_state_id": record.semantic_reviewed_state_id,
                 "result": record.result,
                 "browser_qa_fingerprint": record.browser_qa_fingerprint,
                 "source_test_plan_fingerprint": record.source_test_plan_fingerprint,
@@ -2841,7 +3072,7 @@ impl AuthoritativeTransitionState {
                     .get("run_identity")
                     .and_then(|run_identity| json_string(run_identity, "execution_run_id"))
             });
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "task": record.task,
             "record_id": record.closure_record_id,
             "record_sequence": record_sequence,
@@ -2860,6 +3091,14 @@ impl AuthoritativeTransitionState {
             "verification_result": record.verification_result,
             "verification_summary_hash": record.verification_summary_hash,
         });
+        if let Some(semantic_reviewed_state_id) = record.semantic_reviewed_state_id
+            && let Some(payload_object) = payload.as_object_mut()
+        {
+            payload_object.insert(
+                String::from("semantic_reviewed_state_id"),
+                Value::String(semantic_reviewed_state_id.to_owned()),
+            );
+        }
         let records = self.current_task_closure_records_mut()?;
         records.insert(format!("task-{}", record.task), payload.clone());
         self.task_closure_record_history_mut()?
@@ -2987,7 +3226,7 @@ impl AuthoritativeTransitionState {
             .and_then(Value::as_object)
             .map(|history| history.len() as u64 + 1)
             .unwrap_or(1);
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "task": record.task,
             "record_id": record_id,
             "record_sequence": record_sequence,
@@ -3001,6 +3240,14 @@ impl AuthoritativeTransitionState {
             "verification_result": record.verification_result,
             "verification_summary_hash": record.verification_summary_hash,
         });
+        if let Some(semantic_reviewed_state_id) = record.semantic_reviewed_state_id
+            && let Some(payload_object) = payload.as_object_mut()
+        {
+            payload_object.insert(
+                String::from("semantic_reviewed_state_id"),
+                Value::String(semantic_reviewed_state_id.to_owned()),
+            );
+        }
         let records = self.task_closure_negative_result_records_mut()?;
         records.insert(format!("task-{}", record.task), payload.clone());
         self.task_closure_negative_result_history_mut()?.insert(
@@ -3058,22 +3305,6 @@ impl AuthoritativeTransitionState {
             .filter(|value| !value.is_empty())
     }
 
-    pub(crate) fn current_release_readiness_result(&self) -> Option<&str> {
-        self.state_payload
-            .get("current_release_readiness_result")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    }
-
-    pub(crate) fn current_release_readiness_summary_hash(&self) -> Option<&str> {
-        self.state_payload
-            .get("current_release_readiness_summary_hash")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    }
-
     pub(crate) fn current_release_readiness_record_id(&self) -> Option<String> {
         json_string(&self.state_payload, "current_release_readiness_record_id")
     }
@@ -3091,21 +3322,7 @@ impl AuthoritativeTransitionState {
         record_id: &str,
     ) -> Option<CurrentReleaseReadinessRecord> {
         let payload = self.record_payload_by_id("release_readiness_record_history", record_id)?;
-        Some(CurrentReleaseReadinessRecord {
-            record_status: json_string(&payload, "record_status")?,
-            branch_closure_id: json_string(&payload, "branch_closure_id")?,
-            source_plan_path: json_string(&payload, "source_plan_path")?,
-            source_plan_revision: json_u32(&payload, "source_plan_revision")?,
-            repo_slug: json_string(&payload, "repo_slug")?,
-            branch_name: json_string(&payload, "branch_name")?,
-            base_branch: json_string(&payload, "base_branch")?,
-            reviewed_state_id: json_string(&payload, "reviewed_state_id")?,
-            result: json_string(&payload, "result")?,
-            release_docs_fingerprint: json_string(&payload, "release_docs_fingerprint"),
-            summary: json_string(&payload, "summary")?,
-            summary_hash: json_string(&payload, "summary_hash")?,
-            generated_by_identity: json_string(&payload, "generated_by_identity")?,
-        })
+        release_readiness_record_from_payload(&payload)
     }
 
     pub(crate) fn current_final_review_branch_closure_id(&self) -> Option<&str> {
@@ -3190,6 +3407,7 @@ impl AuthoritativeTransitionState {
             branch_name: json_string(&payload, "branch_name")?,
             base_branch: json_string(&payload, "base_branch")?,
             reviewed_state_id: json_string(&payload, "reviewed_state_id")?,
+            semantic_reviewed_state_id: json_string(&payload, "semantic_reviewed_state_id"),
             summary: json_string(&payload, "summary")?,
             summary_hash: json_string(&payload, "summary_hash")?,
         })
@@ -3403,6 +3621,7 @@ impl AuthoritativeTransitionState {
                     "dispatch_id": record.dispatch_id,
                     "closure_record_id": record.closure_record_id,
                     "reviewed_state_id": record.reviewed_state_id,
+                    "semantic_reviewed_state_id": record.semantic_reviewed_state_id,
                     "contract_identity": record.contract_identity,
                     "effective_reviewed_surface_paths": record.effective_reviewed_surface_paths,
                     "review_result": record.review_result,
@@ -3476,6 +3695,7 @@ impl AuthoritativeTransitionState {
             branch_name,
             base_branch,
             reviewed_state_id: json_string(&payload_value, "reviewed_state_id")?,
+            semantic_reviewed_state_id: json_string(&payload_value, "semantic_reviewed_state_id"),
             contract_identity: json_string(&payload_value, "contract_identity")?,
             _effective_reviewed_branch_surface: effective_reviewed_branch_surface,
             source_task_closure_ids,
@@ -3500,6 +3720,7 @@ impl AuthoritativeTransitionState {
                 CurrentBranchClosureIdentity {
                     branch_closure_id: branch_closure_id.clone(),
                     reviewed_state_id: record.reviewed_state_id,
+                    semantic_reviewed_state_id: record.semantic_reviewed_state_id,
                     contract_identity: record.contract_identity,
                 }
             })
@@ -3521,6 +3742,7 @@ impl AuthoritativeTransitionState {
             return Some(CurrentBranchClosureIdentity {
                 branch_closure_id,
                 reviewed_state_id: record.reviewed_state_id,
+                semantic_reviewed_state_id: record.semantic_reviewed_state_id,
                 contract_identity: record.contract_identity,
             });
         }
@@ -3726,6 +3948,7 @@ impl AuthoritativeTransitionState {
             // a generic missing-record failure.
             base_branch: json_string_allow_empty(&payload, "base_branch")?,
             reviewed_state_id: json_string(&payload, "reviewed_state_id")?,
+            semantic_reviewed_state_id: json_string(&payload, "semantic_reviewed_state_id"),
             result: json_string(&payload, "result")?,
             browser_qa_fingerprint: json_string(&payload, "browser_qa_fingerprint"),
             source_test_plan_fingerprint: json_string(&payload, "source_test_plan_fingerprint"),
@@ -3794,10 +4017,6 @@ impl AuthoritativeTransitionState {
             .and_then(Value::as_object)?
             .get(record_id)
             .cloned()
-    }
-
-    pub(crate) fn current_open_step_state(&self) -> Option<OpenStepStateRecord> {
-        self.current_open_step_state_checked().ok().flatten()
     }
 
     pub(crate) fn current_open_step_state_checked(
@@ -3882,6 +4101,14 @@ impl AuthoritativeTransitionState {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
+            .or_else(|| {
+                self.state_payload
+                    .get("execution_run_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            })
     }
 
     fn last_strategy_checkpoint_fingerprint(&self) -> Option<String> {
@@ -4047,34 +4274,119 @@ impl AuthoritativeTransitionState {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn persist_if_dirty_with_failpoint(
         &self,
         failpoint: Option<&str>,
     ) -> Result<(), JsonFailure> {
-        if !self.dirty {
-            return Ok(());
+        self.persist_if_dirty_with_failpoint_and_command(failpoint, "authoritative_state_persist")
+    }
+
+    pub(crate) fn persist_if_dirty_with_failpoint_and_command(
+        &self,
+        failpoint: Option<&str>,
+        command: &str,
+    ) -> Result<(), JsonFailure> {
+        let outcome =
+            self.persist_if_dirty_with_failpoint_and_command_outcome(failpoint, command)?;
+        if let Some(error) = outcome.projection_refresh_failure
+            && !outcome.authoritative_event_committed
+        {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn persist_if_dirty_with_failpoint_and_command_outcome(
+        &self,
+        failpoint: Option<&str>,
+        command: &str,
+    ) -> Result<AuthoritativePersistOutcome, JsonFailure> {
+        self.persist_if_dirty_with_failpoint_command_outcome_and_step_hint(failpoint, command, None)
+    }
+
+    pub(crate) fn persist_if_dirty_with_failpoint_command_outcome_and_step_hint(
+        &self,
+        failpoint: Option<&str>,
+        command: &str,
+        step_hint: Option<(u32, u32)>,
+    ) -> Result<AuthoritativePersistOutcome, JsonFailure> {
+        if !self.dirty && step_hint.is_none() {
+            return Ok(AuthoritativePersistOutcome {
+                authoritative_event_committed: false,
+                projection_refresh_failure: None,
+            });
         }
         maybe_trigger_authoritative_state_failpoint(failpoint)?;
-        let serialized = serde_json::to_string_pretty(&self.state_payload).map_err(|error| {
-            JsonFailure::new(
-                FailureClass::PartialAuthoritativeMutation,
-                format!(
-                    "Could not serialize authoritative harness state mutation {}: {error}",
-                    self.state_path.display()
-                ),
-            )
-        })?;
-        write_atomic_file(&self.state_path, serialized).map_err(|error| {
-            JsonFailure::new(
-                FailureClass::PartialAuthoritativeMutation,
-                format!(
-                    "Could not persist authoritative harness state {}: {error}",
-                    self.state_path.display()
-                ),
-            )
-        })?;
-        refresh_authoritative_state_payload_cache(&self.state_path, &self.state_payload);
-        Ok(())
+        if let Some(step_hint) = step_hint {
+            append_typed_state_event_for_state_path_with_step_hint(
+                &self.state_path,
+                command,
+                &self.state_payload,
+                "state_persist_projection_refresh",
+                Some(step_hint),
+            )?;
+        } else {
+            append_typed_state_event_for_state_path(
+                &self.state_path,
+                command,
+                &self.state_payload,
+                "state_persist_projection_refresh",
+            )?;
+        }
+        if let Some(injected_failure) =
+            injected_projection_refresh_failure_after_event_append(failpoint)
+        {
+            return Ok(AuthoritativePersistOutcome {
+                authoritative_event_committed: true,
+                projection_refresh_failure: Some(injected_failure),
+            });
+        }
+        let projection_payload =
+            match load_reduced_authoritative_state_for_state_path(&self.state_path) {
+                Ok(Some(reduced)) => reduced,
+                Ok(None) => self.state_payload.clone(),
+                Err(error) => {
+                    return Ok(AuthoritativePersistOutcome {
+                        authoritative_event_committed: true,
+                        projection_refresh_failure: Some(error),
+                    });
+                }
+            };
+        let serialized = match serde_json::to_string_pretty(&projection_payload) {
+            Ok(serialized) => serialized,
+            Err(error) => {
+                return Ok(AuthoritativePersistOutcome {
+                    authoritative_event_committed: true,
+                    projection_refresh_failure: Some(JsonFailure::new(
+                        FailureClass::PartialAuthoritativeMutation,
+                        format!(
+                            "Could not serialize authoritative harness state mutation {}: {error}",
+                            self.state_path.display()
+                        ),
+                    )),
+                });
+            }
+        };
+        if let Err(error) = write_atomic_file(&self.state_path, serialized) {
+            return Ok(AuthoritativePersistOutcome {
+                authoritative_event_committed: true,
+                projection_refresh_failure: Some(JsonFailure::new(
+                    FailureClass::PartialAuthoritativeMutation,
+                    format!(
+                        "Could not persist authoritative harness state {}: {error}",
+                        self.state_path.display()
+                    ),
+                )),
+            });
+        }
+        // The write above refreshes a repo-visible projection only. The next read must reduce
+        // `events.jsonl` rather than reusing this command's partial projection payload.
+        invalidate_authoritative_state_payload_cache(&self.state_path);
+        Ok(AuthoritativePersistOutcome {
+            authoritative_event_committed: true,
+            projection_refresh_failure: None,
+        })
     }
 
     fn root_object_mut(&mut self) -> Result<&mut serde_json::Map<String, Value>, JsonFailure> {
@@ -4090,6 +4402,38 @@ impl AuthoritativeTransitionState {
     }
 }
 
+fn late_stage_record_matches_current_branch_identity(
+    current_identity: &CurrentBranchClosureIdentity,
+    record_reviewed_state_id: &str,
+    record_semantic_reviewed_state_id: Option<&str>,
+) -> bool {
+    let _ = record_reviewed_state_id;
+    match (
+        current_identity.semantic_reviewed_state_id.as_deref(),
+        record_semantic_reviewed_state_id,
+    ) {
+        (Some(current_semantic), Some(record_semantic)) => current_semantic == record_semantic,
+        (Some(_), None) | (None, Some(_)) => false,
+        (None, None) => true,
+    }
+}
+
+pub(crate) fn hydrate_missing_review_projection_summary_payload(
+    state_path: &Path,
+    state_payload: &mut Value,
+) -> Result<(), JsonFailure> {
+    let mut authoritative_state = AuthoritativeTransitionState {
+        state_path: state_path.to_path_buf(),
+        state_payload: std::mem::take(state_payload),
+        phase: None,
+        active_contract: None,
+        dirty: false,
+    };
+    authoritative_state.hydrate_missing_review_projection_summary_fields()?;
+    *state_payload = authoritative_state.state_payload;
+    Ok(())
+}
+
 fn well_formed_late_stage_surface_only_branch_surface(value: &str) -> bool {
     parse_late_stage_surface_only_branch_surface(value).is_some_and(|entries| !entries.is_empty())
 }
@@ -4103,95 +4447,86 @@ fn load_authoritative_transition_state_internal(
         &context.runtime.repo_slug,
         &context.runtime.branch_name,
     );
-    let metadata = match fs::symlink_metadata(&state_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            invalidate_authoritative_state_payload_cache(&state_path);
-            return Ok(None);
-        }
-        Err(error) => {
-            return Err(JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Could not inspect authoritative harness state {}: {error}",
-                    state_path.display()
-                ),
-            ));
-        }
-    };
-    if metadata.file_type().is_symlink() {
-        invalidate_authoritative_state_payload_cache(&state_path);
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state path must not be a symlink in {}.",
-                state_path.display()
-            ),
-        ));
+    if !event_log_authority_exists_for_state_path(&state_path) {
+        match fs::symlink_metadata(&state_path) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    invalidate_authoritative_state_payload_cache(&state_path);
+                    return Err(JsonFailure::new(
+                        FailureClass::MalformedExecutionState,
+                        format!(
+                            "Authoritative harness state path must not be a symlink in {}.",
+                            state_path.display()
+                        ),
+                    ));
+                }
+                if !metadata.is_file() {
+                    invalidate_authoritative_state_payload_cache(&state_path);
+                    return Err(JsonFailure::new(
+                        FailureClass::MalformedExecutionState,
+                        format!(
+                            "Authoritative harness state must be a regular file in {}.",
+                            state_path.display()
+                        ),
+                    ));
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    format!(
+                        "Could not inspect authoritative harness state {}: {error}",
+                        state_path.display()
+                    ),
+                ));
+            }
+        };
     }
-    if !metadata.is_file() {
-        invalidate_authoritative_state_payload_cache(&state_path);
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Authoritative harness state must be a regular file in {}.",
-                state_path.display()
-            ),
-        ));
-    }
-    let stamp = authoritative_state_cache_stamp(&metadata);
+    ensure_event_log_migrated_from_legacy_state(&context.runtime, &state_path)?;
+    let expected_cache_stamp = authoritative_state_cache_stamp(&state_path);
     let cached = authoritative_state_payload_cache()
         .lock()
         .expect("authoritative state payload cache lock should not be poisoned")
         .get(&state_path)
+        .filter(|cached| cached.stamp == expected_cache_stamp)
         .cloned();
-    let (state_payload, gate_state) = if let Some(cached) = cached
-        && cached.stamp == stamp
-    {
+    let (state_payload, gate_state) = if let Some(cached) = cached {
         (cached.state_payload, cached.gate_state)
     } else {
-        let source = fs::read_to_string(&state_path).map_err(|error| {
+        let Some(state_payload) = load_reduced_authoritative_state(&context.runtime)? else {
+            invalidate_authoritative_state_payload_cache(&state_path);
+            return Ok(None);
+        };
+        let gate_state: GateAuthorityState = serde_json::from_value(strip_top_level_null_fields(
+            state_payload.clone(),
+        ))
+        .map_err(|error| {
             JsonFailure::new(
                 FailureClass::MalformedExecutionState,
                 format!(
-                    "Could not read authoritative harness state {}: {error}",
+                    "Authoritative reduced state is malformed for {}: {error}",
                     state_path.display()
                 ),
             )
         })?;
-        let state_payload: Value = serde_json::from_str(&source).map_err(|error| {
-            JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Authoritative harness state is malformed in {}: {error}",
-                    state_path.display()
-                ),
-            )
-        })?;
-        let gate_state: GateAuthorityState = serde_json::from_value(state_payload.clone())
-            .map_err(|error| {
-                JsonFailure::new(
-                    FailureClass::MalformedExecutionState,
-                    format!(
-                        "Authoritative harness state is malformed in {}: {error}",
-                        state_path.display()
-                    ),
-                )
-            })?;
-        authoritative_state_payload_cache()
-            .lock()
-            .expect("authoritative state payload cache lock should not be poisoned")
-            .insert(
-                state_path.clone(),
-                CachedAuthoritativeStatePayload {
-                    stamp,
-                    state_payload: state_payload.clone(),
-                    gate_state: gate_state.clone(),
-                },
-            );
+        if expected_cache_stamp.state_projection.is_some()
+            || expected_cache_stamp.event_log.is_some()
+        {
+            authoritative_state_payload_cache()
+                .lock()
+                .expect("authoritative state payload cache lock should not be poisoned")
+                .insert(
+                    state_path.clone(),
+                    CachedAuthoritativeStatePayload {
+                        stamp: expected_cache_stamp.clone(),
+                        state_payload: state_payload.clone(),
+                        gate_state: gate_state.clone(),
+                    },
+                );
+        }
         (state_payload, gate_state)
     };
-
     let active_contract = if require_active_contract && has_active_contract_pointer(&gate_state) {
         let mut gate = GateState::default();
         let active = require_active_contract_state(context, &gate_state, &mut gate);
@@ -4214,15 +4549,27 @@ fn load_authoritative_transition_state_internal(
         None
     };
 
-    Ok(Some(AuthoritativeTransitionState {
+    let mut authoritative_state = AuthoritativeTransitionState {
         state_path,
         state_payload,
         phase: gate_state.harness_phase.clone(),
         active_contract,
         dirty: false,
-    }))
+    };
+    authoritative_state.hydrate_missing_review_projection_summary_fields()?;
+    authoritative_state.dirty = false;
+
+    Ok(Some(authoritative_state))
 }
 
+fn event_log_authority_exists_for_state_path(state_path: &Path) -> bool {
+    fs::symlink_metadata(events_log_path_for_state_path(state_path))
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.len() > 0)
+        .is_some()
+}
+
+#[cfg(test)]
 pub(crate) fn read_authoritative_transition_state_source(
     state_path: &Path,
 ) -> Result<Option<String>, JsonFailure> {
@@ -4270,6 +4617,10 @@ pub(crate) fn read_authoritative_transition_state_source(
     Ok(Some(source))
 }
 
+/// Loads the reduced event-authoritative transition snapshot for the current branch.
+///
+/// `events.jsonl` is the authority. The `state.json` path is only refreshed as a
+/// repo-visible projection and cache key; reduction still comes from the event log.
 pub(crate) fn load_authoritative_transition_state(
     context: &ExecutionContext,
 ) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
@@ -4295,92 +4646,12 @@ pub(crate) fn load_or_initialize_authoritative_transition_state(
     })
 }
 
+/// Loads the reduced event-authoritative transition snapshot without requiring an
+/// active contract. The returned wrapper is still reduced from `events.jsonl`.
 pub(crate) fn load_authoritative_transition_state_relaxed(
     context: &ExecutionContext,
 ) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
     load_authoritative_transition_state_internal(context, false)
-}
-
-pub(crate) fn materialize_legacy_open_step_state_if_needed(
-    runtime: &ExecutionRuntime,
-    context: &ExecutionContext,
-) -> Result<bool, JsonFailure> {
-    let mut authoritative_state = load_authoritative_transition_state_relaxed(context)?;
-    if let Some(authoritative_state) = authoritative_state.as_mut() {
-        if authoritative_state.current_open_step_state().is_some() {
-            return Ok(false);
-        }
-        if authoritative_state
-            .current_open_step_state_checked()?
-            .is_some()
-        {
-            return Ok(false);
-        }
-        let Some(candidate) = single_legacy_open_step_state_candidate(context)? else {
-            return Ok(false);
-        };
-        authoritative_state.record_open_step_state(candidate)?;
-        authoritative_state.persist_if_dirty_with_failpoint(None)?;
-        return Ok(true);
-    }
-
-    let Some(candidate) = single_legacy_open_step_state_candidate(context)? else {
-        return Ok(false);
-    };
-    let state_path =
-        harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
-    let mut authoritative_state = AuthoritativeTransitionState {
-        state_path,
-        state_payload: Value::Object(serde_json::Map::new()),
-        phase: None,
-        active_contract: None,
-        dirty: false,
-    };
-    authoritative_state.record_open_step_state(candidate)?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
-    Ok(true)
-}
-
-fn single_legacy_open_step_state_candidate(
-    context: &ExecutionContext,
-) -> Result<Option<OpenStepStateRecord>, JsonFailure> {
-    let candidate = match context.legacy_open_step_state_candidates.as_slice() {
-        [] => return Ok(None),
-        [candidate] => candidate,
-        _ => {
-            return Err(JsonFailure::new(
-                FailureClass::MalformedExecutionState,
-                format!(
-                    "Execution plan markdown contains multiple open-step execution notes for {}; persist a single authoritative open step before running mutating commands.",
-                    context.plan_rel
-                ),
-            ));
-        }
-    };
-
-    let Some(step) = context
-        .steps
-        .iter()
-        .find(|step| step.task_number == candidate.task && step.step_number == candidate.step)
-    else {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Legacy open-step execution note in {} points to missing Task {} Step {}.",
-                context.plan_rel, candidate.task, candidate.step
-            ),
-        ));
-    };
-    if step.checked {
-        return Err(JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Legacy open-step execution note in {} points to completed Task {} Step {}.",
-                context.plan_rel, candidate.task, candidate.step
-            ),
-        ));
-    }
-    Ok(Some(candidate.clone()))
 }
 
 pub(crate) fn enforce_authoritative_phase(
@@ -4531,6 +4802,23 @@ fn maybe_trigger_authoritative_state_failpoint(failpoint: Option<&str>) -> Resul
     Ok(())
 }
 
+fn injected_projection_refresh_failure_after_event_append(
+    failpoint: Option<&str>,
+) -> Option<JsonFailure> {
+    let staged_failpoint = failpoint
+        .map(|name| format!("{name}:after_event_append"))
+        .filter(|name| {
+            std::env::var("FEATUREFORGE_PLAN_EXECUTION_TEST_FAILPOINT")
+                .ok()
+                .as_deref()
+                == Some(name.as_str())
+        })?;
+    Some(JsonFailure::new(
+        FailureClass::PartialAuthoritativeMutation,
+        format!("Injected plan execution failpoint: {staged_failpoint}"),
+    ))
+}
+
 fn json_string(payload: &Value, key: &str) -> Option<String> {
     payload
         .get(key)
@@ -4557,6 +4845,25 @@ fn json_u32(payload: &Value, key: &str) -> Option<u32> {
         .get(key)
         .and_then(Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
+}
+
+fn release_readiness_record_from_payload(payload: &Value) -> Option<CurrentReleaseReadinessRecord> {
+    Some(CurrentReleaseReadinessRecord {
+        record_status: json_string(payload, "record_status")?,
+        branch_closure_id: json_string(payload, "branch_closure_id")?,
+        source_plan_path: json_string(payload, "source_plan_path")?,
+        source_plan_revision: json_u32(payload, "source_plan_revision")?,
+        repo_slug: json_string(payload, "repo_slug")?,
+        branch_name: json_string(payload, "branch_name")?,
+        base_branch: json_string(payload, "base_branch")?,
+        reviewed_state_id: json_string(payload, "reviewed_state_id")?,
+        semantic_reviewed_state_id: json_string(payload, "semantic_reviewed_state_id"),
+        result: json_string(payload, "result")?,
+        release_docs_fingerprint: json_string(payload, "release_docs_fingerprint"),
+        summary: json_string(payload, "summary")?,
+        summary_hash: json_string(payload, "summary_hash")?,
+        generated_by_identity: json_string(payload, "generated_by_identity")?,
+    })
 }
 
 fn json_bool(payload: &Value, key: &str) -> bool {
@@ -4701,9 +5008,21 @@ fn next_dispatch_record_sequence(records: &serde_json::Map<String, Value>) -> u6
 }
 
 fn mark_record_status(records: &mut serde_json::Map<String, Value>, record_id: &str, status: &str) {
-    if let Some(record) = records.get_mut(record_id)
-        && let Some(record) = record.as_object_mut()
-    {
+    for (entry_key, record) in records.iter_mut() {
+        let matches_record = entry_key == record_id
+            || record
+                .get("record_id")
+                .or_else(|| record.get("closure_record_id"))
+                .or_else(|| record.get("branch_closure_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|candidate| candidate == record_id);
+        if !matches_record {
+            continue;
+        }
+        let Some(record) = record.as_object_mut() else {
+            continue;
+        };
         if record.contains_key("closure_status") {
             record.insert(
                 String::from("closure_status"),
@@ -4730,6 +5049,7 @@ fn current_task_closure_record_from_payload(
         source_plan_revision: json_u32(&payload_value, "source_plan_revision"),
         execution_run_id: json_string(&payload_value, "execution_run_id"),
         reviewed_state_id: json_string(&payload_value, "reviewed_state_id")?,
+        semantic_reviewed_state_id: json_string(&payload_value, "semantic_reviewed_state_id"),
         contract_identity: json_string(&payload_value, "contract_identity")?,
         effective_reviewed_surface_paths: json_string_array_strict(
             &payload_value,
@@ -4750,6 +5070,7 @@ fn task_closure_negative_result_from_payload(
     Some(TaskClosureNegativeResult {
         dispatch_id: json_string(&payload_value, "dispatch_id")?,
         reviewed_state_id: json_string(&payload_value, "reviewed_state_id")?,
+        semantic_reviewed_state_id: json_string(&payload_value, "semantic_reviewed_state_id"),
         contract_identity: json_string(&payload_value, "contract_identity")?,
         review_result: json_string(&payload_value, "review_result")?,
         review_summary_hash: json_string(&payload_value, "review_summary_hash")?,
@@ -4807,6 +5128,7 @@ mod tests {
     use super::PersistedReviewStateFieldClass;
     use super::ReleaseReadinessResultRecord;
     use super::TaskClosureResultRecord;
+    use super::TaskDispatchLineageUpsertInput;
     use super::authoritative_state_cache_stamp;
     use super::authoritative_state_payload_cache;
     use super::claim_step_write_authority;
@@ -4935,13 +5257,11 @@ mod tests {
     }
 
     #[test]
-    fn persist_if_dirty_refreshes_authoritative_state_cache_entry() {
+    fn persist_if_dirty_invalidates_authoritative_state_cache_entry() {
         let tempdir = tempfile::tempdir().expect("tempdir should be creatable");
         let state_path = tempdir.path().join("authoritative-state.json");
         fs::write(&state_path, r#"{"harness_phase":"executing"}"#)
             .expect("authoritative state fixture should be writable");
-        let initial_metadata =
-            fs::metadata(&state_path).expect("authoritative state fixture should be stat-able");
         let initial_payload = json!({"harness_phase":"executing"});
         let initial_gate_state = serde_json::from_value(initial_payload.clone())
             .expect("initial gate-state payload should parse");
@@ -4951,7 +5271,7 @@ mod tests {
             .insert(
                 state_path.clone(),
                 CachedAuthoritativeStatePayload {
-                    stamp: authoritative_state_cache_stamp(&initial_metadata),
+                    stamp: authoritative_state_cache_stamp(&state_path),
                     state_payload: initial_payload,
                     gate_state: initial_gate_state,
                 },
@@ -4976,11 +5296,10 @@ mod tests {
             .lock()
             .expect("authoritative state payload cache lock should not be poisoned")
             .get(&state_path)
-            .cloned()
-            .expect("persisted state should leave a refreshed cache entry");
-        assert_eq!(
-            cached.state_payload, refreshed_payload,
-            "cache entry should track the latest persisted authoritative payload",
+            .cloned();
+        assert!(
+            cached.is_none(),
+            "persisting must invalidate cached projections so the next read reduces events.jsonl"
         );
     }
 
@@ -5068,24 +5387,26 @@ mod tests {
         };
 
         authoritative_state
-            .upsert_task_dispatch_lineage(
-                1,
-                "run-unit-test",
-                1,
-                "dispatch-a",
-                "task-lineage-a",
-                "git_tree:a",
-            )
+            .upsert_task_dispatch_lineage(TaskDispatchLineageUpsertInput {
+                task: 1,
+                execution_run_id: "run-unit-test",
+                source_step: 1,
+                strategy_checkpoint_fingerprint: "dispatch-a",
+                task_completion_lineage_fingerprint: "task-lineage-a",
+                reviewed_state_id: "git_tree:a",
+                semantic_reviewed_state_id: None,
+            })
             .expect("first task dispatch lineage should record");
         authoritative_state
-            .upsert_task_dispatch_lineage(
-                1,
-                "run-unit-test",
-                1,
-                "dispatch-b",
-                "task-lineage-b",
-                "git_tree:b",
-            )
+            .upsert_task_dispatch_lineage(TaskDispatchLineageUpsertInput {
+                task: 1,
+                execution_run_id: "run-unit-test",
+                source_step: 1,
+                strategy_checkpoint_fingerprint: "dispatch-b",
+                task_completion_lineage_fingerprint: "task-lineage-b",
+                reviewed_state_id: "git_tree:b",
+                semantic_reviewed_state_id: None,
+            })
             .expect("second task dispatch lineage should append");
 
         let history = authoritative_state.state_payload["strategy_review_dispatch_lineage_history"]
@@ -5130,14 +5451,15 @@ mod tests {
             dirty: false,
         };
         authoritative_state
-            .upsert_task_dispatch_lineage(
-                2,
-                "run-unit-test",
-                3,
-                "dispatch-stale",
-                "task-lineage-stale",
-                "git_tree:stale",
-            )
+            .upsert_task_dispatch_lineage(TaskDispatchLineageUpsertInput {
+                task: 2,
+                execution_run_id: "run-unit-test",
+                source_step: 3,
+                strategy_checkpoint_fingerprint: "dispatch-stale",
+                task_completion_lineage_fingerprint: "task-lineage-stale",
+                reviewed_state_id: "git_tree:stale",
+                semantic_reviewed_state_id: None,
+            })
             .expect("task dispatch lineage should record");
 
         let cleared = authoritative_state
@@ -5214,6 +5536,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 result: "blocked",
                 release_docs_fingerprint: None,
                 summary: "summary a",
@@ -5230,6 +5553,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 result: "blocked",
                 release_docs_fingerprint: Some("release-fingerprint-b"),
                 summary: "summary b",
@@ -5267,6 +5591,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 result: "blocked",
                 release_docs_fingerprint: None,
                 summary: "summary a",
@@ -5283,6 +5608,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 result: "ready",
                 release_docs_fingerprint: Some("release-fingerprint-b"),
                 summary: "summary b",
@@ -5299,6 +5625,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 result: "blocked",
                 release_docs_fingerprint: None,
                 summary: "summary a",
@@ -5344,6 +5671,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 summary: "summary a",
                 summary_hash: "summary-a",
             })
@@ -5365,6 +5693,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 summary: "summary b",
                 summary_hash: "summary-b",
             })
@@ -5400,6 +5729,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 result: "fail",
                 browser_qa_fingerprint: None,
                 source_test_plan_fingerprint: Some("test-plan-fingerprint-a"),
@@ -5418,6 +5748,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:current",
+                semantic_reviewed_state_id: None,
                 result: "fail",
                 browser_qa_fingerprint: Some("browser-qa-fingerprint-b"),
                 source_test_plan_fingerprint: Some("test-plan-fingerprint-b"),
@@ -5566,6 +5897,7 @@ mod tests {
                 branch_name: "feature-branch",
                 base_branch: "main",
                 reviewed_state_id: "git_tree:new",
+                semantic_reviewed_state_id: None,
                 contract_identity: "branch-contract-new",
                 effective_reviewed_branch_surface: "repo_tracked_content",
                 source_task_closure_ids: &["task-1-closure".to_owned()],
@@ -6112,6 +6444,7 @@ mod tests {
                 closure_record_id: "task-closure-new",
                 execution_run_id: None,
                 reviewed_state_id: "git_tree:new",
+                semantic_reviewed_state_id: None,
                 contract_identity: "task-contract-1",
                 effective_reviewed_surface_paths: &["README.md".to_owned()],
                 review_result: "pass",

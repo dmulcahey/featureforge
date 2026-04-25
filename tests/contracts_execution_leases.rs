@@ -2,8 +2,9 @@
 mod files_support;
 #[path = "support/git.rs"]
 mod git_support;
-#[path = "support/json.rs"]
-mod json_support;
+#[allow(dead_code)]
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 
@@ -21,7 +22,6 @@ use featureforge::execution::observability::{
 };
 use featureforge::paths::branch_storage_key;
 use files_support::write_file;
-use json_support::parse_json;
 use process_support::{run, run_checked};
 use std::fs;
 #[cfg(unix)]
@@ -29,7 +29,7 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
 use tempfile::TempDir;
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-plan.md";
@@ -173,27 +173,35 @@ fn preflight_acceptance_state_path(repo: &Path, state: &Path) -> PathBuf {
         .join("acceptance-state.json")
 }
 
-fn run_plan_execution_json(
-    repo: &Path,
-    state: &Path,
-    args: &[&str],
-    context: &str,
-) -> serde_json::Value {
-    parse_json(
-        &run_plan_execution_output(repo, state, args, context),
-        context,
+fn run_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> serde_json::Value {
+    plan_execution_direct_support::run_runtime_preflight_gate_json(
+        repo,
+        state,
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: plan_rel.into(),
+            external_review_result_ready: false,
+        },
     )
+    .expect("internal preflight helper should succeed")
 }
 
-fn run_plan_execution_output(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
-    command
-        .current_dir(repo)
-        .env("FEATUREFORGE_STATE_DIR", state)
-        .args(["plan", "execution"])
-        .args(args);
-    run(command, context)
+fn run_internal_preflight_failure_json(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+) -> serde_json::Value {
+    serde_json::from_str(
+        &plan_execution_direct_support::run_runtime_preflight_gate_json(
+            repo,
+            state,
+            &featureforge::cli::plan_execution::StatusArgs {
+                plan: plan_rel.into(),
+                external_review_result_ready: false,
+            },
+        )
+        .expect_err("internal preflight helper should fail"),
+    )
+    .expect("internal preflight failure should serialize")
 }
 
 #[cfg(unix)]
@@ -272,12 +280,7 @@ fn preflight_reclaims_stale_write_authority_lock_before_acceptance() {
         "preflight acceptance state should not exist before stale-lock preflight"
     );
 
-    let gate = run_plan_execution_json(
-        repo,
-        state,
-        &["preflight", "--plan", PLAN_REL],
-        "preflight should run",
-    );
+    let gate = run_runtime_preflight_gate_json(repo, state, PLAN_REL);
 
     assert_eq!(
         gate["allowed"], true,
@@ -328,12 +331,7 @@ fn preflight_blocks_live_write_authority_conflict_without_persisting_acceptance(
         "preflight acceptance state should not exist before live-lock preflight"
     );
 
-    let gate = run_plan_execution_json(
-        repo,
-        state,
-        &["preflight", "--plan", PLAN_REL],
-        "preflight should run",
-    );
+    let gate = run_runtime_preflight_gate_json(repo, state, PLAN_REL);
     let _ = holder.kill();
     let _ = holder.wait();
 
@@ -424,23 +422,7 @@ fn preflight_fails_closed_when_write_authority_lock_is_unreadable() {
     write_file(&lock_path, "pid=12345\n");
     let _guard = DirectoryModeGuard::new(&harness_dir, 0o000);
 
-    let output = run_plan_execution_output(
-        repo,
-        state,
-        &["preflight", "--plan", PLAN_REL],
-        "plan execution preflight with unreadable write-authority lock",
-    );
-    assert!(
-        !output.status.success(),
-        "preflight must fail closed when authoritative state cannot be inspected during hidden-gate migration"
-    );
-    let failure_payload = if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    };
-    let failure: serde_json::Value =
-        serde_json::from_slice(failure_payload).expect("preflight failure payload should be json");
+    let failure = run_internal_preflight_failure_json(repo, state, PLAN_REL);
     assert_eq!(failure["error_class"], "MalformedExecutionState");
     assert!(
         failure["message"].as_str().is_some_and(
@@ -525,12 +507,7 @@ fn preflight_fails_closed_when_write_authority_lock_is_dangling_symlink() {
     symlink("missing-lock-target.pid", &lock_path)
         .expect("dangling write-authority symlink should be creatable");
 
-    let gate = run_plan_execution_json(
-        repo,
-        state,
-        &["preflight", "--plan", PLAN_REL],
-        "plan execution preflight with dangling write-authority symlink",
-    );
+    let gate = run_runtime_preflight_gate_json(repo, state, PLAN_REL);
 
     assert_eq!(gate["allowed"], false);
     assert!(
@@ -567,23 +544,7 @@ fn preflight_fails_closed_when_authoritative_state_is_dangling_symlink() {
     symlink("missing-state-target.json", &state_path)
         .expect("dangling authoritative state symlink should be creatable");
 
-    let output = run_plan_execution_output(
-        repo,
-        state,
-        &["preflight", "--plan", PLAN_REL],
-        "plan execution preflight with dangling authoritative state symlink",
-    );
-    assert!(
-        !output.status.success(),
-        "preflight must fail closed when authoritative harness state path is a symlink"
-    );
-    let failure_payload = if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    };
-    let failure: serde_json::Value =
-        serde_json::from_slice(failure_payload).expect("preflight failure payload should be json");
+    let failure = run_internal_preflight_failure_json(repo, state, PLAN_REL);
     assert_eq!(failure["error_class"], "MalformedExecutionState");
     assert!(
         failure["message"].as_str().is_some_and(|message| {

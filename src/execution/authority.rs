@@ -17,6 +17,10 @@ use crate::execution::dependency_index::{
     DEPENDENCY_INDEX_VERSION, DependencyIndex, DependencyIndexHealth, DependencyIndexState,
     DependencyNode, DependencyNodeId, IndexedArtifactKind,
 };
+use crate::execution::event_log::{
+    append_typed_state_event_for_state_path, ensure_event_log_migrated_from_legacy_state,
+    load_reduced_authoritative_state,
+};
 use crate::execution::gates::{
     GateAuthorityState, normalize_artifact_repo_path, require_active_contract_state,
     validate_contract_provenance, validate_evaluator_semantics, validate_handoff_provenance,
@@ -32,7 +36,7 @@ use crate::execution::observability::{
 };
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, GateResult, GateState,
-    load_execution_context_for_exact_plan,
+    load_execution_context_without_authority_overlay,
 };
 use crate::git::sha256_hex;
 use crate::paths::{
@@ -45,7 +49,7 @@ pub fn record_contract(
     runtime: &ExecutionRuntime,
     args: &RecordContractArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    let context = load_execution_context_without_authority_overlay(runtime, &args.plan)?;
     let mut gate = GateState::default();
 
     let artifact_rel = normalize_artifact_repo_path(&args.contract, "Contract")?;
@@ -105,7 +109,7 @@ pub fn record_evaluation(
     runtime: &ExecutionRuntime,
     args: &RecordEvaluationArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    let context = load_execution_context_without_authority_overlay(runtime, &args.plan)?;
     let mut gate = GateState::default();
 
     let artifact_rel = normalize_artifact_repo_path(&args.evaluation, "Evaluation")?;
@@ -184,7 +188,7 @@ pub fn record_handoff(
     runtime: &ExecutionRuntime,
     args: &RecordHandoffArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    let context = load_execution_context_without_authority_overlay(runtime, &args.plan)?;
     let mut gate = GateState::default();
 
     let artifact_rel = normalize_artifact_repo_path(&args.handoff, "Handoff")?;
@@ -340,7 +344,7 @@ pub fn ensure_preflight_authoritative_bootstrap(
 
     let state_path =
         harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
-    let mut state = match load_mutable_harness_state(&state_path) {
+    let mut state = match load_mutable_harness_state_from_event_authority(runtime, &state_path) {
         Ok(state) => state,
         Err(MutableStateLoadError::MissingState) => MutableHarnessState::default(),
         Err(MutableStateLoadError::Unreadable(message))
@@ -386,6 +390,21 @@ pub fn ensure_preflight_authoritative_bootstrap(
         );
     }
 
+    let state_payload = serde_json::to_value(&state).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not serialize authoritative harness bootstrap payload {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    append_typed_state_event_for_state_path(
+        &state_path,
+        "preflight_bootstrap",
+        &state_payload,
+        "authoritative_preflight_bootstrap_refresh",
+    )?;
     let serialized = serde_json::to_string_pretty(&state).map_err(|error| {
         JsonFailure::new(
             FailureClass::PartialAuthoritativeMutation,
@@ -788,7 +807,7 @@ where
 
     let state_path =
         harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
-    let mut state = match load_mutable_harness_state(&state_path) {
+    let mut state = match load_mutable_harness_state_from_event_authority(runtime, &state_path) {
         Ok(state) => state,
         Err(MutableStateLoadError::MissingState) => {
             gate.fail(
@@ -847,6 +866,7 @@ where
         artifact_file_name,
     );
     let mut artifact_written_this_call = false;
+    let mut event_log_appended = false;
     let target_exists = match fs::read_to_string(&target_path) {
         Ok(existing) if existing == source => true,
         Ok(_) => {
@@ -937,7 +957,7 @@ where
         artifact_file_name,
         authoritative_sequence,
     ) {
-        if artifact_written_this_call {
+        if artifact_written_this_call && !event_log_appended {
             let _ = fs::remove_file(&target_path);
         }
         gate.fail(
@@ -954,7 +974,7 @@ where
         authoritative_sequence,
         &observability,
     ) {
-        if artifact_written_this_call {
+        if artifact_written_this_call && !event_log_appended {
             let _ = fs::remove_file(&target_path);
         }
         gate.fail(
@@ -978,8 +998,42 @@ where
             return Ok(gate.finish());
         }
     };
+    let state_payload = match serde_json::to_value(&state) {
+        Ok(payload) => payload,
+        Err(error) => {
+            if artifact_written_this_call && !event_log_appended {
+                let _ = fs::remove_file(&target_path);
+            }
+            gate.fail(
+                FailureClass::PartialAuthoritativeMutation,
+                "authoritative_state_serialize_failed",
+                format!("Could not encode authoritative harness state mutation: {error}"),
+                "Repair authoritative harness state serialization and retry the record command.",
+            );
+            return Ok(gate.finish());
+        }
+    };
+    let event_command = observability.command_name.replace('-', "_");
+    if let Err(error) = append_typed_state_event_for_state_path(
+        &state_path,
+        event_command.as_str(),
+        &state_payload,
+        "authoritative_record_mutation_refresh",
+    ) {
+        if artifact_written_this_call && !event_log_appended {
+            let _ = fs::remove_file(&target_path);
+        }
+        gate.fail(
+            FailureClass::PartialAuthoritativeMutation,
+            "authoritative_event_log_append_failed",
+            error.message,
+            "Restore event-log mutation access and retry the authoritative record command.",
+        );
+        return Ok(gate.finish());
+    }
+    event_log_appended = true;
     if let Err(error) = write_atomic_file(&state_path, serialized) {
-        if artifact_written_this_call {
+        if artifact_written_this_call && !event_log_appended {
             let _ = fs::remove_file(&target_path);
         }
         gate.fail(
@@ -1163,6 +1217,21 @@ pub fn persist_active_worktree_lease_index(
     state.active_worktree_lease_fingerprints = Some(active_worktree_lease_fingerprints);
     state.active_worktree_lease_bindings = Some(active_worktree_lease_bindings);
 
+    let state_payload = serde_json::to_value(&state).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::PartialAuthoritativeMutation,
+            format!(
+                "Could not encode authoritative harness state lease index payload {}: {error}",
+                state_path.display()
+            ),
+        )
+    })?;
+    append_typed_state_event_for_state_path(
+        &state_path,
+        "worktree_lease_index_update",
+        &state_payload,
+        "authoritative_worktree_lease_index_refresh",
+    )?;
     let serialized = serde_json::to_string_pretty(&state).map_err(|error| {
         JsonFailure::new(
             FailureClass::PartialAuthoritativeMutation,
@@ -1204,7 +1273,7 @@ fn load_mutable_harness_state_for_authoritative_write(
 
     let state_path =
         harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
-    let mut state = match load_mutable_harness_state(&state_path) {
+    let state = match load_mutable_harness_state_from_event_authority(runtime, &state_path) {
         Ok(state) => state,
         Err(MutableStateLoadError::MissingState) => {
             return Err(JsonFailure::new(
@@ -1223,8 +1292,46 @@ fn load_mutable_harness_state_for_authoritative_write(
             ));
         }
     };
-    state.normalize_defaults();
     Ok((lock, state, state_path))
+}
+
+fn load_mutable_harness_state_from_event_authority(
+    runtime: &ExecutionRuntime,
+    state_path: &Path,
+) -> Result<MutableHarnessState, MutableStateLoadError> {
+    ensure_event_log_migrated_from_legacy_state(runtime, state_path).map_err(|error| {
+        MutableStateLoadError::Unreadable(format!(
+            "Could not migrate legacy authoritative state for {}: {}",
+            state_path.display(),
+            error.message
+        ))
+    })?;
+    let reduced = load_reduced_authoritative_state(runtime).map_err(|error| {
+        MutableStateLoadError::Unreadable(format!(
+            "Could not reduce authoritative event log for {}: {}",
+            state_path.display(),
+            error.message
+        ))
+    })?;
+    let Some(payload) = reduced else {
+        return Err(MutableStateLoadError::MissingState);
+    };
+    let mut state: MutableHarnessState =
+        serde_json::from_value(strip_top_level_null_fields(payload)).map_err(|error| {
+            MutableStateLoadError::Malformed(format!(
+                "Reduced authoritative state is malformed in {}: {error}",
+                state_path.display()
+            ))
+        })?;
+    state.normalize_defaults();
+    Ok(state)
+}
+
+fn strip_top_level_null_fields(mut payload: Value) -> Value {
+    if let Some(object) = payload.as_object_mut() {
+        object.retain(|_, value| !value.is_null());
+    }
+    payload
 }
 
 fn validate_safe_identifier_token(value: &str, field_name: &str) -> Result<(), JsonFailure> {
@@ -1662,6 +1769,7 @@ enum MutableStateLoadError {
     Malformed(String),
 }
 
+#[cfg(test)]
 fn load_mutable_harness_state(path: &Path) -> Result<MutableHarnessState, MutableStateLoadError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         if error.kind() == ErrorKind::NotFound {

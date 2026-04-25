@@ -71,12 +71,12 @@ Explicit usage rule:
 When workflow/operator returns a recording-ready substate, it must surface only the runtime-known ids the current recommended command still needs directly, plus any documented transparency-only identifiers that remain exposed:
 
 - `task_closure_recording_ready` must include the task number; dispatch id is compatibility/debug-only and must not be required for the normal public `close-current-task` path
-- `release_readiness_recording_ready.recording_context.branch_closure_id` and `release_blocker_resolution_required.recording_context.branch_closure_id` must exist for authoritative binding context, transparency, and primitive fallback to `record-release-readiness` even though the aggregate release-readiness path still takes only `--plan`, `--result`, and `--summary-file`
+- `release_readiness_recording_ready.recording_context.branch_closure_id` and `release_blocker_resolution_required.recording_context.branch_closure_id` must exist for authoritative binding context and transparency even though the aggregate release-readiness path still takes only `--plan`, `--result`, and `--summary-file`
 - `final_review_recording_ready` must include the current branch closure id; dispatch id is compatibility/debug-only and must not be required for the normal public `advance-late-stage` final-review path
-- `recording_context` is omitted entirely when the current `recommended_command` needs no extra runtime-known identifiers and no documented primitive-fallback or transparency ids need to be surfaced; it is never `null` or an empty object
-- `final_review_recording_ready.recording_context.branch_closure_id` exists for authoritative binding context, transparency, and primitive fallback even though the aggregate final-review command itself no longer requires public `--dispatch-id`
+- `recording_context` is omitted entirely when the current `recommended_command` needs no extra runtime-known identifiers and no transparency ids need to be surfaced; it is never `null` or an empty object
+- `final_review_recording_ready.recording_context.branch_closure_id` exists for authoritative binding context and transparency even though the aggregate final-review command itself no longer requires public `--dispatch-id`
 
-Compatibility/debug `record-review-dispatch` responses use explicit action semantics:
+Compatibility/debug review-dispatch service responses use explicit action semantics:
 
 - `action=recorded` when a new dispatch record is appended
 - `action=already_current` when the current dispatch record is already valid for the same boundary
@@ -94,14 +94,14 @@ When workflow/operator reports `phase=qa_pending` with `phase_detail=test_plan_r
 | request task review | request external review, rerun `featureforge workflow operator --plan <path> --external-review-result-ready`, then follow operator-reported recording-ready closure command | `ReviewDispatchService` compatibility/debug boundary only |
 | close reviewed task work | `featureforge plan execution close-current-task --plan <path> --task <n> --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]` | `TaskClosureRecordingService` internal boundary only; not a first-slice public CLI fallback |
 | repair review-state truth | `featureforge plan execution repair-review-state --plan <path>` | internal diagnostic boundaries only; normal-path guidance stays on operator + repair |
-| record missing reviewed branch closure | `featureforge plan execution advance-late-stage --plan <path>` | `record-branch-closure` compatibility/expert-only primitive |
-| record release-readiness after branch closure is current | `featureforge plan execution advance-late-stage --plan <path> --result ready|blocked --summary-file <path>` | `record-release-readiness` compatibility/expert-only primitive |
+| record missing reviewed branch closure | `featureforge plan execution advance-late-stage --plan <path>` | internal late-stage recording boundary only |
+| record release-readiness after branch closure is current | `featureforge plan execution advance-late-stage --plan <path> --result ready|blocked --summary-file <path>` | internal late-stage recording boundary only |
 | request final review | request external final review, rerun `featureforge workflow operator --plan <path> --external-review-result-ready`, then follow operator-reported recording-ready late-stage command | `ReviewDispatchService` compatibility/debug boundary only |
-| record final-review outcome after dispatch is current and the same branch closure already has a current release-readiness result `ready` | `featureforge plan execution advance-late-stage --plan <path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>` | `record-final-review` compatibility/expert-only primitive |
-| record QA outcome once current branch closure, current release-readiness result `ready`, and current final-review result `pass` are already current for the same branch closure and `QA Requirement: required` | `featureforge plan execution advance-late-stage --plan <path> --result pass|fail --summary-file <path>` | `record-qa` compatibility/expert-only primitive |
+| record final-review outcome after dispatch is current and the same branch closure already has a current release-readiness result `ready` | `featureforge plan execution advance-late-stage --plan <path> --reviewer-source <source> --reviewer-id <id> --result pass|fail --summary-file <path>` | internal late-stage recording boundary only |
+| record QA outcome once current branch closure, current release-readiness result `ready`, and current final-review result `pass` are already current for the same branch closure and `QA Requirement: required` | `featureforge plan execution advance-late-stage --plan <path> --result pass|fail --summary-file <path>` | internal late-stage recording boundary only |
 | refresh the current-branch test plan before QA recording when workflow/operator stays in `qa_pending` with `phase_detail=test_plan_refresh_required` | `featureforge:plan-eng-review`, then rerun `featureforge workflow operator --plan <path>` | current-branch test-plan regeneration lane |
 | record required handoff | `featureforge plan execution transfer --plan <path> --scope <task|branch> --to <owner> --reason <reason>` | execution transfer surface |
-| record required pivot | `featureforge workflow record-pivot --plan <path> --reason <reason>` | workflow pivot surface |
+| record required pivot | `featureforge plan execution repair-review-state --plan <path>` | pivot reentry remains aggregated behind repair-review-state |
 
 ## Status Vocabulary
 
@@ -150,7 +150,7 @@ The first-slice corpus also relies on one named runtime-owned resolver:
 - `RepositoryContextResolver`: the authoritative source for normalized repo slug, branch identity, and base-branch bindings used by branch closure, release-readiness, final review, QA, and workflow/operator
 - `SummaryNormalizer`: the authoritative source for summary equivalence used by same-state idempotency checks across task closure, release-readiness, final review, and QA
 - `PolicyMetadataNormalizer`: the authoritative source for normalized `QA Requirement` values
-- `FollowUpOverrideResolver`: the authoritative source for `follow_up_override = none|record_handoff|record_pivot`, including precedence and clearing behavior
+- `RouteDecisionRouter`: the authoritative source for public `state_kind`, `next_public_action`, and structured `blockers[]` emitted by operator/status surfaces
 
 ## Milestone Model
 
@@ -218,8 +218,9 @@ The public workflow contract should be read like this:
 
 Supporting query fields that runtime-owned commands rely on:
 
-- `follow_up_override = none|record_handoff|record_pivot` tells negative-result commands whether to emit execution reentry or a forced handoff/pivot follow-up
-- `follow_up_override` is derived by `FollowUpOverrideResolver`; `record_pivot` wins if both raw handoff and pivot conditions exist, and the field clears once the corresponding handoff/pivot recording succeeds or workflow reevaluates to `none`
+- `state_kind = actionable_public_command|waiting_external_input|terminal|blocked_runtime_bug` classifies routability
+- `next_public_action` carries the command template for the next legal public command when the state is actionable
+- `blockers[]` carries structured blocker scope and action context; non-terminal blocked states should expose one concrete blocker
 - `finish_review_gate_pass_branch_closure_id` tells workflow/operator whether the finish-review compatibility checkpoint already passed for the still-current branch closure and therefore whether `finish_completion_gate_ready` is true
 - `blocking_scope` tells workflow-owned consumers whether the current block is task-scoped or finish-scoped
 - `blocking_reason_codes` enumerates the machine-readable reasons for the current block and must stay aligned across operator/status

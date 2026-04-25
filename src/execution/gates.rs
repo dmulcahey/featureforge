@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::ErrorKind;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -11,9 +10,10 @@ use crate::contracts::harness::{
     read_evidence_artifact, read_execution_contract, read_execution_handoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
+use crate::execution::event_log::load_reduced_authoritative_state;
 use crate::execution::state::{
-    ExecutionContext, ExecutionRuntime, GateResult, GateState, PacketFingerprintInput,
-    compute_packet_fingerprint, hash_contract_plan, load_execution_context_for_exact_plan,
+    ExecutionContext, ExecutionRuntime, GateResult, GateState, hash_contract_plan,
+    load_execution_context_without_authority_overlay, task_packet_fingerprint,
 };
 use crate::git::sha256_hex;
 use crate::paths::{
@@ -66,7 +66,7 @@ pub fn gate_contract(
     runtime: &ExecutionRuntime,
     args: &GateContractArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    let context = load_execution_context_without_authority_overlay(runtime, &args.plan)?;
     gate_contract_from_context(&context, &args.contract)
 }
 
@@ -133,7 +133,7 @@ pub fn gate_evaluator(
     runtime: &ExecutionRuntime,
     args: &GateEvaluatorArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    let context = load_execution_context_without_authority_overlay(runtime, &args.plan)?;
     gate_evaluator_from_context(&context, &args.evaluation)
 }
 
@@ -221,7 +221,7 @@ pub fn gate_handoff(
     runtime: &ExecutionRuntime,
     args: &GateHandoffArgs,
 ) -> Result<GateResult, JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    let context = load_execution_context_without_authority_overlay(runtime, &args.plan)?;
     gate_handoff_from_context(&context, &args.handoff)
 }
 
@@ -361,7 +361,7 @@ pub(crate) fn validate_contract_provenance(
 fn validate_contract_scope_against_approved_plan(
     context: &ExecutionContext,
     contract: &ExecutionContract,
-    expected_plan_fingerprint: &str,
+    _expected_plan_fingerprint: &str,
     expected_spec_fingerprint: &str,
     gate: &mut GateState,
 ) {
@@ -456,17 +456,8 @@ fn validate_contract_scope_against_approved_plan(
 
     let expected_packet_fingerprints: BTreeSet<String> = contract_scope
         .iter()
-        .map(|(task, step)| {
-            compute_packet_fingerprint(PacketFingerprintInput {
-                plan_path: &context.plan_rel,
-                plan_revision: context.plan_document.plan_revision,
-                plan_fingerprint: expected_plan_fingerprint,
-                source_spec_path: &context.plan_document.source_spec_path,
-                source_spec_revision: context.plan_document.source_spec_revision,
-                source_spec_fingerprint: expected_spec_fingerprint,
-                task: *task,
-                step: *step,
-            })
+        .filter_map(|(task, step)| {
+            task_packet_fingerprint(context, expected_spec_fingerprint, *task, *step)
         })
         .collect();
     let declared_packet_fingerprints: BTreeSet<String> = contract
@@ -692,9 +683,9 @@ fn load_gate_authority_state(
         &context.runtime.repo_slug,
         &context.runtime.branch_name,
     );
-    let source = match fs::read_to_string(&state_path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
+    let payload = match load_reduced_authoritative_state(&context.runtime) {
+        Ok(Some(payload)) => payload,
+        Ok(None) => {
             gate.fail(
                 FailureClass::NonAuthoritativeArtifact,
                 "active_contract_missing",
@@ -711,8 +702,9 @@ fn load_gate_authority_state(
                 FailureClass::NonAuthoritativeArtifact,
                 "active_contract_missing",
                 format!(
-                    "Could not read authoritative harness state {}: {error}",
-                    state_path.display()
+                    "Could not load authoritative reduced state {}: {}",
+                    state_path.display(),
+                    error.message
                 ),
                 "Restore authoritative harness state readability and retry the gate command.",
             );
@@ -720,14 +712,14 @@ fn load_gate_authority_state(
         }
     };
 
-    match serde_json::from_str::<GateAuthorityState>(&source) {
+    match serde_json::from_value::<GateAuthorityState>(payload) {
         Ok(state) => Some(state),
         Err(error) => {
             gate.fail(
                 FailureClass::NonAuthoritativeArtifact,
                 "active_contract_missing",
                 format!(
-                    "Authoritative harness state is malformed in {}: {error}",
+                    "Authoritative reduced state is malformed in {}: {error}",
                     state_path.display()
                 ),
                 "Repair the authoritative harness state and republish valid authoritative execution state before gating artifacts.",

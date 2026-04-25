@@ -16,6 +16,7 @@ node --test tests/codex-runtime/*.test.mjs
 npm --prefix tests/brainstorm-server test
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --test contracts_spec_plan --test packet_and_schema --test contracts_execution_runtime_boundaries --test runtime_instruction_contracts --test using_featureforge_skill --test runtime_instruction_plan_review_contracts --test session_config_slug --test repo_safety --test runtime_root_cli --test update_and_install --test workflow_runtime --test workflow_shell_smoke --test plan_execution --test powershell_wrapper_resolution --test upgrade_skill
+cargo test --test liveness_model_checker
 ```
 ## Performance Budget
 
@@ -157,11 +158,7 @@ Then complete the remaining manual Step 12 checks from the plan:
   - internal-dispatch task closure `<= 2` runtime-management commands
   - rebase / resume stale-boundary recovery `<= 3` runtime-management commands before implementation resumes
   - stale release refresh `<= 3` runtime-management commands before the next real review step
-- 12.5 Search the fixed recovery / budget paths and confirm the normal path never requires hidden helper command names:
-  - `preflight`
-  - `record-review-dispatch`
-  - `gate-review`
-  - `rebuild-evidence`
+- 12.5 Search the fixed recovery / budget paths and confirm the normal path recommends only public execution commands (`begin`, `complete`, `reopen`, `transfer`, `close-current-task`, `repair-review-state`, `advance-late-stage`).
 - 12.6 Run the FS-13 fixture and confirm the runtime surfaces the earliest stale boundary without any manual edit to `**Execution Note:**` lines.
 
 Editing runtime strategy-checkpoint, topology recommendation, or final-review deviation contracts:

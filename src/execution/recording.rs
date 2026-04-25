@@ -22,6 +22,7 @@ pub(crate) struct CurrentTaskClosureWrite<'a> {
     pub(crate) closure_record_id: &'a str,
     pub(crate) execution_run_id: Option<&'a str>,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) contract_identity: &'a str,
     pub(crate) effective_reviewed_surface_paths: &'a [String],
     pub(crate) review_result: &'a str,
@@ -36,6 +37,7 @@ pub(crate) struct NegativeTaskClosureWrite<'a> {
     pub(crate) task: u32,
     pub(crate) dispatch_id: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) contract_identity: &'a str,
     pub(crate) review_result: &'a str,
     pub(crate) review_summary_hash: &'a str,
@@ -51,6 +53,7 @@ pub(crate) struct BranchClosureWrite<'a> {
     pub(crate) branch_name: &'a str,
     pub(crate) base_branch: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) contract_identity: &'a str,
     pub(crate) effective_reviewed_branch_surface: &'a str,
     pub(crate) source_task_closure_ids: &'a [String],
@@ -68,6 +71,7 @@ pub(crate) struct ReleaseReadinessWrite<'a> {
     pub(crate) branch_name: &'a str,
     pub(crate) base_branch: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) result: &'a str,
     pub(crate) release_docs_fingerprint: Option<&'a str>,
     pub(crate) summary: &'a str,
@@ -91,6 +95,7 @@ pub(crate) struct FinalReviewWrite<'a> {
     pub(crate) branch_name: &'a str,
     pub(crate) base_branch: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) summary: &'a str,
     pub(crate) summary_hash: &'a str,
 }
@@ -104,6 +109,7 @@ pub(crate) struct BrowserQaWrite<'a> {
     pub(crate) branch_name: &'a str,
     pub(crate) base_branch: &'a str,
     pub(crate) reviewed_state_id: &'a str,
+    pub(crate) semantic_reviewed_state_id: Option<&'a str>,
     pub(crate) result: &'a str,
     pub(crate) browser_qa_fingerprint: Option<&'a str>,
     pub(crate) source_test_plan_fingerprint: Option<&'a str>,
@@ -165,6 +171,7 @@ pub(crate) fn record_current_task_closure(
         closure_record_id: input.closure_record_id,
         execution_run_id: input.execution_run_id,
         reviewed_state_id: input.reviewed_state_id,
+        semantic_reviewed_state_id: input.semantic_reviewed_state_id,
         contract_identity: input.contract_identity,
         effective_reviewed_surface_paths: input.effective_reviewed_surface_paths,
         review_result: input.review_result,
@@ -178,7 +185,7 @@ pub(crate) fn record_current_task_closure(
         input.closure_record_id,
         input.reviewed_state_id,
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "close_current_task")
 }
 
 pub(crate) fn record_negative_task_closure(
@@ -189,13 +196,14 @@ pub(crate) fn record_negative_task_closure(
         task: input.task,
         dispatch_id: input.dispatch_id,
         reviewed_state_id: input.reviewed_state_id,
+        semantic_reviewed_state_id: input.semantic_reviewed_state_id,
         contract_identity: input.contract_identity,
         review_result: input.review_result,
         review_summary_hash: input.review_summary_hash,
         verification_result: input.verification_result,
         verification_summary_hash: input.verification_summary_hash,
     })?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "close_current_task")
 }
 
 pub(crate) fn record_current_branch_closure(
@@ -210,6 +218,7 @@ pub(crate) fn record_current_branch_closure(
         branch_name: input.branch_name,
         base_branch: input.base_branch,
         reviewed_state_id: input.reviewed_state_id,
+        semantic_reviewed_state_id: input.semantic_reviewed_state_id,
         contract_identity: input.contract_identity,
         effective_reviewed_branch_surface: input.effective_reviewed_branch_surface,
         source_task_closure_ids: input.source_task_closure_ids,
@@ -229,7 +238,7 @@ pub(crate) fn record_current_branch_closure(
         input.reviewed_state_id,
         input.contract_identity,
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "record_branch_closure")
 }
 
 pub(crate) fn record_release_readiness(
@@ -244,13 +253,15 @@ pub(crate) fn record_release_readiness(
         branch_name: input.branch_name,
         base_branch: input.base_branch,
         reviewed_state_id: input.reviewed_state_id,
+        semantic_reviewed_state_id: input.semantic_reviewed_state_id,
         result: input.result,
         release_docs_fingerprint: input.release_docs_fingerprint,
         summary: input.summary,
         summary_hash: input.summary_hash,
         generated_by_identity: input.generated_by_identity,
     })?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)
+    authoritative_state
+        .persist_if_dirty_with_failpoint_and_command(None, "record_release_readiness")
 }
 
 pub(crate) fn record_final_review(
@@ -273,10 +284,11 @@ pub(crate) fn record_final_review(
         branch_name: input.branch_name,
         base_branch: input.base_branch,
         reviewed_state_id: input.reviewed_state_id,
+        semantic_reviewed_state_id: input.semantic_reviewed_state_id,
         summary: input.summary,
         summary_hash: input.summary_hash,
     })?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "record_final_review")
 }
 
 pub(crate) fn record_browser_qa(
@@ -292,6 +304,7 @@ pub(crate) fn record_browser_qa(
         branch_name: input.branch_name,
         base_branch: input.base_branch,
         reviewed_state_id: input.reviewed_state_id,
+        semantic_reviewed_state_id: input.semantic_reviewed_state_id,
         result: input.result,
         browser_qa_fingerprint: input.browser_qa_fingerprint,
         source_test_plan_fingerprint: input.source_test_plan_fingerprint,
@@ -299,7 +312,7 @@ pub(crate) fn record_browser_qa(
         summary_hash: input.summary_hash,
         generated_by_identity: input.generated_by_identity,
     })?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "record_qa")
 }
 
 pub(crate) fn clear_current_branch_closure_for_structural_repair(
@@ -314,7 +327,7 @@ pub(crate) fn clear_current_branch_closure_for_structural_repair(
     if !authoritative_state.clear_current_branch_closure_for_structural_repair()? {
         return Ok(false);
     }
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(true)
 }
 
@@ -434,7 +447,7 @@ pub(crate) fn restore_review_state_projection_overlays(
         return Ok(actions_performed);
     }
 
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(actions_performed)
 }
 
@@ -451,7 +464,7 @@ pub(crate) fn clear_task_review_dispatch_lineage_for_execution_reentry(
     if !authoritative_state.clear_task_review_dispatch_lineage(task_number)? {
         return Ok(false);
     }
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(true)
 }
 
@@ -468,7 +481,7 @@ pub(crate) fn clear_task_review_dispatch_lineage_for_structural_repair(
     if !authoritative_state.clear_task_review_dispatch_lineage_for_structural_repair(task_number)? {
         return Ok(false);
     }
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(true)
 }
 
@@ -502,7 +515,7 @@ pub(crate) fn clear_current_task_closure_results_for_execution_reentry(
     }
     authoritative_state
         .clear_current_task_closure_results_for_execution_reentry(cleared_tasks.iter().copied())?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(cleared_tasks)
 }
 
@@ -536,7 +549,7 @@ pub(crate) fn clear_current_task_closure_results_for_structural_repair(
     }
     authoritative_state
         .clear_current_task_closure_results_for_structural_repair(cleared_tasks.iter().copied())?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(cleared_tasks)
 }
 
@@ -569,7 +582,7 @@ pub(crate) fn clear_current_task_closure_results_for_structural_repair_scope_key
     authoritative_state.clear_current_task_closure_results_for_structural_repair_scope_keys(
         cleared_scope_keys.clone(),
     )?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(cleared_scope_keys)
 }
 
@@ -589,7 +602,7 @@ pub(crate) fn clear_open_step_state(
         return Ok(false);
     }
     authoritative_state.clear_open_step_state()?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(true)
 }
 
@@ -604,6 +617,6 @@ pub(crate) fn persist_review_state_repair_follow_up(
         return Ok(());
     };
     authoritative_state.set_review_state_repair_follow_up(follow_up)?;
-    authoritative_state.persist_if_dirty_with_failpoint(None)?;
+    authoritative_state.persist_if_dirty_with_failpoint_and_command(None, "repair_review_state")?;
     Ok(())
 }

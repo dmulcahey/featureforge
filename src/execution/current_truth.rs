@@ -5,12 +5,13 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::contracts::headers::parse_required_header as parse_plan_header;
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
+use crate::execution::follow_up::normalize_persisted_repair_follow_up_token;
+#[cfg(test)]
 use crate::execution::handoff::{
     WorkflowTransferRecordIdentity, current_workflow_transfer_record_exists,
 };
@@ -18,6 +19,10 @@ use crate::execution::harness::{DownstreamFreshnessState, HarnessPhase};
 use crate::execution::leases::StatusAuthoritativeOverlay;
 use crate::execution::observability::{
     REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
+};
+use crate::execution::semantic_identity::{
+    branch_definition_identity_for_context, semantic_paths_changed_between_raw_trees,
+    semantic_tree_entries_for_raw_tree, semantic_workspace_snapshot,
 };
 use crate::execution::state::{
     ExecutionContext, GateResult, NO_REPO_FILES_MARKER, PlanExecutionStatus,
@@ -28,11 +33,12 @@ use crate::execution::state::{
 use crate::execution::transitions::load_authoritative_transition_state;
 use crate::execution::transitions::{AuthoritativeTransitionState, CurrentTaskClosureRecord};
 use crate::git::{discover_repository, sha256_hex};
+#[cfg(test)]
 use crate::workflow::pivot::{
     WorkflowPivotRecordIdentity, current_workflow_pivot_record_exists, pivot_decision_reason_codes,
 };
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct CurrentLateStageBranchBindings {
     pub finish_review_gate_pass_branch_closure_id: Option<String>,
     pub current_release_readiness_record_id: Option<String>,
@@ -91,35 +97,6 @@ pub(crate) fn reviewer_source_is_valid(value: &str) -> bool {
     )
 }
 
-fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
-    let mut payload = String::from(prefix);
-    for part in parts {
-        payload.push('\n');
-        payload.push_str(part);
-    }
-    let digest = sha256_hex(payload.as_bytes());
-    format!("{prefix}-{}", &digest[..16])
-}
-
-pub(crate) fn branch_contract_identity(
-    plan_rel: &str,
-    plan_revision: u32,
-    repo_slug: &str,
-    branch_name: &str,
-    base_branch: &str,
-) -> String {
-    deterministic_record_id(
-        "branch-contract",
-        &[
-            plan_rel,
-            &plan_revision.to_string(),
-            repo_slug,
-            branch_name,
-            base_branch,
-        ],
-    )
-}
-
 pub(crate) fn task_closure_contributes_to_branch_surface(
     context: &ExecutionContext,
     current_record: &CurrentTaskClosureRecord,
@@ -171,16 +148,22 @@ fn normalized_runtime_control_plane_path(path: &str) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
+fn is_runtime_owned_runtime_output_path(path: &str) -> bool {
+    path.starts_with("docs/archive/featureforge/execution-evidence/")
+        || path.starts_with("docs/featureforge/reviews/")
+        || (path.contains("featureforge-")
+            && (path.contains("-independent-review-") || path.contains("-test-outcome-")))
+}
+
 pub(crate) fn is_runtime_owned_execution_control_plane_path(
-    context: &ExecutionContext,
+    _context: &ExecutionContext,
     path: &str,
 ) -> bool {
     let Some(normalized_path) = normalized_runtime_control_plane_path(path) else {
         return false;
     };
-    let normalized_plan_rel = normalized_runtime_control_plane_path(&context.plan_rel);
-    normalized_plan_rel.as_deref() == Some(normalized_path.as_str())
-        || normalized_path.starts_with("docs/featureforge/execution-evidence/")
+    normalized_path.starts_with("docs/featureforge/execution-evidence/")
+        || is_runtime_owned_runtime_output_path(&normalized_path)
 }
 
 pub(crate) fn normalized_late_stage_surface(plan_source: &str) -> Result<Vec<String>, JsonFailure> {
@@ -268,13 +251,12 @@ pub(crate) fn current_repo_tracked_tree_sha(repo_root: &Path) -> Result<String, 
             format!("Could not discover the repository for reviewed-state identity: {error}"),
         )
     })?;
+    if !repo_has_tracked_changes_for_reviewed_state(&repo)? {
+        return head_tree_sha_for_reviewed_state(&repo);
+    }
     // This helper intentionally uses `git add -u` plus `git write-tree` against a copied index
-    // because the reviewed-state contract is defined in terms of exact Git tracked-tree identity.
-    // The current gix path we use elsewhere does not yet provide a drop-in equivalent for
-    // "stage tracked worktree deltas into a temp index and emit the same tree object ID the git
-    // CLI would produce", including index semantics relied on by the runtime/test contracts.
-    // Keep this boundary memoized at the ExecutionContext level and prefer in-process gix reads
-    // around it so status/operator paths do not repeat the subprocess cost inside one command.
+    // only when tracked worktree changes exist. Clean worktrees use the gix HEAD-tree fast path
+    // above because it is semantically identical without crossing a subprocess boundary.
     let index_path = repo
         .open_index()
         .map_err(|error| {
@@ -316,6 +298,73 @@ pub(crate) fn current_repo_tracked_tree_sha(repo_root: &Path) -> Result<String, 
         ));
     }
     git_write_tree(repo_root, Some(&temp_index_path))
+}
+
+fn repo_has_tracked_changes_for_reviewed_state(
+    repo: &gix::Repository,
+) -> Result<bool, JsonFailure> {
+    let mut status_iter = repo
+        .status(gix::progress::Discard)
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::BranchDetectionFailed,
+                format!(
+                    "Could not prepare tracked worktree status for reviewed-state identity: {error}"
+                ),
+            )
+        })?
+        .untracked_files(gix::status::UntrackedFiles::None)
+        .index_worktree_rewrites(None)
+        .tree_index_track_renames(gix::status::tree_index::TrackRenames::Disabled)
+        .into_iter(Vec::<gix::bstr::BString>::new())
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::BranchDetectionFailed,
+                format!(
+                    "Could not inspect tracked worktree status for reviewed-state identity: {error}"
+                ),
+            )
+        })?;
+    for item in &mut status_iter {
+        let item = item.map_err(|error| {
+            JsonFailure::new(
+                FailureClass::BranchDetectionFailed,
+                format!(
+                    "Could not inspect tracked worktree status for reviewed-state identity: {error}"
+                ),
+            )
+        })?;
+        match item {
+            gix::status::Item::TreeIndex(_) => return Ok(true),
+            gix::status::Item::IndexWorktree(change) if change.summary().is_some() => {
+                return Ok(true);
+            }
+            gix::status::Item::IndexWorktree(_) => {}
+        }
+    }
+    Ok(false)
+}
+
+fn head_tree_sha_for_reviewed_state(repo: &gix::Repository) -> Result<String, JsonFailure> {
+    let head = repo.head_id().map_err(|error| {
+        JsonFailure::new(
+            FailureClass::BranchDetectionFailed,
+            format!("Could not resolve HEAD for reviewed-state identity: {error}"),
+        )
+    })?;
+    let commit = repo.find_commit(head.detach()).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::BranchDetectionFailed,
+            format!("Could not load HEAD commit for reviewed-state identity: {error}"),
+        )
+    })?;
+    let tree_id = commit.tree_id().map_err(|error| {
+        JsonFailure::new(
+            FailureClass::BranchDetectionFailed,
+            format!("Could not resolve HEAD tree for reviewed-state identity: {error}"),
+        )
+    })?;
+    Ok(tree_id.to_string())
 }
 
 fn git_write_tree(repo_root: &Path, index_override: Option<&Path>) -> Result<String, JsonFailure> {
@@ -398,85 +447,10 @@ fn reserve_unique_reviewed_state_index_path() -> Result<PathBuf, JsonFailure> {
     ))
 }
 
-type TrackedPathDiffCache = RwLock<BTreeMap<(PathBuf, String, String), Vec<String>>>;
-
-pub(crate) fn tracked_paths_changed_between(
-    repo_root: &Path,
-    baseline_tree_sha: &str,
-    current_tree_sha: &str,
-) -> Result<Vec<String>, JsonFailure> {
-    static TRACKED_PATH_DIFF_CACHE: OnceLock<TrackedPathDiffCache> = OnceLock::new();
-
-    let cache_key = (
-        repo_root.to_path_buf(),
-        baseline_tree_sha.to_owned(),
-        current_tree_sha.to_owned(),
-    );
-    if let Some(cached) = TRACKED_PATH_DIFF_CACHE
-        .get_or_init(|| RwLock::new(BTreeMap::new()))
-        .read()
-        .expect("tracked path diff cache lock should not be poisoned")
-        .get(&cache_key)
-        .cloned()
-    {
-        return Ok(cached);
-    }
-
-    let repo = discover_repository(repo_root).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::BranchDetectionFailed,
-            format!(
-                "Could not discover the repository while diffing reviewed-state trees: {error}"
-            ),
-        )
-    })?;
-    let baseline_tree = tree_from_sha(&repo, baseline_tree_sha)?;
-    let current_tree = tree_from_sha(&repo, current_tree_sha)?;
-    let mut options = gix::diff::Options::default();
-    options.track_path();
-    options.track_rewrites(None);
-    let mut changed_paths = repo
-        .diff_tree_to_tree(Some(&baseline_tree), Some(&current_tree), Some(options))
-        .map_err(|error| {
-            JsonFailure::new(
-                FailureClass::BranchDetectionFailed,
-                format!(
-                    "Could not diff reviewed-state trees for branch reclosure validation: {error}"
-                ),
-            )
-        })?
-        .into_iter()
-        .map(|change| change.location().to_string())
-        .collect::<Vec<_>>();
-    changed_paths.sort();
-    changed_paths.dedup();
-    TRACKED_PATH_DIFF_CACHE
-        .get_or_init(|| RwLock::new(BTreeMap::new()))
-        .write()
-        .expect("tracked path diff cache lock should not be poisoned")
-        .insert(cache_key, changed_paths.clone());
-    Ok(changed_paths)
-}
-
-pub(crate) fn tracked_paths_changed_between_excluding_runtime_control_plane(
-    context: &ExecutionContext,
-    baseline_tree_sha: &str,
-    current_tree_sha: &str,
-) -> Result<Vec<String>, JsonFailure> {
-    Ok(tracked_paths_changed_between(
-        &context.runtime.repo_root,
-        baseline_tree_sha,
-        current_tree_sha,
-    )?
-    .into_iter()
-    .filter(|path| !is_runtime_owned_execution_control_plane_path(context, path))
-    .collect())
-}
-
 pub(crate) fn current_branch_closure_reviewed_tree_sha(
     context: &ExecutionContext,
 ) -> Option<String> {
-    let identity = validated_current_branch_closure_identity(context)?;
+    let identity = branch_closure_identity_for_rerecording(context)?;
     context
         .cached_reviewed_tree_sha(
             &identity.reviewed_state_id,
@@ -491,42 +465,39 @@ pub(crate) fn current_branch_closure_reviewed_tree_sha(
         .ok()
 }
 
-fn current_branch_closure_allows_empty_lineage_late_stage_rerecord(
-    context: &ExecutionContext,
-) -> Result<bool, JsonFailure> {
-    let Some(authoritative_state) = load_authoritative_transition_state(context)? else {
-        return Ok(false);
-    };
-    let branch_closure_id = validated_current_branch_closure_identity(context)
-        .map(|identity| identity.branch_closure_id);
-    let Some(branch_closure_id) = branch_closure_id else {
-        return Ok(false);
-    };
-    let Some(record) = authoritative_state.branch_closure_record(&branch_closure_id) else {
-        return Ok(false);
-    };
-    Ok(
-        record.provenance_basis == "task_closure_lineage_plus_late_stage_surface_exemption"
-            && record.source_task_closure_ids.is_empty()
-            && branch_closure_record_matches_plan_exemption(context, &record),
-    )
-}
-
 pub(crate) fn tracked_paths_changed_since_record_branch_closure_baseline(
     context: &ExecutionContext,
 ) -> Result<Vec<String>, JsonFailure> {
+    let authoritative_state = load_authoritative_transition_state(context)?;
+    tracked_paths_changed_since_record_branch_closure_baseline_with_authority(
+        context,
+        authoritative_state.as_ref(),
+    )
+}
+
+fn tracked_paths_changed_since_record_branch_closure_baseline_with_authority(
+    context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+) -> Result<Vec<String>, JsonFailure> {
+    if current_branch_closure_has_semantic_reviewed_state_id(authoritative_state, context)
+        && !current_branch_closure_has_tracked_drift(context, authoritative_state)?
+    {
+        return Ok(Vec::new());
+    }
     if let Some(branch_tree_sha) = current_branch_closure_reviewed_tree_sha(context) {
         let current_tree_sha = context.current_tracked_tree_sha()?;
-        if current_tree_sha == branch_tree_sha {
-            return Ok(Vec::new());
+        let semantic_changed_paths =
+            semantic_paths_changed_between_raw_trees(context, &branch_tree_sha, &current_tree_sha)?;
+        if semantic_changed_paths.is_empty() {
+            return Ok(semantic_branch_rerecording_drift_paths(
+                context,
+                authoritative_state,
+            ));
         }
-        return tracked_paths_changed_between_excluding_runtime_control_plane(
-            context,
-            &branch_tree_sha,
-            &current_tree_sha,
-        );
+        return Ok(semantic_changed_paths);
     }
-    let current_records = current_branch_task_closure_records(context)?;
+    let current_records =
+        current_branch_task_closure_records_with_authority(context, authoritative_state)?;
     if !current_records.is_empty() {
         return tracked_paths_changed_since_task_closure_records_baseline(
             context,
@@ -534,6 +505,149 @@ pub(crate) fn tracked_paths_changed_since_record_branch_closure_baseline(
         );
     }
     Ok(Vec::new())
+}
+
+fn current_branch_closure_allows_repaired_empty_lineage_late_stage_rerecord(
+    context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+) -> bool {
+    let Some(authoritative_state) = authoritative_state else {
+        return false;
+    };
+    if authoritative_state.review_state_repair_follow_up() != Some("record_branch_closure") {
+        return false;
+    }
+    let Some(identity) = branch_closure_identity_for_rerecording(context) else {
+        return false;
+    };
+    authoritative_state
+        .branch_closure_record(&identity.branch_closure_id)
+        .is_some_and(|record| {
+            record.provenance_basis == "task_closure_lineage_plus_late_stage_surface_exemption"
+                && record.source_task_closure_ids.is_empty()
+                && branch_closure_record_matches_plan_exemption(context, &record)
+        })
+}
+
+fn current_branch_closure_has_semantic_reviewed_state_id(
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+    context: &ExecutionContext,
+) -> bool {
+    authoritative_state
+        .and_then(|state| {
+            branch_closure_identity_for_rerecording(context)
+                .and_then(|identity| state.branch_closure_record(&identity.branch_closure_id))
+        })
+        .is_some_and(|record| {
+            record
+                .semantic_reviewed_state_id
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+        })
+}
+
+fn semantic_branch_rerecording_drift_paths(
+    context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+) -> Vec<String> {
+    let Some(state) = authoritative_state else {
+        return Vec::new();
+    };
+    let Some(identity) = branch_closure_identity_for_rerecording(context) else {
+        return Vec::new();
+    };
+    let Some(record) = state.branch_closure_record(&identity.branch_closure_id) else {
+        return Vec::new();
+    };
+    let current_branch_contract_identity = branch_definition_identity_for_context(context);
+    let canonical_branch_contract_identity = record.contract_identity.starts_with("branch_def:");
+    if canonical_branch_contract_identity
+        && record.contract_identity != current_branch_contract_identity
+    {
+        let current_base_branch = context.current_release_base_branch().unwrap_or_default();
+        if record.base_branch != current_base_branch {
+            return Vec::new();
+        }
+        return vec![context.plan_rel.clone()];
+    }
+    Vec::new()
+}
+
+fn tracked_worktree_paths_changed_excluding_runtime_control_plane(
+    context: &ExecutionContext,
+) -> Result<Vec<String>, JsonFailure> {
+    let repo = discover_repository(&context.runtime.repo_root).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::BranchDetectionFailed,
+            format!(
+                "Could not discover the repository while inspecting tracked worktree changes: {error}"
+            ),
+        )
+    })?;
+    let mut status_iter = repo
+        .status(gix::progress::Discard)
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::BranchDetectionFailed,
+                format!(
+                    "Could not prepare tracked worktree status while inspecting branch-closure drift: {error}"
+                ),
+            )
+        })?
+        .untracked_files(gix::status::UntrackedFiles::None)
+        .index_worktree_rewrites(None)
+        .tree_index_track_renames(gix::status::tree_index::TrackRenames::Disabled)
+        .into_iter(Vec::<gix::bstr::BString>::new())
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::BranchDetectionFailed,
+                format!(
+                    "Could not inspect tracked worktree changes while evaluating branch-closure drift: {error}"
+                ),
+            )
+        })?;
+    let mut changed_paths = Vec::new();
+    for item in &mut status_iter {
+        let item = item.map_err(|error| {
+            JsonFailure::new(
+                FailureClass::BranchDetectionFailed,
+                format!(
+                    "Could not inspect tracked worktree changes while evaluating branch-closure drift: {error}"
+                ),
+            )
+        })?;
+        let path = item.location().to_string();
+        if is_runtime_owned_execution_control_plane_path(context, &path) {
+            continue;
+        }
+        match item {
+            gix::status::Item::TreeIndex(_) => changed_paths.push(path),
+            gix::status::Item::IndexWorktree(change) if change.summary().is_some() => {
+                changed_paths.push(path)
+            }
+            gix::status::Item::IndexWorktree(_) => {}
+        }
+    }
+    changed_paths.sort();
+    changed_paths.dedup();
+    Ok(changed_paths)
+}
+
+pub(crate) fn worktree_drift_escapes_late_stage_surface(
+    context: &ExecutionContext,
+) -> Result<bool, JsonFailure> {
+    let changed_paths = tracked_worktree_paths_changed_excluding_runtime_control_plane(context)?;
+    if changed_paths.is_empty() {
+        return Ok(false);
+    }
+    let late_stage_surface = normalized_late_stage_surface(&context.plan_source)?;
+    if late_stage_surface.is_empty() {
+        return Ok(true);
+    }
+    Ok(!changed_paths
+        .iter()
+        .all(|path| path_matches_late_stage_surface(path, &late_stage_surface)))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -564,42 +678,29 @@ pub(crate) fn late_stage_missing_task_closure_baseline_bridge_supported(
 pub(crate) fn branch_closure_rerecording_assessment(
     context: &ExecutionContext,
 ) -> Result<BranchRerecordingAssessment, JsonFailure> {
-    let current_records = current_branch_task_closure_records(context)?;
-    let changed_paths = tracked_paths_changed_since_record_branch_closure_baseline(context)?;
-    let debug_enabled = std::env::var_os("FF_TMP_DEBUG_REROUTE").is_some();
-    let debug_branch_closure_id = validated_current_branch_closure_identity(context)
-        .map(|identity| identity.branch_closure_id);
-    let empty_lineage_rerecord_allowed = if current_records.is_empty() {
-        current_branch_closure_allows_empty_lineage_late_stage_rerecord(context)?
+    let authoritative_state = load_authoritative_transition_state(context)?;
+    branch_closure_rerecording_assessment_with_authority(context, authoritative_state.as_ref())
+}
+
+pub(crate) fn branch_closure_rerecording_assessment_with_authority(
+    context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+) -> Result<BranchRerecordingAssessment, JsonFailure> {
+    let current_records =
+        current_branch_task_closure_records_with_authority(context, authoritative_state)?;
+    let mut changed_paths =
+        tracked_paths_changed_since_record_branch_closure_baseline_with_authority(
+            context,
+            authoritative_state,
+        )?;
+    let semantic_contract_drift_paths = if changed_paths.is_empty() {
+        semantic_branch_rerecording_drift_paths(context, authoritative_state)
     } else {
-        true
+        Vec::new()
     };
-    if debug_enabled {
-        eprintln!(
-            "FF_TMP_DEBUG_REROUTE plan={} branch_id={:?} current_records={} changed_paths={:?} empty_lineage_allowed={}",
-            context.plan_rel,
-            debug_branch_closure_id,
-            current_records.len(),
-            changed_paths,
-            empty_lineage_rerecord_allowed
-        );
-    }
-    if !empty_lineage_rerecord_allowed {
-        if debug_enabled {
-            eprintln!(
-                "FF_TMP_DEBUG_REROUTE unsupported=MissingTaskClosureBaseline plan={}",
-                context.plan_rel
-            );
-        }
-        return Ok(BranchRerecordingAssessment {
-            changed_paths,
-            late_stage_surface: Vec::new(),
-            drift_confined_to_late_stage_surface: false,
-            supported: false,
-            unsupported_reason: Some(
-                BranchRerecordingUnsupportedReason::MissingTaskClosureBaseline,
-            ),
-        });
+    let semantic_contract_drift = !semantic_contract_drift_paths.is_empty();
+    if semantic_contract_drift {
+        changed_paths = semantic_contract_drift_paths;
     }
     if changed_paths.is_empty() {
         return Ok(BranchRerecordingAssessment {
@@ -610,36 +711,43 @@ pub(crate) fn branch_closure_rerecording_assessment(
             unsupported_reason: None,
         });
     }
-    let late_stage_surface = normalized_late_stage_surface(&context.plan_source)?;
-    if debug_enabled {
-        eprintln!(
-            "FF_TMP_DEBUG_REROUTE late_stage_surface={:?} plan={}",
-            late_stage_surface, context.plan_rel
-        );
+    let authoritative_task_closure_baseline_exists =
+        authoritative_state.is_some_and(|state| !state.current_task_closure_results().is_empty());
+    if current_records.is_empty()
+        && !authoritative_task_closure_baseline_exists
+        && !current_branch_closure_allows_repaired_empty_lineage_late_stage_rerecord(
+            context,
+            authoritative_state,
+        )
+    {
+        return Ok(BranchRerecordingAssessment {
+            changed_paths,
+            late_stage_surface: Vec::new(),
+            drift_confined_to_late_stage_surface: false,
+            supported: false,
+            unsupported_reason: Some(
+                BranchRerecordingUnsupportedReason::MissingTaskClosureBaseline,
+            ),
+        });
     }
+    let late_stage_surface = normalized_late_stage_surface(&context.plan_source)?;
     if late_stage_surface.is_empty() {
         return Ok(BranchRerecordingAssessment {
             changed_paths,
             late_stage_surface,
             drift_confined_to_late_stage_surface: false,
             supported: false,
-            unsupported_reason: Some(
-                BranchRerecordingUnsupportedReason::LateStageSurfaceNotDeclared,
-            ),
+            unsupported_reason: Some(if semantic_contract_drift {
+                BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface
+            } else {
+                BranchRerecordingUnsupportedReason::LateStageSurfaceNotDeclared
+            }),
         });
     }
     let drift_confined_to_late_stage_surface = changed_paths
         .iter()
         .all(|path| path_matches_late_stage_surface(path, &late_stage_surface));
-    if debug_enabled {
-        eprintln!(
-            "FF_TMP_DEBUG_REROUTE supported={} drift_confined={} plan={}",
-            drift_confined_to_late_stage_surface,
-            drift_confined_to_late_stage_surface,
-            context.plan_rel
-        );
-    }
-    Ok(BranchRerecordingAssessment {
+    let assessment = BranchRerecordingAssessment {
         changed_paths,
         late_stage_surface,
         drift_confined_to_late_stage_surface,
@@ -649,13 +757,15 @@ pub(crate) fn branch_closure_rerecording_assessment(
         } else {
             Some(BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface)
         },
-    })
+    };
+    Ok(assessment)
 }
 
-fn current_branch_task_closure_records(
+fn current_branch_task_closure_records_with_authority(
     context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> Result<Vec<CurrentTaskClosureRecord>, JsonFailure> {
-    if load_authoritative_transition_state(context)?.is_none() {
+    if authoritative_state.is_none() {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
             "record-branch-closure requires authoritative current task-closure state.",
@@ -667,12 +777,6 @@ fn current_branch_task_closure_records(
         .collect())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TreeEntryIdentity {
-    mode: String,
-    object_id: String,
-}
-
 fn tracked_paths_changed_since_task_closure_records_baseline(
     context: &ExecutionContext,
     current_records: &[CurrentTaskClosureRecord],
@@ -682,9 +786,9 @@ fn tracked_paths_changed_since_task_closure_records_baseline(
     }
     let current_tree_sha = context.current_tracked_tree_sha()?;
     let mut tree_entries_cache = BTreeMap::new();
-    let current_entries = cached_tree_entries_for_tree_sha(
+    let current_entries = cached_semantic_tree_entries_for_tree_sha(
+        context,
         &mut tree_entries_cache,
-        &context.runtime.repo_root,
         &current_tree_sha,
     )?;
     let mut closure_tree_entries = Vec::with_capacity(current_records.len());
@@ -697,11 +801,8 @@ fn tracked_paths_changed_since_task_closure_records_baseline(
             ));
         }
         let tree_sha = current_task_closure_reviewed_tree_sha(context, current_record)?;
-        let tree_entries = cached_tree_entries_for_tree_sha(
-            &mut tree_entries_cache,
-            &context.runtime.repo_root,
-            &tree_sha,
-        )?;
+        let tree_entries =
+            cached_semantic_tree_entries_for_tree_sha(context, &mut tree_entries_cache, &tree_sha)?;
         all_paths.extend(tree_entries.keys().cloned());
         closure_tree_entries.push((current_record, tree_entries));
     }
@@ -742,76 +843,16 @@ fn tracked_paths_changed_since_task_closure_records_baseline(
         .collect())
 }
 
-fn cached_tree_entries_for_tree_sha(
-    cache: &mut BTreeMap<String, BTreeMap<String, TreeEntryIdentity>>,
-    repo_root: &Path,
+fn cached_semantic_tree_entries_for_tree_sha(
+    context: &ExecutionContext,
+    cache: &mut BTreeMap<String, BTreeMap<String, String>>,
     tree_sha: &str,
-) -> Result<BTreeMap<String, TreeEntryIdentity>, JsonFailure> {
+) -> Result<BTreeMap<String, String>, JsonFailure> {
     if let Some(entries) = cache.get(tree_sha) {
         return Ok(entries.clone());
     }
-    let entries = tree_entries_for_tree_sha(repo_root, tree_sha)?;
+    let entries = semantic_tree_entries_for_raw_tree(context, tree_sha)?;
     cache.insert(tree_sha.to_owned(), entries.clone());
-    Ok(entries)
-}
-
-fn tree_entries_for_tree_sha(
-    repo_root: &Path,
-    tree_sha: &str,
-) -> Result<BTreeMap<String, TreeEntryIdentity>, JsonFailure> {
-    static TREE_ENTRIES_CACHE: OnceLock<
-        Mutex<BTreeMap<String, BTreeMap<String, TreeEntryIdentity>>>,
-    > = OnceLock::new();
-
-    if let Some(cached) = TREE_ENTRIES_CACHE
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .expect("tree entries cache lock should not be poisoned")
-        .get(tree_sha)
-        .cloned()
-    {
-        return Ok(cached);
-    }
-
-    let repo = discover_repository(repo_root).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::BranchDetectionFailed,
-            format!(
-                "Could not discover the repository while inspecting reviewed-state tree {tree_sha}: {error}"
-            ),
-        )
-    })?;
-    let tree = tree_from_sha(&repo, tree_sha)?;
-    let mut entries = BTreeMap::new();
-    for entry in tree.traverse().breadthfirst.files().map_err(|error| {
-        JsonFailure::new(
-            FailureClass::BranchDetectionFailed,
-            format!("Could not inspect reviewed-state tree {tree_sha}: {error}"),
-        )
-    })? {
-        if entry.mode.is_tree() {
-            continue;
-        }
-        let raw_path: &[u8] = entry.filepath.as_ref();
-        let path = String::from_utf8(raw_path.to_vec()).map_err(|_| {
-            JsonFailure::new(
-                FailureClass::BranchDetectionFailed,
-                format!("Reviewed-state tree {tree_sha} contained a non-utf8 repo path."),
-            )
-        })?;
-        entries.insert(
-            path,
-            TreeEntryIdentity {
-                mode: entry.mode.kind().as_octal_str().to_string(),
-                object_id: entry.oid.to_string(),
-            },
-        );
-    }
-    TREE_ENTRIES_CACHE
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .expect("tree entries cache lock should not be poisoned")
-        .insert(tree_sha.to_owned(), entries.clone());
     Ok(entries)
 }
 
@@ -829,24 +870,6 @@ fn current_task_closure_reviewed_tree_sha(
             )
         },
     )
-}
-
-fn tree_from_sha<'repo>(
-    repo: &'repo gix::Repository,
-    tree_sha: &str,
-) -> Result<gix::Tree<'repo>, JsonFailure> {
-    let object_id = gix::hash::ObjectId::from_hex(tree_sha.as_bytes()).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::BranchDetectionFailed,
-            format!("Could not parse reviewed-state tree id `{tree_sha}`: {error}"),
-        )
-    })?;
-    repo.find_tree(object_id).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::BranchDetectionFailed,
-            format!("Could not load reviewed-state tree {tree_sha}: {error}"),
-        )
-    })
 }
 
 fn task_closure_record_covers_path(
@@ -870,8 +893,8 @@ fn task_closure_record_covers_path(
 
 fn require_unambiguous_task_closure_path_entry(
     path: &str,
-    entries: &[Option<&TreeEntryIdentity>],
-) -> Result<Option<TreeEntryIdentity>, JsonFailure> {
+    entries: &[Option<&String>],
+) -> Result<Option<String>, JsonFailure> {
     let Some(expected_entry) = consensus_tree_entry(entries) else {
         return Err(JsonFailure::new(
             FailureClass::ExecutionStateNotReady,
@@ -883,9 +906,7 @@ fn require_unambiguous_task_closure_path_entry(
     Ok(expected_entry.cloned())
 }
 
-fn consensus_tree_entry<'a>(
-    entries: &[Option<&'a TreeEntryIdentity>],
-) -> Option<Option<&'a TreeEntryIdentity>> {
+fn consensus_tree_entry<'a>(entries: &[Option<&'a String>]) -> Option<Option<&'a String>> {
     let first = entries.first().copied()?;
     entries
         .iter()
@@ -1095,6 +1116,13 @@ pub(crate) fn public_late_stage_rederivation_basis_present(status: &PlanExecutio
         )
 }
 
+pub(crate) fn late_stage_projection_targets_present(status: &PlanExecutionStatus) -> bool {
+    status.current_branch_closure_id.is_some()
+        || status.finish_review_gate_pass_branch_closure_id.is_some()
+        || status.current_final_review_branch_closure_id.is_some()
+        || status.current_qa_branch_closure_id.is_some()
+}
+
 pub(crate) fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {
     status.active_task.is_some()
         || status.blocking_task.is_some()
@@ -1107,7 +1135,8 @@ pub(crate) fn public_late_stage_stale_unreviewed(
     gate_review: Option<&GateResult>,
     gate_finish: Option<&GateResult>,
 ) -> bool {
-    public_late_stage_rederivation_basis_present(status)
+    late_stage_projection_targets_present(status)
+        && public_late_stage_rederivation_basis_present(status)
         && late_stage_stale_unreviewed(gate_review, gate_finish)
 }
 
@@ -1117,6 +1146,33 @@ pub(crate) fn late_stage_missing_current_closure_stale_provenance_present(
 ) -> Result<bool, JsonFailure> {
     if branch_closure_refresh_missing_current_closure(status) {
         return Ok(true);
+    }
+    if status.current_branch_closure_id.is_none() {
+        let authoritative_state = load_authoritative_transition_state(context)?;
+        let historical_late_stage_binding_present =
+            authoritative_state.as_ref().is_some_and(|state| {
+                state
+                    .current_release_readiness_record()
+                    .as_ref()
+                    .map(|record| record.branch_closure_id.as_str())
+                    .into_iter()
+                    .chain(
+                        state
+                            .current_final_review_record()
+                            .as_ref()
+                            .map(|record| record.branch_closure_id.as_str()),
+                    )
+                    .chain(
+                        state
+                            .current_browser_qa_record()
+                            .as_ref()
+                            .map(|record| record.branch_closure_id.as_str()),
+                    )
+                    .any(|closure_id| !closure_id.trim().is_empty())
+            });
+        if historical_late_stage_binding_present {
+            return Ok(true);
+        }
     }
     if !status
         .reason_codes
@@ -1132,23 +1188,47 @@ pub(crate) fn current_branch_closure_has_tracked_drift(
     context: &ExecutionContext,
     authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> Result<bool, JsonFailure> {
-    let Some(baseline_tree_sha) =
-        authoritative_state.and_then(|_| current_branch_closure_reviewed_tree_sha(context))
-    else {
-        return Ok(false);
-    };
-    let current_tree_sha = context.current_tracked_tree_sha()?;
-    if current_tree_sha == baseline_tree_sha {
-        return Ok(false);
+    if let Some(state) = authoritative_state
+        && let Some(identity) = state.bound_current_branch_closure_identity()
+        && let Some(record) = state.branch_closure_record(&identity.branch_closure_id)
+    {
+        let Some(recorded_semantic_reviewed_state_id) = record
+            .semantic_reviewed_state_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            let Ok(branch_tree_sha) = resolve_branch_closure_reviewed_tree_sha(
+                &context.runtime.repo_root,
+                &identity.branch_closure_id,
+                &record.reviewed_state_id,
+            ) else {
+                return Ok(false);
+            };
+            let current_tree_sha = context.current_tracked_tree_sha()?;
+            return Ok(!semantic_paths_changed_between_raw_trees(
+                context,
+                &branch_tree_sha,
+                &current_tree_sha,
+            )?
+            .is_empty());
+        };
+        let current_semantic_reviewed_state_id =
+            semantic_workspace_snapshot(context)?.semantic_workspace_tree_id;
+        return Ok(current_semantic_reviewed_state_id != recorded_semantic_reviewed_state_id);
     }
-    Ok(
-        !tracked_paths_changed_between_excluding_runtime_control_plane(
-            context,
-            &baseline_tree_sha,
-            &current_tree_sha,
-        )?
-        .is_empty(),
-    )
+    Ok(false)
+}
+
+fn branch_closure_identity_for_rerecording(
+    context: &ExecutionContext,
+) -> Option<crate::execution::transitions::CurrentBranchClosureIdentity> {
+    validated_current_branch_closure_identity(context).or_else(|| {
+        load_authoritative_transition_state(context)
+            .ok()
+            .flatten()
+            .and_then(|state| state.bound_current_branch_closure_identity())
+    })
 }
 
 pub(crate) fn public_review_state_stale_unreviewed_for_reroute(
@@ -1185,9 +1265,7 @@ pub(crate) fn late_stage_stale_unreviewed(
         "browser_qa_state_not_fresh",
     ];
 
-    gate_review
-        .is_some_and(|gate| gate.failure_class == FailureClass::StaleExecutionEvidence.as_str())
-        || gate_has_any_reason(gate_review, LATE_STAGE_STALE_REASON_CODES)
+    gate_has_any_reason(gate_review, LATE_STAGE_STALE_REASON_CODES)
         || gate_has_any_reason(gate_finish, LATE_STAGE_STALE_REASON_CODES)
 }
 
@@ -1196,7 +1274,7 @@ pub(crate) fn repair_review_state_branch_reroute_active(
     task_scope_repair_precedence_active: bool,
     branch_reroute_still_valid: bool,
 ) -> bool {
-    repair_follow_up == Some("record_branch_closure")
+    normalize_persisted_repair_follow_up_token(repair_follow_up) == Some("advance_late_stage")
         && !task_scope_repair_precedence_active
         && branch_reroute_still_valid
 }
@@ -1258,12 +1336,28 @@ pub(crate) fn live_task_scope_repair_precedence_active(
     task_scope_overlay_restore_required
         || task_scope_structural_reason_present
         || (task_scope_stale_reason_present
-            && !(persisted_follow_up == Some("record_branch_closure")
+            && !(normalize_persisted_repair_follow_up_token(persisted_follow_up)
+                == Some("advance_late_stage")
                 && branch_reroute_still_valid
                 && matches!(
                     live_review_state_status,
                     Some("stale_unreviewed" | "missing_current_closure")
                 )))
+}
+
+pub(crate) fn release_readiness_result_for_branch_closure(
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+    branch_closure_id: Option<&str>,
+) -> Option<String> {
+    let branch_closure_id = branch_closure_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let authoritative_state = authoritative_state?;
+    authoritative_state
+        .current_release_readiness_record_id()
+        .and_then(|record_id| authoritative_state.release_readiness_record_by_id(&record_id))
+        .filter(|record| record.branch_closure_id == branch_closure_id)
+        .map(|record| record.result)
 }
 
 pub(crate) fn task_scope_stale_review_state_reason_present(repair_reason: Option<&str>) -> bool {
@@ -1298,22 +1392,35 @@ pub(crate) fn current_late_stage_branch_bindings(
     else {
         return CurrentLateStageBranchBindings::default();
     };
-    if current_branch_record.reviewed_state_id != current_branch_reviewed_state_id {
-        return CurrentLateStageBranchBindings::default();
-    }
+    let milestone_reviewed_state_matches =
+        |record_semantic_reviewed_state_id: Option<&str>, record_reviewed_state_id: &str| {
+            match (
+                current_branch_record.semantic_reviewed_state_id.as_deref(),
+                record_semantic_reviewed_state_id,
+            ) {
+                (Some(current), Some(record)) => current == record,
+                // Legacy imported milestone records may be missing semantic identities even when
+                // the branch closure has one. Confine the raw fallback to milestone-to-branch
+                // binding; workspace freshness/routing still uses semantic identities.
+                (_, None) | (None, Some(_)) => {
+                    record_reviewed_state_id == current_branch_reviewed_state_id
+                }
+            }
+        };
     let milestone_matches_current_branch =
         |source_plan_path: &str,
          source_plan_revision: u32,
          repo_slug: &str,
          branch_name: &str,
          base_branch: &str,
+         semantic_reviewed_state_id: Option<&str>,
          reviewed_state_id: &str| {
             source_plan_path == current_branch_record.source_plan_path
                 && source_plan_revision == current_branch_record.source_plan_revision
                 && repo_slug == current_branch_record.repo_slug
                 && branch_name == current_branch_record.branch_name
                 && base_branch == current_branch_record.base_branch
-                && reviewed_state_id == current_branch_record.reviewed_state_id
+                && milestone_reviewed_state_matches(semantic_reviewed_state_id, reviewed_state_id)
         };
     let closure_graph = AuthoritativeClosureGraph::from_state(
         Some(authoritative_state),
@@ -1344,6 +1451,7 @@ pub(crate) fn current_late_stage_branch_bindings(
                     &record.repo_slug,
                     &record.branch_name,
                     &record.base_branch,
+                    record.semantic_reviewed_state_id.as_deref(),
                     &record.reviewed_state_id,
                 )
         });
@@ -1372,6 +1480,7 @@ pub(crate) fn current_late_stage_branch_bindings(
                     &record.repo_slug,
                     &record.branch_name,
                     &record.base_branch,
+                    record.semantic_reviewed_state_id.as_deref(),
                     &record.reviewed_state_id,
                 )
         });
@@ -1405,6 +1514,7 @@ pub(crate) fn current_late_stage_branch_bindings(
                     &record.repo_slug,
                     &record.branch_name,
                     &record.base_branch,
+                    record.semantic_reviewed_state_id.as_deref(),
                     &record.reviewed_state_id,
                 )
         });
@@ -1446,12 +1556,13 @@ pub(crate) fn final_review_dispatch_still_current(
         || gate_has_any_reason(gate_finish, FINAL_REVIEW_DISPATCH_INVALIDATION_REASON_CODES))
 }
 
+#[cfg(test)]
 pub(crate) fn resolve_public_follow_up_override(
     raw_pivot_required: bool,
     raw_handoff_required: bool,
 ) -> String {
     if raw_pivot_required {
-        String::from("record_pivot")
+        String::from("repair_review_state")
     } else if raw_handoff_required {
         String::from("record_handoff")
     } else {
@@ -1459,6 +1570,7 @@ pub(crate) fn resolve_public_follow_up_override(
     }
 }
 
+#[cfg(test)]
 pub(crate) struct FollowUpOverrideInputs<'a> {
     pub(crate) state_dir: &'a Path,
     pub(crate) repo_slug: &'a str,
@@ -1474,6 +1586,7 @@ pub(crate) struct FollowUpOverrideInputs<'a> {
     pub(crate) qa_requirement: Option<&'a str>,
 }
 
+#[cfg(test)]
 pub(crate) fn resolve_follow_up_override(inputs: FollowUpOverrideInputs<'_>) -> String {
     let mut raw_pivot_required = inputs.workflow_phase == Some("pivot_required")
         || inputs.harness_phase == Some(HarnessPhase::PivotRequired)
@@ -1518,10 +1631,18 @@ pub(crate) fn normalized_plan_qa_requirement(value: Option<&str>) -> Option<Stri
 }
 
 pub(crate) fn missing_derived_task_scope_overlays(missing_derived_overlays: &[String]) -> bool {
+    missing_derived_overlays
+        .iter()
+        .any(|field| matches!(field.as_str(), "current_task_closure_records"))
+}
+
+pub(crate) fn missing_derived_branch_scope_overlays(missing_derived_overlays: &[String]) -> bool {
     missing_derived_overlays.iter().any(|field| {
         matches!(
             field.as_str(),
-            "current_task_closure_records" | "task_closure_negative_result_records"
+            "current_branch_closure_id"
+                | "current_branch_closure_reviewed_state_id"
+                | "current_branch_closure_contract_identity"
         )
     })
 }
@@ -1531,16 +1652,15 @@ pub(crate) fn task_scope_overlay_restore_required(
     authoritative_state: Option<&AuthoritativeTransitionState>,
 ) -> bool {
     missing_derived_task_scope_overlays(missing_derived_overlays)
-        || authoritative_state.is_some_and(|state| {
-            state.current_task_closure_overlay_needs_restore()
-                || state.task_closure_negative_result_overlay_needs_restore()
-        })
+        || authoritative_state
+            .is_some_and(|state| state.current_task_closure_overlay_needs_restore())
 }
 
 pub(crate) fn current_task_review_dispatch_id(
     blocking_task: Option<u32>,
     current_lineage_fingerprint: Option<&str>,
-    current_reviewed_state_id: Option<&str>,
+    current_semantic_reviewed_state_id: Option<&str>,
+    _current_raw_reviewed_state_id: Option<&str>,
     overlay: Option<&StatusAuthoritativeOverlay>,
 ) -> Option<String> {
     let overlay = overlay?;
@@ -1548,7 +1668,7 @@ pub(crate) fn current_task_review_dispatch_id(
     let current_lineage_fingerprint = current_lineage_fingerprint
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
-    let current_reviewed_state_id = current_reviewed_state_id
+    let current_semantic_reviewed_state_id = current_semantic_reviewed_state_id
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
     let record = overlay
@@ -1559,13 +1679,20 @@ pub(crate) fn current_task_review_dispatch_id(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
+    let recorded_semantic_reviewed_state_id = record
+        .semantic_reviewed_state_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let reviewed_state_matches =
+        current_semantic_reviewed_state_id == recorded_semantic_reviewed_state_id;
     (record
         .task_completion_lineage_fingerprint
         .as_deref()
         .map(str::trim)
         == Some(current_lineage_fingerprint)
-        && record.reviewed_state_id.as_deref().map(str::trim) == Some(current_reviewed_state_id))
-    .then_some(dispatch_id.to_owned())
+        && reviewed_state_matches)
+        .then_some(dispatch_id.to_owned())
 }
 
 pub(crate) fn current_final_review_dispatch_id(
@@ -1609,12 +1736,20 @@ pub(crate) fn current_task_negative_result_task(
         .strategy_review_dispatch_lineage
         .get(&format!("task-{task}"))?;
     let lineage_dispatch_id = lineage.dispatch_id.as_deref()?.trim();
-    let lineage_reviewed_state_id = lineage.reviewed_state_id.as_deref()?.trim();
+    let lineage_reviewed_state_id = lineage
+        .semantic_reviewed_state_id
+        .as_deref()
+        .or(lineage.reviewed_state_id.as_deref())?
+        .trim();
     if lineage_dispatch_id.is_empty() || lineage_reviewed_state_id.is_empty() {
         return None;
     }
+    let negative_result_reviewed_state_id = negative_result
+        .semantic_reviewed_state_id
+        .as_deref()
+        .unwrap_or(negative_result.reviewed_state_id.as_str());
     (negative_result.dispatch_id == lineage_dispatch_id
-        && negative_result.reviewed_state_id == lineage_reviewed_state_id)
+        && negative_result_reviewed_state_id == lineage_reviewed_state_id)
         .then_some(task)
 }
 
@@ -1676,6 +1811,7 @@ pub(crate) fn review_state_repair_reroute(
     }
 }
 
+#[cfg(test)]
 fn current_workflow_pivot_record_exists_for_decision(inputs: &FollowUpOverrideInputs<'_>) -> bool {
     if inputs.plan_path.trim().is_empty() {
         return false;
@@ -1702,6 +1838,7 @@ fn current_workflow_pivot_record_exists_for_decision(inputs: &FollowUpOverrideIn
     )
 }
 
+#[cfg(test)]
 fn current_workflow_transfer_record_exists_for_decision(
     inputs: &FollowUpOverrideInputs<'_>,
 ) -> bool {

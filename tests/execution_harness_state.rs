@@ -11,7 +11,9 @@ mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 
+use featureforge::cli::plan_execution::{RecordContractArgs, StatusArgs};
 use featureforge::contracts::evidence::read_execution_evidence;
+use featureforge::contracts::plan::parse_plan_file;
 use featureforge::diagnostics::FailureClass;
 use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, STABLE_EVENT_KINDS,
@@ -130,6 +132,27 @@ fn parse_failure_json(output: &Output, context: &str) -> Value {
         .unwrap_or_else(|error| panic!("{context} should emit valid failure json: {error}"))
 }
 
+fn run_runtime_preflight_gate_json(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+    context: &str,
+) -> Value {
+    let mut runtime = ExecutionRuntime::discover(repo)
+        .unwrap_or_else(|error| panic!("{context} should discover runtime: {:?}", error));
+    runtime.state_dir = state.to_path_buf();
+    let args = StatusArgs {
+        plan: PathBuf::from(plan_rel),
+        external_review_result_ready: false,
+    };
+    to_value(
+        runtime
+            .preflight_gate(&args)
+            .unwrap_or_else(|error| panic!("{context} should succeed: {:?}", error)),
+    )
+    .unwrap_or_else(|error| panic!("{context} should serialize to json: {error}"))
+}
+
 fn run_checked_output(command: Command, context: &str) -> Output {
     let output = run(command, context);
     assert!(
@@ -242,11 +265,16 @@ fn branch_name(repo: &Path) -> String {
 }
 
 fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
+    let state_path = harness_state_file_path(repo, state);
     write_file(
-        &harness_state_file_path(repo, state),
+        &state_path,
         &serde_json::to_string_pretty(payload)
             .expect("harness-state fixture payload should serialize"),
     );
+    let events_path = state_path.with_file_name("events.jsonl");
+    let legacy_backup_path = state_path.with_file_name("state.legacy.json");
+    let _ = fs::remove_file(events_path);
+    let _ = fs::remove_file(legacy_backup_path);
 }
 
 fn git_head_sha(repo: &Path) -> String {
@@ -265,10 +293,21 @@ fn write_authoritative_contract_fixture(repo: &Path, state: &Path) -> (String, S
         fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable for contract");
     let plan_fingerprint = hash_contract_plan(&plan_source);
     let source_spec_fingerprint = sha256_hex(source_spec_source.as_bytes());
+    let plan_document =
+        parse_plan_file(repo.join(PLAN_REL)).expect("plan should parse for contract");
+    let task_definition_identity = plan_document
+        .tasks
+        .iter()
+        .find(|task| task.number == 1)
+        .map(serde_json::to_string)
+        .transpose()
+        .expect("task should serialize for contract")
+        .map(|serialized| format!("task_def:{}", sha256_hex(serialized.as_bytes())))
+        .expect("task should exist for contract");
     let packet_fingerprint = compute_packet_fingerprint(PacketFingerprintInput {
         plan_path: PLAN_REL,
         plan_revision: 1,
-        plan_fingerprint: &plan_fingerprint,
+        task_definition_identity: &task_definition_identity,
         source_spec_path: SPEC_REL,
         source_spec_revision: 2,
         source_spec_fingerprint: &source_spec_fingerprint,
@@ -348,10 +387,21 @@ fn write_candidate_contract_fixture(repo: &Path, artifact_rel: &str) -> String {
         fs::read_to_string(repo.join(SPEC_REL)).expect("spec should be readable for contract");
     let plan_fingerprint = hash_contract_plan(&plan_source);
     let source_spec_fingerprint = sha256_hex(source_spec_source.as_bytes());
+    let plan_document =
+        parse_plan_file(repo.join(PLAN_REL)).expect("plan should parse for contract");
+    let task_definition_identity = plan_document
+        .tasks
+        .iter()
+        .find(|task| task.number == 1)
+        .map(serde_json::to_string)
+        .transpose()
+        .expect("task should serialize for contract")
+        .map(|serialized| format!("task_def:{}", sha256_hex(serialized.as_bytes())))
+        .expect("task should exist for contract");
     let packet_fingerprint = compute_packet_fingerprint(PacketFingerprintInput {
         plan_path: PLAN_REL,
         plan_revision: 1,
-        plan_fingerprint: &plan_fingerprint,
+        task_definition_identity: &task_definition_identity,
         source_spec_path: SPEC_REL,
         source_spec_revision: 2,
         source_spec_fingerprint: &source_spec_fingerprint,
@@ -425,10 +475,10 @@ fn accept_execution_preflight(repo: &Path, state: &Path) {
         .current_dir(repo);
     run_checked_output(checkout, "git checkout execution-preflight-fixture");
 
-    let preflight = run_plan_execution_json(
+    let preflight = run_runtime_preflight_gate_json(
         repo,
         state,
-        &["preflight", "--plan", PLAN_REL],
+        PLAN_REL,
         "execution preflight acceptance for per-step provenance coverage",
     );
     assert_eq!(
@@ -955,21 +1005,12 @@ fn status_projects_authoritative_state_for_write_repo_dependency_downstream_and_
     );
     assert_eq!(status["repo_state_drift_state"], "drifted");
     assert_eq!(status["dependency_index_state"], "inconsistent");
-    assert_eq!(status["final_review_state"], "stale");
-    assert_eq!(status["browser_qa_state"], "missing");
-    assert_eq!(status["release_docs_state"], "fresh");
-    assert_eq!(
-        status["last_final_review_artifact_fingerprint"],
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    );
-    assert_eq!(
-        status["last_browser_qa_artifact_fingerprint"],
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    );
-    assert_eq!(
-        status["last_release_docs_artifact_fingerprint"],
-        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-    );
+    assert_eq!(status["final_review_state"], "not_required");
+    assert_eq!(status["browser_qa_state"], "not_required");
+    assert_eq!(status["release_docs_state"], "not_required");
+    assert!(status["last_final_review_artifact_fingerprint"].is_null());
+    assert!(status["last_browser_qa_artifact_fingerprint"].is_null());
+    assert!(status["last_release_docs_artifact_fingerprint"].is_null());
     assert_eq!(
         status["reason_codes"],
         json!(["write_authority_conflict", "blocked_on_plan_revision"])
@@ -977,7 +1018,7 @@ fn status_projects_authoritative_state_for_write_repo_dependency_downstream_and_
 }
 
 #[test]
-fn status_fail_closes_with_reason_code_on_authoritative_late_stage_parity_divergence() {
+fn status_ignores_persisted_late_stage_phase_without_late_stage_bindings() {
     let (repo_dir, state_dir) = init_repo("execution-harness-state-late-stage-parity-divergence");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -990,34 +1031,43 @@ fn status_fail_closes_with_reason_code_on_authoritative_late_stage_parity_diverg
         "Seed completed execution for late-stage parity divergence coverage.",
     );
 
-    write_harness_state_payload(
-        repo,
-        state,
-        &json!({
-            "schema_version": 1,
-            "harness_phase": "ready_for_branch_completion",
-            "latest_authoritative_sequence": 17
-        }),
+    let state_path = harness_state_file_path(repo, state);
+    let mut authoritative_state: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path).expect("authoritative state should be readable"),
+    )
+    .expect("authoritative state should remain valid json");
+    let state_object = authoritative_state
+        .as_object_mut()
+        .expect("authoritative state should remain a json object");
+    state_object.insert(String::from("schema_version"), Value::from(1_u64));
+    state_object.insert(
+        String::from("harness_phase"),
+        Value::from("ready_for_branch_completion"),
     );
+    state_object.insert(
+        String::from("latest_authoritative_sequence"),
+        Value::from(17_u64),
+    );
+    write_harness_state_payload(repo, state, &authoritative_state);
 
     let status = run_plan_execution_json(
         repo,
         state,
         &["status", "--plan", PLAN_REL],
-        "status for late-stage authoritative/operator parity divergence fixture",
+        "status for tampered late-stage phase without canonical late-stage bindings",
     );
 
     assert_eq!(
-        status["harness_phase"], "document_release_pending",
-        "status should fail closed to canonical document-release precedence when authoritative late-stage phase diverges"
+        status["harness_phase"], "executing",
+        "status should keep canonical execution truth when a persisted late-stage phase appears without canonical late-stage bindings"
     );
     assert!(
         status["reason_codes"]
             .as_array()
             .expect("status should expose reason_codes as an array")
             .iter()
-            .any(|value| value.as_str() == Some("stale_provenance")),
-        "status should emit stale_provenance when authoritative late-stage phase diverges from canonical precedence; status payload: {status:?}"
+            .all(|value| value.as_str() != Some("stale_provenance")),
+        "status should not synthesize stale_provenance from a bare persisted late-stage phase override; status payload: {status:?}"
     );
 }
 
@@ -1048,18 +1098,17 @@ fn record_contract_persists_dependency_index_with_authoritative_contract_node() 
         }),
     );
 
-    let record_json = run_plan_execution_json(
+    let record_json = plan_execution_direct_support::run_internal_record_contract_json(
         repo,
         state,
-        &[
-            "record-contract",
-            "--plan",
-            PLAN_REL,
-            "--contract",
-            contract_rel,
-        ],
-        "record-contract dependency-index persistence fixture",
-    );
+        &RecordContractArgs {
+            plan: PathBuf::from(PLAN_REL),
+            contract: PathBuf::from(contract_rel),
+        },
+    )
+    .unwrap_or_else(|error| {
+        panic!("record-contract dependency-index persistence fixture should succeed: {error}")
+    });
     assert_eq!(record_json["allowed"], Value::Bool(true));
 
     let dependency_index_path =
@@ -1115,18 +1164,17 @@ fn record_contract_persists_observability_event_and_authoritative_mutation_count
         }),
     );
 
-    let record_json = run_plan_execution_json(
+    let record_json = plan_execution_direct_support::run_internal_record_contract_json(
         repo,
         state,
-        &[
-            "record-contract",
-            "--plan",
-            PLAN_REL,
-            "--contract",
-            contract_rel,
-        ],
-        "record-contract observability persistence fixture",
-    );
+        &RecordContractArgs {
+            plan: PathBuf::from(PLAN_REL),
+            contract: PathBuf::from(contract_rel),
+        },
+    )
+    .unwrap_or_else(|error| {
+        panic!("record-contract observability persistence fixture should succeed: {error}")
+    });
     assert_eq!(record_json["allowed"], Value::Bool(true));
 
     let harness_root = harness_state_path(state, &repo_slug(repo), &branch_name(repo))

@@ -1,5 +1,8 @@
 #[path = "support/bin.rs"]
 mod bin_support;
+#[allow(dead_code)]
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/workflow.rs"]
@@ -155,6 +158,10 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
         serde_json::to_string_pretty(payload).expect("harness state should serialize"),
     )
     .expect("harness state should be writable");
+    let events_path = state_path.with_file_name("events.jsonl");
+    let legacy_backup_path = state_path.with_file_name("state.legacy.json");
+    let _ = fs::remove_file(events_path);
+    let _ = fs::remove_file(legacy_backup_path);
 }
 
 fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
@@ -169,12 +176,15 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path, plan_rel: &str) {
         &["status", "--plan", plan_rel],
         "status before task-boundary blocked entry fixture execution",
     );
-    let _ = run_plan_execution_json(
+    let _ = plan_execution_direct_support::run_runtime_preflight_gate_json(
         repo,
         state,
-        &["preflight", "--plan", plan_rel],
-        "preflight for task-boundary blocked entry fixture execution",
-    );
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: plan_rel.into(),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("internal preflight helper should succeed for task-boundary blocked entry fixture");
     let begin_task1_step1 = run_plan_execution_json(
         repo,
         state,
@@ -341,7 +351,7 @@ Task 1 -> Task 2
 }
 
 #[test]
-fn fresh_entry_workflow_status_refresh_routes_directly_without_session_entry_state() {
+fn fresh_entry_workflow_operator_routes_directly_without_session_entry_state() {
     let (repo_dir, state_dir) = init_repo("workflow-entry-shell-smoke");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -350,37 +360,43 @@ fn fresh_entry_workflow_status_refresh_routes_directly_without_session_entry_sta
     let output = run_featureforge(
         repo,
         state,
-        &["workflow", "status", "--refresh"],
-        "workflow status refresh from fresh entry shell smoke",
+        &[
+            "workflow",
+            "operator",
+            "--plan",
+            "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md",
+            "--json",
+        ],
+        "workflow operator from fresh entry shell smoke",
     );
     assert!(
         output.status.success(),
-        "fresh entry workflow status should succeed without session-entry state, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        "fresh entry workflow operator should succeed without session-entry state, got {:?}\nstdout:\n{}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
     let json: Value = serde_json::from_slice(&output.stdout)
-        .unwrap_or_else(|error| panic!("workflow status refresh should emit valid json: {error}"));
+        .unwrap_or_else(|error| panic!("workflow operator should emit valid json: {error}"));
     assert_eq!(json["schema_version"], Value::from(3));
     assert!(
-        json["status"]
+        json["phase"]
             .as_str()
             .is_some_and(|value| !value.trim().is_empty()),
-        "fresh entry workflow status should route directly to a concrete workflow status"
+        "fresh entry workflow operator should route directly to a concrete phase"
     );
     assert!(
         json.get("outcome").is_none(),
-        "fresh entry workflow status should not surface session-entry outcome fields"
+        "fresh entry workflow operator should not surface session-entry outcome fields"
     );
     assert!(
         json.get("decision_source").is_none(),
-        "fresh entry workflow status should not surface session-entry decision metadata"
+        "fresh entry workflow operator should not surface session-entry decision metadata"
     );
     assert!(
         !state.join("session-entry").exists(),
-        "fresh entry workflow status should not require or create session-entry state"
+        "fresh entry workflow operator should not require or create session-entry state"
     );
 }
 
@@ -427,13 +443,13 @@ fn fs02_entry_route_surfaces_share_parity_and_budget() {
         .as_str()
         .expect("FS-02 operator route should include phase_detail");
     assert_eq!(
-        phase_detail, "planning_reentry_required",
-        "FS-02 fixture should deterministically classify this entry-path drift to planning reentry, got {operator_json}"
+        phase_detail, "execution_preflight_required",
+        "FS-02 fixture should keep comment-only entry drift on the execution-preflight lane under semantic identity routing, got {operator_json}"
     );
     assert_eq!(
         operator_json["next_action"],
-        Value::from("pivot / return to planning"),
-        "FS-02 entry-path classification should surface planning reentry"
+        Value::from("execution preflight"),
+        "FS-02 entry-path classification should stay on execution preflight for comment-only drift"
     );
     assert_parity_probe_budget("FS-02", runtime_management_commands, 2);
 }
@@ -501,22 +517,12 @@ fn fs09_repair_surfaces_post_repair_next_blocker_in_entry_cli() {
         "workflow operator should expose the executable close-current-task command after repair: {operator}"
     );
 
-    let next_output = run_featureforge(
-        repo,
-        state,
-        &["workflow", "next"],
-        "FS-09 workflow next should mirror the post-repair dispatch blocker",
-    );
     assert!(
-        next_output.status.success(),
-        "workflow next should succeed for FS-09 fixture, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        next_output.status,
-        String::from_utf8_lossy(&next_output.stdout),
-        String::from_utf8_lossy(&next_output.stderr)
-    );
-    let next_text = String::from_utf8_lossy(&next_output.stdout);
-    assert!(
-        next_text.contains("close current task"),
-        "workflow next should surface the post-repair task-closure recording blocker, got:\n{next_text}",
+        operator["next_public_action"]["command"]
+            .as_str()
+            .is_some_and(
+                |command| command.contains("featureforge plan execution close-current-task")
+            ),
+        "workflow operator should surface the post-repair task-closure blocker through next_public_action"
     );
 }

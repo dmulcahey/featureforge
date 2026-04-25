@@ -42,12 +42,7 @@ description: Use when a draft FeatureForge implementation plan needs a first-cla
 
 ## Receipt Recording
 
-After the reviewer writes the artifact, record the runtime-owned receipt:
-
-```bash
-"$_FEATUREFORGE_BIN" workflow plan-fidelity record --plan docs/featureforge/plans/YYYY-MM-DD-<feature-name>.md \
-  --review-artifact .featureforge/reviews/YYYY-MM-DD-<feature-name>-plan-fidelity.md
-```
+After the reviewer writes the artifact, hand off the review artifact path and verdict to the normal planning/review authority. Do not call removed workflow helper commands from this skill.
 
 - If receipt recording fails or the review verdict is not pass, return to `featureforge:writing-plans`.
 - If the receipt records successfully in pass state for the current plan/spec revision pair, continue to `featureforge:plan-eng-review`.

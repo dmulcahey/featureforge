@@ -1,5 +1,7 @@
 #[path = "../src/contracts/headers.rs"]
 mod headers_support;
+#[path = "support/workflow_direct.rs"]
+mod workflow_direct_support;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -346,14 +348,21 @@ fn run_record_plan_fidelity(
     args: &[&str],
     context: &str,
 ) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge cargo binary should exist");
-    command
-        .current_dir(repo_root)
-        .env("FEATUREFORGE_STATE_DIR", state_dir)
-        .args(["workflow", "plan-fidelity"])
-        .args(args);
-    run(command, context)
+    let direct_args = std::iter::once("workflow")
+        .chain(std::iter::once("plan-fidelity"))
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>();
+    workflow_direct_support::try_run_workflow_output_direct(
+        repo_root,
+        state_dir,
+        &direct_args,
+        context,
+        true,
+    )
+    .unwrap_or_else(|error| panic!("{context} direct plan-fidelity helper should run: {error}"))
+    .unwrap_or_else(|| {
+        panic!("{context} direct plan-fidelity helper should handle legacy workflow command")
+    })
 }
 
 fn replace_in_file(path: &Path, search: &str, replacement: &str) {

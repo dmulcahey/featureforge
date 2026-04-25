@@ -11,6 +11,9 @@ const PROJECTS_DIR: &str = "projects";
 const BRANCHES_DIR: &str = "branches";
 const EXECUTION_HARNESS_DIR: &str = "execution-harness";
 const HARNESS_STATE_FILE: &str = "state.json";
+const HARNESS_STATE_LEGACY_BACKUP_FILE: &str = "state.legacy.json";
+const HARNESS_EVENTS_LOG_FILE: &str = "events.jsonl";
+const HARNESS_EVENTS_LOCK_FILE: &str = "events.lock";
 const HARNESS_DEPENDENCY_INDEX_FILE: &str = "dependency-index.json";
 const HARNESS_AUTHORITATIVE_ARTIFACTS_DIR: &str = "authoritative-artifacts";
 const HARNESS_OBSERVABILITY_EVENTS_FILE: &str = "observability-events.jsonl";
@@ -133,6 +136,22 @@ pub fn harness_branch_root(state_dir: &Path, repo_slug: &str, branch_name: &str)
 
 pub fn harness_state_path(state_dir: &Path, repo_slug: &str, branch_name: &str) -> PathBuf {
     harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_STATE_FILE)
+}
+
+pub fn harness_state_legacy_backup_path(
+    state_dir: &Path,
+    repo_slug: &str,
+    branch_name: &str,
+) -> PathBuf {
+    harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_STATE_LEGACY_BACKUP_FILE)
+}
+
+pub fn harness_events_log_path(state_dir: &Path, repo_slug: &str, branch_name: &str) -> PathBuf {
+    harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_EVENTS_LOG_FILE)
+}
+
+pub fn harness_events_lock_path(state_dir: &Path, repo_slug: &str, branch_name: &str) -> PathBuf {
+    harness_branch_root(state_dir, repo_slug, branch_name).join(HARNESS_EVENTS_LOCK_FILE)
 }
 
 pub fn harness_dependency_index_path(

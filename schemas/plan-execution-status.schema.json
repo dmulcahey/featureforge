@@ -9,6 +9,41 @@
       ],
       "type": "string"
     },
+    "Blocker": {
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "details": {
+          "type": "string"
+        },
+        "next_public_action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope_key": {
+          "type": "string"
+        },
+        "scope_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "scope_type",
+        "scope_key",
+        "details"
+      ],
+      "type": "object"
+    },
     "ChunkId": {
       "type": "string"
     },
@@ -58,14 +93,6 @@
     "ExecutionRunId": {
       "type": "string"
     },
-    "FollowUpOverrideSchema": {
-      "enum": [
-        "none",
-        "record_handoff",
-        "record_pivot"
-      ],
-      "type": "string"
-    },
     "HarnessPhase": {
       "enum": [
         "implementation_handoff",
@@ -104,6 +131,23 @@
         "run verification"
       ],
       "type": "string"
+    },
+    "NextPublicAction": {
+      "properties": {
+        "args_template": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "command": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
     },
     "PhaseDetailSchema": {
       "enum": [
@@ -228,8 +272,7 @@
         "run_verification",
         "advance_late_stage",
         "resolve_release_blocker",
-        "record_handoff",
-        "record_pivot"
+        "record_handoff"
       ],
       "type": "string"
     },
@@ -246,6 +289,15 @@
         "clean",
         "stale_unreviewed",
         "missing_current_closure"
+      ],
+      "type": "string"
+    },
+    "StateKindSchema": {
+      "enum": [
+        "actionable_public_command",
+        "waiting_external_input",
+        "terminal",
+        "blocked_runtime_bug"
       ],
       "type": "string"
     },
@@ -482,6 +534,12 @@
     "aggregate_evaluation_state": {
       "$ref": "#/$defs/AggregateEvaluationState"
     },
+    "blockers": {
+      "items": {
+        "$ref": "#/$defs/Blocker"
+      },
+      "type": "array"
+    },
     "blocking_reason_codes": {
       "items": {
         "type": "string"
@@ -660,9 +718,6 @@
         "null"
       ]
     },
-    "follow_up_override": {
-      "$ref": "#/$defs/FollowUpOverrideSchema"
-    },
     "handoff_required": {
       "type": "boolean"
     },
@@ -733,6 +788,16 @@
     "next_action": {
       "$ref": "#/$defs/NextActionSchema"
     },
+    "next_public_action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NextPublicAction"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "non_passing_evaluator_kinds": {
       "items": {
         "$ref": "#/$defs/EvaluatorKind"
@@ -767,6 +832,12 @@
         {
           "type": "null"
         }
+      ]
+    },
+    "raw_workspace_tree_id": {
+      "type": [
+        "string",
+        "null"
       ]
     },
     "reason_codes": {
@@ -843,11 +914,23 @@
     "review_state_status": {
       "$ref": "#/$defs/ReviewStateStatusSchema"
     },
+    "schema_version": {
+      "format": "uint32",
+      "maximum": 3,
+      "minimum": 3,
+      "type": "integer"
+    },
+    "semantic_workspace_tree_id": {
+      "type": "string"
+    },
     "stale_unreviewed_closures": {
       "items": {
         "type": "string"
       },
       "type": "array"
+    },
+    "state_kind": {
+      "$ref": "#/$defs/StateKindSchema"
     },
     "strategy_checkpoint_kind": {
       "type": "string"
@@ -870,9 +953,6 @@
       },
       "type": "array"
     },
-    "workspace_state_id": {
-      "type": "string"
-    },
     "write_authority_holder": {
       "type": [
         "string",
@@ -890,14 +970,13 @@
     }
   },
   "required": [
+    "schema_version",
     "plan_revision",
-    "workspace_state_id",
     "current_task_closures",
     "superseded_closures_summary",
     "stale_unreviewed_closures",
     "current_final_review_state",
     "current_qa_state",
-    "follow_up_override",
     "latest_authoritative_sequence",
     "harness_phase",
     "chunk_id",
@@ -923,6 +1002,8 @@
     "phase_detail",
     "review_state_status",
     "blocking_records",
+    "state_kind",
+    "semantic_workspace_tree_id",
     "next_action",
     "reason_codes",
     "execution_mode",

@@ -5,7 +5,7 @@ use clap::{CommandFactory, Parser};
 use cli::runtime_root::RuntimeRootFieldCli;
 use cli::{Command, PlanCommand, RepoCommand};
 use diagnostics::{DiagnosticError, FailureClass, JsonFailure};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub mod benchmarking;
 pub mod cli;
@@ -23,16 +23,6 @@ pub mod runtime_root;
 pub mod test_support;
 pub mod update_check;
 pub mod workflow;
-
-trait ExitCodeJson {
-    fn exit_code(&self) -> u8;
-}
-
-impl ExitCodeJson for execution::state::RebuildEvidenceOutput {
-    fn exit_code(&self) -> u8 {
-        self.exit_code()
-    }
-}
 
 pub fn run() -> std::process::ExitCode {
     let args = match canonicalized_args() {
@@ -81,108 +71,19 @@ pub fn run() -> std::process::ExitCode {
                         cli::plan_execution::PlanExecutionCommand::Status(args) => {
                             emit_json(runtime.status(&args))
                         }
-                        cli::plan_execution::PlanExecutionCommand::Recommend(args) => {
-                            emit_json(runtime.recommend(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::Preflight(args) => {
-                            emit_json(runtime.preflight(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::Internal(internal) => {
-                            match internal.command {
-                                cli::plan_execution::InternalPlanExecutionCommand::ReconcileReviewState(args) => {
-                                    emit_json(execution::review_state::reconcile_review_state(
-                                        &runtime, &args,
-                                    ))
-                                }
-                            }
-                        }
-                        cli::plan_execution::PlanExecutionCommand::RebuildEvidence(args) => {
-                            let result = execution::mutate::rebuild_evidence(&runtime, &args);
-                            if args.json {
-                                emit_json_with_exit(result)
-                            } else {
-                                match result {
-                                    Ok(output) => {
-                                        print!("{}", output.render_text());
-                                        std::process::ExitCode::from(output.exit_code())
-                                    }
-                                    Err(error) => {
-                                        let failure: JsonFailure = error;
-                                        eprintln!(
-                                            "error error_class={} message={}",
-                                            serde_json::to_string(&failure.error_class)
-                                                .unwrap_or_else(|_| String::from(
-                                                    "\"<serialization-error>\""
-                                                )),
-                                            serde_json::to_string(&failure.message).unwrap_or_else(
-                                                |_| String::from("\"<serialization-error>\"")
-                                            ),
-                                        );
-                                        std::process::ExitCode::from(1)
-                                    }
-                                }
-                            }
-                        }
-                        cli::plan_execution::PlanExecutionCommand::GateContract(args) => {
-                            emit_json(runtime.gate_contract(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::RecordContract(args) => {
-                            emit_json(runtime.record_contract(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::GateEvaluator(args) => {
-                            emit_json(runtime.gate_evaluator(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::RecordEvaluation(args) => {
-                            emit_json(runtime.record_evaluation(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::GateHandoff(args) => {
-                            emit_json(runtime.gate_handoff(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::RecordHandoff(args) => {
-                            emit_json(runtime.record_handoff(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::GateReview(args) => {
-                            emit_json(runtime.gate_review(&args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::RecordReviewDispatch(args) => {
-                            emit_json(runtime.record_review_dispatch(&args))
-                        }
                         cli::plan_execution::PlanExecutionCommand::RepairReviewState(args) => {
                             emit_json(execution::review_state::repair_review_state_command(
                                 &runtime, &args,
                             ))
                         }
-                        cli::plan_execution::PlanExecutionCommand::ExplainReviewState(args) => {
-                            emit_json(execution::review_state::explain_review_state(
-                                &runtime, &args,
-                            ))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::GateFinish(args) => {
-                            emit_json(runtime.gate_finish(&args))
-                        }
                         cli::plan_execution::PlanExecutionCommand::CloseCurrentTask(args) => {
                             emit_json(execution::mutate::close_current_task(&runtime, &args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::RecordBranchClosure(args) => {
-                            emit_json(execution::mutate::record_branch_closure(&runtime, &args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::RecordReleaseReadiness(args) => {
-                            emit_json(execution::mutate::record_release_readiness(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::AdvanceLateStage(args) => {
                             emit_json(execution::mutate::advance_late_stage(&runtime, &args))
                         }
-                        cli::plan_execution::PlanExecutionCommand::RecordFinalReview(args) => {
-                            emit_json(execution::mutate::record_final_review(&runtime, &args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::RecordQa(args) => {
-                            emit_json(execution::mutate::record_qa(&runtime, &args))
-                        }
                         cli::plan_execution::PlanExecutionCommand::Begin(args) => {
                             emit_json(execution::mutate::begin(&runtime, &args))
-                        }
-                        cli::plan_execution::PlanExecutionCommand::Note(args) => {
-                            emit_json(execution::mutate::note(&runtime, &args))
                         }
                         cli::plan_execution::PlanExecutionCommand::Complete(args) => {
                             emit_json(execution::mutate::complete(&runtime, &args))
@@ -241,159 +142,12 @@ pub fn run() -> std::process::ExitCode {
         Some(Command::Workflow(workflow_cli)) => {
             let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             match workflow_cli.command {
-                cli::workflow::WorkflowCommand::Status(args) => {
-                    match workflow::status::WorkflowRuntime::discover(&current_dir) {
-                        Ok(mut runtime) => {
-                            let route = if args.refresh {
-                                runtime.status_refresh()
-                            } else {
-                                runtime.status()
-                            };
-                            if args.summary {
-                                emit_text(route.map(render_workflow_status_summary))
-                            } else {
-                                emit_json(route)
-                            }
-                        }
-                        Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
-                    }
-                }
-                cli::workflow::WorkflowCommand::Resolve => {
-                    match workflow::status::WorkflowRuntime::discover_read_only(&current_dir) {
-                        Ok(runtime) => {
-                            emit_workflow_resolve_json(runtime.resolve().map_err(JsonFailure::from))
-                        }
-                        Err(error) => emit_workflow_resolve_json(Err(
-                            map_read_only_workflow_failure(error.into()),
-                        )),
-                    }
-                }
-                cli::workflow::WorkflowCommand::Expect(args) => {
-                    match workflow::status::WorkflowRuntime::discover(&current_dir) {
-                        Ok(mut runtime) => emit_json(runtime.expect(args.artifact, &args.path)),
-                        Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
-                    }
-                }
-                cli::workflow::WorkflowCommand::Sync(args) => {
-                    match workflow::status::WorkflowRuntime::discover(&current_dir) {
-                        Ok(mut runtime) => {
-                            emit_json(runtime.sync(args.artifact, args.path.as_deref()))
-                        }
-                        Err(error) => emit_json::<Value, JsonFailure>(Err(error.into())),
-                    }
-                }
-                cli::workflow::WorkflowCommand::PlanFidelity(plan_fidelity_cli) => {
-                    match plan_fidelity_cli.command {
-                        cli::workflow::WorkflowPlanFidelityCommand::Record(args) => {
-                            let result =
-                                workflow::status::record_plan_fidelity_receipt(&current_dir, &args);
-                            if args.json {
-                                emit_json(result)
-                            } else {
-                                emit_text(result.map(workflow::status::render_plan_fidelity_record))
-                            }
-                        }
-                    }
-                }
-                cli::workflow::WorkflowCommand::Next => emit_text(
-                    workflow::operator::render_next(&current_dir)
-                        .map_err(map_read_only_workflow_failure),
-                ),
-                cli::workflow::WorkflowCommand::Artifacts => emit_text(
-                    workflow::operator::render_artifacts(&current_dir)
-                        .map_err(map_read_only_workflow_failure),
-                ),
-                cli::workflow::WorkflowCommand::Explain => emit_text(
-                    workflow::operator::render_explain(&current_dir)
-                        .map_err(map_read_only_workflow_failure),
-                ),
-                cli::workflow::WorkflowCommand::Phase(args) => {
-                    if args.json {
-                        emit_json(
-                            workflow::operator::phase(&current_dir)
-                                .map_err(map_read_only_workflow_failure),
-                        )
-                    } else {
-                        emit_text(
-                            workflow::operator::render_phase(&current_dir)
-                                .map_err(map_read_only_workflow_failure),
-                        )
-                    }
-                }
-                cli::workflow::WorkflowCommand::Doctor(args) => {
-                    if args.json {
-                        emit_json(
-                            workflow::operator::doctor_with_args(&current_dir, &args)
-                                .map_err(map_read_only_workflow_failure),
-                        )
-                    } else {
-                        emit_text(
-                            workflow::operator::render_doctor_with_args(&current_dir, &args)
-                                .map_err(map_read_only_workflow_failure),
-                        )
-                    }
-                }
-                cli::workflow::WorkflowCommand::Handoff(args) => {
-                    if args.json {
-                        emit_json(
-                            workflow::operator::handoff(&current_dir)
-                                .map_err(map_read_only_workflow_failure),
-                        )
-                    } else {
-                        emit_text(
-                            workflow::operator::render_handoff(&current_dir)
-                                .map_err(map_read_only_workflow_failure),
-                        )
-                    }
-                }
                 cli::workflow::WorkflowCommand::Operator(args) => {
                     let result = workflow::operator::operator(&current_dir, &args);
                     if args.json {
                         emit_json(result.map_err(map_read_only_workflow_failure))
                     } else {
                         emit_text(result.map(workflow::operator::render_operator))
-                    }
-                }
-                cli::workflow::WorkflowCommand::RecordPivot(args) => {
-                    let result = workflow::pivot::record_pivot(&current_dir, &args);
-                    if args.json {
-                        emit_json(result)
-                    } else {
-                        emit_text(result.map(workflow::pivot::render_pivot_record))
-                    }
-                }
-                cli::workflow::WorkflowCommand::Preflight(args) => {
-                    let result = workflow::operator::preflight(&current_dir, &args);
-                    if args.json {
-                        emit_json(result)
-                    } else {
-                        emit_text(result.map(|gate| {
-                            workflow::operator::render_gate("Execution preflight", &gate)
-                        }))
-                    }
-                }
-                cli::workflow::WorkflowCommand::Gate(gate_cli) => {
-                    match gate_cli.command {
-                        cli::workflow::WorkflowGateCommand::Review(args) => {
-                            let result = workflow::operator::gate_review(&current_dir, &args);
-                            if args.json {
-                                emit_json(result)
-                            } else {
-                                emit_text(result.map(|gate| {
-                                    workflow::operator::render_gate("Review gate", &gate)
-                                }))
-                            }
-                        }
-                        cli::workflow::WorkflowGateCommand::Finish(args) => {
-                            let result = workflow::operator::gate_finish(&current_dir, &args);
-                            if args.json {
-                                emit_json(result)
-                            } else {
-                                emit_text(result.map(|gate| {
-                                    workflow::operator::render_gate("Finish gate", &gate)
-                                }))
-                            }
-                        }
                     }
                 }
             }
@@ -458,35 +212,6 @@ where
     }
 }
 
-fn emit_json_with_exit<T, E>(result: Result<T, E>) -> std::process::ExitCode
-where
-    T: serde::Serialize + ExitCodeJson,
-    E: Into<JsonFailure>,
-{
-    match result {
-        Ok(value) => match serde_json::to_string(&value) {
-            Ok(json) => {
-                println!("{json}");
-                std::process::ExitCode::from(value.exit_code())
-            }
-            Err(error) => {
-                eprintln!("Could not serialize workflow output: {error}");
-                std::process::ExitCode::from(1)
-            }
-        },
-        Err(error) => match serde_json::to_string(&error.into()) {
-            Ok(json) => {
-                eprintln!("{json}");
-                std::process::ExitCode::from(1)
-            }
-            Err(serialize_error) => {
-                eprintln!("Could not serialize error output: {serialize_error}");
-                std::process::ExitCode::from(1)
-            }
-        },
-    }
-}
-
 fn emit_text<E>(result: Result<String, E>) -> std::process::ExitCode
 where
     E: Into<JsonFailure>,
@@ -503,60 +228,6 @@ where
             eprintln!("{}: {}", failure.error_class, failure.message);
             std::process::ExitCode::from(1)
         }
-    }
-}
-
-fn emit_workflow_resolve_json(
-    result: Result<workflow::status::WorkflowRoute, JsonFailure>,
-) -> std::process::ExitCode {
-    match result {
-        Ok(route) => {
-            let manifest_source_path = route.manifest_path.clone();
-            match serde_json::to_value(route) {
-                Ok(Value::Object(mut object)) => {
-                    object.insert(
-                        String::from("outcome"),
-                        Value::String(String::from("resolved")),
-                    );
-                    object.insert(
-                        String::from("manifest_source_path"),
-                        Value::String(manifest_source_path),
-                    );
-                    match serde_json::to_string(&Value::Object(object)) {
-                        Ok(json) => {
-                            println!("{json}");
-                            std::process::ExitCode::SUCCESS
-                        }
-                        Err(error) => {
-                            eprintln!("Could not serialize workflow resolve output: {error}");
-                            std::process::ExitCode::from(1)
-                        }
-                    }
-                }
-                Ok(_) => {
-                    eprintln!("Could not serialize workflow resolve output: expected object");
-                    std::process::ExitCode::from(1)
-                }
-                Err(error) => {
-                    eprintln!("Could not serialize workflow resolve output: {error}");
-                    std::process::ExitCode::from(1)
-                }
-            }
-        }
-        Err(failure) => match serde_json::to_string(&json!({
-            "outcome": "runtime_failure",
-            "failure_class": failure.error_class,
-            "message": failure.message,
-        })) {
-            Ok(json) => {
-                eprintln!("{json}");
-                std::process::ExitCode::from(1)
-            }
-            Err(error) => {
-                eprintln!("Could not serialize workflow resolve failure: {error}");
-                std::process::ExitCode::from(1)
-            }
-        },
     }
 }
 
@@ -578,18 +249,6 @@ fn map_read_only_workflow_failure(failure: JsonFailure) -> JsonFailure {
     } else {
         failure
     }
-}
-
-fn render_workflow_status_summary(route: workflow::status::WorkflowRoute) -> String {
-    let next = if route.status == "implementation_ready" {
-        "execution_preflight"
-    } else {
-        route.next_skill.as_str()
-    };
-    format!(
-        "status={} next={} spec={} plan={} reason={}\n",
-        route.status, next, route.spec_path, route.plan_path, route.reason
-    )
 }
 
 fn shell_quote(value: &str) -> String {

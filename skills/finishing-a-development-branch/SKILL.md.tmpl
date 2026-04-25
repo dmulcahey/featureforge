@@ -126,7 +126,7 @@ If that artifact names pages, routes, or browser interactions, use it to scope t
 
 A project-wide or generic test-plan artifact may help scope ad-hoc QA, but it does not satisfy helper-backed finish readiness when approved-plan `QA Requirement` is `required`. Only the current-branch artifact counts for that freshness check.
 
-If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge workflow record-pivot --plan <path> --reason <reason>`; do not guess from test-plan prose.
+If approved-plan `QA Requirement` is missing or invalid when deciding whether QA applies, stop and reroute through `featureforge plan execution repair-review-state --plan <path>`; do not guess from test-plan prose.
 
 If approved-plan `QA Requirement` is `required` and no current-branch test-plan artifact exists for workflow-routed work, stop and regenerate it before invoking `featureforge:qa-only` or late-stage completion commands.
 

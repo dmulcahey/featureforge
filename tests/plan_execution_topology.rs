@@ -2,6 +2,9 @@
 mod files_support;
 #[path = "support/json.rs"]
 mod json_support;
+#[allow(dead_code)]
+#[path = "support/plan_execution_direct.rs"]
+mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
 #[path = "support/repo_template.rs"]
@@ -17,8 +20,8 @@ use json_support::parse_json;
 use process_support::{run, run_checked};
 use repo_template_support::populate_repo_from_template;
 use serde_json::Value;
-use std::path::Path;
-use std::process::{Command, Output};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use tempfile::TempDir;
 
 const PLAN_REL: &str = "docs/featureforge/plans/2026-03-17-example-execution-plan.md";
@@ -172,24 +175,6 @@ Task 1
     );
 }
 
-fn run_shell(repo: &Path, state: &Path, args: &[&str], context: &str) -> Output {
-    let mut command =
-        Command::cargo_bin("featureforge").expect("featureforge binary should be available");
-    let compat_bin =
-        std::env::var_os("CARGO_BIN_EXE_featureforge").expect("featureforge test binary path");
-    command
-        .current_dir(repo)
-        .env("FEATUREFORGE_COMPAT_BIN", compat_bin)
-        .env("FEATUREFORGE_STATE_DIR", state)
-        .args(["plan", "execution"])
-        .args(args);
-    run(command, context)
-}
-
-fn run_shell_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
-    parse_json(&run_shell(repo, state, args, context), context)
-}
-
 fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Value {
     let mut command =
         Command::cargo_bin("featureforge").expect("featureforge binary should be available");
@@ -199,6 +184,32 @@ fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Val
         .args(["plan", "execution"])
         .args(args);
     parse_json(&run(command, context), context)
+}
+
+fn run_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::run_runtime_preflight_gate_json(
+        repo,
+        state,
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: PathBuf::from(plan_rel),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("internal preflight helper should succeed")
+}
+
+fn run_runtime_topology_recommendation_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::run_runtime_topology_recommendation_json(
+        repo,
+        state,
+        &featureforge::cli::plan_execution::RecommendArgs {
+            plan: PathBuf::from(plan_rel),
+            isolated_agents: Some(featureforge::cli::plan_execution::IsolatedAgentsArg::Available),
+            session_intent: Some(featureforge::cli::plan_execution::SessionIntentArg::Stay),
+            workspace_prepared: Some(featureforge::cli::plan_execution::WorkspacePreparedArg::Yes),
+        },
+    )
+    .expect("internal recommend helper should succeed")
 }
 
 fn topology_report(repo: &Path) -> AnalyzePlanReport {
@@ -237,12 +248,7 @@ fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) {
         "git checkout execution-preflight-fixture",
     );
 
-    let preflight = run_rust_json(
-        repo,
-        state,
-        &["preflight", "--plan", plan_rel],
-        "execution preflight acceptance",
-    );
+    let preflight = run_runtime_preflight_gate_json(repo, state, plan_rel);
     assert_eq!(preflight["allowed"], true);
 }
 
@@ -254,19 +260,8 @@ fn canonical_recommend_matches_helper_for_independent_plan() {
     write_approved_spec(repo);
     write_independent_plan(repo);
 
-    let args = [
-        "recommend",
-        "--plan",
-        PLAN_REL,
-        "--isolated-agents",
-        "available",
-        "--session-intent",
-        "stay",
-        "--workspace-prepared",
-        "yes",
-    ];
-    let helper = run_shell_json(repo, state, &args, "shell recommend");
-    let rust = run_rust_json(repo, state, &args, "rust recommend");
+    let helper = run_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let rust = run_runtime_topology_recommendation_json(repo, state, PLAN_REL);
 
     assert_eq!(rust["recommended_skill"], helper["recommended_skill"]);
     assert_eq!(rust["decision_flags"], helper["decision_flags"]);
@@ -308,22 +303,7 @@ fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_pr
         );
     }
 
-    let recommend = run_rust_json(
-        repo,
-        state,
-        &[
-            "recommend",
-            "--plan",
-            PLAN_REL,
-            "--isolated-agents",
-            "available",
-            "--session-intent",
-            "stay",
-            "--workspace-prepared",
-            "yes",
-        ],
-        "recommend policy tuple",
-    );
+    let recommend = run_runtime_topology_recommendation_json(repo, state, PLAN_REL);
     assert_eq!(
         recommend["recommended_skill"],
         "featureforge:subagent-driven-development"
@@ -402,22 +382,7 @@ fn runtime_topology_recommends_worktree_backed_parallel_when_the_plan_and_worksp
         "parallel-ready topology should report the worktree-backed reason code"
     );
 
-    let shell = run_shell_json(
-        repo,
-        state,
-        &[
-            "recommend",
-            "--plan",
-            PLAN_REL,
-            "--isolated-agents",
-            "available",
-            "--session-intent",
-            "stay",
-            "--workspace-prepared",
-            "yes",
-        ],
-        "shell recommend still available for current routing",
-    );
+    let shell = run_runtime_topology_recommendation_json(repo, state, PLAN_REL);
     assert_eq!(
         shell["recommended_skill"],
         "featureforge:subagent-driven-development"

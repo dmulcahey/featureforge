@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v1.10.0 - 2026-04-25
+
+Breaking churn-prevention cutover that makes the execution event log the sole runtime authority and converges public routing on one reducer/router decision.
+
+- replace authoritative `state.json` mutation truth with append-only `execution-harness/events.jsonl` event authority, typed mutation events, sequence/hash continuity checks, and projection-only state refreshes
+- automatically migrate legacy branch state in place on first runtime access, preserve explicit current/historical/superseded/stale record transitions, keep `state.legacy.json` backups, and fail closed with `blocked_runtime_bug` on migration parity failures
+- add semantic workspace snapshots and stable plan/task/branch definition identities so runtime-owned projection churn does not stale branch or task routing
+- route status, operator, repair-review-state, mutator guards, and late-stage advancement through the shared `RuntimeState` reducer and `RouteDecision` router surface
+- expose the v3 public status/operator contract with `state_kind`, structured `blockers[]`, `next_public_action`, `semantic_workspace_tree_id`, and optional debug-only `raw_workspace_tree_id`
+- remove hidden/debug command recommendations from normal public routing and keep normal progress on public commands only: `workflow operator`, `plan execution status`, `repair-review-state`, `begin`, `complete`, `reopen`, `transfer`, `close-current-task`, and `advance-late-stage`
+- add real public-edge liveness/model-check coverage over synthetic stale, structural, dispatch-lineage, and late-stage state spaces, with no-hidden-command and monotonic progress assertions
+- refresh the checked-in repo runtime binary and darwin/windows prebuilt artifacts for `1.10.0`
+
 ## v1.9.1 - 2026-04-20
 
 Patch release focused on closing the remaining open authority/documentation gaps from the task-boundary hardening work without changing the broader public workflow model.

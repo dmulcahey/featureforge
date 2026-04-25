@@ -758,7 +758,10 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
     check_types!("chunk_id", ["string"], required);
     check_types!("chunking_strategy", ["string", "null"], optional);
     check_enum!("chunking_strategy", ["task", "task-group", "whole-run"]);
-    check_types!("workspace_state_id", ["string"], required);
+    assert!(
+        !properties.contains_key("workspace_state_id"),
+        "plan-execution schema should not expose legacy workspace_state_id once semantic identity is authoritative"
+    );
     check_types!(
         "current_branch_reviewed_state_id",
         ["string", "null"],
@@ -948,10 +951,6 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
         ]
     );
     check_types!("recommended_command", ["string"], optional);
-    check_enum!(
-        "follow_up_override",
-        ["none", "record_handoff", "record_pivot"]
-    );
     assert_schema_pointer_enum(
         &schema,
         "/$defs/RequiredFollowUpSchema",
@@ -963,7 +962,6 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "advance_late_stage",
             "resolve_release_blocker",
             "record_handoff",
-            "record_pivot",
         ],
         &mut issues,
     );
@@ -1256,16 +1254,16 @@ fn checked_in_workflow_schemas_match_generated_output() {
         .expect("checked-in workflow-status schema should parse");
     assert_eq!(generated_status_json, checked_in_status_json);
 
-    let generated_resolve = fs::read_to_string(schemas_dir.join("workflow-resolve.schema.json"))
-        .expect("generated workflow-resolve schema should read");
-    let checked_in_resolve =
-        fs::read_to_string(repo_fixture_path("schemas/workflow-resolve.schema.json"))
-            .expect("checked-in workflow-resolve schema should read");
-    let generated_resolve_json: Value = serde_json::from_str(&generated_resolve)
-        .expect("generated workflow-resolve schema should parse");
-    let checked_in_resolve_json: Value = serde_json::from_str(&checked_in_resolve)
-        .expect("checked-in workflow-resolve schema should parse");
-    assert_eq!(generated_resolve_json, checked_in_resolve_json);
+    let generated_handoff = fs::read_to_string(schemas_dir.join("workflow-handoff.schema.json"))
+        .expect("generated workflow-handoff schema should read");
+    let checked_in_handoff =
+        fs::read_to_string(repo_fixture_path("schemas/workflow-handoff.schema.json"))
+            .expect("checked-in workflow-handoff schema should read");
+    let generated_handoff_json: Value = serde_json::from_str(&generated_handoff)
+        .expect("generated workflow-handoff schema should parse");
+    let checked_in_handoff_json: Value = serde_json::from_str(&checked_in_handoff)
+        .expect("checked-in workflow-handoff schema should parse");
+    assert_eq!(generated_handoff_json, checked_in_handoff_json);
 
     let generated_operator = fs::read_to_string(schemas_dir.join("workflow-operator.schema.json"))
         .expect("generated workflow-operator schema should read");
@@ -1292,9 +1290,9 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
         .as_object()
         .expect("workflow-operator schema should contain properties");
 
-    assert_eq!(properties["schema_version"]["const"], Value::from(2));
-    assert_eq!(properties["schema_version"]["minimum"], Value::from(2));
-    assert_eq!(properties["schema_version"]["maximum"], Value::from(2));
+    assert_eq!(properties["schema_version"]["const"], Value::from(3));
+    assert_eq!(properties["schema_version"]["minimum"], Value::from(3));
+    assert_eq!(properties["schema_version"]["maximum"], Value::from(3));
     for phase in [
         "executing",
         "task_closure_pending",
@@ -1308,12 +1306,6 @@ fn workflow_operator_schema_pins_public_phase_and_routing_vocab() {
         assert!(
             generated_operator.contains(&format!("\"{phase}\"")),
             "workflow-operator schema should include phase '{phase}' in the public phase vocabulary"
-        );
-    }
-    for value in ["none", "record_handoff", "record_pivot"] {
-        assert!(
-            generated_operator.contains(&format!("\"{value}\"")),
-            "workflow-operator schema should include follow_up_override '{value}'"
         );
     }
     let mut issues = Vec::new();
@@ -1491,6 +1483,53 @@ fn runtime_root_schema_bounds_the_source_contract() {
             "runtime-root schema should include {source} in the bounded source set"
         );
     }
+}
+
+#[test]
+fn workflow_handoff_schema_pins_public_routing_fields() {
+    let schemas_dir = unique_temp_dir("workflow-handoff-schema-vocab");
+    write_workflow_schemas(&schemas_dir).expect("workflow schemas should write");
+
+    let generated_handoff = fs::read_to_string(schemas_dir.join("workflow-handoff.schema.json"))
+        .expect("generated workflow-handoff schema should read");
+    let generated_handoff_json: Value = serde_json::from_str(&generated_handoff)
+        .expect("generated workflow-handoff schema should parse");
+    let properties = schema_properties(&generated_handoff_json);
+    let mut issues = Vec::new();
+    let required = schema_required_fields(&generated_handoff_json, &mut issues);
+    assert!(
+        issues.is_empty(),
+        "workflow-handoff schema should expose required fields cleanly: {issues:?}"
+    );
+
+    assert_eq!(properties["schema_version"]["const"], Value::from(3));
+    assert!(required.contains("state_kind"));
+    assert!(
+        required.contains("semantic_workspace_tree_id"),
+        "workflow-handoff schema should require semantic_workspace_tree_id"
+    );
+    let next_public_action_types =
+        schema_type_set(&generated_handoff_json, &properties["next_public_action"])
+            .expect("workflow-handoff next_public_action should expose a resolvable type");
+    assert!(
+        next_public_action_types.contains("object"),
+        "workflow-handoff next_public_action should admit object payloads, got {next_public_action_types:?}"
+    );
+    let blockers_types = schema_type_set(&generated_handoff_json, &properties["blockers"])
+        .expect("workflow-handoff blockers should expose a resolvable type");
+    assert!(
+        blockers_types.contains("array"),
+        "workflow-handoff blockers should admit array payloads, got {blockers_types:?}"
+    );
+    let raw_workspace_tree_id_types = schema_type_set(
+        &generated_handoff_json,
+        &properties["raw_workspace_tree_id"],
+    )
+    .expect("workflow-handoff raw_workspace_tree_id should expose a resolvable type");
+    assert!(
+        raw_workspace_tree_id_types.contains("string"),
+        "workflow-handoff raw_workspace_tree_id should admit string payloads, got {raw_workspace_tree_id_types:?}"
+    );
 }
 
 #[test]

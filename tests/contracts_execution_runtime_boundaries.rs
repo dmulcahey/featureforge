@@ -8,6 +8,8 @@ mod runtime_support;
 mod workflow_support;
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -15,6 +17,10 @@ use featureforge::execution::final_review::resolve_release_base_branch;
 use featureforge::execution::query::{
     ExecutionRoutingState, query_workflow_routing_state_for_runtime,
 };
+use featureforge::execution::semantic_identity::{
+    branch_definition_identity_for_context, task_definition_identity_for_task,
+};
+use featureforge::execution::state::load_execution_context;
 use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::harness_state_path;
 use runtime_support::execution_runtime;
@@ -459,6 +465,9 @@ fn update_authoritative_harness_state(repo: &Path, state: &Path, updates: &[(&st
         serde_json::to_string(&payload).expect("authoritative harness state should serialize"),
     )
     .expect("authoritative harness state should remain writable");
+    let _ = fs::remove_file(state_path.with_file_name("events.jsonl"));
+    let _ = fs::remove_file(state_path.with_file_name("events.lock"));
+    let _ = fs::remove_file(state_path.with_file_name("state.legacy.json"));
 }
 
 fn prepare_preflight_acceptance_workspace(repo: &Path, branch_name: &str) {
@@ -497,26 +506,25 @@ fn sha256_hex(contents: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn branch_contract_identity(
-    plan_rel: &str,
-    plan_revision: u32,
-    repo_slug: &str,
-    branch_name: &str,
-    base_branch: &str,
-) -> String {
-    let payload = format!(
-        "branch-contract\n{plan_rel}\n{plan_revision}\n{repo_slug}\n{branch_name}\n{base_branch}"
-    );
-    format!("branch-contract-{}", &sha256_hex(payload.as_bytes())[..16])
+fn branch_contract_identity(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
+    let runtime = execution_runtime(repo, state_dir);
+    let context = load_execution_context(&runtime, Path::new(plan_rel))
+        .expect("runtime boundary semantic branch identity fixture should load execution context");
+    branch_definition_identity_for_context(&context)
 }
 
-fn deterministic_record_id(prefix: &str, parts: &[&str]) -> String {
-    let mut payload = String::from(prefix);
-    for part in parts {
-        payload.push('\n');
-        payload.push_str(part);
-    }
-    format!("{prefix}-{}", &sha256_hex(payload.as_bytes())[..16])
+fn task_contract_identity(
+    repo: &Path,
+    state_dir: &Path,
+    plan_rel: &str,
+    task_number: u32,
+) -> String {
+    let runtime = execution_runtime(repo, state_dir);
+    let context = load_execution_context(&runtime, Path::new(plan_rel))
+        .expect("runtime boundary semantic task identity fixture should load execution context");
+    task_definition_identity_for_task(&context, task_number)
+        .expect("runtime boundary semantic task identity fixture should compute")
+        .expect("runtime boundary semantic task identity fixture should exist")
 }
 
 fn seed_branch_chain_truth_for_runtime_owned_churn_fixture(
@@ -528,8 +536,7 @@ fn seed_branch_chain_truth_for_runtime_owned_churn_fixture(
     let base_branch = expected_release_base_branch(repo);
     let slug = repo_slug(repo);
     let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
-    let branch_contract_identity =
-        branch_contract_identity(plan_rel, 1, &slug, &branch_name, &base_branch);
+    let branch_contract_identity = branch_contract_identity(repo, state, plan_rel);
     let execution_run_id = run_plan_execution_json(
         repo,
         state,
@@ -539,7 +546,7 @@ fn seed_branch_chain_truth_for_runtime_owned_churn_fixture(
         .as_str()
         .expect("FS-20 status should expose execution_run_id")
         .to_owned();
-    let task_contract_identity = deterministic_record_id("task-contract", &[plan_rel, "1", "1"]);
+    let task_contract_identity = task_contract_identity(repo, state, plan_rel, 1);
     update_authoritative_harness_state(
         repo,
         state,
@@ -653,9 +660,9 @@ fn assert_routing_parity_with_operator_json(routing: &ExecutionRoutingState, ope
         operator.get("qa_requirement").and_then(Value::as_str),
         routing.qa_requirement.as_deref()
     );
-    assert_eq!(
-        operator["follow_up_override"],
-        Value::from(routing.follow_up_override.clone())
+    assert!(
+        operator.get("follow_up_override").is_none(),
+        "operator output must not expose legacy follow_up_override"
     );
     assert_eq!(
         operator
@@ -750,12 +757,15 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before boundary active-context begin",
     );
-    let preflight = run_plan_execution_json(
+    let preflight = featureforge_support::run_runtime_preflight_gate_json(
         repo,
         state,
-        &["preflight", "--plan", PLAN_REL],
-        "preflight before boundary active-context begin",
-    );
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: PLAN_REL.into(),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("internal preflight helper should succeed before boundary active-context begin");
     assert_eq!(preflight["allowed"], Value::Bool(true));
     run_plan_execution_json(
         repo,
@@ -791,12 +801,15 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary fixture execution",
     );
-    let preflight = run_plan_execution_json(
+    let preflight = featureforge_support::run_runtime_preflight_gate_json(
         repo,
         state,
-        &["preflight", "--plan", PLAN_REL],
-        "preflight for task-boundary fixture execution",
-    );
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: PLAN_REL.into(),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("internal preflight helper should succeed for task-boundary fixture execution");
     assert_eq!(
         preflight["allowed"],
         Value::Bool(true),
@@ -950,6 +963,134 @@ fn state_tree_digest(root: &Path) -> String {
     format!("{:x}", digest.finalize())
 }
 
+fn assert_trust_boundary_failure(output: &Output, context: &str, message_fragment: &str) {
+    assert!(
+        !output.status.success(),
+        "{context} must fail closed, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let failure = parse_json_output(output, context);
+    let failure_class = failure
+        .get("error_class")
+        .or_else(|| failure.get("failure_class"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        failure_class == "MalformedExecutionState" || failure_class == "InstructionParseFailed",
+        "{context} should classify trust-boundary failures as MalformedExecutionState or wrapped InstructionParseFailed, got {failure_class}"
+    );
+    let message = failure
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        message.contains(message_fragment),
+        "{context} should surface trust-boundary details containing `{message_fragment}`, got {message}"
+    );
+}
+
+fn assert_event_or_state_loader_rejection_across_public_surfaces(
+    repo: &Path,
+    state: &Path,
+    scenario: &str,
+    message_fragment: &str,
+) {
+    let status_command = ["plan", "execution", "status", "--plan", PLAN_REL];
+    let repair_command = [
+        "plan",
+        "execution",
+        "repair-review-state",
+        "--plan",
+        PLAN_REL,
+    ];
+    let operator_command = ["workflow", "operator", "--plan", PLAN_REL, "--json"];
+    let commands = [
+        ("status", status_command.as_slice()),
+        ("repair", repair_command.as_slice()),
+        ("operator", operator_command.as_slice()),
+    ];
+
+    for (surface, command) in commands {
+        let context = format!("{scenario} {surface} trust-boundary rejection");
+        let output = run_featureforge_output(repo, state, command, true, &context);
+        assert_trust_boundary_failure(&output, &context, message_fragment);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_authoritative_state_is_rejected_across_status_repair_operator_handoff() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-symlinked-authoritative-state");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+
+    let state_path = authoritative_harness_state_path(repo, state);
+    let events_path = state_path.with_file_name("events.jsonl");
+    if let Err(error) = fs::remove_file(&events_path) {
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::NotFound,
+            "event log should be removable before symlink state fixture"
+        );
+    }
+    fs::remove_file(&state_path).expect("authoritative state fixture should be removable");
+    symlink("missing-authoritative-state.json", &state_path)
+        .expect("dangling authoritative state symlink should be creatable");
+
+    assert_event_or_state_loader_rejection_across_public_surfaces(
+        repo,
+        state,
+        "symlinked authoritative state",
+        "Authoritative harness state path must not be a symlink",
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_event_log_is_rejected_across_status_repair_operator_handoff() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-symlinked-authoritative-events");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+
+    let state_path = authoritative_harness_state_path(repo, state);
+    let events_path = state_path.with_file_name("events.jsonl");
+    fs::remove_file(&events_path).expect("authoritative event log fixture should be removable");
+    symlink("missing-authoritative-events.jsonl", &events_path)
+        .expect("dangling authoritative event log symlink should be creatable");
+
+    assert_event_or_state_loader_rejection_across_public_surfaces(
+        repo,
+        state,
+        "symlinked authoritative event log",
+        "Authoritative event log path must not be a symlink",
+    );
+}
+
+#[test]
+fn non_file_event_log_is_rejected_across_status_repair_operator_handoff() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-directory-authoritative-events");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
+
+    let state_path = authoritative_harness_state_path(repo, state);
+    let events_path = state_path.with_file_name("events.jsonl");
+    fs::remove_file(&events_path).expect("authoritative event log fixture should be removable");
+    fs::create_dir_all(&events_path)
+        .expect("directory fixture for authoritative events should create");
+
+    assert_event_or_state_loader_rejection_across_public_surfaces(
+        repo,
+        state,
+        "non-file authoritative event log",
+        "Authoritative event log must be a regular file",
+    );
+}
+
 #[test]
 fn execution_module_exports_query_boundary() {
     let execution_mod = fs::read_to_string(repo_root().join("src/execution/mod.rs"))
@@ -1012,6 +1153,77 @@ fn workflow_operator_uses_execution_query_boundary_instead_of_raw_execution_inte
 }
 
 #[test]
+fn missing_state_projection_keeps_status_and_operator_event_authoritative() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-missing-state-projection");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_execution_in_progress(repo, state);
+
+    let state_path = authoritative_harness_state_path(repo, state);
+    fs::remove_file(&state_path).expect("state projection should be removable for event-only read");
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "plan execution status should route from events when state projection is missing",
+    );
+    let operator = run_workflow_operator_json(
+        repo,
+        state,
+        PLAN_REL,
+        false,
+        "workflow operator should route from events when state projection is missing",
+    );
+
+    assert_eq!(
+        operator["recommended_command"], status["recommended_command"],
+        "status and operator should preserve shared route truth when only events.jsonl remains authoritative"
+    );
+    assert_eq!(
+        operator["phase_detail"], status["phase_detail"],
+        "phase routing should remain event-authoritative when state.json is absent"
+    );
+    assert!(
+        !state_path.exists(),
+        "read surfaces must not regenerate state.json just because it is missing"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn malformed_state_projection_is_ignored_when_event_log_is_authoritative() {
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-malformed-state-projection-ignored");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_execution_in_progress(repo, state);
+
+    let state_path = authoritative_harness_state_path(repo, state);
+    fs::remove_file(&state_path).expect("state projection should be removable for symlink fixture");
+    symlink("missing-projection-state.json", &state_path)
+        .expect("dangling projection state symlink should be creatable");
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "plan execution status should ignore malformed projection when events are authoritative",
+    );
+    let operator = run_workflow_operator_json(
+        repo,
+        state,
+        PLAN_REL,
+        false,
+        "workflow operator should ignore malformed projection when events are authoritative",
+    );
+
+    assert_eq!(
+        operator["phase_detail"], status["phase_detail"],
+        "projection-only state.json shape must not change event-authoritative route truth"
+    );
+}
+
+#[test]
 fn execution_query_boundary_stays_execution_owned() {
     let query_source = fs::read_to_string(repo_root().join("src/execution/query.rs"))
         .expect("execution query source should be readable");
@@ -1041,20 +1253,16 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
-    let dispatch = run_plan_execution_json(
+    let dispatch = featureforge_support::run_runtime_review_dispatch_authority_json(
         repo,
         state,
-        &[
-            "record-review-dispatch",
-            "--plan",
-            PLAN_REL,
-            "--scope",
-            "task",
-            "--task",
-            "1",
-        ],
-        "record-review-dispatch for task_closure_recording_ready fixture",
-    );
+        &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+            plan: PLAN_REL.into(),
+            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            task: Some(1),
+        },
+    )
+    .expect("internal record-review-dispatch helper should succeed for task-boundary fixture");
     assert_eq!(dispatch["allowed"], Value::Bool(true));
     let runtime = execution_runtime(repo, state);
     let plan = PathBuf::from(PLAN_REL);
@@ -1082,25 +1290,25 @@ fn execution_query_recording_ready_states_surface_required_recording_context_ids
     );
     assert_routing_parity_with_operator_json(&routing, &operator);
 
-    let query_source = fs::read_to_string(repo_root().join("src/execution/query.rs"))
-        .expect("execution query source should be readable");
+    let router_source = fs::read_to_string(repo_root().join("src/execution/router.rs"))
+        .expect("execution router source should be readable");
 
     assert!(
-        query_source.contains("\"task_closure_recording_ready\"")
-            && query_source.contains("task_number: Some(task_number)")
-            && query_source.contains("dispatch_id: task_review_dispatch_id.clone()"),
+        router_source.contains("\"task_closure_recording_ready\"")
+            && router_source.contains("task_number: Some(task_number)")
+            && router_source.contains("dispatch_id: task_review_dispatch_id.clone()"),
         "task_closure_recording_ready should expose task_number and may surface dispatch_id in recording_context",
     );
     assert!(
-        query_source.contains("\"release_readiness_recording_ready\"")
-            && query_source.contains("\"release_blocker_resolution_required\"")
-            && query_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
+        router_source.contains("\"release_readiness_recording_ready\"")
+            && router_source.contains("\"release_blocker_resolution_required\"")
+            && router_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
         "release-readiness recording-ready states should expose branch_closure_id recording_context ids",
     );
     assert!(
-        query_source.contains("\"final_review_recording_ready\"")
-            && query_source.contains("dispatch_id: final_review_dispatch_id.clone()")
-            && query_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
+        router_source.contains("\"final_review_recording_ready\"")
+            && router_source.contains("dispatch_id: final_review_dispatch_id.clone()")
+            && router_source.contains("branch_closure_id: Some(branch_closure_id.clone())"),
         "final_review_recording_ready should expose branch_closure_id and may surface dispatch_id in the routing constructor",
     );
 }
@@ -1112,52 +1320,26 @@ fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned() {
     let state = state_dir.path();
     setup_execution_in_progress(repo, state);
 
-    for command in [
-        ["workflow", "next"],
-        ["workflow", "artifacts"],
-        ["workflow", "explain"],
-    ] {
-        let direct = run_featureforge_output(repo, state, &command, false, "direct workflow text");
-        let real = run_featureforge_output(repo, state, &command, true, "real-cli workflow text");
-        assert!(
-            direct.status.success() && real.status.success(),
-            "workflow text command should succeed for direct and real-cli paths\ncommand: {:?}\ndirect status: {:?}\nreal status: {:?}\ndirect stderr:\n{}\nreal stderr:\n{}",
-            command,
-            direct.status,
-            real.status,
-            String::from_utf8_lossy(&direct.stderr),
-            String::from_utf8_lossy(&real.stderr)
-        );
-        assert_eq!(
-            direct.stdout, real.stdout,
-            "workflow text command output must stay aligned between direct and real-cli paths for command {:?}",
-            command
-        );
-    }
-
-    for command in [
-        ["workflow", "phase", "--json"].as_slice(),
-        ["workflow", "doctor", "--json"].as_slice(),
-        [
-            "workflow",
-            "doctor",
-            "--plan",
-            PLAN_REL,
-            "--external-review-result-ready",
-            "--json",
-        ]
-        .as_slice(),
-        ["workflow", "handoff", "--json"].as_slice(),
-        ["workflow", "operator", "--plan", PLAN_REL, "--json"].as_slice(),
-    ] {
-        let direct = run_featureforge_json(repo, state, command, false, "direct workflow json");
-        let real = run_featureforge_json(repo, state, command, true, "real-cli workflow json");
-        assert_eq!(
-            direct, real,
-            "workflow json command output must stay aligned between direct and real-cli paths for command {:?}",
-            command
-        );
-    }
+    let command = ["workflow", "operator", "--plan", PLAN_REL, "--json"];
+    let direct = run_featureforge_json(
+        repo,
+        state,
+        command.as_slice(),
+        false,
+        "direct workflow json",
+    );
+    let real = run_featureforge_json(
+        repo,
+        state,
+        command.as_slice(),
+        true,
+        "real-cli workflow json",
+    );
+    assert_eq!(
+        direct, real,
+        "workflow json command output must stay aligned between direct and real-cli paths for command {:?}",
+        command
+    );
 }
 
 #[test]
@@ -1170,53 +1352,6 @@ fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned_for_task
     setup_task_boundary_blocked_case(repo, state);
 
     for command in [
-        ["workflow", "next"],
-        ["workflow", "artifacts"],
-        ["workflow", "explain"],
-    ] {
-        let direct = run_featureforge_output(
-            repo,
-            state,
-            &command,
-            false,
-            "direct workflow text blocked fixture",
-        );
-        let real = run_featureforge_output(
-            repo,
-            state,
-            &command,
-            true,
-            "real-cli workflow text blocked fixture",
-        );
-        assert!(
-            direct.status.success() && real.status.success(),
-            "workflow text command should succeed for blocked fixture direct and real-cli paths\ncommand: {:?}\ndirect status: {:?}\nreal status: {:?}\ndirect stderr:\n{}\nreal stderr:\n{}",
-            command,
-            direct.status,
-            real.status,
-            String::from_utf8_lossy(&direct.stderr),
-            String::from_utf8_lossy(&real.stderr)
-        );
-        assert_eq!(
-            direct.stdout, real.stdout,
-            "workflow text command output must stay aligned between blocked fixture direct and real-cli paths for command {:?}",
-            command
-        );
-    }
-
-    for command in [
-        ["workflow", "phase", "--json"].as_slice(),
-        ["workflow", "doctor", "--json"].as_slice(),
-        [
-            "workflow",
-            "doctor",
-            "--plan",
-            PLAN_REL,
-            "--external-review-result-ready",
-            "--json",
-        ]
-        .as_slice(),
-        ["workflow", "handoff", "--json"].as_slice(),
         ["workflow", "operator", "--plan", PLAN_REL, "--json"].as_slice(),
         [
             "workflow",
@@ -1251,7 +1386,7 @@ fn workflow_direct_and_real_cli_read_surfaces_stay_semantically_aligned_for_task
 }
 
 #[test]
-fn workflow_status_summary_failure_stays_aligned_with_real_cli() {
+fn removed_workflow_status_failure_stays_aligned_with_real_cli() {
     let repo_dir = TempDir::new().expect("non-repo tempdir should exist");
     let state_dir = TempDir::new().expect("state tempdir should exist");
     let repo = repo_dir.path();
@@ -1262,27 +1397,35 @@ fn workflow_status_summary_failure_stays_aligned_with_real_cli() {
         state,
         &["workflow", "status", "--summary"],
         false,
-        "direct workflow status summary failure",
+        "direct removed workflow status summary failure",
     );
     let real = run_featureforge_output(
         repo,
         state,
         &["workflow", "status", "--summary"],
         true,
-        "real-cli workflow status summary failure",
+        "real-cli removed workflow status summary failure",
     );
 
     assert!(
         !direct.status.success() && !real.status.success(),
-        "workflow status --summary should fail outside a git repo for both direct and real-cli paths",
+        "removed workflow status should fail for both direct and real-cli paths",
     );
     assert_eq!(
         direct.stdout, real.stdout,
-        "workflow status --summary failure stdout must stay aligned between direct and real-cli paths",
+        "removed workflow status failure stdout must stay aligned between direct and real-cli paths",
     );
     assert_eq!(
         direct.stderr, real.stderr,
-        "workflow status --summary failure stderr must stay aligned between direct and real-cli paths",
+        "removed workflow status failure stderr must stay aligned between direct and real-cli paths",
+    );
+    let failure = parse_json_output(&direct, "removed workflow status failure");
+    assert_eq!(failure["error_class"], "InvalidCommandInput");
+    assert!(
+        failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("unrecognized subcommand 'status'")),
+        "removed workflow status should fail at CLI parsing, got {failure:?}"
     );
 }
 
@@ -1475,23 +1618,58 @@ fn gate_follow_up_contract_uses_exact_shared_fs04_action() {
 
     let query_source = fs::read_to_string(repo_root().join("src/execution/query.rs"))
         .expect("execution query source should be readable");
-    let follow_up_start = query_source
+    let query_follow_up_start = query_source
         .find("pub(crate) fn required_follow_up_from_routing(")
         .expect("query.rs should keep required_follow_up_from_routing");
-    let follow_up_end = query_source[follow_up_start..]
-        .find("fn routing_requires_review_state_repair(")
+    let query_follow_up_end = query_source[query_follow_up_start..]
+        .find("pub(crate) fn normalize_public_follow_up_alias(")
+        .map(|offset| query_follow_up_start + offset)
+        .expect("query.rs should keep normalize_public_follow_up_alias after follow-up helper");
+    let query_follow_up_source = &query_source[query_follow_up_start..query_follow_up_end];
+    assert!(
+        query_follow_up_source.contains("required_follow_up_from_route_decision")
+            && query_follow_up_source.contains("route_decision_from_routing"),
+        "query follow-up projection must delegate to the shared RouteDecision authority"
+    );
+
+    let router_source = fs::read_to_string(repo_root().join("src/execution/router.rs"))
+        .expect("execution router source should be readable");
+    let follow_up_start = router_source
+        .find("fn derive_required_follow_up_from_optional_status")
+        .expect("router.rs should keep shared derive_required_follow_up_from_optional_status");
+    let follow_up_end = router_source[follow_up_start..]
+        .find("fn route_requires_review_state_repair(")
         .map(|offset| follow_up_start + offset)
-        .expect("query.rs should keep routing_requires_review_state_repair");
-    let follow_up_source = &query_source[follow_up_start..follow_up_end];
+        .expect("router.rs should keep route_requires_review_state_repair");
+    let follow_up_source = &router_source[follow_up_start..follow_up_end];
     let repair_index = follow_up_source
-        .find("routing_requires_review_state_repair(routing)")
-        .expect("required_follow_up_from_routing should consult shared repair routing");
+        .find("route_requires_review_state_repair(")
+        .expect("shared required-follow-up derivation should consult repair routing");
     let late_stage_index = follow_up_source
-        .find("routing.phase_detail == \"branch_closure_recording_required_for_release_readiness\"")
-        .expect("required_follow_up_from_routing should keep the branch-closure recording lane");
+        .find("follow_up_from_phase_detail(phase_detail")
+        .expect("shared required-follow-up derivation should keep phase-detail fallback");
     assert!(
         repair_index < late_stage_index,
-        "required_follow_up_from_routing must prefer shared repair routing before late-stage branch-closure follow-up fallback"
+        "shared required-follow-up derivation must prefer repair routing before phase-detail fallback"
+    );
+    assert!(
+        follow_up_source.contains("normalize_public_routing_follow_up_token")
+            && follow_up_source.contains("follow_up_from_phase_detail"),
+        "router required-follow-up derivation must delegate alias and phase-detail truth to execution::follow_up"
+    );
+
+    let follow_up_helper_source =
+        fs::read_to_string(repo_root().join("src/execution/follow_up.rs"))
+            .expect("execution follow-up helper source should be readable");
+    assert!(
+        follow_up_helper_source.contains("pub(crate) enum FollowUpKind")
+            && follow_up_helper_source.contains("pub(crate) enum FollowUpAliasContext")
+            && follow_up_helper_source
+                .contains("pub(crate) fn normalize_public_routing_follow_up_token")
+            && follow_up_helper_source
+                .contains("pub(crate) fn normalize_persisted_repair_follow_up_token")
+            && follow_up_helper_source.contains("pub(crate) fn follow_up_from_phase_detail"),
+        "required-follow-up taxonomy, aliasing, and phase-detail mapping must stay centralized in execution::follow_up"
     );
 
     let state_source = fs::read_to_string(repo_root().join("src/execution/state.rs"))
@@ -1569,129 +1747,92 @@ fn runtime_remediation_inventory_includes_boundary_contract_regressions() {
 }
 
 #[test]
-fn runtime_remediation_fs03_dispatch_target_acceptance_and_mismatch_stay_aligned_between_direct_and_compiled_cli()
+fn runtime_remediation_fs03_internal_dispatch_target_acceptance_and_mismatch_preserve_mutation_contract()
  {
-    let command_success = [
-        "plan",
-        "execution",
-        "record-review-dispatch",
-        "--plan",
-        PLAN_REL,
-        "--scope",
-        "task",
-        "--task",
-        "1",
-    ];
-    let command_mismatch = [
-        "plan",
-        "execution",
-        "record-review-dispatch",
-        "--plan",
-        PLAN_REL,
-        "--scope",
-        "task",
-        "--task",
-        "2",
-    ];
+    let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs03-internal");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    setup_task_boundary_blocked_case(repo, state);
 
-    for (label, real_cli) in [("direct", false), ("compiled-cli", true)] {
-        let (repo_dir, state_dir) = init_repo(&format!(
-            "contracts-boundary-runtime-remediation-fs03-{label}"
-        ));
-        let repo = repo_dir.path();
-        let state = state_dir.path();
-        setup_task_boundary_blocked_case(repo, state);
+    let baseline = state_tree_digest(state);
+    let accepted = featureforge_support::run_runtime_review_dispatch_authority_json(
+        repo,
+        state,
+        &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+            plan: PLAN_REL.into(),
+            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            task: Some(1),
+        },
+    )
+    .expect("FS-03 accepted task-boundary dispatch target should remain allowed");
+    assert_eq!(
+        accepted["allowed"],
+        Value::Bool(true),
+        "FS-03 accepted path should remain allowed"
+    );
+    let digest_after_accept = state_tree_digest(state);
+    assert_ne!(
+        digest_after_accept, baseline,
+        "FS-03 accepted path should record dispatch lineage"
+    );
 
-        let baseline = state_tree_digest(state);
-        let accepted = run_featureforge_json(
+    let rejected_json: Value = serde_json::from_str(
+        &featureforge_support::run_runtime_review_dispatch_authority_json(
             repo,
             state,
-            &command_success,
-            real_cli,
-            &format!("FS-03 {label} accepted task-boundary dispatch target"),
-        );
-        assert_eq!(
-            accepted["allowed"],
-            Value::Bool(true),
-            "FS-03 {label} accepted path should remain allowed"
-        );
-        let digest_after_accept = state_tree_digest(state);
-        assert_ne!(
-            digest_after_accept, baseline,
-            "FS-03 {label} accepted path should record dispatch lineage"
-        );
-
-        let rejected = run_featureforge_output(
-            repo,
-            state,
-            &command_mismatch,
-            real_cli,
-            &format!("FS-03 {label} rejected mismatched task target"),
-        );
-        assert!(
-            !rejected.status.success(),
-            "FS-03 {label} mismatched task target should fail before mutation"
-        );
-        let rejected_json = parse_json_output(&rejected, &format!("FS-03 {label} rejected output"));
-        assert_eq!(
-            rejected_json
-                .get("failure_class")
-                .or_else(|| rejected_json.get("error_class"))
-                .cloned()
-                .unwrap_or(Value::Null),
-            Value::from("InvalidCommandInput"),
-            "FS-03 {label} mismatched task target should fail with InvalidCommandInput"
-        );
-        assert_eq!(
-            state_tree_digest(state),
-            digest_after_accept,
-            "FS-03 {label} mismatched task target must not mutate runtime state after failing"
-        );
-    }
+            &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+                plan: PLAN_REL.into(),
+                scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+                task: Some(2),
+            },
+        )
+        .expect_err("FS-03 mismatched task target should fail before mutation"),
+    )
+    .expect("FS-03 internal mismatch failure should serialize as json");
+    assert_eq!(
+        rejected_json["error_class"],
+        Value::from("InvalidCommandInput"),
+        "FS-03 mismatched task target should fail with InvalidCommandInput"
+    );
+    assert_eq!(
+        state_tree_digest(state),
+        digest_after_accept,
+        "FS-03 mismatched task target must not mutate runtime state after failing"
+    );
 }
 
 #[test]
-fn runtime_remediation_fs05_unsupported_field_fails_before_mutation_on_compatibility_aliases() {
+fn runtime_remediation_fs05_internal_unsupported_field_fails_before_mutation_on_dispatch_contract()
+{
     let (repo_dir, state_dir) = init_repo("contracts-boundary-runtime-remediation-fs05");
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
 
     let baseline = state_tree_digest(state);
-    let command = [
-        "plan",
-        "execution",
-        "record-review-dispatch",
-        "--plan",
-        PLAN_REL,
-        "--scope",
-        "final-review",
-        "--task",
-        "1",
-    ];
-
-    for (label, real_cli) in [("direct", false), ("compiled-cli", true)] {
-        let output = run_featureforge_output(repo, state, &command, real_cli, label);
-        assert!(
-            !output.status.success(),
-            "FS-05 {label} path should fail unsupported final-review task field request"
-        );
-        let failure = parse_json_output(&output, &format!("FS-05 {label} failure"));
-        assert_eq!(
-            failure
-                .get("failure_class")
-                .or_else(|| failure.get("error_class"))
-                .cloned()
-                .unwrap_or(Value::Null),
-            Value::from("InvalidCommandInput"),
-            "FS-05 {label} path should reject unsupported fields before mutation"
-        );
-        assert_eq!(
-            state_tree_digest(state),
-            baseline,
-            "FS-05 {label} path must not mutate runtime state files on unsupported fields"
-        );
-    }
+    let failure: Value = serde_json::from_str(
+        &featureforge_support::run_runtime_review_dispatch_authority_json(
+            repo,
+            state,
+            &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+                plan: PLAN_REL.into(),
+                scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::FinalReview,
+                task: Some(1),
+            },
+        )
+        .expect_err("FS-05 unsupported final-review task field should fail before mutation"),
+    )
+    .expect("FS-05 internal failure should serialize as json");
+    assert_eq!(
+        failure["error_class"],
+        Value::from("InvalidCommandInput"),
+        "FS-05 path should reject unsupported fields before mutation"
+    );
+    assert_eq!(
+        state_tree_digest(state),
+        baseline,
+        "FS-05 path must not mutate runtime state files on unsupported fields"
+    );
 }
 
 #[test]
@@ -2044,12 +2185,15 @@ fn runtime_remediation_fs15_compiled_cli_never_prefers_later_stale_task() {
         .expect("FS-15 stale-boundary fixture plan should be writable");
     prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs15");
 
-    let preflight = run_plan_execution_json(
+    let preflight = featureforge_support::run_runtime_preflight_gate_json(
         repo,
         state,
-        &["preflight", "--plan", PLAN_REL],
-        "FS-15 preflight before stale-boundary fixture",
-    );
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: PLAN_REL.into(),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("internal preflight helper should succeed for FS-15 stale-boundary fixture");
     assert_eq!(
         preflight["allowed"],
         Value::Bool(true),
@@ -2326,12 +2470,15 @@ fn fs19_compiled_cli_ignores_superseded_stale_history_when_selecting_blocking_ta
         .expect("FS-19 stale-history fixture plan should be writable");
     prepare_preflight_acceptance_workspace(repo, "boundary-runtime-remediation-fs19");
 
-    let preflight = run_plan_execution_json(
+    let preflight = featureforge_support::run_runtime_preflight_gate_json(
         repo,
         state,
-        &["preflight", "--plan", PLAN_REL],
-        "FS-19 preflight before stale-history fixture",
-    );
+        &featureforge::cli::plan_execution::StatusArgs {
+            plan: PLAN_REL.into(),
+            external_review_result_ready: false,
+        },
+    )
+    .expect("internal preflight helper should succeed for FS-19 stale-history fixture");
     assert_eq!(
         preflight["allowed"],
         Value::Bool(true),
@@ -2580,11 +2727,6 @@ fn fs20_runtime_owned_control_plane_churn_does_not_flip_query_or_operator_to_bra
         ("operator after churn", &operator_after_churn),
     ] {
         assert_ne!(
-            payload["blocking_scope"],
-            Value::from("branch"),
-            "FS-20 {label} must not use branch blocking scope for control-plane-only churn"
-        );
-        assert_ne!(
             payload["phase_detail"],
             Value::from("branch_closure_recording_required_for_release_readiness"),
             "FS-20 {label} must not route to branch_closure_recording_required_for_release_readiness from control-plane-only churn"
@@ -2597,11 +2739,6 @@ fn fs20_runtime_owned_control_plane_churn_does_not_flip_query_or_operator_to_bra
         );
     }
 
-    assert_ne!(
-        routing_after_churn.blocking_scope.as_deref(),
-        Some("branch"),
-        "FS-20 routing query must not switch blocking scope to branch from control-plane-only churn"
-    );
     assert_ne!(
         routing_after_churn.phase_detail, "branch_closure_recording_required_for_release_readiness",
         "FS-20 routing query must not reroute to branch_closure_recording_required_for_release_readiness from control-plane-only churn"
@@ -2763,4 +2900,103 @@ fn runtime_remediation_fs13_authoritative_open_step_state_survives_compiled_cli_
             "FS-13 operator must not route to Task 1 Step 1 from markdown-only note text when authoritative open-step state is absent: {payload:?}",
         );
     }
+}
+
+#[test]
+fn status_and_operator_share_state_taxonomy_and_semantic_identity_fields() {
+    let (repo_dir, state_dir) = init_repo("boundary-state-taxonomy-semantic-identity");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
+
+    let status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status taxonomy/semantic identity contract",
+    );
+    let operator = run_workflow_operator_json(
+        repo,
+        state,
+        PLAN_REL,
+        false,
+        "operator taxonomy/semantic identity contract",
+    );
+
+    let state_kind = status["state_kind"]
+        .as_str()
+        .expect("status should expose state_kind");
+    assert!(
+        matches!(
+            state_kind,
+            "actionable_public_command"
+                | "waiting_external_input"
+                | "terminal"
+                | "blocked_runtime_bug"
+        ),
+        "status state_kind should use the public taxonomy: {state_kind}"
+    );
+    assert_eq!(
+        operator["state_kind"], status["state_kind"],
+        "workflow operator and plan execution status must share the same routed state_kind"
+    );
+
+    let semantic_tree = status["semantic_workspace_tree_id"]
+        .as_str()
+        .expect("status should expose semantic_workspace_tree_id");
+    assert!(
+        !semantic_tree.trim().is_empty(),
+        "status semantic_workspace_tree_id should be non-empty"
+    );
+    assert_eq!(
+        operator["semantic_workspace_tree_id"], status["semantic_workspace_tree_id"],
+        "workflow operator and plan execution status should converge on semantic workspace identity"
+    );
+
+    assert!(
+        status
+            .get("blockers")
+            .is_none_or(|value| value.is_array() || value.is_null()),
+        "status blockers should be optional and, when present, an array"
+    );
+    assert!(
+        operator
+            .get("blockers")
+            .is_none_or(|value| value.is_array() || value.is_null()),
+        "operator blockers should be optional and, when present, an array"
+    );
+
+    let status_next_public = status
+        .get("next_public_action")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let operator_next_public = operator
+        .get("next_public_action")
+        .cloned()
+        .unwrap_or(Value::Null);
+    for next_public_action in [&status_next_public, &operator_next_public] {
+        if let Some(next_public_action) = next_public_action.as_object() {
+            let command = next_public_action
+                .get("command")
+                .and_then(Value::as_str)
+                .expect("next_public_action command should be present when object is emitted");
+            assert!(
+                command.starts_with("featureforge "),
+                "next_public_action command should be a public featureforge command: {command}"
+            );
+        }
+    }
+
+    assert!(
+        status
+            .get("raw_workspace_tree_id")
+            .is_none_or(|value| value.is_string() || value.is_null()),
+        "status raw_workspace_tree_id should remain debug-only optional string"
+    );
+    assert!(
+        operator
+            .get("raw_workspace_tree_id")
+            .is_none_or(|value| value.is_string() || value.is_null()),
+        "operator raw_workspace_tree_id should remain debug-only optional string"
+    );
 }

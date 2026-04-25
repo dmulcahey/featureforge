@@ -137,9 +137,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "harness fixture should contain valid json")]
     fn read_harness_json_fixture_rejects_non_json_fixtures() {
-        let _ = read_harness_json_fixture("valid-execution-contract.md");
+        let failure = std::panic::catch_unwind(|| {
+            let _ = read_harness_json_fixture("valid-execution-contract.md");
+        })
+        .expect_err("non-json harness fixtures should panic when read as JSON");
+        let message = failure
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| failure.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(
+            message.contains("harness fixture should contain valid json"),
+            "unexpected panic message: {message}"
+        );
     }
 
     #[test]
