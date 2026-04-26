@@ -150,9 +150,8 @@ fn normalized_runtime_control_plane_path(path: &str) -> Option<String> {
 
 fn is_runtime_owned_runtime_output_path(path: &str) -> bool {
     path.starts_with("docs/archive/featureforge/execution-evidence/")
+        || path.starts_with("docs/featureforge/projections/")
         || path.starts_with("docs/featureforge/reviews/")
-        || (path.contains("featureforge-")
-            && (path.contains("-independent-review-") || path.contains("-test-outcome-")))
 }
 
 pub(crate) fn is_runtime_owned_execution_control_plane_path(
@@ -1149,28 +1148,10 @@ pub(crate) fn late_stage_missing_current_closure_stale_provenance_present(
     }
     if status.current_branch_closure_id.is_none() {
         let authoritative_state = load_authoritative_transition_state(context)?;
-        let historical_late_stage_binding_present =
-            authoritative_state.as_ref().is_some_and(|state| {
-                state
-                    .current_release_readiness_record()
-                    .as_ref()
-                    .map(|record| record.branch_closure_id.as_str())
-                    .into_iter()
-                    .chain(
-                        state
-                            .current_final_review_record()
-                            .as_ref()
-                            .map(|record| record.branch_closure_id.as_str()),
-                    )
-                    .chain(
-                        state
-                            .current_browser_qa_record()
-                            .as_ref()
-                            .map(|record| record.branch_closure_id.as_str()),
-                    )
-                    .any(|closure_id| !closure_id.trim().is_empty())
-            });
-        if historical_late_stage_binding_present {
+        if actionable_late_stage_stale_provenance_without_current_branch_closure(
+            authoritative_state.as_ref(),
+            status,
+        ) {
             return Ok(true);
         }
     }
@@ -1182,6 +1163,58 @@ pub(crate) fn late_stage_missing_current_closure_stale_provenance_present(
         return Ok(false);
     }
     Ok(!tracked_paths_changed_since_record_branch_closure_baseline(context)?.is_empty())
+}
+
+fn actionable_late_stage_stale_provenance_without_current_branch_closure(
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+    status: &PlanExecutionStatus,
+) -> bool {
+    let Some(state) = authoritative_state else {
+        return false;
+    };
+    if state
+        .review_state_repair_follow_up()
+        .is_some_and(|follow_up| {
+            matches!(
+                normalize_persisted_repair_follow_up_token(Some(follow_up)),
+                Some("advance_late_stage" | "record_branch_closure")
+            )
+        })
+        && state.current_task_closure_results().values().any(|record| {
+            record.review_result == "pass"
+                && record.verification_result == "pass"
+                && record
+                    .closure_status
+                    .as_deref()
+                    .is_none_or(|status| status == "current")
+        })
+    {
+        return true;
+    }
+    let referenced_current_branch_closure_exists = state
+        .current_release_readiness_record()
+        .as_ref()
+        .map(|record| record.branch_closure_id.as_str())
+        .into_iter()
+        .chain(
+            state
+                .current_final_review_record()
+                .as_ref()
+                .map(|record| record.branch_closure_id.as_str()),
+        )
+        .chain(
+            state
+                .current_browser_qa_record()
+                .as_ref()
+                .map(|record| record.branch_closure_id.as_str()),
+        )
+        .filter(|closure_id| !closure_id.trim().is_empty())
+        .any(|closure_id| state.branch_closure_record(closure_id).is_some());
+    referenced_current_branch_closure_exists
+        && status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == REASON_CODE_STALE_PROVENANCE)
 }
 
 pub(crate) fn current_branch_closure_has_tracked_drift(

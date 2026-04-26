@@ -47,6 +47,11 @@ pub enum PlanExecutionCommand {
     Reopen(ReopenArgs),
     #[command(about = "Execution handoff transfer recorder.")]
     Transfer(TransferArgs),
+    #[command(
+        name = "materialize-projections",
+        about = "Render runtime projections without changing runtime truth."
+    )]
+    MaterializeProjections(MaterializeProjectionsArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -320,6 +325,26 @@ pub struct RebuildEvidenceArgs {
     pub no_output: bool,
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MaterializeProjectionsArgs {
+    #[arg(long)]
+    pub plan: PathBuf,
+    #[arg(long, value_enum, default_value = "execution")]
+    pub scope: MaterializeProjectionScopeArg,
+    #[arg(long = "tracked", conflicts_with = "state_dir")]
+    pub tracked: bool,
+    #[arg(long = "state-dir")]
+    pub state_dir: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum MaterializeProjectionScopeArg {
+    Execution,
+    LateStage,
+    All,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]

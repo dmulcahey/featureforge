@@ -10,9 +10,10 @@ use sha2::{Digest, Sha256};
 
 use crate::cli::plan_execution::{
     AdvanceLateStageArgs, AdvanceLateStageResultArg, BeginArgs, CloseCurrentTaskArgs, CompleteArgs,
-    NoteArgs, RebuildEvidenceArgs, RecordBranchClosureArgs, RecordFinalReviewArgs, RecordQaArgs,
-    RecordReleaseReadinessArgs, ReopenArgs, ReviewDispatchScopeArg, ReviewOutcomeArg, StatusArgs,
-    TransferArgs, VerificationOutcomeArg,
+    MaterializeProjectionScopeArg, MaterializeProjectionsArgs, NoteArgs, RebuildEvidenceArgs,
+    RecordBranchClosureArgs, RecordFinalReviewArgs, RecordQaArgs, RecordReleaseReadinessArgs,
+    ReopenArgs, ReviewDispatchScopeArg, ReviewOutcomeArg, StatusArgs, TransferArgs,
+    VerificationOutcomeArg,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::authority::write_authoritative_unit_review_receipt_artifact;
@@ -51,10 +52,13 @@ use crate::execution::leases::{
 };
 use crate::execution::observability::REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED;
 use crate::execution::projection_renderer::{
-    BranchClosureProjectionInput, FinalReviewProjectionInput, QaProjectionInput,
-    publish_authoritative_artifact, regenerate_projection_artifacts_from_authoritative_state,
-    render_branch_closure_artifact, render_final_review_artifacts, render_qa_artifact,
-    render_release_readiness_artifact, timestamp_slug, write_project_artifact,
+    BranchClosureProjectionInput, FinalReviewProjectionInput, ProjectionWriteMode,
+    QaProjectionInput, RenderedExecutionProjections, materialize_late_stage_projection_artifacts,
+    normal_projection_write_mode, publish_authoritative_artifact,
+    regenerate_projection_artifacts_from_authoritative_state, render_branch_closure_artifact,
+    render_execution_projections, render_final_review_artifacts, render_qa_artifact,
+    render_release_readiness_artifact, timestamp_slug, write_execution_projection_read_models,
+    write_project_artifact,
 };
 use crate::execution::query::ExecutionRoutingState;
 use crate::execution::recording::{
@@ -63,6 +67,7 @@ use crate::execution::recording::{
     record_current_branch_closure, record_current_task_closure,
     record_final_review as persist_final_review_record, record_negative_task_closure,
     record_release_readiness as persist_release_readiness_record,
+    resolve_current_task_closure_postconditions,
 };
 use crate::execution::router::{
     command_invokes_hidden_lane, command_is_legal_public_command, project_runtime_routing_state,
@@ -74,19 +79,19 @@ use crate::execution::semantic_identity::{
 };
 use crate::execution::state::{
     EvidenceAttempt, ExecutionContext, ExecutionEvidence, ExecutionRuntime, FileProof,
-    NO_REPO_FILES_MARKER, PlanExecutionStatus, PlanStepState, RebuildEvidenceCandidate,
-    RebuildEvidenceCounts, RebuildEvidenceFilter, RebuildEvidenceOutput, RebuildEvidenceTarget,
+    NO_REPO_FILES_MARKER, PlanExecutionStatus, RebuildEvidenceCandidate, RebuildEvidenceCounts,
+    RebuildEvidenceFilter, RebuildEvidenceOutput, RebuildEvidenceTarget,
     branch_closure_record_matches_plan_exemption, current_file_proof, current_head_sha,
     current_review_dispatch_id_candidate, current_test_plan_artifact_path_for_qa_recording,
     discover_rebuild_candidates, ensure_current_review_dispatch_id, gate_finish_from_context,
-    gate_review_from_context, hash_contract_plan, load_execution_context_for_exact_plan,
-    load_execution_context_for_mutation, load_execution_read_scope_for_mutation,
-    normalize_begin_request, normalize_complete_request, normalize_note_request,
-    normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
-    normalize_transfer_request, require_normalized_text, require_preflight_acceptance,
-    require_prior_task_closure_for_begin, status_from_context_with_shared_routing,
-    still_current_task_closure_records, structural_current_task_closure_failures,
-    task_closure_baseline_repair_candidate,
+    gate_review_from_context, load_execution_context_for_exact_plan,
+    load_execution_context_for_mutation, load_execution_context_for_rebuild,
+    load_execution_read_scope_for_mutation, normalize_begin_request, normalize_complete_request,
+    normalize_note_request, normalize_rebuild_evidence_request, normalize_reopen_request,
+    normalize_source, normalize_transfer_request, require_normalized_text,
+    require_preflight_acceptance, require_prior_task_closure_for_begin,
+    status_from_context_with_shared_routing, still_current_task_closure_records,
+    structural_current_task_closure_failures, task_closure_baseline_repair_candidate,
     task_closure_negative_result_blocks_current_reviewed_state,
     task_completion_lineage_fingerprint, task_packet_fingerprint,
     usable_current_branch_closure_identity, validate_expected_fingerprint,
@@ -131,6 +136,97 @@ pub struct CloseCurrentTaskOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authoritative_next_action: Option<String>,
     pub trace_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MaterializeProjectionsOutput {
+    pub action: String,
+    pub projection_mode: String,
+    pub written_paths: Vec<String>,
+    pub runtime_truth_changed: bool,
+    pub trace_summary: String,
+}
+
+fn close_current_task_already_current_output(
+    task_number: u32,
+    closure_record_id: String,
+    trace_summary: &str,
+    mut reason_codes: Vec<String>,
+) -> CloseCurrentTaskOutput {
+    reason_codes.sort();
+    reason_codes.dedup();
+    CloseCurrentTaskOutput {
+        action: String::from("already_current"),
+        task_number,
+        dispatch_validation_action: String::from("validated"),
+        closure_action: String::from("already_current"),
+        task_closure_status: String::from("current"),
+        superseded_task_closure_ids: Vec::new(),
+        closure_record_id: Some(closure_record_id),
+        code: None,
+        recommended_command: None,
+        rederive_via_workflow_operator: None,
+        required_follow_up: None,
+        blocking_scope: None,
+        blocking_task: None,
+        blocking_reason_codes: reason_codes,
+        authoritative_next_action: None,
+        trace_summary: String::from(trace_summary),
+    }
+}
+
+fn resolve_already_current_task_closure_postconditions(
+    authoritative_state: &mut AuthoritativeTransitionState,
+    task_number: u32,
+    closure_record_id: &str,
+    reviewed_state_id: &str,
+) -> Result<Vec<String>, JsonFailure> {
+    if resolve_current_task_closure_postconditions(
+        authoritative_state,
+        task_number,
+        closure_record_id,
+        reviewed_state_id,
+    )? {
+        authoritative_state
+            .persist_if_dirty_with_failpoint_and_command(None, "close_current_task")?;
+        return Ok(vec![String::from(
+            "current_task_closure_postconditions_resolved",
+        )]);
+    }
+    Ok(Vec::new())
+}
+
+fn current_positive_closure_matches_incoming_results(
+    current_record: &CurrentTaskClosureRecord,
+    review_result: &str,
+    verification_result: &str,
+) -> bool {
+    current_record.review_result == "pass"
+        && current_record.verification_result == "pass"
+        && review_result == "pass"
+        && verification_result == "pass"
+        && current_record
+            .closure_status
+            .as_deref()
+            .is_none_or(|status| status == "current")
+}
+
+fn task_closure_negative_result_blocks_reviewed_state(
+    authoritative_state: &AuthoritativeTransitionState,
+    task: u32,
+    reviewed_state_id: &str,
+) -> bool {
+    authoritative_state
+        .task_closure_negative_result(task)
+        .is_some_and(|negative_record| {
+            task_closure_negative_result_blocks_current_reviewed_state(
+                negative_record
+                    .semantic_reviewed_state_id
+                    .as_deref()
+                    .unwrap_or(negative_record.reviewed_state_id.as_str()),
+                Some(reviewed_state_id),
+            )
+        })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -279,6 +375,8 @@ fn open_step_state_record(
         step,
         note_state: note_state.as_str().to_owned(),
         note_summary: truncate_summary(note_summary),
+        execution_mode: Some(context.plan_document.execution_mode.clone()),
+        repo_root: Some(context.runtime.repo_root.to_string_lossy().into_owned()),
         source_plan_path: context.plan_rel.clone(),
         source_plan_revision: context.plan_document.plan_revision,
         authoritative_sequence: current_open_step_authoritative_sequence(context),
@@ -490,6 +588,7 @@ pub fn begin(
         }
     }
 
+    let projection_write_mode = normal_projection_write_mode()?;
     context.steps[step_index].note_state = Some(crate::execution::state::NoteState::Active);
     context.steps[step_index].note_summary = truncate_summary(&require_normalized_text(
         &context.steps[step_index].title,
@@ -511,11 +610,8 @@ pub fn begin(
         consume_execution_reentry_repair_follow_up(Some(authoritative_state))?;
     }
 
-    let rendered_plan = render_plan_source(
-        &context.plan_source,
-        &context.plan_document.execution_mode,
-        &context.steps,
-    );
+    let rendered = render_execution_projections(&context);
+    record_execution_projection_fingerprints(authoritative_state.as_mut(), &rendered)?;
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_rollback(
             authoritative_state,
@@ -527,7 +623,7 @@ pub fn begin(
             "begin_after_plan_write_before_authoritative_state_publish",
         )?;
     }
-    write_atomic(&context.plan_abs, &rendered_plan)?;
+    write_execution_projection_read_models(&context, &rendered, projection_write_mode)?;
     let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
     status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
 }
@@ -663,7 +759,6 @@ pub fn complete(
         authoritative_state.clear_open_step_state()?;
     }
 
-    let contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
     let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
     let packet_fingerprint = task_packet_fingerprint(
         &context,
@@ -680,6 +775,7 @@ pub fn complete(
             ),
         )
     })?;
+    let projection_write_mode = normal_projection_write_mode()?;
     let recorded_at = Timestamp::now().to_string();
     let head_sha = context.current_head_sha()?;
     let new_attempt = EvidenceAttempt {
@@ -711,17 +807,12 @@ pub fn complete(
 
     context.evidence.attempts.push(new_attempt);
     context.evidence.format = crate::execution::state::EvidenceFormat::V2;
+    if let Some(authoritative_state) = authoritative_state.as_mut() {
+        authoritative_state.record_execution_evidence_attempts(&context)?;
+    }
 
-    let rendered_plan = render_plan_source(
-        &context.plan_source,
-        &context.plan_document.execution_mode,
-        &context.steps,
-    );
-    let rendered_evidence = render_evidence_source(
-        &context,
-        &contract_plan_fingerprint,
-        &source_spec_fingerprint,
-    );
+    let rendered = render_execution_projections(&context);
+    record_execution_projection_fingerprints(authoritative_state.as_mut(), &rendered)?;
     let _ = consume_execution_reentry_repair_follow_up(authoritative_state.as_mut())?;
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_step_hint_and_rollback(
@@ -732,20 +823,12 @@ pub fn complete(
                 plan_path: &context.plan_abs,
                 original_plan: &context.plan_source,
                 evidence_path: &context.evidence_abs,
-                original_evidence: context.evidence.source.as_deref(),
                 failpoint: "complete_after_plan_and_evidence_write_before_authoritative_state_publish",
             },
         )?;
     }
-    write_plan_and_evidence_with_rollback(
-        &context.plan_abs,
-        &context.plan_source,
-        &rendered_plan,
-        &context.evidence_abs,
-        context.evidence.source.as_deref(),
-        &rendered_evidence,
-        "complete_after_plan_write",
-    )?;
+    maybe_trigger_failpoint("complete_after_plan_write")?;
+    write_execution_projection_read_models(&context, &rendered, projection_write_mode)?;
     let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
     status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
 }
@@ -787,6 +870,7 @@ pub fn note(
         ));
     }
 
+    let projection_write_mode = normal_projection_write_mode()?;
     context.steps[step_index].note_state = Some(request.state);
     context.steps[step_index].note_summary = request.message;
     if let Some(authoritative_state) = authoritative_state.as_mut() {
@@ -800,11 +884,8 @@ pub fn note(
         authoritative_state.apply_note_reset_policy(request.state)?;
     }
 
-    let rendered_plan = render_plan_source(
-        &context.plan_source,
-        &context.plan_document.execution_mode,
-        &context.steps,
-    );
+    let rendered = render_execution_projections(&context);
+    record_execution_projection_fingerprints(authoritative_state.as_mut(), &rendered)?;
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_rollback(
             authoritative_state,
@@ -816,7 +897,7 @@ pub fn note(
             "note_after_plan_write_before_authoritative_state_publish",
         )?;
     }
-    write_atomic(&context.plan_abs, &rendered_plan)?;
+    write_execution_projection_read_models(&context, &rendered, projection_write_mode)?;
     let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
     status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
 }
@@ -890,6 +971,7 @@ pub fn reopen(
         ));
     }
 
+    let projection_write_mode = normal_projection_write_mode()?;
     invalidate_latest_completed_attempt(&mut context, request.task, request.step, &request.reason)?;
     context.steps[step_index].checked = false;
     context.steps[step_index].note_state = Some(crate::execution::state::NoteState::Interrupted);
@@ -916,18 +998,12 @@ pub fn reopen(
         if authoritative_state.strategy_checkpoint_kind() != Some("cycle_break") {
             authoritative_state.set_harness_phase_executing()?;
         }
+        authoritative_state.record_execution_evidence_attempts(&context)?;
         consume_execution_reentry_repair_follow_up(Some(authoritative_state))?;
     }
 
-    let rendered_plan = render_plan_source(
-        &context.plan_source,
-        &context.plan_document.execution_mode,
-        &context.steps,
-    );
-    let plan_fingerprint = hash_contract_plan(&context.plan_source);
-    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
-    let rendered_evidence =
-        render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
+    let rendered = render_execution_projections(&context);
+    record_execution_projection_fingerprints(authoritative_state.as_mut(), &rendered)?;
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_rollback(
             authoritative_state,
@@ -939,15 +1015,8 @@ pub fn reopen(
             "reopen_after_plan_and_evidence_write_before_authoritative_state_publish",
         )?;
     }
-    write_plan_and_evidence_with_rollback(
-        &context.plan_abs,
-        &context.plan_source,
-        &rendered_plan,
-        &context.evidence_abs,
-        context.evidence.source.as_deref(),
-        &rendered_evidence,
-        "reopen_after_plan_write",
-    )?;
+    maybe_trigger_failpoint("reopen_after_plan_write")?;
+    write_execution_projection_read_models(&context, &rendered, projection_write_mode)?;
 
     let reloaded = load_execution_context_for_mutation(runtime, &args.plan)?;
     status_with_shared_routing_or_context(runtime, &args.plan, &reloaded)
@@ -1069,6 +1138,7 @@ fn transfer_repair_step(
         ));
     }
 
+    let projection_write_mode = normal_projection_write_mode()?;
     invalidate_latest_completed_attempt(&mut context, repair_task, repair_step, reason)?;
     context.steps[repair_index].checked = false;
     context.steps[repair_index].note_state = None;
@@ -1088,15 +1158,8 @@ fn transfer_repair_step(
         ))?;
     }
 
-    let rendered_plan = render_plan_source(
-        &context.plan_source,
-        &context.plan_document.execution_mode,
-        &context.steps,
-    );
-    let plan_fingerprint = hash_contract_plan(&context.plan_source);
-    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
-    let rendered_evidence =
-        render_evidence_source(&context, &plan_fingerprint, &source_spec_fingerprint);
+    let rendered = render_execution_projections(&context);
+    record_execution_projection_fingerprints(authoritative_state.as_mut(), &rendered)?;
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         persist_authoritative_state_with_rollback(
             authoritative_state,
@@ -1108,15 +1171,8 @@ fn transfer_repair_step(
             "transfer_after_plan_and_evidence_write_before_authoritative_state_publish",
         )?;
     }
-    write_plan_and_evidence_with_rollback(
-        &context.plan_abs,
-        &context.plan_source,
-        &rendered_plan,
-        &context.evidence_abs,
-        context.evidence.source.as_deref(),
-        &rendered_evidence,
-        "transfer_after_plan_write",
-    )?;
+    maybe_trigger_failpoint("transfer_after_plan_write")?;
+    write_execution_projection_read_models(&context, &rendered, projection_write_mode)?;
 
     let reloaded = load_execution_context_for_mutation(runtime, plan)?;
     status_with_shared_routing_or_context(runtime, plan, &reloaded)
@@ -1209,6 +1265,7 @@ fn enforce_post_mutation_status_invariants(
     }
     if status.review_state_status == "stale_unreviewed"
         && status.stale_unreviewed_closures.is_empty()
+        && !targetless_stale_reconcile_diagnostic(status)
     {
         return Err(JsonFailure::new(
             FailureClass::MalformedExecutionState,
@@ -1269,6 +1326,18 @@ fn enforce_post_mutation_status_invariants(
         }
     }
     Ok(())
+}
+
+fn targetless_stale_reconcile_diagnostic(status: &PlanExecutionStatus) -> bool {
+    status.phase_detail == "runtime_reconcile_required"
+        && status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == "stale_unreviewed_target_missing")
+        && status
+            .blocking_reason_codes
+            .iter()
+            .any(|reason_code| reason_code == "stale_unreviewed_target_missing")
 }
 
 fn semantic_changed_paths_between_statuses(
@@ -1520,69 +1589,11 @@ pub fn close_current_task(
                 "close-current-task requires authoritative harness state.",
             ));
         };
-        if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
-            && current_record.closure_record_id == initial_closure_record_id
-            && current_record.dispatch_id == dispatch_id
-        {
-            let (review_summary_hash, verification_summary_hash) =
-                close_current_task_summary_hashes(args)?;
-            if current_record.review_result == args.review_result.as_str()
-                && current_record.review_summary_hash == review_summary_hash.as_str()
-                && current_record.verification_result == verification_result
-                && current_record.verification_summary_hash == verification_summary_hash.as_str()
-            {
-                if !projection_refresh_only_candidate {
-                    return Ok(CloseCurrentTaskOutput {
-                        action: String::from("already_current"),
-                        task_number: args.task,
-                        dispatch_validation_action: String::from("validated"),
-                        closure_action: String::from("already_current"),
-                        task_closure_status: String::from("current"),
-                        superseded_task_closure_ids: Vec::new(),
-                        closure_record_id: Some(initial_closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: None,
-                        blocking_scope: None,
-                        blocking_task: None,
-                        blocking_reason_codes: Vec::new(),
-                        authoritative_next_action: None,
-                        trace_summary: String::from(
-                            "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
-                        ),
-                    });
-                }
-            } else if !projection_refresh_only_candidate {
-                let operator = current_workflow_operator(runtime, &args.plan, true)?;
-                return Ok(with_close_current_task_operator_blocker_metadata(
-                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "validated",
-                        task_closure_status: "current",
-                        closure_record_id: Some(initial_closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
-                        trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
-                    }),
-                    &operator,
-                ));
-            }
-        }
-        if authoritative_state
-            .task_closure_negative_result(args.task)
-            .is_some_and(|negative_record| {
-                task_closure_negative_result_blocks_current_reviewed_state(
-                    negative_record
-                        .semantic_reviewed_state_id
-                        .as_deref()
-                        .unwrap_or(negative_record.reviewed_state_id.as_str()),
-                    Some(initial_reviewed_state_id.as_str()),
-                )
-            })
-        {
+        if task_closure_negative_result_blocks_reviewed_state(
+            authoritative_state,
+            args.task,
+            &initial_reviewed_state_id,
+        ) {
             let operator = current_workflow_operator(runtime, &args.plan, true)?;
             let (required_follow_up, recommended_command) =
                 close_current_task_follow_up_and_command(&operator);
@@ -1600,6 +1611,71 @@ pub fn close_current_task(
                 }),
                 &operator,
             ));
+        }
+        if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
+            && current_record.closure_record_id == initial_closure_record_id
+            && current_record.dispatch_id == dispatch_id
+        {
+            let (review_summary_hash, verification_summary_hash) =
+                close_current_task_summary_hashes(args)?;
+            if current_record.review_result == args.review_result.as_str()
+                && current_record.review_summary_hash == review_summary_hash.as_str()
+                && current_record.verification_result == verification_result
+                && current_record.verification_summary_hash == verification_summary_hash.as_str()
+            {
+                if !projection_refresh_only_candidate {
+                    let _write_authority = claim_step_write_authority(runtime)?;
+                    let reason_codes = resolve_already_current_task_closure_postconditions(
+                        authoritative_state,
+                        args.task,
+                        &initial_closure_record_id,
+                        &current_record.reviewed_state_id,
+                    )?;
+                    return Ok(close_current_task_already_current_output(
+                        args.task,
+                        initial_closure_record_id,
+                        "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                        reason_codes,
+                    ));
+                }
+            } else if !projection_refresh_only_candidate
+                && current_positive_closure_matches_incoming_results(
+                    &current_record,
+                    args.review_result.as_str(),
+                    verification_result,
+                )
+            {
+                let _write_authority = claim_step_write_authority(runtime)?;
+                let mut reason_codes = resolve_already_current_task_closure_postconditions(
+                    authoritative_state,
+                    args.task,
+                    &initial_closure_record_id,
+                    &current_record.reviewed_state_id,
+                )?;
+                reason_codes.push(String::from("summary_hash_drift_ignored"));
+                return Ok(close_current_task_already_current_output(
+                    args.task,
+                    initial_closure_record_id,
+                    "Current task already has a positive recorded task closure for the supplied dispatch lineage; summary-only drift was ignored.",
+                    reason_codes,
+                ));
+            } else if !projection_refresh_only_candidate {
+                let operator = current_workflow_operator(runtime, &args.plan, true)?;
+                return Ok(with_close_current_task_operator_blocker_metadata(
+                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                        task_number: args.task,
+                        dispatch_validation_action: "validated",
+                        task_closure_status: "current",
+                        closure_record_id: Some(initial_closure_record_id),
+                        code: None,
+                        recommended_command: None,
+                        rederive_via_workflow_operator: None,
+                        required_follow_up: Some(String::from("execution_reentry")),
+                        trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
+                    }),
+                    &operator,
+                ));
+            }
         }
     }
     let mut summary_hashes = candidate_dispatch_id
@@ -1685,66 +1761,11 @@ pub fn close_current_task(
                 "close-current-task requires authoritative harness state.",
             ));
         };
-        if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
-            && current_record.closure_record_id == closure_record_id
-            && current_record.dispatch_id == dispatch_id
-        {
-            if current_record.review_result == args.review_result.as_str()
-                && current_record.review_summary_hash == review_summary_hash.as_str()
-                && current_record.verification_result == verification_result
-                && current_record.verification_summary_hash == verification_summary_hash.as_str()
-            {
-                if !projection_refresh_only_candidate {
-                    return Ok(CloseCurrentTaskOutput {
-                        action: String::from("already_current"),
-                        task_number: args.task,
-                        dispatch_validation_action: String::from("validated"),
-                        closure_action: String::from("already_current"),
-                        task_closure_status: String::from("current"),
-                        superseded_task_closure_ids: Vec::new(),
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: None,
-                        blocking_scope: None,
-                        blocking_task: None,
-                        blocking_reason_codes: Vec::new(),
-                        authoritative_next_action: None,
-                        trace_summary: String::from(
-                            "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
-                        ),
-                    });
-                }
-            } else if !projection_refresh_only_candidate {
-                return Ok(with_close_current_task_operator_blocker_metadata(
-                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
-                        task_number: args.task,
-                        dispatch_validation_action: "validated",
-                        task_closure_status: "current",
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: Some(String::from("execution_reentry")),
-                        trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
-                    }),
-                    &operator,
-                ));
-            }
-        }
-        if authoritative_state
-            .task_closure_negative_result(args.task)
-            .is_some_and(|negative_record| {
-                task_closure_negative_result_blocks_current_reviewed_state(
-                    negative_record
-                        .semantic_reviewed_state_id
-                        .as_deref()
-                        .unwrap_or(negative_record.reviewed_state_id.as_str()),
-                    Some(reviewed_state_id.as_str()),
-                )
-            })
-        {
+        if task_closure_negative_result_blocks_reviewed_state(
+            authoritative_state,
+            args.task,
+            &reviewed_state_id,
+        ) {
             let operator = current_workflow_operator(runtime, &args.plan, true)?;
             let (required_follow_up, recommended_command) =
                 close_current_task_follow_up_and_command(&operator);
@@ -1762,6 +1783,66 @@ pub fn close_current_task(
                 }),
                 &operator,
             ));
+        }
+        if let Some(current_record) = authoritative_state.current_task_closure_result(args.task)
+            && current_record.closure_record_id == closure_record_id
+            && current_record.dispatch_id == dispatch_id
+        {
+            if current_record.review_result == args.review_result.as_str()
+                && current_record.review_summary_hash == review_summary_hash.as_str()
+                && current_record.verification_result == verification_result
+                && current_record.verification_summary_hash == verification_summary_hash.as_str()
+            {
+                if !projection_refresh_only_candidate {
+                    let reason_codes = resolve_already_current_task_closure_postconditions(
+                        authoritative_state,
+                        args.task,
+                        &closure_record_id,
+                        &current_record.reviewed_state_id,
+                    )?;
+                    return Ok(close_current_task_already_current_output(
+                        args.task,
+                        closure_record_id,
+                        "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                        reason_codes,
+                    ));
+                }
+            } else if !projection_refresh_only_candidate
+                && current_positive_closure_matches_incoming_results(
+                    &current_record,
+                    args.review_result.as_str(),
+                    verification_result,
+                )
+            {
+                let mut reason_codes = resolve_already_current_task_closure_postconditions(
+                    authoritative_state,
+                    args.task,
+                    &closure_record_id,
+                    &current_record.reviewed_state_id,
+                )?;
+                reason_codes.push(String::from("summary_hash_drift_ignored"));
+                return Ok(close_current_task_already_current_output(
+                    args.task,
+                    closure_record_id,
+                    "Current task already has a positive recorded task closure for the supplied dispatch lineage; summary-only drift was ignored.",
+                    reason_codes,
+                ));
+            } else if !projection_refresh_only_candidate {
+                return Ok(with_close_current_task_operator_blocker_metadata(
+                    blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
+                        task_number: args.task,
+                        dispatch_validation_action: "validated",
+                        task_closure_status: "current",
+                        closure_record_id: Some(closure_record_id),
+                        code: None,
+                        recommended_command: None,
+                        rederive_via_workflow_operator: None,
+                        required_follow_up: Some(String::from("execution_reentry")),
+                        trace_summary: "close-current-task failed closed because the current task closure already has conflicting equivalent-state inputs for this dispatch lineage.",
+                    }),
+                    &operator,
+                ));
+            }
         }
     }
     match close_current_task_outcome_class(args.review_result, args.verification_result) {
@@ -1796,26 +1877,24 @@ pub fn close_current_task(
                 if current_record.review_result == "pass"
                     && current_record.verification_result == "pass"
                 {
-                    return Ok(CloseCurrentTaskOutput {
-                        action: String::from("already_current"),
-                        task_number: args.task,
-                        dispatch_validation_action: String::from("validated"),
-                        closure_action: String::from("already_current"),
-                        task_closure_status: String::from("current"),
-                        superseded_task_closure_ids: Vec::new(),
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: None,
-                        blocking_scope: None,
-                        blocking_task: None,
-                        blocking_reason_codes: Vec::new(),
-                        authoritative_next_action: None,
-                        trace_summary: String::from(
-                            "Current task closure is already current for this dispatch lineage; refreshed receipt projections from the existing closure baseline.",
-                        ),
-                    });
+                    let mut reason_codes = resolve_already_current_task_closure_postconditions(
+                        authoritative_state,
+                        args.task,
+                        &closure_record_id,
+                        &current_record.reviewed_state_id,
+                    )?;
+                    if current_record.review_summary_hash != review_summary_hash.as_str()
+                        || current_record.verification_summary_hash
+                            != verification_summary_hash.as_str()
+                    {
+                        reason_codes.push(String::from("summary_hash_drift_ignored"));
+                    }
+                    return Ok(close_current_task_already_current_output(
+                        args.task,
+                        closure_record_id,
+                        "Current task closure is already current for this dispatch lineage; refreshed receipt projections from the existing closure baseline.",
+                        reason_codes,
+                    ));
                 }
                 if current_record.review_result == args.review_result.as_str()
                     && current_record.review_summary_hash == review_summary_hash.as_str()
@@ -1823,26 +1902,18 @@ pub fn close_current_task(
                     && current_record.verification_summary_hash
                         == verification_summary_hash.as_str()
                 {
-                    return Ok(CloseCurrentTaskOutput {
-                        action: String::from("already_current"),
-                        task_number: args.task,
-                        dispatch_validation_action: String::from("validated"),
-                        closure_action: String::from("already_current"),
-                        task_closure_status: String::from("current"),
-                        superseded_task_closure_ids: Vec::new(),
-                        closure_record_id: Some(closure_record_id),
-                        code: None,
-                        recommended_command: None,
-                        rederive_via_workflow_operator: None,
-                        required_follow_up: None,
-                        blocking_scope: None,
-                        blocking_task: None,
-                        blocking_reason_codes: Vec::new(),
-                        authoritative_next_action: None,
-                        trace_summary: String::from(
-                            "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
-                        ),
-                    });
+                    let reason_codes = resolve_already_current_task_closure_postconditions(
+                        authoritative_state,
+                        args.task,
+                        &closure_record_id,
+                        &current_record.reviewed_state_id,
+                    )?;
+                    return Ok(close_current_task_already_current_output(
+                        args.task,
+                        closure_record_id,
+                        "Current task already has an equivalent recorded task closure for the supplied dispatch lineage.",
+                        reason_codes,
+                    ));
                 }
                 return Ok(with_close_current_task_operator_blocker_metadata(
                     blocked_close_current_task_output(BlockedCloseCurrentTaskOutputContext {
@@ -3535,8 +3606,8 @@ pub fn rebuild_evidence(
         ));
     }
     let started_at = Instant::now();
-    let context = load_execution_context_for_exact_plan(runtime, &request.plan)?;
-    if !context.evidence_abs.is_file() {
+    let context = load_execution_context_for_rebuild(runtime, &request.plan)?;
+    if context.evidence.source.is_none() {
         return Err(JsonFailure::new(
             FailureClass::InvalidCommandInput,
             "session_not_found: no execution evidence session exists for the approved plan revision.",
@@ -3679,6 +3750,62 @@ pub fn rebuild_evidence(
     })
 }
 
+pub fn materialize_projections(
+    runtime: &ExecutionRuntime,
+    args: &MaterializeProjectionsArgs,
+) -> Result<MaterializeProjectionsOutput, JsonFailure> {
+    let context = load_execution_context_for_exact_plan(runtime, &args.plan)?;
+    let mode = if args.tracked {
+        ProjectionWriteMode::TrackedMaterialization
+    } else {
+        ProjectionWriteMode::StateDirOnly
+    };
+    let mut written_paths = Vec::new();
+    if matches!(
+        args.scope,
+        MaterializeProjectionScopeArg::Execution | MaterializeProjectionScopeArg::All
+    ) {
+        crate::execution::state::validate_state_dir_evidence_projection_before_materialization(
+            &context,
+        )?;
+        let rendered = render_execution_projections(&context);
+        written_paths.extend(write_execution_projection_read_models(
+            &context, &rendered, mode,
+        )?);
+    }
+    if matches!(
+        args.scope,
+        MaterializeProjectionScopeArg::LateStage | MaterializeProjectionScopeArg::All
+    ) {
+        let authoritative_state = load_authoritative_transition_state(&context)?;
+        if let Some(authoritative_state) = authoritative_state.as_ref() {
+            written_paths.extend(materialize_late_stage_projection_artifacts(
+                runtime,
+                &context,
+                authoritative_state,
+                mode,
+            )?);
+        }
+    }
+    Ok(MaterializeProjectionsOutput {
+        action: String::from("materialized"),
+        projection_mode: mode.as_str().to_owned(),
+        written_paths,
+        runtime_truth_changed: false,
+        trace_summary: match mode {
+            ProjectionWriteMode::TrackedMaterialization => String::from(
+                "Materialized tracked projection files from authoritative runtime state.",
+            ),
+            ProjectionWriteMode::StateDirOnly => String::from(
+                "Materialized state-dir projection files from authoritative runtime state.",
+            ),
+            ProjectionWriteMode::Disabled => {
+                String::from("Projection materialization was disabled; no files were written.")
+            }
+        },
+    })
+}
+
 fn is_rebuild_precondition_failure(failure_class: &str) -> bool {
     matches!(
         failure_class,
@@ -3735,8 +3862,14 @@ fn refresh_rebuild_downstream_truth(
     runtime: &ExecutionRuntime,
     plan: &Path,
 ) -> Result<(), JsonFailure> {
-    let context = load_execution_context_for_exact_plan(runtime, plan)?;
+    let context = load_execution_context_for_rebuild(runtime, plan)?;
     let _write_authority = claim_step_write_authority(runtime)?;
+    let rendered = render_execution_projections(&context);
+    let _ = write_execution_projection_read_models(
+        &context,
+        &rendered,
+        ProjectionWriteMode::StateDirOnly,
+    )?;
     let authoritative_state = load_authoritative_transition_state(&context)?;
     if let Some(authoritative_state) = authoritative_state.as_ref() {
         let _ = regenerate_projection_artifacts_from_authoritative_state(
@@ -5799,211 +5932,6 @@ fn default_files_for_task(context: &ExecutionContext, task_number: u32) -> Vec<S
     }
 }
 
-fn render_plan_source(
-    original_source: &str,
-    execution_mode: &str,
-    steps: &[PlanStepState],
-) -> String {
-    let step_map = steps
-        .iter()
-        .map(|step| ((step.task_number, step.step_number), step))
-        .collect::<BTreeMap<_, _>>();
-    let lines = original_source.lines().collect::<Vec<_>>();
-    let mut rendered = Vec::new();
-    let mut current_task = None::<u32>;
-    let mut suppress_note = false;
-
-    for line in lines {
-        if suppress_note {
-            if line.is_empty() || line.trim_start().starts_with("**Execution Note:**") {
-                continue;
-            }
-            suppress_note = false;
-        }
-
-        if line.starts_with("**Execution Mode:** ") {
-            rendered.push(format!("**Execution Mode:** {execution_mode}"));
-            continue;
-        }
-
-        if let Some(rest) = line.strip_prefix("## Task ") {
-            current_task = rest
-                .split(':')
-                .next()
-                .and_then(|value| value.parse::<u32>().ok());
-            rendered.push(line.to_owned());
-            continue;
-        }
-
-        if let Some((_, step_number, _)) = crate::execution::state::parse_step_line(line)
-            && let Some(task_number) = current_task
-            && let Some(step) = step_map.get(&(task_number, step_number))
-        {
-            let mark = if step.checked { 'x' } else { ' ' };
-            rendered.push(format!(
-                "- [{mark}] **Step {}: {}**",
-                step.step_number, step.title
-            ));
-            if let Some(note_state) = step.note_state {
-                rendered.push(String::new());
-                rendered.push(format!(
-                    "  **Execution Note:** {} - {}",
-                    note_state.as_str(),
-                    step.note_summary
-                ));
-            }
-            suppress_note = true;
-            continue;
-        }
-
-        rendered.push(line.to_owned());
-    }
-
-    format!("{}\n", rendered.join("\n"))
-}
-
-fn render_evidence_source(
-    context: &ExecutionContext,
-    plan_fingerprint: &str,
-    source_spec_fingerprint: &str,
-) -> String {
-    let mut output = Vec::new();
-    let topic = Path::new(&context.plan_rel)
-        .file_stem()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or("plan");
-    output.push(format!("# Execution Evidence: {topic}"));
-    output.push(String::new());
-    output.push(format!("**Plan Path:** {}", context.plan_rel));
-    output.push(format!(
-        "**Plan Revision:** {}",
-        context.plan_document.plan_revision
-    ));
-    output.push(format!("**Plan Fingerprint:** {plan_fingerprint}"));
-    output.push(format!(
-        "**Source Spec Path:** {}",
-        context.plan_document.source_spec_path
-    ));
-    output.push(format!(
-        "**Source Spec Revision:** {}",
-        context.plan_document.source_spec_revision
-    ));
-    output.push(format!(
-        "**Source Spec Fingerprint:** {source_spec_fingerprint}"
-    ));
-    output.push(String::new());
-    output.push(String::from("## Step Evidence"));
-
-    for step in &context.steps {
-        let attempts = context
-            .evidence
-            .attempts
-            .iter()
-            .filter(|attempt| {
-                attempt.task_number == step.task_number && attempt.step_number == step.step_number
-            })
-            .collect::<Vec<_>>();
-        if attempts.is_empty() {
-            continue;
-        }
-        output.push(String::new());
-        output.push(format!(
-            "### Task {} Step {}",
-            step.task_number, step.step_number
-        ));
-        for (index, attempt) in attempts.iter().enumerate() {
-            if index > 0 {
-                output.push(String::new());
-            }
-            output.push(format!("#### Attempt {}", attempt.attempt_number));
-            output.push(format!("**Status:** {}", attempt.status));
-            output.push(format!("**Recorded At:** {}", attempt.recorded_at));
-            output.push(format!(
-                "**Execution Source:** {}",
-                attempt.execution_source
-            ));
-            output.push(format!("**Task Number:** {}", attempt.task_number));
-            output.push(format!("**Step Number:** {}", attempt.step_number));
-            output.push(format!(
-                "**Packet Fingerprint:** {}",
-                attempt
-                    .packet_fingerprint
-                    .clone()
-                    .unwrap_or_else(|| String::from("unknown"))
-            ));
-            output.push(format!(
-                "**Head SHA:** {}",
-                attempt
-                    .head_sha
-                    .clone()
-                    .unwrap_or_else(|| String::from("unknown"))
-            ));
-            if let Some(base_sha) = &attempt.base_sha {
-                output.push(format!("**Base SHA:** {base_sha}"));
-            }
-            output.push(format!("**Claim:** {}", attempt.claim));
-            if let Some(source_contract_path) = &attempt.source_contract_path {
-                output.push(format!("**Source Contract Path:** {source_contract_path}"));
-            }
-            if let Some(source_contract_fingerprint) = &attempt.source_contract_fingerprint {
-                output.push(format!(
-                    "**Source Contract Fingerprint:** `{source_contract_fingerprint}`"
-                ));
-            }
-            if let Some(source_evaluation_report_fingerprint) =
-                &attempt.source_evaluation_report_fingerprint
-            {
-                output.push(format!(
-                    "**Source Evaluation Report Fingerprint:** `{source_evaluation_report_fingerprint}`"
-                ));
-            }
-            if let Some(evaluator_verdict) = &attempt.evaluator_verdict {
-                output.push(format!("**Evaluator Verdict:** {evaluator_verdict}"));
-            }
-            if !attempt.failing_criterion_ids.is_empty() {
-                output.push(String::from("**Failing Criterion IDs:**"));
-                for criterion_id in &attempt.failing_criterion_ids {
-                    output.push(format!("- `{criterion_id}`"));
-                }
-            }
-            if let Some(source_handoff_fingerprint) = &attempt.source_handoff_fingerprint {
-                output.push(format!(
-                    "**Source Handoff Fingerprint:** `{source_handoff_fingerprint}`"
-                ));
-            }
-            if let Some(repo_state_baseline_head_sha) = &attempt.repo_state_baseline_head_sha {
-                output.push(format!(
-                    "**Repo State Baseline Head SHA:** {repo_state_baseline_head_sha}"
-                ));
-            }
-            if let Some(repo_state_baseline_worktree_fingerprint) =
-                &attempt.repo_state_baseline_worktree_fingerprint
-            {
-                output.push(format!(
-                    "**Repo State Baseline Worktree Fingerprint:** {repo_state_baseline_worktree_fingerprint}"
-                ));
-            }
-            output.push(String::from("**Files Proven:**"));
-            for proof in &attempt.file_proofs {
-                output.push(format!("- {} | {}", proof.path, proof.proof));
-            }
-            if let Some(verify_command) = &attempt.verify_command {
-                output.push(format!("**Verify Command:** {verify_command}"));
-            }
-            output.push(format!(
-                "**Verification Summary:** {}",
-                attempt.verification_summary
-            ));
-            output.push(format!(
-                "**Invalidation Reason:** {}",
-                attempt.invalidation_reason
-            ));
-        }
-    }
-
-    format!("{}\n", output.join("\n"))
-}
-
 fn next_attempt_number(evidence: &ExecutionEvidence, task: u32, step: u32) -> u32 {
     evidence
         .attempts
@@ -6013,6 +5941,19 @@ fn next_attempt_number(evidence: &ExecutionEvidence, task: u32, step: u32) -> u3
         .max()
         .unwrap_or(0)
         + 1
+}
+
+fn record_execution_projection_fingerprints(
+    authoritative_state: Option<&mut AuthoritativeTransitionState>,
+    rendered: &RenderedExecutionProjections,
+) -> Result<(), JsonFailure> {
+    if let Some(authoritative_state) = authoritative_state {
+        authoritative_state.set_execution_projection_fingerprints(
+            &sha256_hex(rendered.plan.as_bytes()),
+            &sha256_hex(rendered.evidence.as_bytes()),
+        )?;
+    }
+    Ok(())
 }
 
 fn invalidate_latest_completed_attempt(
@@ -6043,41 +5984,19 @@ fn invalidate_latest_completed_attempt(
     Ok(())
 }
 
-fn write_plan_and_evidence_with_rollback(
-    plan_path: &Path,
-    original_plan: &str,
-    rendered_plan: &str,
-    evidence_path: &Path,
-    original_evidence: Option<&str>,
-    rendered_evidence: &str,
-    failpoint: &str,
-) -> Result<(), JsonFailure> {
-    write_atomic(plan_path, rendered_plan)?;
-    if let Err(error) = maybe_trigger_failpoint(failpoint) {
-        restore_plan_and_evidence(plan_path, original_plan, evidence_path, original_evidence);
-        return Err(error);
-    }
-    if let Err(error) = write_atomic(evidence_path, rendered_evidence) {
-        restore_plan_and_evidence(plan_path, original_plan, evidence_path, original_evidence);
-        return Err(error);
-    }
-    Ok(())
-}
-
 fn persist_authoritative_state_with_rollback(
     authoritative_state: &AuthoritativeTransitionState,
     command: &str,
     plan_path: &Path,
     original_plan: &str,
     evidence_path: &Path,
-    original_evidence: Option<&str>,
+    _original_evidence: Option<&str>,
     failpoint: &str,
 ) -> Result<(), JsonFailure> {
     let rollback = AuthoritativePersistRollback {
         plan_path,
         original_plan,
         evidence_path,
-        original_evidence,
         failpoint,
     };
     persist_authoritative_state_with_step_hint_and_rollback(
@@ -6092,7 +6011,6 @@ struct AuthoritativePersistRollback<'a> {
     plan_path: &'a Path,
     original_plan: &'a str,
     evidence_path: &'a Path,
-    original_evidence: Option<&'a str>,
     failpoint: &'a str,
 }
 
@@ -6102,6 +6020,7 @@ fn persist_authoritative_state_with_step_hint_and_rollback(
     step_hint: Option<(u32, u32)>,
     rollback: AuthoritativePersistRollback<'_>,
 ) -> Result<(), JsonFailure> {
+    let original_evidence = rollback_evidence_source(rollback.evidence_path)?;
     let outcome = match authoritative_state
         .persist_if_dirty_with_failpoint_command_outcome_and_step_hint(
             Some(rollback.failpoint),
@@ -6114,7 +6033,7 @@ fn persist_authoritative_state_with_step_hint_and_rollback(
                 rollback.plan_path,
                 rollback.original_plan,
                 rollback.evidence_path,
-                rollback.original_evidence,
+                original_evidence.as_deref(),
             );
             return Err(error);
         }
@@ -6125,12 +6044,25 @@ fn persist_authoritative_state_with_step_hint_and_rollback(
                 rollback.plan_path,
                 rollback.original_plan,
                 rollback.evidence_path,
-                rollback.original_evidence,
+                original_evidence.as_deref(),
             );
         }
         return Err(error);
     }
     Ok(())
+}
+
+fn rollback_evidence_source(evidence_path: &Path) -> Result<Option<String>, JsonFailure> {
+    match fs::read_to_string(evidence_path) {
+        Ok(source) => Ok(Some(source)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(JsonFailure::new(
+            FailureClass::MalformedExecutionState,
+            format!(
+                "Could not read tracked execution evidence before authoritative mutation rollback setup: {error}"
+            ),
+        )),
+    }
 }
 
 fn restore_plan_and_evidence(
@@ -6211,7 +6143,8 @@ mod unit_tests {
     use crate::execution::leases::authoritative_state_path;
     use crate::execution::query::ExecutionRoutingState;
     use crate::execution::state::{
-        EvidenceFormat, ExecutionContext, ExecutionEvidence, ExecutionRuntime, NO_REPO_FILES_MARKER,
+        EvidenceFormat, EvidenceSourceOrigin, ExecutionContext, ExecutionEvidence,
+        ExecutionRuntime, NO_REPO_FILES_MARKER,
     };
     use crate::execution::transitions::CurrentTaskClosureRecord;
     use crate::execution::transitions::load_authoritative_transition_state;
@@ -6276,7 +6209,11 @@ mod unit_tests {
                 source_spec_fingerprint: None,
                 attempts: Vec::new(),
                 source: None,
+                source_origin: EvidenceSourceOrigin::Empty,
+                tracked_progress_present: false,
+                tracked_source: None,
             },
+            authoritative_evidence_projection_fingerprint: None,
             source_spec_source: String::new(),
             source_spec_path: repo_root
                 .join("docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md"),
@@ -6398,7 +6335,11 @@ mod unit_tests {
                 source_spec_fingerprint: None,
                 attempts: Vec::new(),
                 source: None,
+                source_origin: EvidenceSourceOrigin::Empty,
+                tracked_progress_present: false,
+                tracked_source: None,
             },
+            authoritative_evidence_projection_fingerprint: None,
             source_spec_source: String::new(),
             source_spec_path: repo_root
                 .join("docs/archive/featureforge/specs/ACTIVE_IMPLEMENTATION_TARGET.md"),

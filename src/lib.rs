@@ -94,6 +94,9 @@ pub fn run() -> std::process::ExitCode {
                         cli::plan_execution::PlanExecutionCommand::Transfer(args) => {
                             emit_json(execution::mutate::transfer(&runtime, &args))
                         }
+                        cli::plan_execution::PlanExecutionCommand::MaterializeProjections(args) => {
+                            emit_json(execution::mutate::materialize_projections(&runtime, &args))
+                        }
                     },
                     Err(error) => emit_json::<Value, _>(Err(error)),
                 }

@@ -330,6 +330,9 @@ fn execute_plan_execution_command_json(
         PlanExecutionCommand::Complete(args) => Ok(to_json!(mutate::complete(runtime, &args)?)),
         PlanExecutionCommand::Reopen(args) => Ok(to_json!(mutate::reopen(runtime, &args)?)),
         PlanExecutionCommand::Transfer(args) => Ok(to_json!(mutate::transfer(runtime, &args)?)),
+        PlanExecutionCommand::MaterializeProjections(args) => {
+            Ok(to_json!(mutate::materialize_projections(runtime, &args)?))
+        }
     }
 }
 

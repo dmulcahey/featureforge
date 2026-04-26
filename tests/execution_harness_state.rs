@@ -10,6 +10,8 @@ mod json_support;
 mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/projection.rs"]
+mod projection_support;
 
 use featureforge::cli::plan_execution::{RecordContractArgs, StatusArgs};
 use featureforge::contracts::evidence::read_execution_evidence;
@@ -1390,7 +1392,8 @@ fn complete_writes_contract_evaluation_and_repo_state_provenance_into_step_evide
         state,
         "Completed step with expected contract/evaluation provenance.",
     );
-    let evidence_path = repo.join(
+    let evidence_path = projection_support::state_dir_projection_path(
+        &complete_status,
         complete_status["evidence_path"]
             .as_str()
             .expect("complete status should expose evidence_path"),
@@ -1441,31 +1444,30 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
     write_plan(repo, "none");
     accept_execution_preflight(repo, state);
 
+    let source_handoff_fingerprint =
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_owned();
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 12,
+            "handoff_required": false,
+            "last_handoff_fingerprint": source_handoff_fingerprint.clone(),
+        }),
+    );
+
     let complete_status = begin_and_complete_single_step(
         repo,
         state,
         "Seed completion before reopen provenance preservation check.",
     );
-    let evidence_path = repo.join(
-        complete_status["evidence_path"]
-            .as_str()
-            .expect("complete status should expose evidence_path"),
-    );
-    let source_handoff_fingerprint =
-        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_owned();
-    let seeded_source = fs::read_to_string(&evidence_path)
-        .expect("seed execution evidence should be readable before provenance injection");
-    let seeded_with_handoff = seeded_source.replace(
-        "**Claim:** Seed completion before reopen provenance preservation check.",
-        &format!(
-            "**Claim:** Seed completion before reopen provenance preservation check.\n**Source Handoff Fingerprint:** `{source_handoff_fingerprint}`"
-        ),
-    );
-    assert_ne!(
-        seeded_source, seeded_with_handoff,
-        "provenance-injection fixture should modify execution evidence before reopen"
-    );
-    write_file(&evidence_path, &seeded_with_handoff);
+    let evidence_rel = complete_status["evidence_path"]
+        .as_str()
+        .expect("complete status should expose evidence_path");
+    let evidence_path =
+        projection_support::state_dir_projection_path(&complete_status, evidence_rel);
 
     let seeded_step = read_execution_evidence(&evidence_path)
         .expect("seeded execution evidence should parse before reopen")

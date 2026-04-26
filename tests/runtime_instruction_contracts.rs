@@ -927,7 +927,7 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
 
     assert_contains(
         &readme_content,
-        "the approved plan checklist is the human-visible execution progress projection; the event log remains authoritative for operator routing and gates",
+        "the approved plan checklist and execution-evidence markdown are optional materialized projections; normal runtime commands render current read models under the runtime state directory instead of mutating tracked docs paths",
         "README.md",
     );
     assert_not_contains(
@@ -937,7 +937,12 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
     );
     assert_contains(
         &subagent_skill,
-        "The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.",
+        "Runtime read models are rendered under the state directory during normal execution. Tracked approved-plan checklist and evidence markdown are optional exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.",
+        "skills/subagent-driven-development/SKILL.md",
+    );
+    assert_contains(
+        &subagent_skill,
+        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --tracked` only when the user explicitly needs tracked human-readable exports. Materialization is never required normal progress.",
         "skills/subagent-driven-development/SKILL.md",
     );
     assert_not_contains(
@@ -947,7 +952,12 @@ fn runtime_instruction_docs_keep_runtime_state_authoritative_and_publish_full_ne
     );
     assert_contains(
         &executing_plans_skill,
-        "The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.",
+        "Runtime read models are rendered under the state directory during normal execution. Tracked approved-plan checklist and evidence markdown are optional exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.",
+        "skills/executing-plans/SKILL.md",
+    );
+    assert_contains(
+        &executing_plans_skill,
+        "Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --tracked` only when the user explicitly needs tracked human-readable exports. Materialization is never required normal progress.",
         "skills/executing-plans/SKILL.md",
     );
     assert_not_contains(

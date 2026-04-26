@@ -2,6 +2,8 @@
 mod featureforge_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/projection.rs"]
+mod projection_support;
 #[path = "support/runtime.rs"]
 mod runtime_support;
 #[path = "support/workflow.rs"]
@@ -1943,8 +1945,10 @@ fn runtime_remediation_fs04_repair_route_visibility_stays_aligned_between_direct
         (operator, repair)
     };
 
-    let (operator_direct, repair_direct) = run_case("direct", false);
-    let (operator_real, repair_real) = run_case("compiled-cli", true);
+    let (mut operator_direct, repair_direct) = run_case("direct", false);
+    let (mut operator_real, repair_real) = run_case("compiled-cli", true);
+    projection_support::normalize_state_dir_projection_paths_for_parity(&mut operator_direct);
+    projection_support::normalize_state_dir_projection_paths_for_parity(&mut operator_real);
     assert_eq!(
         operator_direct, operator_real,
         "FS-04 direct and compiled-cli operator outputs must stay semantically aligned"
@@ -2711,11 +2715,9 @@ fn fs20_runtime_owned_control_plane_churn_does_not_flip_query_or_operator_to_bra
         "FS-20 baseline operator before runtime-owned control-plane churn",
     );
 
-    let evidence_path = repo.join(
-        baseline_status["evidence_path"]
-            .as_str()
-            .expect("FS-20 baseline status should expose evidence_path"),
-    );
+    let evidence_rel = baseline_status["evidence_path"]
+        .as_str()
+        .expect("FS-20 baseline status should expose evidence_path");
     let plan_path = repo.join(PLAN_REL);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     fs::write(
@@ -2724,12 +2726,12 @@ fn fs20_runtime_owned_control_plane_churn_does_not_flip_query_or_operator_to_bra
     )
     .expect("FS-20 should mutate only the approved plan path");
     let evidence_source =
-        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
-    fs::write(
-        &evidence_path,
-        format!("{evidence_source}\n<!-- fs20 contracts runtime-owned evidence mutation -->\n"),
-    )
-    .expect("FS-20 should mutate only execution evidence path");
+        projection_support::read_state_dir_projection(&baseline_status, evidence_rel);
+    projection_support::write_state_dir_projection(
+        &baseline_status,
+        evidence_rel,
+        &format!("{evidence_source}\n<!-- fs20 contracts runtime-owned evidence mutation -->\n"),
+    );
 
     let status_after_churn = run_featureforge_json(
         repo,

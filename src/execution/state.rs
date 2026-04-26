@@ -6,6 +6,7 @@ use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+use gix::bstr::ByteSlice;
 use jiff::Timestamp;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
@@ -44,7 +45,7 @@ use crate::execution::current_truth::{
     finish_requires_test_plan_refresh, is_runtime_owned_execution_control_plane_path,
     late_stage_missing_current_closure_stale_provenance_present as shared_late_stage_missing_current_closure_stale_provenance_present,
     late_stage_missing_task_closure_baseline_bridge_supported,
-    late_stage_qa_blocked as shared_late_stage_qa_blocked,
+    late_stage_projection_targets_present, late_stage_qa_blocked as shared_late_stage_qa_blocked,
     late_stage_release_blocked as shared_late_stage_release_blocked,
     late_stage_review_blocked as shared_late_stage_review_blocked,
     late_stage_review_truth_blocked as shared_late_stage_review_truth_blocked,
@@ -69,8 +70,8 @@ use crate::execution::current_truth::{
 use crate::execution::current_truth::{task_review_dispatch_task, task_review_result_pending_task};
 use crate::execution::event_log::load_reduced_authoritative_state_for_state_path;
 use crate::execution::final_review::{
-    authoritative_strategy_checkpoint_fingerprint_checked, parse_artifact_document,
-    resolve_release_base_branch,
+    authoritative_strategy_checkpoint_fingerprint_checked, is_canonical_fingerprint,
+    parse_artifact_document, resolve_release_base_branch,
 };
 use crate::execution::follow_up::{
     FollowUpAliasContext, FollowUpKind, direct_gate_follow_up_from_reason_codes,
@@ -99,15 +100,22 @@ use crate::execution::next_action::{
 use crate::execution::observability::{
     REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
 };
+use crate::execution::projection_renderer::{
+    execution_projection_read_model_metadata, normal_projection_write_mode,
+    projection_source_matches_fingerprint, read_state_dir_projection,
+    render_canonical_evidence_projection_source,
+    render_canonical_evidence_projection_source_with_fingerprints,
+    state_dir_projection_matches_recorded_output_fingerprint,
+};
 use crate::execution::query::{ExecutionRoutingState, required_follow_up_from_routing};
 use crate::execution::router::{
     Blocker as RuntimeBlocker, NextPublicAction as RuntimeNextPublicAction, RouteDecision,
     route_decision_with_status_blockers,
 };
 use crate::execution::semantic_identity::{
-    branch_definition_identity_for_context, normalized_plan_source_for_semantic_identity,
-    semantic_paths_changed_between_raw_trees, semantic_workspace_snapshot,
-    task_definition_identity_for_task,
+    branch_definition_identity_for_context, normalized_plan_source_for_approved_plan_preflight,
+    normalized_plan_source_for_semantic_identity, semantic_paths_changed_between_raw_trees,
+    semantic_workspace_snapshot, task_definition_identity_for_task,
 };
 use crate::execution::topology::{
     RecommendOutput, default_preflight_chunking_strategy, default_preflight_evaluator_policy,
@@ -119,8 +127,9 @@ use crate::execution::topology::{
 };
 use crate::execution::transitions::{
     AuthoritativeTransitionState, CurrentBrowserQaRecord, OpenStepStateRecord,
-    PersistedReviewStateFieldClass, claim_step_write_authority, classify_review_state_field,
-    load_authoritative_transition_state, load_authoritative_transition_state_relaxed,
+    PersistedReviewStateFieldClass, authoritative_state_optional_string_field_for_runtime,
+    claim_step_write_authority, classify_review_state_field, load_authoritative_transition_state,
+    load_authoritative_transition_state_relaxed,
 };
 use crate::execution::workflow_operator_requery_command;
 use crate::git::{
@@ -172,6 +181,7 @@ enum PhaseDetailSchema {
     QaRecordingRequired,
     ReleaseBlockerResolutionRequired,
     ReleaseReadinessRecordingReady,
+    RuntimeReconcileRequired,
     TaskClosureRecordingReady,
     TaskReviewDispatchRequired,
     TaskReviewResultPending,
@@ -356,6 +366,10 @@ pub struct PlanExecutionStatus {
     pub execution_mode: String,
     pub execution_fingerprint: String,
     pub evidence_path: String,
+    pub projection_mode: String,
+    pub state_dir_projection_paths: Vec<String>,
+    pub tracked_projection_paths: Vec<String>,
+    pub tracked_projections_current: bool,
     pub execution_started: String,
     pub warning_codes: Vec<String>,
     pub active_task: Option<u32>,
@@ -643,13 +657,28 @@ pub enum EvidenceFormat {
     V2,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EvidenceSourceOrigin {
+    Empty,
+    TrackedFile,
+    StateDirProjection,
+    AuthoritativeState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StateDirProjectionCurrentness {
+    Unbound,
+    Current,
+    Stale,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileProof {
     pub path: String,
     pub proof: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceAttempt {
     pub task_number: u32,
     pub step_number: u32,
@@ -687,6 +716,9 @@ pub struct ExecutionEvidence {
     pub source_spec_fingerprint: Option<String>,
     pub attempts: Vec<EvidenceAttempt>,
     pub source: Option<String>,
+    pub(crate) source_origin: EvidenceSourceOrigin,
+    pub(crate) tracked_progress_present: bool,
+    pub(crate) tracked_source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -703,6 +735,7 @@ pub struct ExecutionContext {
     pub evidence_rel: String,
     pub evidence_abs: PathBuf,
     pub evidence: ExecutionEvidence,
+    pub(crate) authoritative_evidence_projection_fingerprint: Option<String>,
     pub source_spec_source: String,
     pub source_spec_path: PathBuf,
     pub execution_fingerprint: String,
@@ -734,9 +767,7 @@ impl ExecutionContext {
         match self
             .tracked_worktree_changes_excluding_execution_evidence_cache
             .get_or_init(|| {
-                compute_repo_has_tracked_worktree_changes_excluding_execution_evidence(
-                    &self.runtime.repo_root,
-                )
+                compute_repo_has_tracked_worktree_changes_excluding_execution_evidence(self)
             }) {
             Ok(has_changes) => Ok(*has_changes),
             Err(error) => Err(error.clone()),
@@ -3193,12 +3224,13 @@ pub fn load_execution_context(
         runtime,
         plan_path,
         LegacyEvidencePolicy::Reject,
+        TrackedEvidenceProjectionPolicy::Ignore,
         ApprovedArtifactSelectionPolicy::RequireUnique,
         true,
     )
 }
 
-pub(crate) fn load_execution_context_for_mutation(
+pub fn load_execution_context_for_mutation(
     runtime: &ExecutionRuntime,
     plan_path: &Path,
 ) -> Result<ExecutionContext, JsonFailure> {
@@ -3206,6 +3238,21 @@ pub(crate) fn load_execution_context_for_mutation(
         runtime,
         plan_path,
         LegacyEvidencePolicy::Allow,
+        TrackedEvidenceProjectionPolicy::Ignore,
+        ApprovedArtifactSelectionPolicy::AllowExactPlan,
+        true,
+    )
+}
+
+pub(crate) fn load_execution_context_for_rebuild(
+    runtime: &ExecutionRuntime,
+    plan_path: &Path,
+) -> Result<ExecutionContext, JsonFailure> {
+    load_execution_context_with_policies(
+        runtime,
+        plan_path,
+        LegacyEvidencePolicy::Allow,
+        TrackedEvidenceProjectionPolicy::AllowExplicitImport,
         ApprovedArtifactSelectionPolicy::AllowExactPlan,
         true,
     )
@@ -3219,6 +3266,7 @@ pub(crate) fn load_execution_context_for_exact_plan(
         runtime,
         plan_path,
         LegacyEvidencePolicy::Reject,
+        TrackedEvidenceProjectionPolicy::Ignore,
         ApprovedArtifactSelectionPolicy::AllowExactPlan,
         true,
     )
@@ -3232,6 +3280,7 @@ pub(crate) fn load_execution_context_without_authority_overlay(
         runtime,
         plan_path,
         LegacyEvidencePolicy::Reject,
+        TrackedEvidenceProjectionPolicy::Ignore,
         ApprovedArtifactSelectionPolicy::AllowExactPlan,
         false,
     )
@@ -3261,13 +3310,14 @@ fn finalize_execution_read_scope(
     mut context: ExecutionContext,
 ) -> Result<ExecutionReadScope, JsonFailure> {
     let authoritative_state = load_authoritative_transition_state_relaxed(&context)?;
+    overlay_execution_evidence_attempts_from_authority(&mut context, authoritative_state.as_ref())?;
     overlay_step_state_from_authority(&mut context, authoritative_state.as_ref())?;
+    refresh_execution_fingerprint(&mut context);
     let derived = derive_execution_truth_from_authority(&context, authoritative_state.as_ref())?;
     let overlay = derived.overlay;
     let mut status = derived.status;
     let local_contract_plan_fingerprint = hash_contract_plan(&context.plan_source);
-    let local_evidence_progress_present =
-        status.execution_fingerprint != compute_execution_fingerprint(&context.plan_source, None);
+    let local_evidence_progress_present = context.evidence.tracked_progress_present;
     let local_projection_only_execution_started =
         status.execution_started == "yes" && !context.local_execution_progress_markers_present;
     let local_has_other_same_branch_worktree = has_other_same_branch_worktree(runtime);
@@ -3292,7 +3342,8 @@ fn finalize_execution_read_scope(
             && local_projection_only_execution_started
             && local_has_other_same_branch_worktree
         {
-            clear_open_step_projections(&mut context);
+            clear_projection_only_execution_progress(&mut context);
+            refresh_execution_fingerprint(&mut context);
             status = derive_execution_truth_from_authority(&context, None)?.status;
             normalize_non_started_same_branch_status(&mut status);
             return Ok(ExecutionReadScope {
@@ -3316,7 +3367,15 @@ fn finalize_execution_read_scope(
 }
 
 fn normalize_non_started_same_branch_status(status: &mut PlanExecutionStatus) {
-    if status.execution_started != "no" || status.phase_detail != "execution_reentry_required" {
+    if status.execution_started == "yes" && status.phase_detail == "execution_in_progress" {
+        status.execution_started = String::from("no");
+        status.active_task = None;
+        status.active_step = None;
+        status.resume_task = None;
+        status.resume_step = None;
+    } else if status.execution_started != "no"
+        || status.phase_detail != "execution_reentry_required"
+    {
         return;
     }
     status.phase = Some(String::from("execution_preflight"));
@@ -3511,11 +3570,38 @@ fn clear_open_step_projections(context: &mut ExecutionContext) {
     clear_open_step_projections_for_steps(&mut context.steps);
 }
 
-fn overlay_event_completed_step_state(context: &mut ExecutionContext) -> Result<(), JsonFailure> {
-    let Some(authoritative_state) = load_authoritative_transition_state_relaxed(context)? else {
-        return Ok(());
-    };
-    overlay_step_state_from_authority(context, Some(&authoritative_state))
+fn clear_projection_only_execution_progress(context: &mut ExecutionContext) {
+    clear_open_step_projections(context);
+    if matches!(
+        context.evidence.source_origin,
+        EvidenceSourceOrigin::StateDirProjection | EvidenceSourceOrigin::AuthoritativeState
+    ) {
+        let tracked_progress_present = context.evidence.tracked_progress_present;
+        let tracked_source = context.evidence.tracked_source.clone();
+        let source_origin = if tracked_source.is_some() {
+            EvidenceSourceOrigin::TrackedFile
+        } else {
+            EvidenceSourceOrigin::Empty
+        };
+        context.evidence = ExecutionEvidence {
+            format: EvidenceFormat::Empty,
+            plan_path: context.plan_rel.clone(),
+            plan_revision: context.plan_document.plan_revision,
+            plan_fingerprint: None,
+            source_spec_path: context.plan_document.source_spec_path.clone(),
+            source_spec_revision: context.plan_document.source_spec_revision,
+            source_spec_fingerprint: None,
+            attempts: Vec::new(),
+            source: tracked_source.clone(),
+            source_origin,
+            tracked_progress_present,
+            tracked_source,
+        };
+        context.authoritative_evidence_projection_fingerprint = None;
+        if !context.local_execution_progress_markers_present {
+            context.plan_document.execution_mode = String::from("none");
+        }
+    }
 }
 
 fn overlay_step_state_from_authority(
@@ -3538,31 +3624,197 @@ fn overlay_step_state_from_authority(
     overlay_authoritative_open_step_state_from_state(context, authoritative_state)
 }
 
+fn overlay_execution_evidence_attempts_from_authority(
+    context: &mut ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+) -> Result<(), JsonFailure> {
+    let Some(authoritative_state) = authoritative_state else {
+        return Ok(());
+    };
+    let state_payload = authoritative_state.state_payload_snapshot();
+    context.authoritative_evidence_projection_fingerprint = state_payload
+        .get("execution_evidence_projection_fingerprint")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    let Some(attempts_value) = state_payload
+        .get("execution_evidence_attempts")
+        .filter(|value| !value.is_null())
+        .cloned()
+    else {
+        if context.evidence.attempts.is_empty() {
+            synthesize_legacy_authoritative_evidence_attempts(context, &state_payload)?;
+        }
+        return Ok(());
+    };
+    let attempts =
+        serde_json::from_value::<Vec<EvidenceAttempt>>(attempts_value).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!("Authoritative execution evidence attempts are malformed: {error}"),
+            )
+        })?;
+    context.evidence.format = if attempts.is_empty() {
+        EvidenceFormat::Empty
+    } else {
+        EvidenceFormat::V2
+    };
+    context.evidence.plan_fingerprint = Some(hash_contract_plan(&context.plan_source));
+    context.evidence.source_spec_fingerprint =
+        Some(sha256_hex(context.source_spec_source.as_bytes()));
+    context.evidence.attempts = attempts;
+    context.evidence.source = Some(render_canonical_evidence_projection_source(
+        &context.plan_rel,
+        &context.plan_document,
+        &context.plan_source,
+        &context.source_spec_source,
+        &context.steps,
+        &context.evidence,
+    ));
+    context.evidence.source_origin = EvidenceSourceOrigin::AuthoritativeState;
+    Ok(())
+}
+
+fn synthesize_legacy_authoritative_evidence_attempts(
+    context: &mut ExecutionContext,
+    state_payload: &serde_json::Value,
+) -> Result<(), JsonFailure> {
+    let completed_steps = authoritative_completed_steps_for_evidence(context, state_payload)?;
+    if completed_steps.is_empty() {
+        return Ok(());
+    }
+    let execution_source = if context.plan_document.execution_mode == "none" {
+        context.plan_document.execution_mode = String::from("featureforge:executing-plans");
+        String::from("featureforge:executing-plans")
+    } else {
+        context.plan_document.execution_mode.clone()
+    };
+    context.evidence.format = EvidenceFormat::V2;
+    let plan_fingerprint = hash_contract_plan(&context.plan_source);
+    let source_spec_fingerprint = sha256_hex(context.source_spec_source.as_bytes());
+    let head_sha = state_payload
+        .get("repo_state_baseline_head_sha")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            context
+                .current_head_sha()
+                .unwrap_or_else(|_| String::from("authoritative-event-log"))
+        });
+    context.evidence.plan_fingerprint = Some(plan_fingerprint);
+    context.evidence.source_spec_fingerprint = Some(source_spec_fingerprint.clone());
+    context.evidence.attempts = completed_steps
+        .into_iter()
+        .map(|((task_number, step_number), files)| {
+            let files = if files.is_empty() {
+                vec![NO_REPO_FILES_MARKER.to_owned()]
+            } else {
+                files
+            };
+            let file_proofs = files
+                .iter()
+                .map(|path| FileProof {
+                    path: path.clone(),
+                    proof: current_file_proof(&context.runtime.repo_root, path),
+                })
+                .collect::<Vec<_>>();
+            let packet_fingerprint = task_packet_fingerprint(
+                context,
+                &source_spec_fingerprint,
+                task_number,
+                step_number,
+            );
+            EvidenceAttempt {
+                task_number,
+                step_number,
+                attempt_number: 1,
+                status: String::from("Completed"),
+                recorded_at: String::from("authoritative-event-log"),
+                execution_source: execution_source.clone(),
+                claim: format!(
+                    "Authoritative event log marks Task {task_number} Step {step_number} complete."
+                ),
+                files,
+                file_proofs,
+                verify_command: None,
+                verification_summary: String::from(
+                    "Recovered from authoritative completed-step state.",
+                ),
+                invalidation_reason: String::from("N/A"),
+                packet_fingerprint,
+                head_sha: Some(head_sha.clone()),
+                base_sha: Some(head_sha.clone()),
+                source_contract_path: None,
+                source_contract_fingerprint: None,
+                source_evaluation_report_fingerprint: None,
+                evaluator_verdict: None,
+                failing_criterion_ids: Vec::new(),
+                source_handoff_fingerprint: None,
+                repo_state_baseline_head_sha: None,
+                repo_state_baseline_worktree_fingerprint: None,
+            }
+        })
+        .collect();
+    context.evidence.source = Some(render_canonical_evidence_projection_source(
+        &context.plan_rel,
+        &context.plan_document,
+        &context.plan_source,
+        &context.source_spec_source,
+        &context.steps,
+        &context.evidence,
+    ));
+    context.evidence.source_origin = EvidenceSourceOrigin::AuthoritativeState;
+    Ok(())
+}
+
+fn authoritative_completed_steps_for_evidence(
+    context: &ExecutionContext,
+    state_payload: &serde_json::Value,
+) -> Result<BTreeMap<(u32, u32), Vec<String>>, JsonFailure> {
+    let mut completed_steps = BTreeMap::<(u32, u32), Vec<String>>::new();
+    if let Some(event_completed_steps) = state_payload
+        .get("event_completed_steps")
+        .and_then(serde_json::Value::as_object)
+    {
+        for step in parse_authoritative_completed_steps(event_completed_steps)? {
+            completed_steps.entry(step).or_default();
+        }
+    }
+    if let Some(records) = state_payload
+        .get("current_task_closure_records")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (record_key, record) in records {
+            let Some(task) = task_number_from_task_closure_record(record_key, record) else {
+                continue;
+            };
+            let reviewed_surface_paths = record
+                .get("effective_reviewed_surface_paths")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            for step in context.steps.iter().filter(|step| step.task_number == task) {
+                let entry = completed_steps
+                    .entry((step.task_number, step.step_number))
+                    .or_default();
+                if !reviewed_surface_paths.is_empty() {
+                    *entry = reviewed_surface_paths.clone();
+                }
+            }
+        }
+    }
+    Ok(completed_steps)
+}
+
 fn overlay_event_completed_steps(
     context: &mut ExecutionContext,
     completed_steps: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), JsonFailure> {
-    for entry in completed_steps.values() {
-        let task = entry
-            .get("task")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| {
-                JsonFailure::new(
-                    FailureClass::MalformedExecutionState,
-                    "Authoritative event_completed_steps entry is missing a numeric task.",
-                )
-            })?;
-        let step = entry
-            .get("step")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| {
-                JsonFailure::new(
-                    FailureClass::MalformedExecutionState,
-                    "Authoritative event_completed_steps entry is missing a numeric step.",
-                )
-            })?;
+    for (task, step) in parse_authoritative_completed_steps(completed_steps)? {
         let Some(plan_step) = context
             .steps
             .iter_mut()
@@ -3580,6 +3832,37 @@ fn overlay_event_completed_steps(
     Ok(())
 }
 
+fn parse_authoritative_completed_steps(
+    completed_steps: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Vec<(u32, u32)>, JsonFailure> {
+    completed_steps
+        .values()
+        .map(|entry| {
+            let task = entry
+                .get("task")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    JsonFailure::new(
+                        FailureClass::MalformedExecutionState,
+                        "Authoritative event_completed_steps entry is missing a numeric task.",
+                    )
+                })?;
+            let step = entry
+                .get("step")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    JsonFailure::new(
+                        FailureClass::MalformedExecutionState,
+                        "Authoritative event_completed_steps entry is missing a numeric step.",
+                    )
+                })?;
+            Ok((task, step))
+        })
+        .collect()
+}
+
 fn overlay_task_closure_completed_steps(
     context: &mut ExecutionContext,
     state_payload: &serde_json::Value,
@@ -3591,13 +3874,7 @@ fn overlay_task_closure_completed_steps(
         return Ok(());
     };
     for (record_key, record) in records {
-        let Some(task) = record
-            .get("task")
-            .or_else(|| record.get("task_number"))
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .or_else(|| task_number_from_closure_record_key(record_key))
-        else {
+        let Some(task) = task_number_from_task_closure_record(record_key, record) else {
             continue;
         };
         for step in context
@@ -3617,6 +3894,18 @@ fn task_number_from_closure_record_key(record_key: &str) -> Option<u32> {
         .unwrap_or(record_key)
         .parse::<u32>()
         .ok()
+}
+
+fn task_number_from_task_closure_record(
+    record_key: &str,
+    record: &serde_json::Value,
+) -> Option<u32> {
+    record
+        .get("task")
+        .or_else(|| record.get("task_number"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .or_else(|| task_number_from_closure_record_key(record_key))
 }
 
 fn same_branch_worktrees(current_repo_root: &Path) -> Vec<PathBuf> {
@@ -3650,6 +3939,12 @@ enum LegacyEvidencePolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrackedEvidenceProjectionPolicy {
+    Ignore,
+    AllowExplicitImport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApprovedArtifactSelectionPolicy {
     RequireUnique,
     AllowExactPlan,
@@ -3659,6 +3954,7 @@ fn load_execution_context_with_policies(
     runtime: &ExecutionRuntime,
     plan_path: &Path,
     legacy_evidence_policy: LegacyEvidencePolicy,
+    tracked_evidence_policy: TrackedEvidenceProjectionPolicy,
     selection_policy: ApprovedArtifactSelectionPolicy,
     apply_authority_overlay: bool,
 ) -> Result<ExecutionContext, JsonFailure> {
@@ -3671,7 +3967,7 @@ fn load_execution_context_with_policies(
         ));
     }
 
-    let plan_document = parse_plan_file(&plan_abs).map_err(|error| {
+    let mut plan_document = parse_plan_file(&plan_abs).map_err(|error| {
         JsonFailure::new(
             FailureClass::PlanNotExecutionReady,
             format!("Approved plan headers are missing or malformed: {error}"),
@@ -3752,13 +4048,37 @@ fn load_execution_context_with_policies(
 
     let evidence_rel = derive_evidence_rel_path(&plan_rel, plan_document.plan_revision);
     let evidence_abs = runtime.repo_root.join(&evidence_rel);
-    let evidence = parse_evidence_file(
-        &evidence_abs,
-        &plan_rel,
-        plan_document.plan_revision,
-        &plan_document.source_spec_path,
-        plan_document.source_spec_revision,
-    )?;
+    let plan_header_execution_mode = plan_document.execution_mode.clone();
+    let evidence = parse_execution_evidence_projection(ExecutionEvidenceProjectionParseInput {
+        runtime,
+        evidence_rel: &evidence_rel,
+        evidence_abs: &evidence_abs,
+        plan_source: &plan_source,
+        expected_plan_path: &plan_rel,
+        plan_document: &plan_document,
+        steps: &parsed_steps,
+        expected_spec_path: &plan_document.source_spec_path,
+        source_spec_source: &source_spec_source,
+        allow_legacy_unbound: legacy_evidence_policy == LegacyEvidencePolicy::Allow,
+        allow_tracked_projection: tracked_evidence_policy
+            == TrackedEvidenceProjectionPolicy::AllowExplicitImport,
+    })?;
+
+    if plan_document.execution_mode == "none"
+        && let Some(execution_source) = evidence
+            .attempts
+            .iter()
+            .rev()
+            .map(|attempt| attempt.execution_source.as_str())
+            .find(|source| {
+                matches!(
+                    *source,
+                    "featureforge:executing-plans" | "featureforge:subagent-driven-development"
+                )
+            })
+    {
+        plan_document.execution_mode = execution_source.to_owned();
+    }
 
     if legacy_evidence_policy == LegacyEvidencePolicy::Reject
         && evidence.format == EvidenceFormat::Legacy
@@ -3776,16 +4096,15 @@ fn load_execution_context_with_policies(
             "Execution evidence history cannot exist while Execution Mode is none.",
         ));
     }
-    let local_execution_progress_markers_present = plan_document.execution_mode != "none";
+    let local_execution_progress_markers_present = plan_header_execution_mode != "none"
+        || (evidence.source_origin == EvidenceSourceOrigin::TrackedFile
+            && !evidence.attempts.is_empty());
     let tasks_by_number = plan_document
         .tasks
         .iter()
         .cloned()
         .map(|task| (task.number, task))
         .collect();
-    let execution_fingerprint =
-        compute_execution_fingerprint(&plan_source, evidence.source.as_deref());
-
     let mut context = ExecutionContext {
         runtime: runtime.clone(),
         plan_rel,
@@ -3799,9 +4118,10 @@ fn load_execution_context_with_policies(
         evidence_rel,
         evidence_abs,
         evidence,
+        authoritative_evidence_projection_fingerprint: None,
         source_spec_source,
         source_spec_path,
-        execution_fingerprint,
+        execution_fingerprint: String::new(),
         tracked_tree_sha_cache: OnceLock::new(),
         semantic_workspace_snapshot_cache: OnceLock::new(),
         reviewed_tree_sha_cache: RefCell::new(BTreeMap::new()),
@@ -3810,10 +4130,19 @@ fn load_execution_context_with_policies(
         tracked_worktree_changes_excluding_execution_evidence_cache: OnceLock::new(),
     };
 
+    let authoritative_state = if apply_authority_overlay {
+        load_authoritative_transition_state_relaxed(&context)?
+    } else {
+        None
+    };
     if apply_authority_overlay {
-        overlay_event_completed_step_state(&mut context)?;
-        overlay_authoritative_open_step_state(&mut context)?;
+        overlay_execution_evidence_attempts_from_authority(
+            &mut context,
+            authoritative_state.as_ref(),
+        )?;
+        overlay_step_state_from_authority(&mut context, authoritative_state.as_ref())?;
     }
+    refresh_execution_fingerprint(&mut context);
 
     if context.plan_document.execution_mode == "none"
         && (markdown_has_checked_steps || markdown_has_open_step_notes)
@@ -3846,6 +4175,18 @@ fn load_execution_context_with_policies(
     }
 
     Ok(context)
+}
+
+fn refresh_execution_fingerprint(context: &mut ExecutionContext) {
+    let normalized_plan_source = normalized_plan_source_for_semantic_identity(&context.plan_source);
+    context.execution_fingerprint = compute_execution_fingerprint(
+        &normalized_plan_source,
+        context.evidence.source.as_deref(),
+        context
+            .authoritative_evidence_projection_fingerprint
+            .as_deref(),
+        &execution_state_fingerprint_source(context),
+    );
 }
 
 pub fn validate_expected_fingerprint(
@@ -3910,6 +4251,8 @@ pub(crate) fn status_from_context_with_overlay(
         .as_ref()
         .map(|acceptance| acceptance.review_stack.clone());
     let semantic_snapshot = semantic_workspace_snapshot(context)?;
+    let projection_metadata =
+        execution_projection_read_model_metadata(context, normal_projection_write_mode()?)?;
 
     let mut status = PlanExecutionStatus {
         schema_version: 3,
@@ -3997,6 +4340,10 @@ pub(crate) fn status_from_context_with_overlay(
         execution_mode: context.plan_document.execution_mode.clone(),
         execution_fingerprint: context.execution_fingerprint.clone(),
         evidence_path: context.evidence_rel.clone(),
+        projection_mode: projection_metadata.projection_mode,
+        state_dir_projection_paths: projection_metadata.state_dir_projection_paths,
+        tracked_projection_paths: projection_metadata.tracked_projection_paths,
+        tracked_projections_current: projection_metadata.tracked_projections_current,
         execution_started: if started {
             String::from("yes")
         } else {
@@ -5315,6 +5662,14 @@ fn populate_public_status_contract_fields(
         event_authority_state,
         &status.review_state_status,
     )?;
+    if stale_unreviewed_target_missing(
+        &status.review_state_status,
+        &status.stale_unreviewed_closures,
+        task_closure_baseline_repair_candidate_reason_present(status),
+        late_stage_projection_targets_present(status),
+    ) {
+        push_status_reason_code_once(status, "stale_unreviewed_target_missing");
+    }
     clear_route_projection_fields(status);
     if (task_scope_overlay_restore_required || branch_closure_recording_basis_missing)
         && !preserve_canonical_late_stage_harness_phase
@@ -5884,11 +6239,19 @@ fn derive_stale_unreviewed_closures(
     if !stale_history_record_ids.is_empty() {
         return Ok(stale_history_record_ids);
     }
-    Ok(status
-        .current_task_closures
-        .iter()
-        .map(|closure| closure.closure_record_id.clone())
-        .collect())
+    Ok(Vec::new())
+}
+
+fn stale_unreviewed_target_missing(
+    review_state_status: &str,
+    stale_unreviewed_closures: &[String],
+    has_task_closure_baseline_candidate: bool,
+    has_late_stage_bound_target: bool,
+) -> bool {
+    review_state_status == "stale_unreviewed"
+        && stale_unreviewed_closures.is_empty()
+        && !has_task_closure_baseline_candidate
+        && !has_late_stage_bound_target
 }
 
 pub(crate) fn stale_current_task_closure_record_ids(
@@ -8153,14 +8516,27 @@ pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
             "Restore repo-safety availability before continuing execution.",
         ),
     }
-    match repo_has_tracked_worktree_changes(&context.runtime.repo_root) {
-        Ok(true) => gate.fail(
-            FailureClass::WorkspaceNotSafe,
-            "tracked_worktree_dirty",
-            "Execution preflight does not allow tracked worktree changes.",
-            "Commit or discard tracked worktree changes before continuing execution.",
-        ),
-        Ok(false) => {}
+    match repo_has_non_runtime_projection_tracked_changes(context) {
+        Ok(Some(reason)) => {
+            let (message, remediation) = if reason == "approved_plan_semantic_drift" {
+                (
+                    "Execution preflight does not allow semantic approved-plan edits.",
+                    "Restore, commit, or re-approve semantic approved-plan changes before continuing execution.",
+                )
+            } else {
+                (
+                    "Execution preflight does not allow tracked worktree changes.",
+                    "Commit or discard tracked worktree changes before continuing execution.",
+                )
+            };
+            gate.fail(
+                FailureClass::WorkspaceNotSafe,
+                &reason,
+                message,
+                remediation,
+            );
+        }
+        Ok(None) => {}
         Err(error) => gate.fail(
             FailureClass::WorkspaceNotSafe,
             "worktree_state_unavailable",
@@ -8521,6 +8897,30 @@ fn evaluate_pre_checkpoint_finish_gate(context: &ExecutionContext, gate: &mut Ga
         );
         return false;
     };
+    match shared_current_branch_closure_has_tracked_drift(context, Some(&authoritative_state)) {
+        Ok(true) => {
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED,
+                "Tracked repo writes after final review invalidated review freshness for terminal branch completion.",
+                "Record a fresh branch closure and rerun requesting-code-review and downstream finish artifacts.",
+            );
+            return false;
+        }
+        Ok(false) => {}
+        Err(error) => {
+            gate.fail(
+                FailureClass::ReviewArtifactNotFresh,
+                "review_artifact_workspace_state_unavailable",
+                format!(
+                    "Finish readiness could not compare current workspace state with the reviewed branch closure: {}",
+                    error.message
+                ),
+                "Restore repository state inspection, then rerun requesting-code-review and downstream finish artifacts.",
+            );
+            return false;
+        }
+    }
     if !require_current_release_readiness_ready_for_finish(
         context,
         &authoritative_state,
@@ -12629,27 +13029,183 @@ pub fn current_tracked_tree_sha(repo_root: &Path) -> Result<String, JsonFailure>
     current_repo_tracked_tree_sha(repo_root)
 }
 
-fn repo_has_tracked_worktree_changes(repo_root: &Path) -> Result<bool, JsonFailure> {
-    let repo = discover_repository(repo_root).map_err(|error| {
+fn repo_has_non_runtime_projection_tracked_changes(
+    context: &ExecutionContext,
+) -> Result<Option<String>, JsonFailure> {
+    let repo = discover_repository(&context.runtime.repo_root).map_err(|error| {
         JsonFailure::new(
             FailureClass::WorkspaceNotSafe,
             format!("Could not discover the current repository: {error}"),
         )
     })?;
-    repo.is_dirty().map_err(|error| {
+    let mut status_iter = repo
+        .status(gix::progress::Discard)
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::WorkspaceNotSafe,
+                format!("Could not prepare tracked worktree status: {error}"),
+            )
+        })?
+        .untracked_files(gix::status::UntrackedFiles::None)
+        .index_worktree_rewrites(None)
+        .tree_index_track_renames(gix::status::tree_index::TrackRenames::Disabled)
+        .into_iter(Vec::<gix::bstr::BString>::new())
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::WorkspaceNotSafe,
+                format!("Could not determine tracked worktree status: {error}"),
+            )
+        })?;
+    for item in &mut status_iter {
+        let item = item.map_err(|error| {
+            JsonFailure::new(
+                FailureClass::WorkspaceNotSafe,
+                format!("Could not inspect tracked worktree change: {error}"),
+            )
+        })?;
+        let path = item.location().to_string();
+        if is_runtime_owned_execution_control_plane_path(context, &path) {
+            continue;
+        }
+        if path == context.plan_rel {
+            if approved_plan_change_is_clean_for_preflight(context, &path)? {
+                continue;
+            }
+            return Ok(Some(String::from("approved_plan_semantic_drift")));
+        }
+        return Ok(Some(String::from("tracked_worktree_dirty")));
+    }
+    Ok(None)
+}
+
+fn approved_plan_change_is_projection_only(
+    context: &ExecutionContext,
+    path: &str,
+) -> Result<bool, JsonFailure> {
+    approved_plan_sources_match_after_normalization(
+        context,
+        path,
+        normalized_plan_source_for_semantic_identity,
+    )
+}
+
+fn approved_plan_change_is_clean_for_preflight(
+    context: &ExecutionContext,
+    path: &str,
+) -> Result<bool, JsonFailure> {
+    approved_plan_sources_match_after_normalization(
+        context,
+        path,
+        normalized_plan_source_for_approved_plan_preflight,
+    )
+}
+
+fn approved_plan_sources_match_after_normalization(
+    context: &ExecutionContext,
+    path: &str,
+    normalize: fn(&str) -> String,
+) -> Result<bool, JsonFailure> {
+    let Some(head_source) = head_blob_source_for_path(&context.runtime.repo_root, path)? else {
+        return Ok(false);
+    };
+    let Some(index_source) = index_blob_source_for_path(&context.runtime.repo_root, path)? else {
+        return Ok(false);
+    };
+    let worktree_source =
+        fs::read_to_string(context.runtime.repo_root.join(path)).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::WorkspaceNotSafe,
+                format!(
+                    "Could not read approved plan {path} while checking semantic drift: {error}"
+                ),
+            )
+        })?;
+    let normalized_head = normalize(&head_source);
+    Ok(normalized_head == normalize(&index_source)
+        && normalized_head == normalize(&worktree_source))
+}
+
+fn head_blob_source_for_path(repo_root: &Path, path: &str) -> Result<Option<String>, JsonFailure> {
+    let repo = discover_repository(repo_root).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            format!("Could not discover repository while reading HEAD content for {path}: {error}"),
+        )
+    })?;
+    let tree = repo.head_tree().map_err(|error| {
+        JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            format!("Could not read HEAD tree while checking semantic drift for {path}: {error}"),
+        )
+    })?;
+    let Some(entry) = tree.lookup_entry_by_path(path).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            format!("Could not inspect HEAD tree path {path}: {error}"),
+        )
+    })?
+    else {
+        return Ok(None);
+    };
+    let blob = repo.find_blob(entry.object_id()).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            format!("Could not load HEAD blob for {path}: {error}"),
+        )
+    })?;
+    std::str::from_utf8(&blob.data)
+        .map(|content| Some(content.to_owned()))
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::WorkspaceNotSafe,
+                format!("HEAD content for {path} was not valid UTF-8: {error}"),
+            )
+        })
+}
+
+fn index_blob_source_for_path(repo_root: &Path, path: &str) -> Result<Option<String>, JsonFailure> {
+    let repo = discover_repository(repo_root).map_err(|error| {
         JsonFailure::new(
             FailureClass::WorkspaceNotSafe,
             format!(
-                "Could not determine whether the repository has tracked worktree changes: {error}"
+                "Could not discover repository while reading index content for {path}: {error}"
             ),
         )
-    })
+    })?;
+    let index = repo.open_index().map_err(|error| {
+        JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            format!(
+                "Could not open repository index while checking semantic drift for {path}: {error}"
+            ),
+        )
+    })?;
+    let Some(entry) = index.entry_by_path(path.as_bytes().as_bstr()) else {
+        return Ok(None);
+    };
+    if entry.stage_raw() != 0 {
+        return Ok(None);
+    }
+    let blob = repo.find_blob(entry.id).map_err(|error| {
+        JsonFailure::new(
+            FailureClass::WorkspaceNotSafe,
+            format!("Could not load index blob for {path}: {error}"),
+        )
+    })?;
+    std::str::from_utf8(&blob.data)
+        .map(|content| Some(content.to_owned()))
+        .map_err(|error| {
+            JsonFailure::new(
+                FailureClass::WorkspaceNotSafe,
+                format!("Index content for {path} was not valid UTF-8: {error}"),
+            )
+        })
 }
 
 fn compute_repo_has_tracked_worktree_changes_excluding_execution_evidence(
-    repo_root: &Path,
+    context: &ExecutionContext,
 ) -> Result<bool, JsonFailure> {
-    let repo = discover_repository(repo_root).map_err(|error| {
+    let repo = discover_repository(&context.runtime.repo_root).map_err(|error| {
         JsonFailure::new(
             FailureClass::WorkspaceNotSafe,
             format!("Could not discover the current repository: {error}"),
@@ -12687,7 +13243,10 @@ fn compute_repo_has_tracked_worktree_changes_excluding_execution_evidence(
             )
         })?;
         let path = item.location().to_string();
-        if path.starts_with("docs/featureforge/execution-evidence/") {
+        if is_runtime_owned_execution_control_plane_path(context, &path) {
+            continue;
+        }
+        if path == context.plan_rel && approved_plan_change_is_projection_only(context, &path)? {
             continue;
         }
         match item {
@@ -13280,19 +13839,6 @@ fn parse_note_line(line: &str) -> Option<(NoteState, String)> {
     Some((note_state, normalize_whitespace(summary)))
 }
 
-// Legacy markdown execution notes are read only to seed authoritative
-// current_open_step_state on mutation entry or hidden-gate compatibility paths.
-// Plain read surfaces must not treat raw markdown note text as live runtime state.
-fn overlay_authoritative_open_step_state(
-    context: &mut ExecutionContext,
-) -> Result<(), JsonFailure> {
-    let authoritative_state = load_authoritative_transition_state_relaxed(context)?;
-    let Some(authoritative_state) = authoritative_state else {
-        return Ok(());
-    };
-    overlay_authoritative_open_step_state_from_state(context, &authoritative_state)
-}
-
 fn overlay_authoritative_open_step_state_from_state(
     context: &mut ExecutionContext,
     authoritative_state: &AuthoritativeTransitionState,
@@ -13300,12 +13846,76 @@ fn overlay_authoritative_open_step_state_from_state(
     let Some(record) = authoritative_state.current_open_step_state_checked()? else {
         return Ok(());
     };
+    if !open_step_record_matches_or_can_share_current_workspace(context, &record) {
+        return Ok(());
+    }
+    if context.plan_document.execution_mode == "none"
+        && let Some(execution_mode) = record.execution_mode.as_deref()
+    {
+        match execution_mode {
+            "featureforge:executing-plans" | "featureforge:subagent-driven-development" => {
+                context.plan_document.execution_mode = execution_mode.to_owned();
+            }
+            _ => {
+                return Err(JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    format!(
+                        "Authoritative current_open_step_state for {} has invalid execution_mode `{execution_mode}`.",
+                        context.plan_rel
+                    ),
+                ));
+            }
+        }
+    }
     apply_authoritative_open_step_record_to_steps(
         &mut context.steps,
         &record,
         &context.plan_rel,
         context.plan_document.plan_revision,
     )
+}
+
+fn open_step_record_matches_or_can_share_current_workspace(
+    context: &ExecutionContext,
+    record: &OpenStepStateRecord,
+) -> bool {
+    let Some(record_repo_root) = record.repo_root.as_deref() else {
+        return true;
+    };
+    let record_repo_root = canonicalize_repo_root_path(Path::new(record_repo_root));
+    if record_repo_root == context.runtime.repo_root {
+        return true;
+    }
+    if context
+        .evidence
+        .source
+        .as_deref()
+        .is_some_and(|source| source.contains("### Task "))
+    {
+        return false;
+    }
+    let Ok(discovered_runtime) = ExecutionRuntime::discover(&record_repo_root) else {
+        return false;
+    };
+    if context.runtime.branch_name == "current"
+        || discovered_runtime.branch_name == "current"
+        || discovered_runtime.branch_name != context.runtime.branch_name
+    {
+        return false;
+    }
+    let record_runtime = ExecutionRuntime {
+        state_dir: context.runtime.state_dir.clone(),
+        ..discovered_runtime
+    };
+    let Ok(record_context) = load_execution_context_without_authority_overlay(
+        &record_runtime,
+        Path::new(&context.plan_rel),
+    ) else {
+        return false;
+    };
+    hash_contract_plan(&record_context.plan_source) == hash_contract_plan(&context.plan_source)
+        && status_workspace_state_id(&record_context).ok()
+            == status_workspace_state_id(context).ok()
 }
 
 fn apply_authoritative_open_step_record_to_steps(
@@ -13390,36 +14000,360 @@ fn apply_authoritative_open_step_record_to_steps(
     Ok(())
 }
 
-fn parse_evidence_file(
-    evidence_abs: &Path,
-    expected_plan_path: &str,
-    expected_plan_revision: u32,
-    expected_spec_path: &str,
-    expected_spec_revision: u32,
+struct ExecutionEvidenceProjectionParseInput<'a> {
+    runtime: &'a ExecutionRuntime,
+    evidence_rel: &'a str,
+    evidence_abs: &'a Path,
+    plan_source: &'a str,
+    expected_plan_path: &'a str,
+    plan_document: &'a PlanDocument,
+    steps: &'a [PlanStepState],
+    expected_spec_path: &'a str,
+    source_spec_source: &'a str,
+    allow_legacy_unbound: bool,
+    allow_tracked_projection: bool,
+}
+
+fn parse_execution_evidence_projection(
+    input: ExecutionEvidenceProjectionParseInput<'_>,
 ) -> Result<ExecutionEvidence, JsonFailure> {
-    if !evidence_abs.is_file() {
-        return Ok(ExecutionEvidence {
-            format: EvidenceFormat::Empty,
-            plan_path: expected_plan_path.to_owned(),
-            plan_revision: expected_plan_revision,
-            plan_fingerprint: None,
-            source_spec_path: expected_spec_path.to_owned(),
-            source_spec_revision: expected_spec_revision,
-            source_spec_fingerprint: None,
-            attempts: Vec::new(),
-            source: None,
-        });
+    let expected_plan_revision = input.plan_document.plan_revision;
+    let expected_spec_revision = input.plan_document.source_spec_revision;
+    if let Some(source) = read_state_dir_projection(input.runtime, input.evidence_rel)? {
+        match state_dir_evidence_projection_currentness_for_source(
+            input.runtime,
+            input.evidence_rel,
+            &source,
+        )? {
+            StateDirProjectionCurrentness::Current => {
+                return parse_evidence_source(
+                    source,
+                    EvidenceSourceParseInput {
+                        expected_plan_path: input.expected_plan_path,
+                        expected_plan_revision,
+                        expected_spec_path: input.expected_spec_path,
+                        expected_spec_revision,
+                        source_origin: EvidenceSourceOrigin::StateDirProjection,
+                        tracked_progress_present: false,
+                        tracked_source: None,
+                    },
+                );
+            }
+            StateDirProjectionCurrentness::Stale => {
+                match classify_stale_state_dir_evidence_projection(
+                    &input,
+                    &source,
+                    expected_plan_revision,
+                    expected_spec_revision,
+                )? {
+                    StaleStateDirEvidenceProjection::CurrentEvidence(parsed) => return Ok(parsed),
+                    StaleStateDirEvidenceProjection::RuntimeGeneratedReadModel => {}
+                }
+            }
+            StateDirProjectionCurrentness::Unbound => {
+                if let Some(parsed) = parse_self_bound_legacy_state_dir_evidence_projection(
+                    &source, &input, false, None,
+                )? {
+                    return Ok(parsed);
+                }
+                if input.allow_legacy_unbound {
+                    return parse_evidence_source(
+                        source,
+                        EvidenceSourceParseInput {
+                            expected_plan_path: input.expected_plan_path,
+                            expected_plan_revision,
+                            expected_spec_path: input.expected_spec_path,
+                            expected_spec_revision,
+                            source_origin: EvidenceSourceOrigin::StateDirProjection,
+                            tracked_progress_present: false,
+                            tracked_source: None,
+                        },
+                    );
+                }
+                if evidence_source_has_progress(&source) {
+                    return Err(JsonFailure::new(
+                        FailureClass::MalformedExecutionState,
+                        "State-dir execution evidence projection is not bound to authoritative runtime state.",
+                    ));
+                }
+            }
+        }
+    }
+    if input.allow_tracked_projection
+        && let Some(source) = read_tracked_evidence_source(input.evidence_abs)?
+    {
+        let tracked_source = Some(source.clone());
+        return parse_evidence_source(
+            source,
+            EvidenceSourceParseInput {
+                expected_plan_path: input.expected_plan_path,
+                expected_plan_revision,
+                expected_spec_path: input.expected_spec_path,
+                expected_spec_revision,
+                source_origin: EvidenceSourceOrigin::TrackedFile,
+                tracked_progress_present: true,
+                tracked_source,
+            },
+        );
+    }
+    // Tracked execution evidence is an optional export in normal operation.
+    // The only tracked read retained here is the legacy pre-harness guard: a
+    // legacy evidence file with progress is rejected or imported through the
+    // existing legacy policy instead of being treated as a current projection.
+    if let Some(source) = read_tracked_legacy_evidence_source(input.evidence_abs)? {
+        let tracked_source = Some(source.clone());
+        return parse_evidence_source(
+            source,
+            EvidenceSourceParseInput {
+                expected_plan_path: input.expected_plan_path,
+                expected_plan_revision,
+                expected_spec_path: input.expected_spec_path,
+                expected_spec_revision,
+                source_origin: EvidenceSourceOrigin::TrackedFile,
+                tracked_progress_present: true,
+                tracked_source,
+            },
+        );
     }
 
-    let source = fs::read_to_string(evidence_abs).map_err(|error| {
-        JsonFailure::new(
-            FailureClass::MalformedExecutionState,
-            format!(
-                "Could not read execution evidence {}: {error}",
-                evidence_abs.display()
-            ),
-        )
-    })?;
+    Ok(ExecutionEvidence {
+        format: EvidenceFormat::Empty,
+        plan_path: input.expected_plan_path.to_owned(),
+        plan_revision: expected_plan_revision,
+        plan_fingerprint: None,
+        source_spec_path: input.expected_spec_path.to_owned(),
+        source_spec_revision: expected_spec_revision,
+        source_spec_fingerprint: None,
+        attempts: Vec::new(),
+        source: None,
+        source_origin: EvidenceSourceOrigin::Empty,
+        tracked_progress_present: false,
+        tracked_source: None,
+    })
+}
+
+enum StaleStateDirEvidenceProjection {
+    CurrentEvidence(ExecutionEvidence),
+    RuntimeGeneratedReadModel,
+}
+
+fn classify_stale_state_dir_evidence_projection(
+    input: &ExecutionEvidenceProjectionParseInput<'_>,
+    source: &str,
+    expected_plan_revision: u32,
+    expected_spec_revision: u32,
+) -> Result<StaleStateDirEvidenceProjection, JsonFailure> {
+    if let Some(expected_fingerprint) =
+        state_dir_evidence_projection_expected_fingerprint(input.runtime, input.evidence_rel)?
+    {
+        let parsed = parse_evidence_source(
+            source.to_owned(),
+            EvidenceSourceParseInput {
+                expected_plan_path: input.expected_plan_path,
+                expected_plan_revision,
+                expected_spec_path: input.expected_spec_path,
+                expected_spec_revision,
+                source_origin: EvidenceSourceOrigin::StateDirProjection,
+                tracked_progress_present: false,
+                tracked_source: None,
+            },
+        )?;
+        let canonical_source = render_canonical_evidence_projection_source(
+            input.expected_plan_path,
+            input.plan_document,
+            input.plan_source,
+            input.source_spec_source,
+            input.steps,
+            &parsed,
+        );
+        if projection_source_matches_fingerprint(&canonical_source, &expected_fingerprint) {
+            return Ok(StaleStateDirEvidenceProjection::CurrentEvidence(parsed));
+        }
+    }
+    if state_dir_projection_matches_recorded_output_fingerprint(
+        input.runtime,
+        input.evidence_rel,
+        source,
+    )? {
+        // This is an older runtime-generated read model. Do not parse it as
+        // authority, but allow the authoritative reducer to rebuild the current
+        // read model for normal paths.
+        return Ok(StaleStateDirEvidenceProjection::RuntimeGeneratedReadModel);
+    }
+    Err(JsonFailure::new(
+        FailureClass::MalformedExecutionState,
+        "State-dir execution evidence projection does not match authoritative runtime state.",
+    ))
+}
+
+pub(crate) fn validate_state_dir_evidence_projection_before_materialization(
+    context: &ExecutionContext,
+) -> Result<(), JsonFailure> {
+    let Some(source) = read_state_dir_projection(&context.runtime, &context.evidence_rel)? else {
+        return Ok(());
+    };
+    if state_dir_evidence_projection_currentness_for_source(
+        &context.runtime,
+        &context.evidence_rel,
+        &source,
+    )? != StateDirProjectionCurrentness::Stale
+    {
+        return Ok(());
+    }
+    let input = ExecutionEvidenceProjectionParseInput {
+        runtime: &context.runtime,
+        evidence_rel: &context.evidence_rel,
+        evidence_abs: &context.evidence_abs,
+        plan_source: &context.plan_source,
+        expected_plan_path: &context.plan_rel,
+        plan_document: &context.plan_document,
+        steps: &context.steps,
+        expected_spec_path: &context.plan_document.source_spec_path,
+        source_spec_source: &context.source_spec_source,
+        allow_legacy_unbound: false,
+        allow_tracked_projection: false,
+    };
+    classify_stale_state_dir_evidence_projection(
+        &input,
+        &source,
+        context.plan_document.plan_revision,
+        context.plan_document.source_spec_revision,
+    )?;
+    Ok(())
+}
+
+fn state_dir_evidence_projection_currentness_for_source(
+    runtime: &ExecutionRuntime,
+    evidence_rel: &str,
+    source: &str,
+) -> Result<StateDirProjectionCurrentness, JsonFailure> {
+    let Some(expected_fingerprint) =
+        state_dir_evidence_projection_expected_fingerprint(runtime, evidence_rel)?
+    else {
+        return Ok(StateDirProjectionCurrentness::Unbound);
+    };
+    if projection_source_matches_fingerprint(source, &expected_fingerprint) {
+        Ok(StateDirProjectionCurrentness::Current)
+    } else {
+        Ok(StateDirProjectionCurrentness::Stale)
+    }
+}
+
+fn state_dir_evidence_projection_expected_fingerprint(
+    runtime: &ExecutionRuntime,
+    _evidence_rel: &str,
+) -> Result<Option<String>, JsonFailure> {
+    match authoritative_state_optional_string_field_for_runtime(
+        runtime,
+        "execution_evidence_projection_fingerprint",
+    )? {
+        Some(Some(fingerprint)) => Ok(Some(fingerprint)),
+        Some(None) | None => Ok(None),
+    }
+}
+
+fn parse_self_bound_legacy_state_dir_evidence_projection(
+    source: &str,
+    input: &ExecutionEvidenceProjectionParseInput<'_>,
+    tracked_progress_present: bool,
+    tracked_source: Option<String>,
+) -> Result<Option<ExecutionEvidence>, JsonFailure> {
+    let headers = parse_headers(source);
+    if !headers.contains_key("Plan Fingerprint") {
+        return Ok(None);
+    }
+    let expected_plan_revision = input.plan_document.plan_revision.to_string();
+    let expected_spec_revision = input.plan_document.source_spec_revision.to_string();
+    let Some(header_plan_fingerprint) = headers.get("Plan Fingerprint").map(String::as_str) else {
+        return Ok(None);
+    };
+    if !is_canonical_fingerprint(header_plan_fingerprint) {
+        return Ok(None);
+    }
+    let expected_source_spec_fingerprint = sha256_hex(input.source_spec_source.as_bytes());
+    if headers.get("Plan Path").map(String::as_str) != Some(input.expected_plan_path)
+        || headers.get("Plan Revision").map(String::as_str) != Some(expected_plan_revision.as_str())
+        || headers.get("Source Spec Path").map(String::as_str) != Some(input.expected_spec_path)
+        || headers.get("Source Spec Revision").map(String::as_str)
+            != Some(expected_spec_revision.as_str())
+        || headers.get("Source Spec Fingerprint").map(String::as_str)
+            != Some(expected_source_spec_fingerprint.as_str())
+    {
+        return Ok(None);
+    }
+    let parsed = parse_evidence_source(
+        source.to_owned(),
+        EvidenceSourceParseInput {
+            expected_plan_path: input.expected_plan_path,
+            expected_plan_revision: input.plan_document.plan_revision,
+            expected_spec_path: input.expected_spec_path,
+            expected_spec_revision: input.plan_document.source_spec_revision,
+            source_origin: EvidenceSourceOrigin::StateDirProjection,
+            tracked_progress_present,
+            tracked_source,
+        },
+    )?;
+    let canonical_source = render_canonical_evidence_projection_source_with_fingerprints(
+        input.expected_plan_path,
+        input.plan_document,
+        header_plan_fingerprint,
+        &expected_source_spec_fingerprint,
+        input.steps,
+        &parsed,
+    );
+    let canonical_fingerprint = sha256_hex(canonical_source.as_bytes());
+    let source_matches_canonical =
+        projection_source_matches_fingerprint(source, &canonical_fingerprint);
+    if source_matches_canonical {
+        Ok(Some(parsed))
+    } else {
+        Ok(None)
+    }
+}
+
+fn evidence_source_has_progress(source: &str) -> bool {
+    source.contains("### Task ")
+}
+
+fn read_tracked_legacy_evidence_source(evidence_abs: &Path) -> Result<Option<String>, JsonFailure> {
+    let Some(source) = read_tracked_evidence_source(evidence_abs)? else {
+        return Ok(None);
+    };
+    let is_legacy_evidence = !parse_headers(&source).contains_key("Plan Fingerprint");
+    Ok(is_legacy_evidence.then_some(source))
+}
+
+fn read_tracked_evidence_source(evidence_abs: &Path) -> Result<Option<String>, JsonFailure> {
+    let source = match fs::read_to_string(evidence_abs) {
+        Ok(source) => source,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!(
+                    "Could not read legacy execution evidence {}: {error}",
+                    evidence_abs.display()
+                ),
+            ));
+        }
+    };
+    Ok(evidence_source_has_progress(&source).then_some(source))
+}
+
+struct EvidenceSourceParseInput<'a> {
+    expected_plan_path: &'a str,
+    expected_plan_revision: u32,
+    expected_spec_path: &'a str,
+    expected_spec_revision: u32,
+    source_origin: EvidenceSourceOrigin,
+    tracked_progress_present: bool,
+    tracked_source: Option<String>,
+}
+
+fn parse_evidence_source(
+    source: String,
+    input: EvidenceSourceParseInput<'_>,
+) -> Result<ExecutionEvidence, JsonFailure> {
     let headers = parse_headers(&source);
     let format = if headers.contains_key("Plan Fingerprint") {
         EvidenceFormat::V2
@@ -13430,20 +14364,23 @@ fn parse_evidence_file(
     if attempts.is_empty() {
         return Ok(ExecutionEvidence {
             format: EvidenceFormat::Empty,
-            plan_path: expected_plan_path.to_owned(),
-            plan_revision: expected_plan_revision,
+            plan_path: input.expected_plan_path.to_owned(),
+            plan_revision: input.expected_plan_revision,
             plan_fingerprint: headers.get("Plan Fingerprint").cloned(),
             source_spec_path: headers
                 .get("Source Spec Path")
                 .cloned()
-                .unwrap_or_else(|| expected_spec_path.to_owned()),
+                .unwrap_or_else(|| input.expected_spec_path.to_owned()),
             source_spec_revision: headers
                 .get("Source Spec Revision")
                 .and_then(|value| value.parse::<u32>().ok())
-                .unwrap_or(expected_spec_revision),
+                .unwrap_or(input.expected_spec_revision),
             source_spec_fingerprint: headers.get("Source Spec Fingerprint").cloned(),
             attempts,
             source: Some(source),
+            source_origin: input.source_origin,
+            tracked_progress_present: input.tracked_progress_present,
+            tracked_source: input.tracked_source,
         });
     }
 
@@ -13452,23 +14389,26 @@ fn parse_evidence_file(
         plan_path: headers
             .get("Plan Path")
             .cloned()
-            .unwrap_or_else(|| expected_plan_path.to_owned()),
+            .unwrap_or_else(|| input.expected_plan_path.to_owned()),
         plan_revision: headers
             .get("Plan Revision")
             .and_then(|value| value.parse::<u32>().ok())
-            .unwrap_or(expected_plan_revision),
+            .unwrap_or(input.expected_plan_revision),
         plan_fingerprint: headers.get("Plan Fingerprint").cloned(),
         source_spec_path: headers
             .get("Source Spec Path")
             .cloned()
-            .unwrap_or_else(|| expected_spec_path.to_owned()),
+            .unwrap_or_else(|| input.expected_spec_path.to_owned()),
         source_spec_revision: headers
             .get("Source Spec Revision")
             .and_then(|value| value.parse::<u32>().ok())
-            .unwrap_or(expected_spec_revision),
+            .unwrap_or(input.expected_spec_revision),
         source_spec_fingerprint: headers.get("Source Spec Fingerprint").cloned(),
         attempts,
         source: Some(source),
+        source_origin: input.source_origin,
+        tracked_progress_present: input.tracked_progress_present,
+        tracked_source: input.tracked_source,
     })
 }
 
@@ -13801,11 +14741,45 @@ fn parse_optional_evidence_scalar(value: &str) -> Option<String> {
     }
 }
 
-fn compute_execution_fingerprint(plan_source: &str, evidence_source: Option<&str>) -> String {
+fn execution_state_fingerprint_source(context: &ExecutionContext) -> String {
+    let mut source = String::new();
+    source.push_str("execution-mode=");
+    source.push_str(&context.plan_document.execution_mode);
+    source.push('\n');
+    for step in &context.steps {
+        source.push_str("step=");
+        source.push_str(&step.task_number.to_string());
+        source.push('.');
+        source.push_str(&step.step_number.to_string());
+        source.push_str(";checked=");
+        source.push_str(if step.checked { "true" } else { "false" });
+        source.push_str(";note=");
+        if let Some(note_state) = step.note_state {
+            source.push_str(note_state.as_str());
+        } else {
+            source.push_str("none");
+        }
+        source.push_str(";summary=");
+        source.push_str(&step.note_summary);
+        source.push('\n');
+    }
+    source
+}
+
+fn compute_execution_fingerprint(
+    plan_source: &str,
+    evidence_source: Option<&str>,
+    authoritative_evidence_projection_fingerprint: Option<&str>,
+    execution_state_source: &str,
+) -> String {
     let mut payload = String::from("plan\n");
     payload.push_str(plan_source);
     payload.push_str("\n--evidence--\n");
-    if let Some(source) = evidence_source {
+    if let Some(fingerprint) = authoritative_evidence_projection_fingerprint {
+        payload.push_str("authoritative-projection-fingerprint=");
+        payload.push_str(fingerprint);
+        payload.push('\n');
+    } else if let Some(source) = evidence_source {
         if source.contains("### Task ") {
             payload.push_str(source);
         } else {
@@ -13814,6 +14788,8 @@ fn compute_execution_fingerprint(plan_source: &str, evidence_source: Option<&str
     } else {
         payload.push_str("__EMPTY_EVIDENCE__\n");
     }
+    payload.push_str("\n--execution-state--\n");
+    payload.push_str(execution_state_source);
     sha256_hex(payload.as_bytes())
 }
 

@@ -118,6 +118,7 @@
         "final_review_outcome_pending",
         "final_review_recording_ready",
         "qa_recording_required",
+        "runtime_reconcile_required",
         "test_plan_refresh_required",
         "finish_review_gate_ready",
         "finish_completion_gate_ready",
@@ -417,6 +418,9 @@
     "plan_path": {
       "type": "string"
     },
+    "projection_mode": {
+      "type": "string"
+    },
     "qa_requirement": {
       "anyOf": [
         {
@@ -455,8 +459,23 @@
     "spec_path": {
       "type": "string"
     },
+    "state_dir_projection_paths": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "state_kind": {
       "$ref": "#/$defs/WorkflowOperatorStateKindSchema"
+    },
+    "tracked_projection_paths": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tracked_projections_current": {
+      "type": "boolean"
     }
   },
   "required": [
@@ -469,7 +488,11 @@
     "state_kind",
     "semantic_workspace_tree_id",
     "spec_path",
-    "plan_path"
+    "plan_path",
+    "projection_mode",
+    "state_dir_projection_paths",
+    "tracked_projection_paths",
+    "tracked_projections_current"
   ],
   "title": "WorkflowOperator",
   "type": "object"

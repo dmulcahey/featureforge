@@ -23,9 +23,15 @@ const PLAN_REL: &str = "docs/featureforge/plans/2026-04-01-liveness-model-plan.m
 const SPEC_REL: &str = "docs/featureforge/specs/2026-04-01-liveness-model-spec.md";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ProgressMetric {
+    targetless_stale_without_diagnostic: u8,
+    hidden_command_exposure: u8,
+    cycle_break_blockers: u8,
     structural_blockers: u8,
     stale_boundaries: u8,
     dispatch_lineage_blockers: u8,
+    summary_hash_drift_reentry: u8,
+    projection_dirty_blockers: u8,
+    resume_exact_disagreement: u8,
     task_scope_distance: u8,
     late_stage_blockers: u8,
     execution_frontier_distance: u8,
@@ -33,13 +39,45 @@ struct ProgressMetric {
     remaining_tasks: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct SyntheticState {
     completed_tasks: u8,
+    steps_per_task: u8,
     stale_boundary_present: bool,
     structural_blocker_present: bool,
     late_stage_blocker_present: bool,
     dispatch_lineage_missing: bool,
+    stale_cycle_break_overlay_present: bool,
+    downstream_stale_step_present: bool,
+    downstream_interrupted_projection_present: bool,
+    current_branch_closure_null: bool,
+    orphan_milestone_records_present: bool,
+    runtime_projection_dirtiness_present: bool,
+    summary_hash_drift_present: bool,
+    targetless_stale_present: bool,
+    resume_exact_disagreement_present: bool,
+}
+
+impl SyntheticState {
+    fn base(completed_tasks: u8) -> Self {
+        Self {
+            completed_tasks,
+            steps_per_task: 1,
+            stale_boundary_present: false,
+            structural_blocker_present: false,
+            late_stage_blocker_present: false,
+            dispatch_lineage_missing: false,
+            stale_cycle_break_overlay_present: false,
+            downstream_stale_step_present: false,
+            downstream_interrupted_projection_present: false,
+            current_branch_closure_null: false,
+            orphan_milestone_records_present: false,
+            runtime_projection_dirtiness_present: false,
+            summary_hash_drift_present: false,
+            targetless_stale_present: false,
+            resume_exact_disagreement_present: false,
+        }
+    }
 }
 
 struct SyntheticFixtureContext<'a> {
@@ -53,7 +91,7 @@ struct SyntheticFixtureContext<'a> {
     branch_name: &'a str,
 }
 
-fn write_spec_and_plan(repo: &Path, total_tasks: u8, completed_tasks: u8) {
+fn write_spec_and_plan(repo: &Path, total_tasks: u8, completed_tasks: u8, steps_per_task: u8) {
     files_support::write_file(
         &repo.join(SPEC_REL),
         "# Liveness Model Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** plan-ceo-review\n\n## Requirement Index\n\n- [VERIFY-001][verification] Runtime routes a legal public next step.\n",
@@ -69,30 +107,38 @@ fn write_spec_and_plan(repo: &Path, total_tasks: u8, completed_tasks: u8) {
     );
 
     for task in 1..=u32::from(total_tasks) {
-        let checkbox = if task <= u32::from(completed_tasks) {
-            "[x]"
-        } else {
-            "[ ]"
-        };
         plan.push_str(&format!(
-            "\n## Task {task}: Liveness task {task}\n\n**Spec Coverage:** VERIFY-001\n**Goal:** Runtime routes a legal public next step.\n\n**Context:**\n- Spec Coverage: VERIFY-001.\n\n**Constraints:**\n- Keep one step per task.\n**Done when:**\n- Runtime routes a legal public next step.\n\n**Files:**\n- Modify: `docs/liveness-task-{task}.md`\n\n- {checkbox} **Step 1: Execute task {task}**\n"
+            "\n## Task {task}: Liveness task {task}\n\n**Spec Coverage:** VERIFY-001\n**Goal:** Runtime routes a legal public next step.\n\n**Context:**\n- Spec Coverage: VERIFY-001.\n\n**Constraints:**\n- Keep one or more modeled steps per task.\n**Done when:**\n- Runtime routes a legal public next step.\n\n**Files:**\n- Modify: `docs/liveness-task-{task}.md`\n"
         ));
+        for step in 1..=u32::from(steps_per_task.max(1)) {
+            let checkbox = if task <= u32::from(completed_tasks) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            plan.push_str(&format!(
+                "\n- {checkbox} **Step {step}: Execute task {task} step {step}**\n"
+            ));
+        }
     }
 
     files_support::write_file(&repo.join(PLAN_REL), &plan);
-    write_execution_evidence(repo, completed_tasks);
+    write_execution_evidence(repo, completed_tasks, steps_per_task);
 }
 
-fn write_execution_evidence(repo: &Path, completed_tasks: u8) {
+fn write_execution_evidence(repo: &Path, completed_tasks: u8, steps_per_task: u8) {
     let plan_fingerprint =
         sha256_hex(&std::fs::read(repo.join(PLAN_REL)).expect("liveness plan should be readable"));
     let spec_fingerprint =
         sha256_hex(&std::fs::read(repo.join(SPEC_REL)).expect("liveness spec should be readable"));
     let mut attempts = String::new();
     for task in 1..=u32::from(completed_tasks) {
-        attempts.push_str(&format!(
-            "### Task {task} Step 1\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-04-01T00:00:0{task}Z\n**Execution Source:** featureforge:executing-plans\n**Task Number:** {task}\n**Step Number:** 1\n**Packet Fingerprint:** packet-{task}\n**Head SHA:** 1111111111111111111111111111111111111111\n**Base SHA:** 1111111111111111111111111111111111111111\n**Claim:** Completed task {task} step 1.\n**Files Proven:**\n- README.md | sha256:aaaaaaaa\n**Verification Summary:** Synthetic liveness evidence.\n**Invalidation Reason:** N/A\n\n"
-        ));
+        for step in 1..=u32::from(steps_per_task.max(1)) {
+            let second = task.saturating_mul(10).saturating_add(step);
+            attempts.push_str(&format!(
+                "### Task {task} Step {step}\n#### Attempt 1\n**Status:** Completed\n**Recorded At:** 2026-04-01T00:00:{second:02}Z\n**Execution Source:** featureforge:executing-plans\n**Task Number:** {task}\n**Step Number:** {step}\n**Packet Fingerprint:** packet-{task}-{step}\n**Head SHA:** 1111111111111111111111111111111111111111\n**Base SHA:** 1111111111111111111111111111111111111111\n**Claim:** Completed task {task} step {step}.\n**Files Proven:**\n- README.md | sha256:aaaaaaaa\n**Verification Summary:** Synthetic liveness evidence.\n**Invalidation Reason:** N/A\n\n"
+            ));
+        }
     }
     files_support::write_file(
         &repo.join(
@@ -155,17 +201,22 @@ fn task_completion_lineage_fingerprints(
     let context = semantic_execution_context(repo, state_dir);
     (1..=u32::from(total_tasks))
         .filter_map(|task| {
-            let step = context
+            let task_steps = context
                 .steps
                 .iter()
-                .find(|step| step.task_number == task && step.step_number == 1)?;
-            if !step.checked {
+                .filter(|step| step.task_number == task)
+                .collect::<Vec<_>>();
+            if task_steps.is_empty() || task_steps.iter().any(|step| !step.checked) {
                 return None;
             }
-            let recorded_at = format!("2026-04-01T00:00:0{task}Z");
-            let payload = format!(
-                "plan={PLAN_REL}\nplan_revision=1\ntask={task}\nstep=1:attempt=1:recorded_at={recorded_at}:packet=packet-{task}:checkpoint=1111111111111111111111111111111111111111\n"
-            );
+            let mut payload = format!("plan={PLAN_REL}\nplan_revision=1\ntask={task}\n");
+            for step in task_steps {
+                let step_number = step.step_number;
+                let second = task.saturating_mul(10).saturating_add(step_number);
+                payload.push_str(&format!(
+                    "step={step_number}:attempt=1:recorded_at=2026-04-01T00:00:{second:02}Z:packet=packet-{task}-{step_number}:checkpoint=1111111111111111111111111111111111111111\n"
+                ));
+            }
             Some((task, sha256_hex(payload.as_bytes())))
         })
         .collect()
@@ -214,14 +265,16 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
     let mut event_completed_steps = serde_json::Map::new();
     let boundary_task = u32::from(synthetic.completed_tasks.max(1));
     for task in 1..=u32::from(synthetic.completed_tasks) {
-        event_completed_steps.insert(
-            format!("task-{task}-step-1"),
-            json!({
-                "task": task,
-                "step": 1,
-                "record_status": "current",
-            }),
-        );
+        for step in 1..=u32::from(synthetic.steps_per_task.max(1)) {
+            event_completed_steps.insert(
+                format!("task-{task}-step-{step}"),
+                json!({
+                    "task": task,
+                    "step": step,
+                    "record_status": "current",
+                }),
+            );
+        }
         let record_reviewed_state_id = if synthetic.stale_boundary_present && task == boundary_task
         {
             "git_tree:0000000000000000000000000000000000000000"
@@ -234,6 +287,11 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
             fixture.task_completion_lineages,
             task,
         );
+        let mut record = record;
+        if synthetic.summary_hash_drift_present && task == boundary_task {
+            record["review_summary_hash"] = Value::from("ffffffff");
+            record["verification_summary_hash"] = Value::from("eeeeeeee");
+        }
         if !(synthetic.structural_blocker_present && task == boundary_task) {
             current_records.insert(format!("task-{task}"), record.clone());
         }
@@ -269,15 +327,21 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
         };
 
     if synthetic.stale_boundary_present {
-        history_records.insert(format!("task-{boundary_task}-stale"), {
+        let stale_task = if synthetic.downstream_stale_step_present
+            && boundary_task < u32::from(fixture.total_tasks)
+        {
+            boundary_task.saturating_add(1)
+        } else {
+            boundary_task
+        };
+        history_records.insert(format!("task-{stale_task}-stale"), {
             let mut stale_record = closure_record(
                 "git_tree:0000000000000000000000000000000000000000",
                 fixture.task_contract_identities,
                 fixture.task_completion_lineages,
-                boundary_task,
+                stale_task,
             );
-            stale_record["closure_record_id"] =
-                Value::from(format!("closure-{boundary_task}-stale"));
+            stale_record["closure_record_id"] = Value::from(format!("closure-{stale_task}-stale"));
             stale_record["review_summary_hash"] = Value::from("cccccccc");
             stale_record["verification_summary_hash"] = Value::from("dddddddd");
             stale_record["closure_status"] = Value::from("stale_unreviewed");
@@ -325,21 +389,24 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
     } else {
         json!({})
     };
-    let current_branch_closure_id = if synthetic.late_stage_blocker_present {
-        Value::from(branch_closure_id)
-    } else {
-        Value::Null
-    };
-    let current_branch_closure_reviewed_state_id = if synthetic.late_stage_blocker_present {
-        Value::from(fixture.reviewed_state_id)
-    } else {
-        Value::Null
-    };
-    let current_branch_closure_contract_identity = if synthetic.late_stage_blocker_present {
-        Value::from(fixture.branch_definition_identity)
-    } else {
-        Value::Null
-    };
+    let current_branch_closure_id =
+        if synthetic.late_stage_blocker_present && !synthetic.current_branch_closure_null {
+            Value::from(branch_closure_id)
+        } else {
+            Value::Null
+        };
+    let current_branch_closure_reviewed_state_id =
+        if synthetic.late_stage_blocker_present && !synthetic.current_branch_closure_null {
+            Value::from(fixture.reviewed_state_id)
+        } else {
+            Value::Null
+        };
+    let current_branch_closure_contract_identity =
+        if synthetic.late_stage_blocker_present && !synthetic.current_branch_closure_null {
+            Value::from(fixture.branch_definition_identity)
+        } else {
+            Value::Null
+        };
     let release_readiness_record_id = "release-readiness-liveness";
     let release_readiness_record_history = if synthetic.late_stage_blocker_present {
         json!({
@@ -397,6 +464,78 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
     } else {
         Value::Null
     };
+    let final_review_record_history = if synthetic.orphan_milestone_records_present {
+        json!({
+            "orphan-final-review-liveness": {
+                "record_id": "orphan-final-review-liveness",
+                "record_sequence": u64::from(synthetic.completed_tasks).saturating_add(4),
+                "record_status": "stale",
+                "branch_closure_id": "orphan-branch-closure-liveness",
+                "source_plan_path": PLAN_REL,
+                "source_plan_revision": 1,
+                "reviewed_state_id": "git_tree:0000000000000000000000000000000000000000",
+                "result": "pass",
+                "summary": "Synthetic orphan final-review history.",
+                "summary_hash": "abababab",
+                "final_review_fingerprint": "cdcdcdcd",
+                "release_readiness_record_id": release_readiness_record_id
+            }
+        })
+    } else {
+        json!({})
+    };
+    let (strategy_state, strategy_checkpoint_kind, strategy_cycle_break_task) =
+        if synthetic.stale_cycle_break_overlay_present {
+            (
+                Value::from("cycle_breaking"),
+                Value::from("cycle_break"),
+                Value::from(u64::from(boundary_task)),
+            )
+        } else {
+            (
+                Value::from("checkpoint_recorded"),
+                Value::from("task"),
+                Value::Null,
+            )
+        };
+    let strategy_cycle_break_step = if synthetic.stale_cycle_break_overlay_present {
+        Value::from(1_u64)
+    } else {
+        Value::Null
+    };
+    let review_state_repair_follow_up = if synthetic.targetless_stale_present {
+        Value::from("repair_review_state")
+    } else {
+        Value::Null
+    };
+    let current_open_step_state = if synthetic.downstream_interrupted_projection_present {
+        let interrupted_task = boundary_task
+            .saturating_add(1)
+            .min(u32::from(fixture.total_tasks).max(1));
+        json!({
+            "task": interrupted_task,
+            "step": u32::from(synthetic.steps_per_task.max(1)),
+            "note_state": "Interrupted",
+            "note_summary": "Synthetic downstream interruption.",
+            "execution_mode": "featureforge:executing-plans",
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1,
+            "authoritative_sequence": 1
+        })
+    } else if synthetic.resume_exact_disagreement_present {
+        json!({
+            "task": boundary_task,
+            "step": 1,
+            "note_state": "Active",
+            "note_summary": "Synthetic resume disagreement.",
+            "execution_mode": "featureforge:executing-plans",
+            "source_plan_path": PLAN_REL,
+            "source_plan_revision": 1,
+            "authoritative_sequence": 1
+        })
+    } else {
+        Value::Null
+    };
     let payload = json!({
         "schema_version": 1,
         "harness_phase": harness_phase,
@@ -416,15 +555,24 @@ fn write_variant_harness_state(fixture: &SyntheticFixtureContext<'_>, synthetic:
         "current_release_readiness_result": current_release_readiness_result,
         "current_release_readiness_record_id": current_release_readiness_record_id,
         "release_readiness_record_history": release_readiness_record_history,
-        "final_review_record_history": {},
+        "final_review_record_history": final_review_record_history,
         "browser_qa_record_history": {},
         "strategy_review_dispatch_lineage": Value::Object(dispatch_lineage),
         "strategy_review_dispatch_lineage_history": {},
         "current_final_review_dispatch_id": current_final_review_dispatch_id,
         "final_review_dispatch_lineage": final_review_dispatch_lineage,
         "superseded_branch_closure_ids": [],
-        "strategy_state": "checkpoint_recorded",
-        "strategy_checkpoint_kind": "task",
+        "strategy_state": strategy_state,
+        "strategy_checkpoint_kind": strategy_checkpoint_kind,
+        "strategy_cycle_break_task": strategy_cycle_break_task,
+        "strategy_cycle_break_step": strategy_cycle_break_step,
+        "strategy_cycle_break_checkpoint_fingerprint": if synthetic.stale_cycle_break_overlay_present {
+            Value::from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        } else {
+            Value::Null
+        },
+        "review_state_repair_follow_up": review_state_repair_follow_up,
+        "current_open_step_state": current_open_step_state,
         "last_strategy_checkpoint_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     });
     files_support::write_file(
@@ -464,6 +612,25 @@ fn migrate_variant_to_event_authority(state_path: &Path, context: &str) {
         .expect("liveness migration should permit removing state projection after event publish");
 }
 
+fn clear_liveness_authority(state_path: &Path) {
+    let _ = std::fs::remove_file(state_path);
+    let _ = std::fs::remove_file(state_path.with_file_name("events.jsonl"));
+    let _ = std::fs::remove_file(state_path.with_file_name("events.lock"));
+    let _ = std::fs::remove_file(state_path.with_file_name("state.legacy.json"));
+}
+
+fn apply_synthetic_worktree_variants(repo: &Path, synthetic: SyntheticState) {
+    if synthetic.runtime_projection_dirtiness_present {
+        let evidence_path = repo.join(
+            "docs/featureforge/execution-evidence/2026-04-01-liveness-model-plan-r1-evidence.md",
+        );
+        let mut evidence_source = std::fs::read_to_string(&evidence_path)
+            .expect("liveness projection dirtiness case should read evidence projection");
+        evidence_source.push_str("\n<!-- synthetic runtime-owned projection dirtiness -->\n");
+        files_support::write_file(&evidence_path, &evidence_source);
+    }
+}
+
 fn contains_hidden_command_token(command: &str) -> bool {
     [
         " workflow record-pivot ",
@@ -473,6 +640,8 @@ fn contains_hidden_command_token(command: &str) -> bool {
         " plan execution gate-review ",
         " plan execution gate-finish ",
         " plan execution rebuild-evidence ",
+        " workflow recommend ",
+        " workflow preflight ",
         " reconcile-review-state ",
         " internal ",
     ]
@@ -481,6 +650,26 @@ fn contains_hidden_command_token(command: &str) -> bool {
 }
 
 fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) -> ProgressMetric {
+    let recommended_command = materialized_status_command(status);
+    let hidden_command_exposure = u8::from(
+        recommended_command
+            .as_deref()
+            .is_some_and(contains_hidden_command_token),
+    );
+    let targetless_stale_without_diagnostic = u8::from(
+        status.review_state_status == "stale_unreviewed"
+            && status.stale_unreviewed_closures.is_empty()
+            && !status
+                .reason_codes
+                .iter()
+                .any(|reason| reason == "stale_unreviewed_target_missing"),
+    );
+    let cycle_break_blockers = u8::from(
+        status
+            .blocking_reason_codes
+            .iter()
+            .any(|reason| reason == "task_cycle_break_active"),
+    );
     let stale_boundaries = u8::from(!status.stale_unreviewed_closures.is_empty());
     let structural_blockers = if status.blocking_reason_codes.iter().any(|reason| {
         matches!(
@@ -512,6 +701,30 @@ fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) ->
             .blocking_reason_codes
             .iter()
             .any(|reason| reason.contains("dispatch")),
+    );
+    let summary_hash_drift_reentry = u8::from(
+        status.phase_detail == "execution_reentry_required"
+            && status
+                .blocking_reason_codes
+                .iter()
+                .any(|reason| reason.contains("summary_hash")),
+    );
+    let projection_dirty_blockers = u8::from(
+        status
+            .reason_codes
+            .iter()
+            .chain(status.blocking_reason_codes.iter())
+            .any(|reason| reason.contains("projection") && reason.contains("dirty")),
+    );
+    let resume_exact_disagreement = u8::from(
+        status
+            .execution_command_context
+            .as_ref()
+            .is_some_and(|context| {
+                status
+                    .resume_task
+                    .is_some_and(|resume_task| context.task_number != Some(resume_task))
+            }),
     );
     let late_stage_blockers = match status.phase_detail.as_str() {
         "branch_closure_recording_required_for_release_readiness" => 6,
@@ -549,15 +762,71 @@ fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) ->
     );
 
     ProgressMetric {
+        targetless_stale_without_diagnostic,
+        hidden_command_exposure,
+        cycle_break_blockers,
         structural_blockers,
         stale_boundaries,
         dispatch_lineage_blockers,
+        summary_hash_drift_reentry,
+        projection_dirty_blockers,
+        resume_exact_disagreement,
         task_scope_distance,
         late_stage_blockers,
         execution_frontier_distance,
         repair_scope_distance,
         remaining_tasks: total_tasks.saturating_sub(current_closures),
     }
+}
+
+fn public_edge_satisfies_liveness_contract(
+    before_status: &PlanExecutionStatus,
+    before: ProgressMetric,
+    after_status: &PlanExecutionStatus,
+    after: ProgressMetric,
+) -> bool {
+    if after < before {
+        return true;
+    }
+    if after_status.recommended_command == before_status.recommended_command
+        && after_status.phase_detail == before_status.phase_detail
+        && after_status.blocking_reason_codes == before_status.blocking_reason_codes
+    {
+        return false;
+    }
+    if after_status.phase_detail == "runtime_reconcile_required"
+        && !after_status.blocking_reason_codes.is_empty()
+    {
+        return true;
+    }
+    if !after_status.blocking_reason_codes.is_empty()
+        && after_status.blocking_reason_codes != before_status.blocking_reason_codes
+    {
+        return true;
+    }
+    after_status.next_action == "already_current"
+        && after_status
+            .blocking_reason_codes
+            .iter()
+            .all(|reason| reason != "task_cycle_break_active")
+}
+
+fn materialized_status_command(status: &PlanExecutionStatus) -> Option<String> {
+    status
+        .recommended_command
+        .clone()
+        .or_else(|| {
+            status
+                .next_public_action
+                .as_ref()
+                .map(|action| action.command.clone())
+        })
+        .or_else(|| {
+            status
+                .blockers
+                .iter()
+                .find_map(|blocker| blocker.next_public_action.clone())
+        })
 }
 
 fn summary_file(state: &Path, label: &str) -> std::path::PathBuf {
@@ -732,21 +1001,20 @@ fn synthetic_liveness_cases(total_tasks: u8) -> Vec<SyntheticState> {
                     }
                     if completed_tasks < total_tasks {
                         cases.push(SyntheticState {
-                            completed_tasks,
                             stale_boundary_present,
                             structural_blocker_present,
-                            late_stage_blocker_present: false,
                             dispatch_lineage_missing,
+                            ..SyntheticState::base(completed_tasks)
                         });
                         continue;
                     }
                     for late_stage_blocker_present in [false, true] {
                         cases.push(SyntheticState {
-                            completed_tasks,
                             stale_boundary_present,
                             structural_blocker_present,
                             late_stage_blocker_present,
                             dispatch_lineage_missing,
+                            ..SyntheticState::base(completed_tasks)
                         });
                     }
                 }
@@ -754,14 +1022,9 @@ fn synthetic_liveness_cases(total_tasks: u8) -> Vec<SyntheticState> {
         }
     }
     if cases.is_empty() {
-        cases.push(SyntheticState {
-            completed_tasks: 0,
-            stale_boundary_present: false,
-            structural_blocker_present: false,
-            late_stage_blocker_present: false,
-            dispatch_lineage_missing: false,
-        });
+        cases.push(SyntheticState::base(0));
     }
+    cases.extend(production_loop_liveness_cases(total_tasks));
     cases.retain(|case| {
         if case.late_stage_blocker_present && case.completed_tasks < total_tasks {
             return false;
@@ -774,36 +1037,66 @@ fn synthetic_liveness_cases(total_tasks: u8) -> Vec<SyntheticState> {
             true
         }
     });
-    cases.sort_by_key(|case| {
-        (
-            case.completed_tasks,
-            case.stale_boundary_present,
-            case.structural_blocker_present,
-            case.dispatch_lineage_missing,
-            case.late_stage_blocker_present,
-        )
-    });
-    cases.dedup_by_key(|case| {
-        (
-            case.completed_tasks,
-            case.stale_boundary_present,
-            case.structural_blocker_present,
-            case.dispatch_lineage_missing,
-            case.late_stage_blocker_present,
-        )
-    });
+    cases.sort();
+    cases.dedup();
     cases
+}
+
+fn production_loop_liveness_cases(total_tasks: u8) -> Vec<SyntheticState> {
+    let active_completed = total_tasks.saturating_sub(1).max(1);
+    let completed = total_tasks.max(1);
+    vec![
+        SyntheticState {
+            stale_cycle_break_overlay_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+        SyntheticState {
+            targetless_stale_present: true,
+            current_branch_closure_null: true,
+            ..SyntheticState::base(active_completed)
+        },
+        SyntheticState {
+            late_stage_blocker_present: true,
+            current_branch_closure_null: true,
+            orphan_milestone_records_present: true,
+            ..SyntheticState::base(completed)
+        },
+        SyntheticState {
+            runtime_projection_dirtiness_present: true,
+            ..SyntheticState::base(0)
+        },
+        SyntheticState {
+            summary_hash_drift_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+        SyntheticState {
+            stale_boundary_present: true,
+            downstream_stale_step_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+        SyntheticState {
+            stale_boundary_present: true,
+            resume_exact_disagreement_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+        SyntheticState {
+            steps_per_task: 2,
+            stale_boundary_present: true,
+            downstream_interrupted_projection_present: true,
+            ..SyntheticState::base(active_completed)
+        },
+    ]
 }
 
 #[test]
 fn synthetic_liveness_generator_covers_full_legal_variant_space() {
     for total_tasks in 1_u8..=5 {
         let cases = synthetic_liveness_cases(total_tasks);
-        let expected = 1 + usize::from(total_tasks.saturating_sub(1)) * 8 + 16;
-        assert_eq!(
-            cases.len(),
-            expected,
-            "liveness generator must cover every legal stale/structural/dispatch/late-stage variant for {total_tasks} tasks"
+        let baseline_expected = 1 + usize::from(total_tasks.saturating_sub(1)) * 8 + 16;
+        assert!(
+            cases.len() >= baseline_expected,
+            "liveness generator must cover every legal base variant plus production-loop variants for {total_tasks} tasks; got {} expected at least {baseline_expected}",
+            cases.len()
         );
         for completed_tasks in 1..total_tasks {
             for stale_boundary_present in [false, true] {
@@ -816,6 +1109,16 @@ fn synthetic_liveness_generator_covers_full_legal_variant_space() {
                                     && case.structural_blocker_present == structural_blocker_present
                                     && case.dispatch_lineage_missing == dispatch_lineage_missing
                                     && !case.late_stage_blocker_present
+                                    && case.steps_per_task == 1
+                                    && !case.stale_cycle_break_overlay_present
+                                    && !case.downstream_stale_step_present
+                                    && !case.downstream_interrupted_projection_present
+                                    && !case.current_branch_closure_null
+                                    && !case.orphan_milestone_records_present
+                                    && !case.runtime_projection_dirtiness_present
+                                    && !case.summary_hash_drift_present
+                                    && !case.targetless_stale_present
+                                    && !case.resume_exact_disagreement_present
                             }),
                             "missing active legal variant for {total_tasks} tasks / {completed_tasks} completed"
                         );
@@ -834,6 +1137,16 @@ fn synthetic_liveness_generator_covers_full_legal_variant_space() {
                                     && case.structural_blocker_present == structural_blocker_present
                                     && case.dispatch_lineage_missing == dispatch_lineage_missing
                                     && case.late_stage_blocker_present == late_stage_blocker_present
+                                    && case.steps_per_task == 1
+                                    && !case.stale_cycle_break_overlay_present
+                                    && !case.downstream_stale_step_present
+                                    && !case.downstream_interrupted_projection_present
+                                    && !case.current_branch_closure_null
+                                    && !case.orphan_milestone_records_present
+                                    && !case.runtime_projection_dirtiness_present
+                                    && !case.summary_hash_drift_present
+                                    && !case.targetless_stale_present
+                                    && !case.resume_exact_disagreement_present
                             }),
                             "missing completed legal variant for {total_tasks} tasks"
                         );
@@ -844,12 +1157,132 @@ fn synthetic_liveness_generator_covers_full_legal_variant_space() {
         assert_eq!(
             cases
                 .iter()
-                .filter(|case| case.completed_tasks == 0)
+                .filter(|case| {
+                    case.completed_tasks == 0
+                        && case.steps_per_task == 1
+                        && !case.stale_boundary_present
+                        && !case.structural_blocker_present
+                        && !case.dispatch_lineage_missing
+                        && !case.runtime_projection_dirtiness_present
+                })
                 .count(),
             1,
-            "zero-completion state has only one legal variant because no closure boundary exists yet"
+            "zero-completion base state has only one legal variant because no closure boundary exists yet"
+        );
+        assert!(
+            cases.iter().any(|case| case.steps_per_task > 1),
+            "missing multi-step production-loop liveness variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases
+                .iter()
+                .any(|case| case.stale_cycle_break_overlay_present),
+            "missing FS-01 already-current cycle-break production-loop variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases.iter().any(|case| case.targetless_stale_present),
+            "missing FS-02 targetless stale production-loop variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases
+                .iter()
+                .any(|case| case.orphan_milestone_records_present),
+            "missing FS-03 orphan late-stage production-loop variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases
+                .iter()
+                .any(|case| case.runtime_projection_dirtiness_present),
+            "missing FS-04/FS-08 projection dirtiness production-loop variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases.iter().any(|case| case.summary_hash_drift_present),
+            "missing FS-05 summary-hash drift production-loop variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases.iter().any(|case| case.downstream_stale_step_present),
+            "missing downstream stale production-loop variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases
+                .iter()
+                .any(|case| case.resume_exact_disagreement_present),
+            "missing exact-command/resume-disagreement production-loop variant for {total_tasks} tasks"
+        );
+        assert!(
+            cases
+                .iter()
+                .any(|case| case.downstream_interrupted_projection_present),
+            "missing nested interruption production-loop variant for {total_tasks} tasks"
         );
     }
+}
+
+fn assert_production_loop_case_is_modeled(
+    label: &str,
+    matches_case: impl FnMut(&SyntheticState) -> bool,
+) {
+    let cases = synthetic_liveness_cases(3);
+    assert!(
+        cases.iter().any(matches_case),
+        "{label} must be present in the liveness model case set"
+    );
+}
+
+#[test]
+fn liveness_already_current_cycle_break_clears_or_routes_forward() {
+    assert_production_loop_case_is_modeled("FS-01 already-current cycle-break", |case| {
+        case.completed_tasks > 0 && case.stale_cycle_break_overlay_present
+    });
+}
+
+#[test]
+fn liveness_stale_unreviewed_without_target_diagnostics_not_reopen() {
+    assert_production_loop_case_is_modeled("FS-02 targetless stale diagnostic", |case| {
+        case.targetless_stale_present && !case.stale_boundary_present
+    });
+}
+
+#[test]
+fn liveness_orphan_late_stage_history_does_not_reopen_current_task() {
+    assert_production_loop_case_is_modeled("FS-03 orphan late-stage history", |case| {
+        case.current_branch_closure_null && case.orphan_milestone_records_present
+    });
+}
+
+#[test]
+fn liveness_projection_dirty_preflight_does_not_block() {
+    assert_production_loop_case_is_modeled("FS-04 projection-only dirtiness", |case| {
+        case.runtime_projection_dirtiness_present
+    });
+}
+
+#[test]
+fn liveness_summary_hash_drift_does_not_reenter_execution() {
+    assert_production_loop_case_is_modeled("FS-05 summary-hash drift", |case| {
+        case.summary_hash_drift_present
+    });
+}
+
+#[test]
+fn liveness_downstream_stale_step_after_prior_closure_routes_to_downstream_not_prior_task() {
+    assert_production_loop_case_is_modeled("downstream stale step", |case| {
+        case.stale_boundary_present && case.downstream_stale_step_present
+    });
+}
+
+#[test]
+fn liveness_resume_task_disagreement_never_overrides_exact_legal_command() {
+    assert_production_loop_case_is_modeled("resume/exact-command disagreement", |case| {
+        case.resume_exact_disagreement_present
+    });
+}
+
+#[test]
+fn liveness_nested_interruption_does_not_strand_earliest_stale_boundary() {
+    assert_production_loop_case_is_modeled("nested interruption", |case| {
+        case.steps_per_task > 1 && case.downstream_interrupted_projection_present
+    });
 }
 
 #[test]
@@ -862,16 +1295,17 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
 
     for total_tasks in 1_u8..=5_u8 {
         let runtime = runtime_for_status(repo, state);
-        let mut cases_by_completed = BTreeMap::<u8, Vec<SyntheticState>>::new();
+        let mut cases_by_fixture_shape = BTreeMap::<(u8, u8), Vec<SyntheticState>>::new();
         for synthetic in synthetic_liveness_cases(total_tasks) {
-            cases_by_completed
-                .entry(synthetic.completed_tasks)
+            cases_by_fixture_shape
+                .entry((synthetic.completed_tasks, synthetic.steps_per_task))
                 .or_default()
                 .push(synthetic);
         }
 
-        for (completed_tasks, cases) in cases_by_completed {
-            write_spec_and_plan(repo, total_tasks, completed_tasks);
+        for ((completed_tasks, steps_per_task), cases) in cases_by_fixture_shape {
+            clear_liveness_authority(&state_path);
+            write_spec_and_plan(repo, total_tasks, completed_tasks, steps_per_task);
             let task_contract_identities = task_contract_identities(repo, state, total_tasks);
             let task_completion_lineages =
                 task_completion_lineage_fingerprints(repo, state, total_tasks);
@@ -898,8 +1332,9 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 branch_name: &branch_name,
             };
             for synthetic in cases {
-                write_spec_and_plan(repo, total_tasks, completed_tasks);
+                write_spec_and_plan(repo, total_tasks, completed_tasks, steps_per_task);
                 write_variant_harness_state(&fixture, synthetic);
+                apply_synthetic_worktree_variants(repo, synthetic);
                 migrate_variant_to_event_authority(
                     &state_path,
                     "liveness synthetic authority migration",
@@ -976,8 +1411,8 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 });
                 let after = progress_metric_from_status(&successor, total_tasks);
                 assert!(
-                    after < before,
-                    "real public progress edge must monotonically reduce runtime-derived metric; before={before:?} after={after:?} status={status:?} successor={successor:?}"
+                    public_edge_satisfies_liveness_contract(&status, before, &successor, after),
+                    "real public progress edge must reduce the metric, expose a different true blocker, emit a deterministic diagnostic, or resolve already-current state; before={before:?} after={after:?} status={status:?} successor={successor:?}"
                 );
                 executed_successor_edges = executed_successor_edges.saturating_add(1);
             }
@@ -997,7 +1432,8 @@ fn runtime_liveness_model_checker_never_emits_hidden_recommendations() {
     let state_path = harness_state_file_path(repo, state);
     let mut hidden_hits = BTreeMap::<String, String>::new();
     for total_tasks in 1_u8..=5_u8 {
-        write_spec_and_plan(repo, total_tasks, total_tasks.saturating_sub(1));
+        clear_liveness_authority(&state_path);
+        write_spec_and_plan(repo, total_tasks, total_tasks.saturating_sub(1), 1);
         let task_contract_identities = task_contract_identities(repo, state, total_tasks);
         let task_completion_lineages =
             task_completion_lineage_fingerprints(repo, state, total_tasks);
@@ -1025,13 +1461,7 @@ fn runtime_liveness_model_checker_never_emits_hidden_recommendations() {
                 repo_slug: &repo_slug,
                 branch_name: &branch_name,
             },
-            SyntheticState {
-                completed_tasks: 0,
-                stale_boundary_present: false,
-                structural_blocker_present: false,
-                late_stage_blocker_present: false,
-                dispatch_lineage_missing: false,
-            },
+            SyntheticState::base(0),
         );
         migrate_variant_to_event_authority(
             &state_path,

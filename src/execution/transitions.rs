@@ -492,6 +492,10 @@ pub(crate) struct OpenStepStateRecord {
     pub(crate) step: u32,
     pub(crate) note_state: String,
     pub(crate) note_summary: String,
+    #[serde(default)]
+    pub(crate) execution_mode: Option<String>,
+    #[serde(default)]
+    pub(crate) repo_root: Option<String>,
     pub(crate) source_plan_path: String,
     pub(crate) source_plan_revision: u32,
     pub(crate) authoritative_sequence: u64,
@@ -2098,6 +2102,17 @@ impl AuthoritativeTransitionState {
             .filter(|value| !value.is_empty())
     }
 
+    pub(crate) fn review_state_repair_follow_up_task(&self) -> Option<u32> {
+        json_u32(&self.state_payload, "review_state_repair_follow_up_task")
+    }
+
+    pub(crate) fn review_state_repair_follow_up_closure_record_id(&self) -> Option<String> {
+        json_string(
+            &self.state_payload,
+            "review_state_repair_follow_up_closure_record_id",
+        )
+    }
+
     pub(crate) fn closure_history_snapshot(&self) -> ClosureHistorySnapshot {
         fn snapshot_map(payload: &Value, key: &str) -> BTreeMap<String, Value> {
             payload
@@ -2159,6 +2174,63 @@ impl AuthoritativeTransitionState {
         );
         self.dirty = true;
         Ok(())
+    }
+
+    pub(crate) fn set_execution_projection_fingerprints(
+        &mut self,
+        plan_fingerprint: &str,
+        evidence_fingerprint: &str,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("execution_plan_projection_fingerprint"),
+            Value::String(plan_fingerprint.to_owned()),
+        );
+        root.insert(
+            String::from("execution_evidence_projection_fingerprint"),
+            Value::String(evidence_fingerprint.to_owned()),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn record_execution_evidence_attempts(
+        &mut self,
+        context: &ExecutionContext,
+    ) -> Result<(), JsonFailure> {
+        let attempts = serde_json::to_value(&context.evidence.attempts).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!("Could not serialize authoritative execution evidence attempts: {error}"),
+            )
+        })?;
+        let root = self.root_object_mut()?;
+        root.insert(String::from("execution_evidence_attempts"), attempts);
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn clear_review_state_repair_follow_up(&mut self) -> Result<bool, JsonFailure> {
+        let has_repair_follow_up_state = self.review_state_repair_follow_up().is_some()
+            || self.review_state_repair_follow_up_task().is_some()
+            || self
+                .review_state_repair_follow_up_closure_record_id()
+                .is_some();
+        if !has_repair_follow_up_state {
+            return Ok(false);
+        }
+        let root = self.root_object_mut()?;
+        root.insert(String::from("review_state_repair_follow_up"), Value::Null);
+        root.insert(
+            String::from("review_state_repair_follow_up_task"),
+            Value::Null,
+        );
+        root.insert(
+            String::from("review_state_repair_follow_up_closure_record_id"),
+            Value::Null,
+        );
+        self.dirty = true;
+        Ok(true)
     }
 
     pub(crate) fn set_current_release_readiness_record_id_cache(
@@ -4652,6 +4724,19 @@ pub(crate) fn load_authoritative_transition_state_relaxed(
     context: &ExecutionContext,
 ) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
     load_authoritative_transition_state_internal(context, false)
+}
+
+pub(crate) fn authoritative_state_optional_string_field_for_runtime(
+    runtime: &ExecutionRuntime,
+    field: &str,
+) -> Result<Option<Option<String>>, JsonFailure> {
+    let state_path =
+        harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
+    ensure_event_log_migrated_from_legacy_state(runtime, &state_path)?;
+    let Some(state_payload) = load_reduced_authoritative_state(runtime)? else {
+        return Ok(None);
+    };
+    Ok(Some(json_string(&state_payload, field)))
 }
 
 pub(crate) fn enforce_authoritative_phase(

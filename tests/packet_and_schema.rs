@@ -916,6 +916,7 @@ fn plan_execution_status_schema_issues(schema_json: &str) -> Vec<String> {
             "qa_recording_required",
             "release_blocker_resolution_required",
             "release_readiness_recording_ready",
+            "runtime_reconcile_required",
             "task_closure_recording_ready",
             "task_review_dispatch_required",
             "task_review_result_pending",

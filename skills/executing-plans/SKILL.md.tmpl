@@ -38,7 +38,7 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 8. The later repo-safety checks still govern any additional protected branches declared through repo or user instructions.
 9. Run `featureforge workflow operator --plan <approved-plan-path>` before starting execution.
 10. If workflow/operator does not report `phase` `executing`, stop and follow the reported `phase`, `phase_detail`, `next_action`, and `recommended_command` instead of reopening execution through compatibility helpers.
-11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and use the approved plan checklist as the human-visible execution progress projection while the event log remains authoritative for routing and gates.
+11. If workflow/operator confirms `phase` `executing`, review the plan critically for execution concerns and treat workflow/operator plus `plan execution status` as the live execution surface. Tracked checklist/evidence markdown is an optional materialized export; the event log remains authoritative for routing and gates.
 12. Treat execution start as a hard gate, not a reminder:
    - no code edits and no test edits are allowed after workflow/operator confirms the current execution preflight handoff and before the first `begin` for the active step
    - no repo mutation is allowed until that first `begin` is recorded
@@ -64,6 +64,8 @@ Load the approved plan, follow the runtime-selected topology, execute all tasks,
 - Coordinators and subagents may prepare candidate artifacts (for example task packets, coverage matrix context, and handoff drafts), but they must not directly invoke these commands; the runtime helper owns and executes execution-state mutations.
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:executing-plans`
 - The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
+- Runtime read models are rendered under the state directory during normal execution. Tracked approved-plan checklist and evidence markdown are optional exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.
+- Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --tracked` only when the user explicitly needs tracked human-readable exports. Materialization is never required normal progress. Add `--scope execution|late-stage|all` only when a non-default export scope is needed.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 
@@ -129,7 +131,7 @@ For each task:
    - `Done when` obligations must not be reinterpreted or replaced with prose summaries; objectively reviewable obligations remain mandatory even when verified by diff inspection or targeted evidence rather than one command.
    - Separate-session handoffs must paste the helper-built packet verbatim and may not replace it with a coordinator-written summary.
    - If packet content conflicts with `review/plan-task-contract.md`, stop and route back to plan review instead of guessing.
-3. Use the approved plan checklist as the human-visible step-progress projection for the task's steps; the event log remains authoritative for routing and gates.
+3. Use workflow/operator and `plan execution status` as the live step-progress surface for the task's steps; tracked checklist/evidence markdown is optional materialized output and is not routing authority.
 4. Follow each step exactly (plan has bite-sized steps).
 5. Run verifications as specified.
 6. After the implementation steps for a task are complete, enforce the mandatory task-boundary closure loop before beginning the next task:
@@ -144,7 +146,7 @@ For each task:
    - if workflow/operator remains in a `*_dispatch_required` lane after an external review result is ready, keep rerouting through workflow/operator and the intent-level commands; do not expand the normal path into low-level dispatch-lineage management
    - no exceptions: only after close-current-task succeeds may Task `N+1` begin
 7. If the packet is malformed, stale, or still leaves ambiguity unresolved, stop and route back to review instead of guessing.
-8. Call `complete` as soon as a step is truly satisfied so the plan checkbox flips to `- [x]`.
+8. Call `complete` as soon as a step is truly satisfied so the authoritative event log records the completed step. Do not manually flip tracked plan checkboxes during normal execution.
 
 ### Reviewed-Closure Command Matrix
 
@@ -172,6 +174,7 @@ Do not reconstruct closure routing from memory or duplicate route tables in this
 - MUST NOT manually edit runtime-owned execution records.
 - MUST NOT manually edit `**Execution Note:**` lines to recover runtime state.
 - MUST NOT manually edit derived markdown artifacts or receipts.
+- MUST NOT repair runtime progress by editing tracked plan, evidence, review, readiness, QA, or strategy projection files.
 - MUST NOT use the internal task-closure recording service boundary directly.
 - MUST use `close-current-task` for task closure.
 

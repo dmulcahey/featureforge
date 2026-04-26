@@ -329,6 +329,20 @@ fn route_decision_from_runtime_state_with_inputs(
     {
         return branch_closure_recording_route_decision(runtime_state, status);
     }
+    if status
+        .reason_codes
+        .iter()
+        .any(|code| code == "stale_unreviewed_target_missing")
+    {
+        return runtime_reconcile_route_decision(
+            runtime_state,
+            status,
+            status
+                .blocking_task
+                .or_else(|| blocking_task_from_status_records(status)),
+            "stale_unreviewed_target_missing",
+        );
+    }
     if status.blocking_records.iter().any(|record| {
         record.record_type == "review_state"
             && record.required_follow_up.as_deref() == Some("repair_review_state")
@@ -701,6 +715,59 @@ fn repair_review_state_route_decision(
     reason_code: &str,
 ) -> RouteDecision {
     let phase_detail = String::from("execution_reentry_required");
+    let recommended_command = Some(format!(
+        "featureforge plan execution repair-review-state --plan {}",
+        runtime_state.context.plan_rel
+    ));
+    let next_public_action =
+        synthesize_next_public_action(recommended_command.as_deref(), &phase_detail);
+    let review_state_status = status.review_state_status.clone();
+    let mut blocking_reason_codes = compact_route_reason_codes(
+        status,
+        &phase_detail,
+        &review_state_status,
+        task_number.or(status.blocking_task),
+        None,
+    );
+    if !blocking_reason_codes
+        .iter()
+        .any(|existing| existing == reason_code)
+    {
+        blocking_reason_codes.push(reason_code.to_owned());
+    }
+    let state_kind = derive_state_kind_from_seed(
+        None,
+        status.harness_phase,
+        &phase_detail,
+        recommended_command.as_deref(),
+    );
+    let blockers = materialize_blocker_actions(
+        primary_blocker_for_status(status, state_kind.as_str(), next_public_action.as_ref()),
+        &runtime_state.context.plan_rel,
+    );
+    RouteDecision {
+        state_kind,
+        phase: String::from("executing"),
+        phase_detail,
+        review_state_status,
+        next_action: String::from("repair review state / reenter execution"),
+        blocking_reason_codes,
+        recommended_command,
+        required_follow_up: Some(String::from("repair_review_state")),
+        next_public_action,
+        blockers,
+        execution_command_context: None,
+        recording_context: None,
+    }
+}
+
+fn runtime_reconcile_route_decision(
+    runtime_state: &RuntimeState,
+    status: &PlanExecutionStatus,
+    task_number: Option<u32>,
+    reason_code: &str,
+) -> RouteDecision {
+    let phase_detail = String::from("runtime_reconcile_required");
     let recommended_command = Some(format!(
         "featureforge plan execution repair-review-state --plan {}",
         runtime_state.context.plan_rel
@@ -2063,6 +2130,10 @@ mod tests {
             execution_mode: String::from("none"),
             execution_fingerprint: String::from("fingerprint"),
             evidence_path: String::from("docs/featureforge/execution-evidence/example"),
+            projection_mode: String::from("state_dir_only"),
+            state_dir_projection_paths: Vec::new(),
+            tracked_projection_paths: Vec::new(),
+            tracked_projections_current: false,
             execution_started: String::from("yes"),
             warning_codes: Vec::new(),
             active_task: None,

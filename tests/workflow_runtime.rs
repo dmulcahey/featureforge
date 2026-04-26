@@ -12,6 +12,8 @@ mod markdown_scan_support;
 mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/projection.rs"]
+mod projection_support;
 #[path = "support/runtime_json.rs"]
 mod runtime_json_support;
 #[path = "support/runtime_phase_handoff.rs"]
@@ -6962,30 +6964,18 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_d
         "plan execution explain-review-state after same-branch fingerprint guard fixture on repo B",
     );
 
-    assert_eq!(status_b_after_begin["execution_started"], "no");
-    assert!(
-        status_b_after_begin["active_task"].is_null(),
-        "repo B should not borrow repo A's active task when execution fingerprints differ"
-    );
-    assert!(
-        status_b_after_begin["active_step"].is_null(),
-        "repo B should not borrow repo A's active step when execution fingerprints differ"
+    assert_eq!(status_b_after_begin["execution_started"], "yes");
+    assert_eq!(
+        status_b_after_begin["active_task"], 1,
+        "tracked execution-evidence exports are not routing authority, so repo B can share repo A's same-branch started state"
     );
     assert_eq!(
-        status_b_before_begin["phase_detail"], status_b_after_begin["phase_detail"],
-        "repo B should preserve its local phase detail when same-branch fingerprints differ"
+        status_b_after_begin["active_step"], 1,
+        "tracked execution-evidence exports are not routing authority, so repo B can share repo A's same-branch started step"
     );
-    assert_eq!(
-        explain_b_before_begin["next_action"], explain_b_after_begin["next_action"],
-        "repo B explain-review-state should preserve its local next_action when same-branch fingerprints differ"
-    );
-    assert_eq!(
+    assert_ne!(
         explain_b_before_begin["recommended_command"], explain_b_after_begin["recommended_command"],
-        "repo B explain-review-state should preserve its local recommended command when same-branch fingerprints differ"
-    );
-    assert_eq!(
-        explain_b_before_begin["trace_summary"], explain_b_after_begin["trace_summary"],
-        "repo B explain-review-state should preserve its local trace summary when same-branch fingerprints differ"
+        "same-branch adoption should update the execution command once only tracked projection exports differ"
     );
 }
 
@@ -8949,7 +8939,7 @@ fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase
 }
 
 #[test]
-fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
+fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-gate-review-evidence-failure");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -8979,11 +8969,39 @@ fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
         &["status", "--plan", plan_rel],
         "plan execution status for workflow gate-review evidence failure fixture",
     );
-    let evidence_path = repo.join(
-        execution_status["evidence_path"]
-            .as_str()
-            .expect("execution status should expose evidence_path"),
+    let evidence_rel = execution_status["evidence_path"]
+        .as_str()
+        .expect("execution status should expose evidence_path");
+    run_plan_execution_json(
+        repo,
+        state,
+        &["materialize-projections", "--plan", plan_rel, "--tracked"],
+        "materialize tracked execution evidence for gate-review diagnostic fixture",
     );
+    let state_dir_evidence_path =
+        projection_support::state_dir_projection_path(&execution_status, evidence_rel);
+    fs::remove_file(&state_dir_evidence_path).unwrap_or_else(|error| {
+        panic!(
+            "state-dir evidence projection {} should be removable for tracked diagnostic fixture: {error}",
+            state_dir_evidence_path.display()
+        )
+    });
+    let state_dir_fingerprint_path = state_dir_evidence_path.with_file_name(format!(
+        "{}.sha256",
+        state_dir_evidence_path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .expect("state-dir evidence projection should have a utf-8 file name")
+    ));
+    if let Err(error) = fs::remove_file(&state_dir_fingerprint_path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        panic!(
+            "state-dir evidence projection fingerprint {} should be removable for tracked diagnostic fixture: {error}",
+            state_dir_fingerprint_path.display()
+        );
+    }
+    let evidence_path = repo.join(evidence_rel);
     replace_in_file(
         &evidence_path,
         "**Plan Fingerprint:** ",
@@ -9020,22 +9038,22 @@ fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
         ),
         "workflow doctor for gate-review evidence failure fixture",
     );
+    assert_eq!(
+        doctor_json["execution_status"]["tracked_projections_current"],
+        Value::Bool(false),
+        "workflow doctor should expose stale tracked projection currentness without making it route authority, got {doctor_json:?}"
+    );
     if let Some(gate_review) = doctor_json["gate_review"].as_object() {
-        assert_eq!(gate_review.get("allowed"), Some(&Value::Bool(false)));
-        assert_eq!(
-            gate_review.get("failure_class"),
-            Some(&Value::from("StaleProvenance"))
-        );
         assert!(
             gate_review
                 .get("reason_codes")
                 .and_then(Value::as_array)
-                .is_some_and(|codes| {
-                    codes
+                .is_none_or(|codes| {
+                    !codes
                         .iter()
                         .any(|code| code.as_str() == Some("plan_fingerprint_mismatch"))
                 }),
-            "workflow doctor should surface projection provenance diagnostics without making them route authority, got {doctor_json:?}"
+            "tracked projection freshness should not surface as a gate-review reason, got {doctor_json:?}"
         );
     }
     assert_eq!(phase_json["phase"], "document_release_pending");
@@ -12215,11 +12233,9 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
         &["status", "--plan", plan_rel],
         "FS-20 baseline status before runtime-owned churn",
     );
-    let evidence_path = repo.join(
-        baseline_status["evidence_path"]
-            .as_str()
-            .expect("FS-20 baseline status should expose evidence_path"),
-    );
+    let evidence_rel = baseline_status["evidence_path"]
+        .as_str()
+        .expect("FS-20 baseline status should expose evidence_path");
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
@@ -12227,9 +12243,10 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
         &format!("{plan_source}\n<!-- fs20 runtime-owned plan mutation -->\n"),
     );
     let evidence_source =
-        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
-    write_file(
-        &evidence_path,
+        projection_support::read_state_dir_projection(&baseline_status, evidence_rel);
+    projection_support::write_state_dir_projection(
+        &baseline_status,
+        evidence_rel,
         &format!("{evidence_source}\n<!-- fs20 runtime-owned evidence mutation -->\n"),
     );
 
@@ -12277,11 +12294,9 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_br
         .as_str()
         .expect("FS-20 baseline status should expose current_branch_closure_id")
         .to_owned();
-    let evidence_path = repo.join(
-        baseline_status["evidence_path"]
-            .as_str()
-            .expect("FS-20 baseline status should expose evidence_path"),
-    );
+    let evidence_rel = baseline_status["evidence_path"]
+        .as_str()
+        .expect("FS-20 baseline status should expose evidence_path");
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
@@ -12289,9 +12304,10 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_br
         &format!("{plan_source}\n<!-- fs20 branch runtime-owned plan mutation -->\n"),
     );
     let evidence_source =
-        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
-    write_file(
-        &evidence_path,
+        projection_support::read_state_dir_projection(&baseline_status, evidence_rel);
+    projection_support::write_state_dir_projection(
+        &baseline_status,
+        evidence_rel,
         &format!("{evidence_source}\n<!-- fs20 branch runtime-owned evidence mutation -->\n"),
     );
 
@@ -12340,11 +12356,9 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
     let baseline_release_state = baseline_status["current_release_readiness_state"].clone();
     let baseline_final_state = baseline_status["current_final_review_state"].clone();
     let baseline_qa_state = baseline_status["current_qa_state"].clone();
-    let evidence_path = repo.join(
-        baseline_status["evidence_path"]
-            .as_str()
-            .expect("FS-20 baseline status should expose evidence path"),
-    );
+    let evidence_rel = baseline_status["evidence_path"]
+        .as_str()
+        .expect("FS-20 baseline status should expose evidence path");
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
@@ -12352,9 +12366,10 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
         &format!("{plan_source}\n<!-- fs20 branch-current runtime-owned plan mutation -->\n"),
     );
     let evidence_source =
-        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
-    write_file(
-        &evidence_path,
+        projection_support::read_state_dir_projection(&baseline_status, evidence_rel);
+    projection_support::write_state_dir_projection(
+        &baseline_status,
+        evidence_rel,
         &format!(
             "{evidence_source}\n<!-- fs20 branch-current runtime-owned evidence mutation -->\n"
         ),

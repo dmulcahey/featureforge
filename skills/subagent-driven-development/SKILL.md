@@ -232,6 +232,8 @@ Before dispatching any implementation subagent:
 - reports interruptions or blockers in the handoff/status surface instead of invoking a removed execution-note command
 - On the first `begin` for a revision whose plan still says `**Execution Mode:** none`, initialize execution with `--execution-mode featureforge:subagent-driven-development`
 - The approved plan checklist is the human-visible execution progress projection. The event log remains authoritative for routing and gates; do not create or maintain a separate ad hoc task tracker outside those shared surfaces.
+- Runtime read models are rendered under the state directory during normal execution. Tracked approved-plan checklist and evidence markdown are optional exports; do not create or maintain a separate ad hoc task tracker outside workflow/operator and status.
+- Use `featureforge plan execution materialize-projections --plan <approved-plan-path> --tracked` only when the user explicitly needs tracked human-readable exports. Materialization is never required normal progress. Add `--scope execution|late-stage|all` only when a non-default export scope is needed.
 
 ## Runtime Strategy Checkpoints (Automatic, Runtime-Owned)
 

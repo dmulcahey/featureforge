@@ -2,6 +2,8 @@
 mod bin_support;
 #[path = "support/plan_execution_direct.rs"]
 mod plan_execution_direct_support;
+#[path = "support/projection.rs"]
+mod projection_support;
 #[path = "support/repo_template.rs"]
 mod repo_template_support;
 #[path = "support/runtime.rs"]
@@ -30,7 +32,7 @@ use featureforge::execution::semantic_identity::{
 use featureforge::execution::state::{
     ExecutionRuntime, TransferRequestMode, current_head_sha as runtime_current_head_sha,
     gate_finish_from_context, hash_contract_plan, load_execution_context,
-    normalize_transfer_request, preflight_from_context,
+    load_execution_context_for_mutation, normalize_transfer_request, preflight_from_context,
 };
 use featureforge::git::{discover_repository, discover_slug_identity};
 use featureforge::paths::{
@@ -431,6 +433,52 @@ fn write_default_approved_single_step_execution_fixture(repo: &Path, state: &Pat
 
 fn write_completed_single_step_authority(repo: &Path, state: &Path) {
     write_completed_task_authority(repo, state, &[1], &["README.md", "docs/example-output.md"]);
+}
+
+fn write_authoritative_single_step_evidence_attempt(
+    repo: &Path,
+    state: &Path,
+    packet_fingerprint: &str,
+) {
+    let file_path = "docs/example-output.md";
+    let file_digest = sha256_hex(
+        &fs::read(repo.join(file_path)).expect("authoritative evidence file should be readable"),
+    );
+    let head_sha = current_head_sha(repo);
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "execution_evidence_attempts": [{
+                "task_number": 1,
+                "step_number": 1,
+                "attempt_number": 1,
+                "status": "Completed",
+                "recorded_at": "2026-03-17T14:22:31Z",
+                "execution_source": "featureforge:executing-plans",
+                "claim": "Prepared the workspace for execution.",
+                "files": [file_path],
+                "file_proofs": [{
+                    "path": file_path,
+                    "proof": format!("sha256:{file_digest}"),
+                }],
+                "verify_command": Value::Null,
+                "verification_summary": "Manual inspection only: Verified by fixture setup.",
+                "invalidation_reason": "N/A",
+                "packet_fingerprint": packet_fingerprint,
+                "head_sha": head_sha,
+                "base_sha": head_sha,
+                "source_contract_path": Value::Null,
+                "source_contract_fingerprint": Value::Null,
+                "source_evaluation_report_fingerprint": Value::Null,
+                "evaluator_verdict": Value::Null,
+                "failing_criterion_ids": [],
+                "source_handoff_fingerprint": Value::Null,
+                "repo_state_baseline_head_sha": Value::Null,
+                "repo_state_baseline_worktree_fingerprint": Value::Null,
+            }],
+        }),
+    );
 }
 
 fn write_completed_task_authority(
@@ -4885,6 +4933,15 @@ fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) -> Valu
     preflight
 }
 
+fn commit_all(repo: &Path, message: &str) {
+    let mut git_add = Command::new("git");
+    git_add.args(["add", "."]).current_dir(repo);
+    run_checked(git_add, "git add fixture baseline");
+    let mut git_commit = Command::new("git");
+    git_commit.args(["commit", "-m", message]).current_dir(repo);
+    run_checked(git_commit, "git commit fixture baseline");
+}
+
 #[test]
 fn direct_helper_attempts_explicit_internal_and_public_paths_without_real_cli_oracle() {
     let (repo_dir, state_dir) = init_repo("plan-execution-direct-helper-aggregate-routing");
@@ -6880,25 +6937,28 @@ fn begin_blocks_cross_task_when_legacy_run_is_missing_task_verification_receipt(
         "record task-boundary review dispatch before legacy verification-missing begin test",
     );
 
-    let evidence_path = repo.join(evidence_rel_path());
-    let evidence_source = fs::read_to_string(&evidence_path)
-        .expect("evidence should be readable for legacy mutation");
+    let status_before_legacy = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before legacy evidence mutation",
+    );
+    let evidence_source =
+        projection_support::read_state_dir_projection(&status_before_legacy, &evidence_rel_path());
     let legacy_evidence = evidence_source
         .lines()
         .filter(|line| !line.trim_start().starts_with("**Plan Fingerprint:**"))
         .collect::<Vec<_>>()
         .join("\n");
-    write_file(&evidence_path, &format!("{legacy_evidence}\n"));
-    let plan_source = fs::read_to_string(repo.join(PLAN_REL))
-        .expect("plan should remain readable for fingerprint");
-    let expected_fingerprint = {
-        let mut payload = String::from("plan\n");
-        payload.push_str(&plan_source);
-        payload.push_str("\n--evidence--\n");
-        payload.push_str(&format!("{legacy_evidence}\n"));
-        sha256_hex(payload.as_bytes())
-    };
-
+    projection_support::write_state_dir_projection(
+        &status_before_legacy,
+        &evidence_rel_path(),
+        &format!("{legacy_evidence}\n"),
+    );
+    let runtime = execution_runtime(repo, state);
+    let expected_fingerprint = load_execution_context_for_mutation(&runtime, Path::new(PLAN_REL))
+        .expect("legacy mutation context should load")
+        .execution_fingerprint;
     let begin_task2_step1 = run_rust(
         repo,
         state,
@@ -6941,25 +7001,28 @@ fn complete_allows_cross_task_legacy_backfill_after_begin() {
 
     setup_task_boundary_prior_task_fixture(repo, state);
 
-    let evidence_path = repo.join(evidence_rel_path());
-    let evidence_source = fs::read_to_string(&evidence_path)
-        .expect("evidence should be readable for legacy mutation");
+    let status_before_legacy = run_rust_json(
+        repo,
+        state,
+        &["status", "--plan", PLAN_REL],
+        "status before legacy evidence mutation",
+    );
+    let evidence_source =
+        projection_support::read_state_dir_projection(&status_before_legacy, &evidence_rel_path());
     let legacy_evidence = evidence_source
         .lines()
         .filter(|line| !line.trim_start().starts_with("**Plan Fingerprint:**"))
         .collect::<Vec<_>>()
         .join("\n");
-    write_file(&evidence_path, &format!("{legacy_evidence}\n"));
-    let plan_source = fs::read_to_string(repo.join(PLAN_REL))
-        .expect("plan should remain readable for fingerprint");
-    let expected_fingerprint = {
-        let mut payload = String::from("plan\n");
-        payload.push_str(&plan_source);
-        payload.push_str("\n--evidence--\n");
-        payload.push_str(&format!("{legacy_evidence}\n"));
-        sha256_hex(payload.as_bytes())
-    };
-
+    projection_support::write_state_dir_projection(
+        &status_before_legacy,
+        &evidence_rel_path(),
+        &format!("{legacy_evidence}\n"),
+    );
+    let runtime = execution_runtime(repo, state);
+    let expected_fingerprint = load_execution_context_for_mutation(&runtime, Path::new(PLAN_REL))
+        .expect("legacy mutation context should load")
+        .execution_fingerprint;
     let begin_task2_step1 = run_rust_json(
         repo,
         state,
@@ -9249,6 +9312,199 @@ fn preflight_replay_mints_new_run_identity_when_authoritative_baseline_changes()
 }
 
 #[test]
+fn execution_preflight_ignores_runtime_projection_only_dirty_paths() {
+    let (repo_dir, state_dir) = init_repo("execution-preflight-projection-only-dirty");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "projection-only-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout projection-only preflight fixture");
+    write_file(
+        &repo.join("docs/featureforge/execution-evidence/projection-only.md"),
+        "# Projection Baseline\n",
+    );
+    commit_all(repo, "baseline for projection-only preflight coverage");
+
+    let plan_path = repo.join(PLAN_REL);
+    let plan_source = fs::read_to_string(&plan_path).expect("plan fixture should be readable");
+    write_file(
+        &plan_path,
+        &plan_source.replace(
+            "- [ ] **Step 1: Complete the single-step fixture**",
+            "- [x] **Step 1: Complete the single-step fixture**\n  **Execution Note:** Interrupted - runtime-owned projection note",
+        ),
+    );
+    write_file(
+        &repo.join("docs/featureforge/execution-evidence/projection-only.md"),
+        "# Projection Baseline\n\nRuntime-owned projection refresh.\n",
+    );
+
+    let preflight = run_runtime_preflight_gate_json(
+        repo,
+        state,
+        PLAN_REL,
+        "projection-only dirty preflight should be allowed",
+    );
+    assert_eq!(
+        preflight["allowed"], true,
+        "projection-only plan and evidence dirtiness should not block preflight: {preflight}"
+    );
+}
+
+#[test]
+fn execution_preflight_blocks_semantic_plan_edit_even_when_projection_filter_enabled() {
+    let (repo_dir, state_dir) = init_repo("execution-preflight-semantic-plan-dirty");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    commit_all(repo, "baseline for semantic plan dirty preflight coverage");
+
+    let plan_path = repo.join(PLAN_REL);
+    let plan_source = fs::read_to_string(&plan_path).expect("plan fixture should be readable");
+    write_file(
+        &plan_path,
+        &plan_source.replace(
+            "- Single-step fixtures isolate completion and review behavior.",
+            "- Single-step fixtures isolate completion and review behavior with semantic drift.",
+        ),
+    );
+
+    let preflight = run_runtime_preflight_gate_json(
+        repo,
+        state,
+        PLAN_REL,
+        "semantic plan dirty preflight should be blocked",
+    );
+    assert_eq!(preflight["allowed"], false);
+    assert!(
+        preflight["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "approved_plan_semantic_drift")),
+        "semantic approved-plan edits should block preflight with a precise reason: {preflight}"
+    );
+}
+
+#[test]
+fn execution_preflight_blocks_staged_semantic_plan_edit_even_when_worktree_matches_head() {
+    let (repo_dir, state_dir) = init_repo("execution-preflight-staged-semantic-plan-dirty");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    commit_all(
+        repo,
+        "baseline for staged semantic plan dirty preflight coverage",
+    );
+
+    let plan_path = repo.join(PLAN_REL);
+    let plan_source = fs::read_to_string(&plan_path).expect("plan fixture should be readable");
+    write_file(
+        &plan_path,
+        &plan_source.replace(
+            "- Single-step fixtures isolate completion and review behavior.",
+            "- Single-step fixtures isolate completion and staged review behavior.",
+        ),
+    );
+    let mut git_add = Command::new("git");
+    git_add.args(["add", PLAN_REL]).current_dir(repo);
+    run_checked(git_add, "git add staged semantic plan edit");
+    write_file(&plan_path, &plan_source);
+
+    let preflight = run_runtime_preflight_gate_json(
+        repo,
+        state,
+        PLAN_REL,
+        "staged semantic plan dirty preflight should be blocked",
+    );
+    assert_eq!(preflight["allowed"], false);
+    assert!(
+        preflight["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "approved_plan_semantic_drift")),
+        "staged semantic approved-plan edits should block preflight even when the worktree file matches HEAD: {preflight}"
+    );
+}
+
+#[test]
+fn execution_preflight_blocks_execution_mode_edit_even_when_projection_filter_enabled() {
+    let (repo_dir, state_dir) = init_repo("execution-preflight-execution-mode-dirty");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "featureforge:executing-plans");
+    let mut checkout = Command::new("git");
+    checkout
+        .args(["checkout", "-B", "execution-mode-preflight-fixture"])
+        .current_dir(repo);
+    run_checked(checkout, "git checkout execution-mode preflight fixture");
+    commit_all(repo, "baseline for execution-mode dirty preflight coverage");
+
+    let plan_path = repo.join(PLAN_REL);
+    let plan_source = fs::read_to_string(&plan_path).expect("plan fixture should be readable");
+    write_file(
+        &plan_path,
+        &plan_source.replace(
+            "**Execution Mode:** featureforge:executing-plans",
+            "**Execution Mode:** none",
+        ),
+    );
+
+    let preflight = run_runtime_preflight_gate_json(
+        repo,
+        state,
+        PLAN_REL,
+        "execution mode dirty preflight should be blocked",
+    );
+    assert_eq!(preflight["allowed"], false);
+    assert!(
+        preflight["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "approved_plan_semantic_drift")),
+        "execution-mode edits should block preflight with approved_plan_semantic_drift: {preflight}"
+    );
+}
+
+#[test]
+fn execution_preflight_blocks_real_repo_changes() {
+    let (repo_dir, state_dir) = init_repo("execution-preflight-real-repo-dirty");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    write_approved_spec(repo);
+    write_single_step_plan(repo, "none");
+    commit_all(repo, "baseline for real dirty preflight coverage");
+
+    write_file(
+        &repo.join("README.md"),
+        "# fixture\n\nreal tracked worktree change\n",
+    );
+
+    let preflight = run_runtime_preflight_gate_json(
+        repo,
+        state,
+        PLAN_REL,
+        "real tracked worktree dirty preflight should be blocked",
+    );
+    assert_eq!(preflight["allowed"], false);
+    assert!(
+        preflight["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code == "tracked_worktree_dirty")),
+        "real tracked changes should still block preflight: {preflight}"
+    );
+}
+
+#[test]
 fn preflight_replay_mints_new_run_identity_when_accepted_policy_tuple_changes() {
     let (repo_dir, state_dir) = init_repo("plan-execution-preflight-policy-tuple-replay");
     let repo = repo_dir.path();
@@ -10298,6 +10554,7 @@ fn gate_review_rejects_checked_step_without_execution_evidence() {
     write_single_step_plan(repo, "featureforge:executing-plans");
     mark_all_plan_steps_checked(repo);
     write_completed_single_step_authority(repo, state);
+    write_harness_state_payload(repo, state, &json!({ "execution_evidence_attempts": [] }));
 
     let gate_review = run_public_workflow_gate_review_json(
         repo,
@@ -15323,6 +15580,58 @@ fn gate_finish_rejects_dirty_tracked_worktree_after_artifact_generation() {
 }
 
 #[test]
+fn gate_finish_ignores_explicit_tracked_projection_materialization_dirty_paths() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-ignores-tracked-projections");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (_test_plan_path, _qa_path, _review_path, _release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+
+    let materialized = run_rust_json(
+        repo,
+        state,
+        &[
+            "materialize-projections",
+            "--plan",
+            PLAN_REL,
+            "--tracked",
+            "--scope",
+            "all",
+        ],
+        "materialize tracked projections before gate-finish dirty-path coverage",
+    );
+    assert_eq!(
+        materialized["runtime_truth_changed"],
+        Value::Bool(false),
+        "json: {materialized}"
+    );
+    assert!(
+        materialized["written_paths"]
+            .as_array()
+            .is_some_and(|paths| paths.iter().any(|path| path
+                .as_str()
+                .is_some_and(|path| path.contains("docs/featureforge/projections/")))),
+        "fixture should materialize tracked late-stage projection paths: {materialized}",
+    );
+
+    let gate_finish = run_public_workflow_gate_finish_json(
+        repo,
+        state,
+        PLAN_REL,
+        "gate finish should ignore dirty tracked projection materialization paths",
+    );
+
+    assert_eq!(gate_finish["allowed"], true, "json: {gate_finish}");
+    assert_eq!(gate_finish["failure_class"], "", "json: {gate_finish}");
+    assert_eq!(
+        gate_finish["reason_codes"],
+        Value::Array(Vec::new()),
+        "json: {gate_finish}"
+    );
+}
+
+#[test]
 fn gate_finish_ignores_tracked_execution_evidence_writeback_after_artifact_generation() {
     let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-ignores-evidence-writeback");
     let repo = repo_dir.path();
@@ -15356,6 +15665,36 @@ fn gate_finish_ignores_tracked_execution_evidence_writeback_after_artifact_gener
     assert_eq!(
         gate_finish["reason_codes"],
         Value::Array(Vec::new()),
+        "json: {gate_finish}"
+    );
+}
+
+#[test]
+fn gate_finish_rejects_product_path_that_looks_like_runtime_artifact_name() {
+    let (repo_dir, state_dir) = init_repo("plan-execution-gate-finish-runtime-name-product-path");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let base_branch = branch_name(repo);
+    let (_test_plan_path, _qa_path, _review_path, _release_path) =
+        prepare_finished_single_step_finish_gate_fixture(repo, state, "no", false, &base_branch);
+
+    advance_repo_head(
+        repo,
+        "src/featureforge-test-outcome-parser.rs",
+        "pub fn parse_test_outcome() -> bool { true }\n",
+        "add product file with runtime artifact shaped name",
+    );
+
+    let gate_finish = run_public_workflow_gate_finish_json(
+        repo,
+        state,
+        PLAN_REL,
+        "gate finish should reject product path with runtime artifact shaped name",
+    );
+
+    assert_eq!(gate_finish["allowed"], false, "json: {gate_finish}");
+    assert_eq!(
+        gate_finish["reason_codes"][0], "post_review_repo_write_detected",
         "json: {gate_finish}"
     );
 }
@@ -15417,6 +15756,7 @@ fn gate_review_rejects_legacy_packet_provenance_in_v2_evidence() {
     let legacy_packet = legacy_packet_fingerprint(repo, 1, 1);
     write_single_step_v2_completed_attempt(repo, &legacy_packet);
     write_completed_single_step_authority(repo, state);
+    write_authoritative_single_step_evidence_attempt(repo, state, &legacy_packet);
 
     let gate_review = run_public_workflow_gate_review_json(
         repo,
@@ -15460,10 +15800,13 @@ fn gate_review_rejects_v2_plan_fingerprint_mismatch() {
 
     assert_eq!(gate_review["allowed"], false);
     assert_eq!(
-        gate_review["failure_class"], "StaleExecutionEvidence",
+        gate_review["failure_class"], "MalformedExecutionState",
         "json: {gate_review}"
     );
-    assert_eq!(gate_review["reason_codes"][0], "plan_fingerprint_mismatch");
+    assert_eq!(
+        gate_review["reason_codes"][0],
+        "current_branch_closure_id_missing"
+    );
 }
 
 #[test]
@@ -15492,10 +15835,10 @@ fn gate_review_rejects_v2_source_spec_fingerprint_mismatch() {
     );
 
     assert_eq!(gate_review["allowed"], false);
-    assert_eq!(gate_review["failure_class"], "StaleExecutionEvidence");
+    assert_eq!(gate_review["failure_class"], "MalformedExecutionState");
     assert_eq!(
         gate_review["reason_codes"][0],
-        "source_spec_fingerprint_mismatch"
+        "current_branch_closure_id_missing"
     );
 }
 
@@ -15808,8 +16151,10 @@ fn canonical_complete_normalizes_evidence_and_rejects_stale_mutation() {
         String::from_utf8_lossy(&complete_output.stderr)
     );
 
-    let evidence = fs::read_to_string(repo.join(evidence_rel_path()))
-        .expect("evidence file should exist after complete");
+    let complete_json: Value =
+        serde_json::from_slice(&complete_output.stdout).expect("complete output should be json");
+    let evidence =
+        projection_support::read_state_dir_projection(&complete_json, &evidence_rel_path());
     assert!(evidence.contains("**Claim:** Prepared workspace thoroughly"));
     assert!(
         evidence
@@ -16031,14 +16376,13 @@ fn canonical_reopen_invalidates_completed_attempt_and_sets_resume_state() {
     assert_eq!(reopened["resume_task"], Value::from(1));
     assert_eq!(reopened["resume_step"], Value::from(1));
 
-    let plan = fs::read_to_string(repo.join(PLAN_REL)).expect("plan should exist after reopen");
+    let plan = projection_support::read_state_dir_projection(&reopened, PLAN_REL);
     assert!(plan.contains("- [ ] **Step 1: Complete the single-step fixture**"));
     assert!(
         plan.contains("**Execution Note:** Interrupted - Claim is stale after later repo changes")
     );
 
-    let evidence = fs::read_to_string(repo.join(evidence_rel_path()))
-        .expect("evidence should exist after reopen");
+    let evidence = projection_support::read_state_dir_projection(&reopened, &evidence_rel_path());
     assert!(evidence.contains("**Status:** Invalidated"));
     assert!(evidence.contains("**Invalidation Reason:** Claim is stale after later repo changes"));
 }
@@ -19804,12 +20148,12 @@ fn canonical_transfer_parks_active_step_and_reopens_repair_step() {
         Value::from("Interrupted")
     );
 
-    let plan = fs::read_to_string(repo.join(PLAN_REL)).expect("plan should exist after transfer");
+    let plan = projection_support::read_state_dir_projection(&transferred, PLAN_REL);
     assert!(plan.contains("- [ ] **Step 2: Validate the generated output**"));
     assert!(plan.contains("**Execution Note:** Interrupted - Parked for repair of Task 1 Step 2"));
 
-    let evidence = fs::read_to_string(repo.join(evidence_rel_path()))
-        .expect("evidence should exist after transfer");
+    let evidence =
+        projection_support::read_state_dir_projection(&transferred, &evidence_rel_path());
     assert!(evidence.contains("### Task 1 Step 2"));
     assert!(evidence.contains("**Status:** Invalidated"));
     assert!(
@@ -20247,7 +20591,7 @@ fn canonical_complete_canonicalizes_rename_backed_paths() {
         "begin before rename-backed complete",
     );
 
-    run_rust_json(
+    let complete = run_rust_json(
         repo,
         state,
         &[
@@ -20274,8 +20618,7 @@ fn canonical_complete_canonicalizes_rename_backed_paths() {
         "rename-backed complete",
     );
 
-    let evidence = fs::read_to_string(repo.join(evidence_rel_path()))
-        .expect("evidence should exist after rename-backed complete");
+    let evidence = projection_support::read_state_dir_projection(&complete, &evidence_rel_path());
     assert!(evidence.contains("**Files Proven:**\n- docs/new-output.md | sha256:"));
     assert!(!evidence.contains("- docs/old-output.md | sha256:missing"));
 }

@@ -58,6 +58,7 @@ enum WorkflowOperatorPhaseDetailSchema {
     FinalReviewOutcomePending,
     FinalReviewRecordingReady,
     QaRecordingRequired,
+    RuntimeReconcileRequired,
     TestPlanRefreshRequired,
     FinishReviewGateReady,
     FinishCompletionGateReady,
@@ -256,6 +257,10 @@ pub struct WorkflowOperator {
     pub raw_workspace_tree_id: Option<String>,
     pub spec_path: String,
     pub plan_path: String,
+    pub projection_mode: String,
+    pub state_dir_projection_paths: Vec<String>,
+    pub tracked_projection_paths: Vec<String>,
+    pub tracked_projections_current: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -596,6 +601,7 @@ fn doctor_synthetic_gate_review_reason_code(reason_code: &str) -> bool {
             | "final_review_state_not_fresh"
             | "browser_qa_state_not_fresh"
             | "release_docs_state_not_fresh"
+            | "plan_fingerprint_mismatch"
     )
 }
 
@@ -603,7 +609,10 @@ fn doctor_synthetic_gate_review_failure_class(reason_codes: &[String]) -> String
     if reason_codes.iter().any(|reason_code| {
         matches!(
             reason_code.as_str(),
-            "stale_provenance" | "stale_unreviewed" | "post_review_repo_write_detected"
+            "stale_provenance"
+                | "stale_unreviewed"
+                | "post_review_repo_write_detected"
+                | "plan_fingerprint_mismatch"
         )
     }) {
         String::from("StaleProvenance")
@@ -852,6 +861,25 @@ pub fn operator_for_runtime(
 
 fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> WorkflowOperator {
     let plan_path = operator_plan_path(&context, args);
+    let projection_mode = context
+        .execution_status
+        .as_ref()
+        .map(|status| status.projection_mode.clone())
+        .unwrap_or_default();
+    let state_dir_projection_paths = context
+        .execution_status
+        .as_ref()
+        .map(|status| status.state_dir_projection_paths.clone())
+        .unwrap_or_default();
+    let tracked_projection_paths = context
+        .execution_status
+        .as_ref()
+        .map(|status| status.tracked_projection_paths.clone())
+        .unwrap_or_default();
+    let tracked_projections_current = context
+        .execution_status
+        .as_ref()
+        .is_some_and(|status| status.tracked_projections_current);
     WorkflowOperator {
         schema_version: WORKFLOW_OPERATOR_SCHEMA_VERSION,
         phase: context.operator_phase.clone(),
@@ -877,6 +905,10 @@ fn operator_from_context(context: OperatorContext, args: &OperatorArgs) -> Workf
         raw_workspace_tree_id: context.operator_raw_workspace_tree_id.clone(),
         spec_path: context.route.spec_path.clone(),
         plan_path,
+        projection_mode,
+        state_dir_projection_paths,
+        tracked_projection_paths,
+        tracked_projections_current,
     }
 }
 
@@ -898,6 +930,21 @@ pub fn render_operator(operator: WorkflowOperator) -> String {
     }
     if let Some(checkpoint) = operator.finish_review_gate_pass_branch_closure_id {
         output.push_str(&format!("Finish gate checkpoint: {checkpoint}\n"));
+    }
+    if !operator.projection_mode.is_empty() {
+        output.push_str(&format!("Projection mode: {}\n", operator.projection_mode));
+        output.push_str(&format!(
+            "State-dir projections: {}\n",
+            projection_paths_text(&operator.state_dir_projection_paths)
+        ));
+        output.push_str(&format!(
+            "Tracked projections: {}\n",
+            projection_paths_text(&operator.tracked_projection_paths)
+        ));
+        output.push_str(&format!(
+            "Tracked projections current: {}\n",
+            operator.tracked_projections_current
+        ));
     }
     if let Some(recording_context) = recording_context.as_ref() {
         output.push_str(&format!(
@@ -1713,6 +1760,14 @@ fn evaluator_kinds_text(kinds: &[EvaluatorKind]) -> String {
     }
 }
 
+fn projection_paths_text(paths: &[String]) -> String {
+    if paths.is_empty() {
+        String::from("none")
+    } else {
+        paths.join(", ")
+    }
+}
+
 fn evaluator_kind_text(kind: &EvaluatorKind) -> &'static str {
     match kind {
         EvaluatorKind::SpecCompliance => "spec_compliance",
@@ -1845,6 +1900,12 @@ mod tests {
             raw_workspace_tree_id: Some(String::from("git_tree:def")),
             spec_path: String::from("docs/featureforge/specs/sample.md"),
             plan_path: String::from("docs/featureforge/plans/sample.md"),
+            projection_mode: String::from("state_dir_only"),
+            state_dir_projection_paths: vec![String::from("/tmp/state/projection.md")],
+            tracked_projection_paths: vec![String::from(
+                "docs/featureforge/execution-evidence/sample.md",
+            )],
+            tracked_projections_current: false,
         });
 
         assert!(rendered.contains("QA requirement: required"));

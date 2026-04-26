@@ -161,6 +161,9 @@ pub(crate) fn semantic_tree_entries_for_raw_tree(
             ),
         )
     })? {
+        if entry.mode.is_tree() {
+            continue;
+        }
         let raw_path: &[u8] = entry.filepath.as_ref();
         let path = String::from_utf8(raw_path.to_vec()).map_err(|_| {
             JsonFailure::new(
@@ -219,7 +222,24 @@ fn semantic_plan_blob_identity(
     ))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanSourceNormalizationMode {
+    WorkspaceIdentity,
+    ApprovedPlanPreflight,
+}
+
 pub(crate) fn normalized_plan_source_for_semantic_identity(plan_source: &str) -> String {
+    normalized_plan_source(plan_source, PlanSourceNormalizationMode::WorkspaceIdentity)
+}
+
+pub(crate) fn normalized_plan_source_for_approved_plan_preflight(plan_source: &str) -> String {
+    normalized_plan_source(
+        plan_source,
+        PlanSourceNormalizationMode::ApprovedPlanPreflight,
+    )
+}
+
+fn normalized_plan_source(plan_source: &str, mode: PlanSourceNormalizationMode) -> String {
     // Runtime-injected execution headers and control-plane comments must not turn the whole
     // approved plan file into semantic drift.
     let mut skipping_runtime_step_note = false;
@@ -238,16 +258,19 @@ pub(crate) fn normalized_plan_source_for_semantic_identity(plan_source: &str) ->
                 && (trimmed.contains("runtime-owned")
                     || trimmed.contains("featureforge:")
                     || trimmed.contains("codex:"));
-            if matches!(
+            let runtime_owned_execution_metadata = matches!(
                 trimmed,
                 l if l.starts_with("**Execution Mode:**")
                     || l.starts_with("**Chunking Strategy:**")
                     || l.starts_with("**Evaluator Policy:**")
                     || l.starts_with("**Reset Policy:**")
                     || l.starts_with("**Review Stack:**")
-                    || l.starts_with("**Execution Fingerprint:**")
-                    || runtime_owned_comment
-            ) {
+            );
+            if trimmed.starts_with("**Execution Fingerprint:**")
+                || runtime_owned_comment
+                || (mode == PlanSourceNormalizationMode::WorkspaceIdentity
+                    && runtime_owned_execution_metadata)
+            {
                 return None;
             }
             if let Some(normalized_step) = normalize_runtime_step_projection_line(line) {

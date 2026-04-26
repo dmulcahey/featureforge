@@ -68,6 +68,9 @@ const RUN_METADATA_FIELDS: &[&str] = &[
     "authoritative_sequence",
     "source_plan_path",
     "source_plan_revision",
+    "execution_plan_projection_fingerprint",
+    "execution_evidence_projection_fingerprint",
+    "execution_evidence_attempts",
     "run_identity",
     "execution_run_id",
     "chunk_id",
@@ -115,6 +118,9 @@ const HANDOFF_FIELDS: &[&str] = &[
 
 const STEP_EVENT_FIELDS: &[&str] = &[
     "current_open_step_state",
+    "execution_plan_projection_fingerprint",
+    "execution_evidence_projection_fingerprint",
+    "execution_evidence_attempts",
     "harness_phase",
     "handoff_required",
     "aggregate_evaluation_state",
@@ -342,6 +348,9 @@ const AUTHORITATIVE_EVENT_FIELDS: &[&str] = &[
     "authoritative_sequence",
     "source_plan_path",
     "source_plan_revision",
+    "execution_plan_projection_fingerprint",
+    "execution_evidence_projection_fingerprint",
+    "execution_evidence_attempts",
     "run_identity",
     "execution_run_id",
     "chunk_id",
@@ -512,6 +521,9 @@ authoritative_fact_fields! {
     authoritative_sequence => "authoritative_sequence",
     source_plan_path => "source_plan_path",
     source_plan_revision => "source_plan_revision",
+    execution_plan_projection_fingerprint => "execution_plan_projection_fingerprint",
+    execution_evidence_projection_fingerprint => "execution_evidence_projection_fingerprint",
+    execution_evidence_attempts => "execution_evidence_attempts",
     run_identity => "run_identity",
     execution_run_id => "execution_run_id",
     chunk_id => "chunk_id",
@@ -648,6 +660,9 @@ macro_rules! event_fact_payload {
 
 event_fact_payload! { StepEventFacts {
     current_open_step_state => "current_open_step_state",
+    execution_plan_projection_fingerprint => "execution_plan_projection_fingerprint",
+    execution_evidence_projection_fingerprint => "execution_evidence_projection_fingerprint",
+    execution_evidence_attempts => "execution_evidence_attempts",
     harness_phase => "harness_phase",
     handoff_required => "handoff_required",
     aggregate_evaluation_state => "aggregate_evaluation_state",
@@ -875,6 +890,9 @@ event_fact_payload! { RunMetadataEventFacts {
     authoritative_sequence => "authoritative_sequence",
     source_plan_path => "source_plan_path",
     source_plan_revision => "source_plan_revision",
+    execution_plan_projection_fingerprint => "execution_plan_projection_fingerprint",
+    execution_evidence_projection_fingerprint => "execution_evidence_projection_fingerprint",
+    execution_evidence_attempts => "execution_evidence_attempts",
     run_identity => "run_identity",
     execution_run_id => "execution_run_id",
     chunk_id => "chunk_id",
@@ -2278,15 +2296,7 @@ fn scalar_current_not_replayed_from_history(
 }
 
 fn migration_step_state_fields(state: &Value) -> AuthoritativeFactBuilder {
-    collect_authoritative_fields(
-        state,
-        &[
-            "current_open_step_state",
-            "harness_phase",
-            "handoff_required",
-            "aggregate_evaluation_state",
-        ],
-    )
+    collect_authoritative_fields(state, STEP_EVENT_FIELDS)
 }
 
 fn migration_run_metadata_state_fields(state: &Value) -> AuthoritativeFactBuilder {
@@ -3168,6 +3178,7 @@ fn migration_parity_projection(state: &Value) -> Value {
         "task_closure_record_history",
         "task_closure_negative_result_records",
         "event_completed_steps",
+        "execution_evidence_attempts",
         "current_branch_closure_id",
         "current_branch_closure_reviewed_state_id",
         "current_branch_closure_contract_identity",
@@ -3253,7 +3264,8 @@ fn migration_projection_default_value(field: &str) -> Value {
         | "final_review_dispatch_lineage_history" => Value::Object(serde_json::Map::new()),
         "superseded_task_closure_ids"
         | "superseded_branch_closure_ids"
-        | "strategy_checkpoints" => Value::Array(Vec::new()),
+        | "strategy_checkpoints"
+        | "execution_evidence_attempts" => Value::Array(Vec::new()),
         "handoff_required" | "strategy_reset_required" => Value::Bool(false),
         _ => Value::Null,
     }

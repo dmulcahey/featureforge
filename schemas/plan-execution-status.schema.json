@@ -164,6 +164,7 @@
         "qa_recording_required",
         "release_blocker_resolution_required",
         "release_readiness_recording_ready",
+        "runtime_reconcile_required",
         "task_closure_recording_ready",
         "task_review_dispatch_required",
         "task_review_result_pending",
@@ -824,6 +825,9 @@
       "minimum": 0,
       "type": "integer"
     },
+    "projection_mode": {
+      "type": "string"
+    },
     "qa_requirement": {
       "anyOf": [
         {
@@ -929,6 +933,12 @@
       },
       "type": "array"
     },
+    "state_dir_projection_paths": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "state_kind": {
       "$ref": "#/$defs/StateKindSchema"
     },
@@ -946,6 +956,15 @@
         "type": "string"
       },
       "type": "array"
+    },
+    "tracked_projection_paths": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tracked_projections_current": {
+      "type": "boolean"
     },
     "warning_codes": {
       "items": {
@@ -1009,6 +1028,10 @@
     "execution_mode",
     "execution_fingerprint",
     "evidence_path",
+    "projection_mode",
+    "state_dir_projection_paths",
+    "tracked_projection_paths",
+    "tracked_projections_current",
     "execution_started",
     "warning_codes"
   ],

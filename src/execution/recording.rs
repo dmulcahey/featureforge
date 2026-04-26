@@ -118,41 +118,73 @@ pub(crate) struct BrowserQaWrite<'a> {
     pub(crate) generated_by_identity: &'a str,
 }
 
-fn resolve_cycle_break_after_current_task_closure(
+pub(crate) fn resolve_current_task_closure_postconditions(
     authoritative_state: &mut AuthoritativeTransitionState,
     task_number: u32,
     closure_record_id: &str,
     reviewed_state_id: &str,
-) -> Result<(), JsonFailure> {
-    let cycle_break_binding_matches_task =
-        authoritative_state.strategy_cycle_break_task() == Some(task_number);
-    if !cycle_break_binding_matches_task {
-        return Ok(());
-    }
+) -> Result<bool, JsonFailure> {
     let Some(current_closure) = authoritative_state.current_task_closure_result(task_number) else {
-        return Ok(());
+        return Ok(false);
     };
     let current_positive_closure_on_current_reviewed_state = current_closure.closure_record_id
         == closure_record_id
-        && current_closure.reviewed_state_id == reviewed_state_id
+        && (current_closure.reviewed_state_id == reviewed_state_id
+            || authoritative_state
+                .current_task_closure_result(task_number)
+                .is_some_and(|record| record.closure_record_id == closure_record_id))
         && current_closure.review_result == "pass"
-        && current_closure.verification_result != "fail"
+        && current_closure.verification_result == "pass"
         && current_closure
             .closure_status
             .as_deref()
             .is_none_or(|status| status == "current");
     if !current_positive_closure_on_current_reviewed_state {
-        return Ok(());
+        return Ok(false);
     }
-    let _ = authoritative_state.clear_cycle_break_binding_and_strategy()?;
-    authoritative_state.clear_task_cycle_count(task_number)?;
     if authoritative_state
-        .review_state_repair_follow_up()
-        .is_some_and(|follow_up| matches!(follow_up, "execution_reentry" | "repair_review_state"))
+        .task_closure_negative_result(task_number)
+        .is_some()
     {
-        authoritative_state.set_review_state_repair_follow_up(None)?;
+        return Ok(false);
     }
-    Ok(())
+    let cycle_break_binding_matches_task =
+        authoritative_state.strategy_cycle_break_task() == Some(task_number);
+    let mut changed = false;
+    if cycle_break_binding_matches_task {
+        let _ = authoritative_state.clear_cycle_break_binding_and_strategy()?;
+        authoritative_state.clear_task_cycle_count(task_number)?;
+        changed = true;
+    }
+    let repair_follow_up_matches_current_closure = authoritative_state
+        .review_state_repair_follow_up_task()
+        .is_some_and(|task| task == task_number)
+        || authoritative_state
+            .review_state_repair_follow_up_closure_record_id()
+            .is_some_and(|record_id| record_id == closure_record_id);
+    let cycle_break_follow_up_matches_task = cycle_break_binding_matches_task
+        && authoritative_state
+            .review_state_repair_follow_up()
+            .is_some_and(|follow_up| matches!(follow_up, "cycle_break" | "cycle_break_repair"));
+    let repair_follow_up_kind_can_clear = authoritative_state
+        .review_state_repair_follow_up()
+        .is_some_and(|follow_up| {
+            matches!(
+                follow_up,
+                "execution_reentry"
+                    | "repair_review_state"
+                    | "task_closure_baseline_repair"
+                    | "cycle_break"
+                    | "cycle_break_repair"
+            )
+        });
+    if repair_follow_up_kind_can_clear
+        && (repair_follow_up_matches_current_closure || cycle_break_follow_up_matches_task)
+        && authoritative_state.clear_review_state_repair_follow_up()?
+    {
+        changed = true;
+    }
+    Ok(changed)
 }
 
 pub(crate) fn record_current_task_closure(
@@ -179,7 +211,7 @@ pub(crate) fn record_current_task_closure(
         verification_result: input.verification_result,
         verification_summary_hash: input.verification_summary_hash,
     })?;
-    resolve_cycle_break_after_current_task_closure(
+    let _ = resolve_current_task_closure_postconditions(
         authoritative_state,
         input.task,
         input.closure_record_id,
