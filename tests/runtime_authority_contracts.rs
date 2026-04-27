@@ -42,6 +42,8 @@ const FORBIDDEN_STALE_TARGET_RECOMPUTATION_FILES: &[&str] = &[
 const FORBIDDEN_STALE_TARGET_RECOMPUTATION_CALLS: &[&str] = &[
     "task_closure_baseline_repair_candidate(",
     "earliest_unresolved_stale_task_from_closure_graph(",
+    "derive_stale_unreviewed_closures(",
+    "pre_reducer_earliest_unresolved_stale_task(",
 ];
 
 const FORBIDDEN_STALE_TARGET_RECOMPUTATION_FUNCTIONS: &[(&str, &str)] = &[(

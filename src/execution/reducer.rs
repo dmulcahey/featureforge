@@ -19,11 +19,11 @@ use crate::execution::semantic_identity::{SemanticWorkspaceSnapshot, semantic_wo
 use crate::execution::state::{
     ExecutionContext, ExecutionDerivedTruth, ExecutionReadScope, FinalReviewDispatchAuthority,
     GateProjectionInputs, GateResult, GateState, PlanExecutionStatus,
-    closure_baseline_candidate_task, current_task_review_dispatch_id_for_status,
-    derive_execution_truth_from_authority, derive_execution_truth_from_authority_with_gates,
-    gate_finish_from_context, gate_review_from_context, preflight_from_context,
-    project_persisted_public_repair_targets, stale_current_task_closure_records,
-    task_closure_baseline_repair_candidate,
+    closure_baseline_candidate_task, compute_status_blocking_records,
+    current_task_review_dispatch_id_for_status, derive_execution_truth_from_authority,
+    derive_execution_truth_from_authority_with_gates, gate_finish_from_context,
+    gate_review_from_context, preflight_from_context, project_persisted_public_repair_targets,
+    stale_current_task_closure_records, task_closure_baseline_repair_candidate_with_stale_target,
     usable_current_branch_closure_identity_from_authoritative_state,
 };
 use crate::execution::transitions::AuthoritativeTransitionState;
@@ -283,6 +283,16 @@ fn build_runtime_state_from_event_authority(
         gate_finish.clone(),
     )?;
     project_gate_snapshot_stale_closures(&mut status, &gate_snapshot);
+    let fallback_gate_finish;
+    let gate_finish_for_blocking_records = match gate_snapshot.gate_finish.as_ref() {
+        Some(gate_finish) => gate_finish,
+        None => {
+            fallback_gate_finish = GateState::default().finish();
+            &fallback_gate_finish
+        }
+    };
+    status.blocking_records =
+        compute_status_blocking_records(context, &status, gate_finish_for_blocking_records)?;
     project_persisted_public_repair_targets(context, &mut status, event_authority_state, None);
     let usable_current_branch_closure_identity =
         usable_current_branch_closure_identity_from_authoritative_state(
@@ -562,7 +572,19 @@ fn append_task_closure_baseline_stale_target(
     else {
         return Ok(());
     };
-    if task_closure_baseline_repair_candidate(context, status, task)?.is_none() {
+    let earliest_stale_task = stale_targets
+        .iter()
+        .filter(|target| target.scope == AuthoritativeStaleTargetScope::Task)
+        .filter_map(|target| target.task)
+        .min();
+    if task_closure_baseline_repair_candidate_with_stale_target(
+        context,
+        status,
+        task,
+        earliest_stale_task,
+    )?
+    .is_none()
+    {
         return Ok(());
     }
     if stale_targets.iter().any(|target| {
@@ -625,9 +647,7 @@ fn project_gate_snapshot_stale_closures(
                 .any(|current_id| record_id == current_id)
         });
     }
-    if !stale_record_ids.is_empty() {
-        status.stale_unreviewed_closures = stale_record_ids;
-    }
+    status.stale_unreviewed_closures = stale_record_ids;
     if !status.stale_unreviewed_closures.is_empty() {
         status
             .reason_codes

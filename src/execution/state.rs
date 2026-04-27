@@ -2926,7 +2926,7 @@ fn review_dispatch_task_boundary_target(
     let status = status_from_context(context).ok();
     let earliest_stale_boundary_task = status
         .as_ref()
-        .and_then(|status| earliest_unresolved_stale_task_from_closure_graph(context, status));
+        .and_then(|status| pre_reducer_earliest_unresolved_stale_task(context, status));
     if let Some(stale_task) = earliest_stale_boundary_task
         .filter(|task_number| review_dispatch_boundary_blocked_for_task(context, *task_number))
     {
@@ -2979,10 +2979,15 @@ fn review_dispatch_task_boundary_target(
                 review_dispatch_boundary_blocked_for_task(context, *candidate_task)
             })
             .find(|candidate_task| {
-                task_closure_baseline_repair_candidate(context, status, *candidate_task)
-                    .ok()
-                    .flatten()
-                    .is_some()
+                task_closure_baseline_repair_candidate_with_stale_target(
+                    context,
+                    status,
+                    *candidate_task,
+                    pre_reducer_earliest_unresolved_stale_task(context, status),
+                )
+                .ok()
+                .flatten()
+                .is_some()
             })
     })?;
     let step_number = latest_attempted_step_for_task(context, task_number).or_else(|| {
@@ -5312,7 +5317,7 @@ fn apply_task_boundary_status_overlay(
         return;
     }
     if let Some(active_task) = status.active_task {
-        if earliest_unresolved_stale_task_from_closure_graph(context, status).is_none()
+        if pre_reducer_earliest_unresolved_stale_task(context, status).is_none()
             && let Some(prior_task) = prior_task_number_for_begin(context, active_task)
             && let Err(error) = require_prior_task_closure_for_begin(context, active_task)
         {
@@ -5338,7 +5343,7 @@ fn apply_task_boundary_status_overlay(
         return;
     }
     if let Some(resume_task) = status.resume_task {
-        if earliest_unresolved_stale_task_from_closure_graph(context, status).is_none()
+        if pre_reducer_earliest_unresolved_stale_task(context, status).is_none()
             && let Some(prior_task) = prior_task_number_for_begin(context, resume_task)
             && let Err(error) = require_prior_task_closure_for_begin(context, resume_task)
         {
@@ -5439,10 +5444,15 @@ fn push_task_closure_recording_status_reasons(
         .dispatch_id
         .as_deref()
         .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty());
-    let baseline_candidate_present = task_closure_baseline_repair_candidate(context, status, task)
-        .ok()
-        .flatten()
-        .is_some();
+    let baseline_candidate_present = task_closure_baseline_repair_candidate_with_stale_target(
+        context,
+        status,
+        task,
+        pre_reducer_earliest_unresolved_stale_task(context, status),
+    )
+    .ok()
+    .flatten()
+    .is_some();
     let stale_bridge_ready =
         stale_unreviewed_allows_task_closure_baseline_bridge(context, status, task)
             .unwrap_or(false);
@@ -5789,13 +5799,18 @@ fn suppress_preempted_resume_status_fields(
     let Some(resume_task) = status.resume_task else {
         return;
     };
-    let stale_preempts_resume = earliest_unresolved_stale_task_from_closure_graph(context, status)
+    let stale_preempts_resume = pre_reducer_earliest_unresolved_stale_task(context, status)
         .is_some_and(|earliest_task| earliest_task < resume_task);
     let bridge_preempts_resume = status.blocking_task.is_some_and(|blocking_task| {
-        task_closure_baseline_repair_candidate(context, status, blocking_task)
-            .ok()
-            .flatten()
-            .is_some()
+        task_closure_baseline_repair_candidate_with_stale_target(
+            context,
+            status,
+            blocking_task,
+            pre_reducer_earliest_unresolved_stale_task(context, status),
+        )
+        .ok()
+        .flatten()
+        .is_some()
             && stale_unreviewed_allows_task_closure_baseline_bridge(context, status, blocking_task)
                 .unwrap_or(false)
     });
@@ -6119,7 +6134,7 @@ fn populate_public_status_contract_fields(
         };
     }
     let task_boundary_unresolved_stale =
-        earliest_unresolved_stale_task_from_closure_graph(context, status).is_some();
+        pre_reducer_earliest_unresolved_stale_task(context, status).is_some();
     status.review_state_status = derive_public_review_state_status(
         status,
         gate_review,
@@ -6197,13 +6212,6 @@ fn populate_public_status_contract_fields(
         overlay,
         event_authority_state,
     );
-    status.stale_unreviewed_closures = derive_stale_unreviewed_closures(
-        context,
-        status,
-        overlay,
-        event_authority_state,
-        &status.review_state_status,
-    )?;
     if TargetlessStaleReconcile::status_needs_marker_for_status(status) {
         push_status_reason_code_once(status, TARGETLESS_STALE_RECONCILE_REASON_CODE);
     }
@@ -6272,7 +6280,7 @@ fn canonical_late_stage_phase_from_bindings(status: &PlanExecutionStatus) -> Opt
     Some(HarnessPhase::ReadyForBranchCompletion)
 }
 
-fn compute_status_blocking_records(
+pub(crate) fn compute_status_blocking_records(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
     gate_finish: &GateResult,
@@ -6727,63 +6735,6 @@ fn current_workflow_pivot_record_exists_for_status_decision(
     )
 }
 
-fn derive_stale_unreviewed_closures(
-    context: &ExecutionContext,
-    status: &PlanExecutionStatus,
-    overlay: Option<&StatusAuthoritativeOverlay>,
-    authoritative_state: Option<&AuthoritativeTransitionState>,
-    review_state_status: &str,
-) -> Result<Vec<String>, JsonFailure> {
-    let missing_current_closure_stale_provenance = review_state_status == "missing_current_closure"
-        && shared_late_stage_missing_current_closure_stale_provenance_present(context, status)?;
-    if public_late_stage_rederivation_basis_present(status)
-        || is_late_stage_phase(status.harness_phase)
-        || missing_current_closure_stale_provenance
-    {
-        let preserve_late_stage_stale_targets =
-            review_state_status == "stale_unreviewed" || missing_current_closure_stale_provenance;
-        if !preserve_late_stage_stale_targets {
-            return Ok(Vec::new());
-        }
-        let closure_graph = AuthoritativeClosureGraph::from_state(
-            authoritative_state,
-            &ClosureGraphSignals::from_authoritative_state(
-                authoritative_state,
-                overlay.and_then(|overlay| overlay.current_branch_closure_id.as_deref()),
-                review_state_status == "stale_unreviewed",
-                missing_current_closure_stale_provenance,
-                shared_stale_reason_codes_for_late_stage_projection(
-                    status,
-                    std::iter::empty::<&String>(),
-                ),
-            ),
-        );
-        let late_stage_stale_record_ids = closure_graph.stale_unreviewed_record_ids();
-        if !late_stage_stale_record_ids.is_empty() {
-            return Ok(late_stage_stale_record_ids);
-        }
-        return Ok(Vec::new());
-    }
-    if review_state_status != "stale_unreviewed" {
-        return Ok(Vec::new());
-    }
-    let closure_graph = AuthoritativeClosureGraph::from_state(
-        authoritative_state,
-        &ClosureGraphSignals::from_authoritative_state(
-            authoritative_state,
-            overlay.and_then(|overlay| overlay.current_branch_closure_id.as_deref()),
-            false,
-            false,
-            Vec::new(),
-        ),
-    );
-    let stale_history_record_ids = closure_graph.stale_unreviewed_record_ids();
-    if !stale_history_record_ids.is_empty() {
-        return Ok(stale_history_record_ids);
-    }
-    Ok(Vec::new())
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExecutionReentryCurrentTaskClosureTargets {
     pub(crate) stale_tasks: Vec<u32>,
@@ -6858,9 +6809,14 @@ fn derive_public_phase_detail(
         && task_closure_baseline_repair_candidate_reason_present(status)
         && status.blocking_step.is_none()
         && status.blocking_task.is_some_and(|task| {
-            task_closure_baseline_repair_candidate(context, status, task)
-                .map(|candidate| candidate.is_some())
-                .unwrap_or(false)
+            task_closure_baseline_repair_candidate_with_stale_target(
+                context,
+                status,
+                task,
+                projected_earliest_stale_task_from_status(status),
+            )
+            .map(|candidate| candidate.is_some())
+            .unwrap_or(false)
         })
     {
         return String::from("task_closure_recording_ready");
@@ -7092,7 +7048,9 @@ pub(crate) fn recommended_execution_source(execution_mode: &str) -> &str {
     }
 }
 
-pub(crate) fn earliest_unresolved_stale_task_from_closure_graph(
+// Bootstrap-only helper used while constructing the reducer input status. After RuntimeState
+// exists, consumers must use reducer-projected stale targets instead.
+fn pre_reducer_earliest_unresolved_stale_task(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
 ) -> Option<u32> {
@@ -15888,14 +15846,47 @@ pub(crate) fn stale_unreviewed_allows_task_closure_baseline_bridge(
     status: &PlanExecutionStatus,
     task: u32,
 ) -> Result<bool, JsonFailure> {
-    let earliest_unresolved_stale_task =
-        earliest_unresolved_stale_task_from_closure_graph(context, status);
     stale_unreviewed_allows_task_closure_baseline_bridge_with_stale_target(
         context,
         status,
         task,
-        earliest_unresolved_stale_task,
+        projected_earliest_stale_task_from_status(status)
+            .or_else(|| pre_reducer_earliest_unresolved_stale_task(context, status)),
     )
+}
+
+pub(crate) fn projected_earliest_stale_task_from_status(
+    status: &PlanExecutionStatus,
+) -> Option<u32> {
+    status
+        .blocking_records
+        .iter()
+        .filter(|record| record.scope_type == "task")
+        .filter_map(|record| task_number_from_task_scope_key(&record.scope_key))
+        .chain(
+            status
+                .stale_unreviewed_closures
+                .iter()
+                .filter_map(|record_id| task_number_from_task_scope_key(record_id)),
+        )
+        .chain(
+            status
+                .public_repair_targets
+                .iter()
+                .filter_map(|target| target.task),
+        )
+        .min()
+}
+
+fn task_number_from_task_scope_key(scope_key: &str) -> Option<u32> {
+    let raw = scope_key.strip_prefix("task-")?;
+    let digits = raw
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>();
+    (!digits.is_empty())
+        .then(|| digits.parse::<u32>().ok())
+        .flatten()
 }
 
 pub(crate) fn stale_unreviewed_allows_task_closure_baseline_bridge_with_stale_target(
@@ -16003,21 +15994,6 @@ fn authoritative_task_closure_history_lineage_present(
                     .is_some_and(|execution_run_id| !execution_run_id.trim().is_empty())
         })
     })
-}
-
-pub(crate) fn task_closure_baseline_repair_candidate(
-    context: &ExecutionContext,
-    status: &PlanExecutionStatus,
-    task: u32,
-) -> Result<Option<TaskClosureBaselineRepairCandidate>, JsonFailure> {
-    let earliest_unresolved_stale_task =
-        earliest_unresolved_stale_task_from_closure_graph(context, status);
-    task_closure_baseline_repair_candidate_with_stale_target(
-        context,
-        status,
-        task,
-        earliest_unresolved_stale_task,
-    )
 }
 
 pub(crate) fn task_closure_baseline_repair_candidate_with_stale_target(

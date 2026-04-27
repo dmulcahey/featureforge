@@ -237,6 +237,30 @@ pub fn decide_public_mutation(
     )
 }
 
+pub(crate) fn public_execution_mutation_is_authorized(
+    status: &PlanExecutionStatus,
+    command_kind: &str,
+    task: u32,
+    step: Option<u32>,
+) -> bool {
+    let Some(kind) = PublicMutationKind::from_execution_command_kind(command_kind) else {
+        return false;
+    };
+    let command_name = kind.public_command_name();
+    decide_public_mutation(
+        status,
+        &PublicMutationRequest {
+            kind,
+            task: Some(task),
+            step,
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name,
+        },
+    )
+    .allowed
+}
+
 pub(crate) fn public_mutation_request_from_command(command: &str) -> Option<PublicMutationRequest> {
     if command_invokes_hidden_lane(command) || !command_is_legal_public_command(command) {
         return None;

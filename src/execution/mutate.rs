@@ -89,10 +89,11 @@ use crate::execution::state::{
     load_execution_context_for_rebuild, load_execution_read_scope_for_mutation,
     normalize_begin_request, normalize_complete_request, normalize_note_request,
     normalize_rebuild_evidence_request, normalize_reopen_request, normalize_source,
-    normalize_transfer_request, require_normalized_text, require_preflight_acceptance,
-    require_prior_task_closure_for_begin, status_from_context_with_shared_routing,
-    still_current_task_closure_records, structural_current_task_closure_failures,
-    task_closure_baseline_repair_candidate,
+    normalize_transfer_request, projected_earliest_stale_task_from_status, require_normalized_text,
+    require_preflight_acceptance, require_prior_task_closure_for_begin,
+    status_from_context_with_shared_routing, still_current_task_closure_records,
+    structural_current_task_closure_failures,
+    task_closure_baseline_repair_candidate_with_stale_target,
     task_closure_negative_result_blocks_current_reviewed_state,
     task_completion_lineage_fingerprint, task_packet_fingerprint,
     usable_current_branch_closure_identity, validate_expected_fingerprint,
@@ -1498,7 +1499,12 @@ pub fn close_current_task(
         args.dispatch_id.as_deref(),
     )?;
     let closure_baseline_repair_candidate =
-        task_closure_baseline_repair_candidate(&initial_context, &status, args.task)?;
+        task_closure_baseline_repair_candidate_with_stale_target(
+            &initial_context,
+            &status,
+            args.task,
+            projected_earliest_stale_task_from_status(&status),
+        )?;
     let projection_refresh_only_candidate = closure_baseline_repair_candidate
         .as_ref()
         .is_some_and(|candidate| candidate.projection_refresh_only);

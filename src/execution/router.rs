@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::JsonFailure;
 use crate::execution::command_eligibility::{
-    PublicMutationKind, PublicMutationRequest, command_invokes_hidden_lane,
-    command_is_legal_public_command, decide_public_mutation, public_mutation_request_from_command,
+    command_invokes_hidden_lane, command_is_legal_public_command, decide_public_mutation,
+    public_mutation_request_from_command,
 };
 use crate::execution::current_truth::{
     CurrentTruthSnapshot, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
@@ -665,30 +665,6 @@ pub(crate) fn route_runtime_state(
         external_review_result_ready,
         false,
     )
-}
-
-pub(crate) fn router_allows_public_execution_mutation(
-    status: &PlanExecutionStatus,
-    command_kind: &str,
-    task: u32,
-    step: Option<u32>,
-) -> bool {
-    let Some(kind) = PublicMutationKind::from_execution_command_kind(command_kind) else {
-        return false;
-    };
-    let command_name = kind.public_command_name();
-    decide_public_mutation(
-        status,
-        &PublicMutationRequest {
-            kind,
-            task: Some(task),
-            step,
-            transfer_mode: None,
-            transfer_scope: None,
-            command_name,
-        },
-    )
-    .allowed
 }
 
 pub(crate) fn router_allows_public_recommended_mutation(

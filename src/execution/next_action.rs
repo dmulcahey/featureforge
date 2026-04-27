@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::execution::command_eligibility::public_execution_mutation_is_authorized;
 use crate::execution::current_truth::{
     BranchRerecordingAssessment, BranchRerecordingUnsupportedReason,
     branch_closure_rerecording_assessment_with_authority,
@@ -16,7 +17,6 @@ use crate::execution::reducer::{AuthoritativeStaleTarget, AuthoritativeStaleTarg
 use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TargetlessStaleReconcile,
 };
-use crate::execution::router::router_allows_public_execution_mutation;
 use crate::execution::state::{
     ExactExecutionCommand, ExecutionContext, GateResult, PlanExecutionStatus,
     closure_baseline_candidate_task, document_release_pending_phase_detail,
@@ -2086,7 +2086,7 @@ pub(crate) fn execution_reentry_target(
     ) && command.command_kind == "begin"
         && command.task_number == task
         && command.step_id == Some(step)
-        && router_allows_public_execution_mutation(
+        && public_execution_mutation_is_authorized(
             status,
             command.command_kind,
             command.task_number,
@@ -2105,7 +2105,7 @@ pub(crate) fn execution_reentry_target(
         return Some(target.into_execution_reentry_target());
     }
     if let Some(command) = exact_command
-        && router_allows_public_execution_mutation(
+        && public_execution_mutation_is_authorized(
             status,
             command.command_kind,
             command.task_number,
