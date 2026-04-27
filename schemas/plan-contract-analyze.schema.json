@@ -61,8 +61,8 @@
         "$ref": "#/$defs/ParallelWorktreeRequirement"
       }
     },
-    "plan_fidelity_receipt": {
-      "$ref": "#/$defs/PlanFidelityGateReport"
+    "plan_fidelity_review": {
+      "$ref": "#/$defs/PlanFidelityReviewReport"
     },
     "plan_fingerprint": {
       "type": "string"
@@ -151,7 +151,7 @@
     "parallel_worktree_requirements",
     "reason_codes",
     "overlapping_write_scopes",
-    "plan_fidelity_receipt",
+    "plan_fidelity_review",
     "diagnostics"
   ],
   "$defs": {
@@ -218,7 +218,7 @@
         "required_worktrees"
       ]
     },
-    "PlanFidelityGateReport": {
+    "PlanFidelityReviewReport": {
       "type": "object",
       "properties": {
         "diagnostics": {
@@ -236,7 +236,7 @@
             "type": "string"
           }
         },
-        "receipt_path": {
+        "review_artifact_path": {
           "type": "string"
         },
         "reviewer_stage": {
@@ -263,7 +263,7 @@
       },
       "required": [
         "state",
-        "receipt_path",
+        "review_artifact_path",
         "reviewer_stage",
         "provenance_source",
         "verified_requirement_index",

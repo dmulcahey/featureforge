@@ -11,9 +11,9 @@ mod process_support;
 mod repo_template_support;
 
 use assert_cmd::cargo::CommandCargoExt;
-use featureforge::cli::plan_execution::ExecutionTopologyArg;
 use featureforge::contracts::plan::{AnalyzePlanReport, analyze_plan};
 use featureforge::execution::harness::{LearnedTopologyGuidance, TopologySelectionContext};
+use featureforge::execution::internal_args::ExecutionTopologyArg;
 use featureforge::execution::topology::recommend_topology;
 use files_support::write_file;
 use json_support::parse_json;
@@ -204,8 +204,8 @@ fn run_rust_json(repo: &Path, state: &Path, args: &[&str], context: &str) -> Val
     parse_json(&run(command, context), context)
 }
 
-fn run_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::run_runtime_preflight_gate_json(
+fn internal_test_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
         repo,
         state,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -216,15 +216,23 @@ fn run_runtime_preflight_gate_json(repo: &Path, state: &Path, plan_rel: &str) ->
     .expect("internal preflight helper should succeed")
 }
 
-fn run_runtime_topology_recommendation_json(repo: &Path, state: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::run_runtime_topology_recommendation_json(
+fn internal_test_runtime_topology_recommendation_json(
+    repo: &Path,
+    state: &Path,
+    plan_rel: &str,
+) -> Value {
+    plan_execution_direct_support::internal_test_runtime_topology_recommendation_json(
         repo,
         state,
-        &featureforge::cli::plan_execution::RecommendArgs {
+        &featureforge::execution::internal_args::RecommendArgs {
             plan: PathBuf::from(plan_rel),
-            isolated_agents: Some(featureforge::cli::plan_execution::IsolatedAgentsArg::Available),
-            session_intent: Some(featureforge::cli::plan_execution::SessionIntentArg::Stay),
-            workspace_prepared: Some(featureforge::cli::plan_execution::WorkspacePreparedArg::Yes),
+            isolated_agents: Some(
+                featureforge::execution::internal_args::IsolatedAgentsArg::Available,
+            ),
+            session_intent: Some(featureforge::execution::internal_args::SessionIntentArg::Stay),
+            workspace_prepared: Some(
+                featureforge::execution::internal_args::WorkspacePreparedArg::Yes,
+            ),
         },
     )
     .expect("internal recommend helper should succeed")
@@ -266,7 +274,7 @@ fn accept_execution_preflight(repo: &Path, state: &Path, plan_rel: &str) {
         "git checkout execution-preflight-fixture",
     );
 
-    let preflight = run_runtime_preflight_gate_json(repo, state, plan_rel);
+    let preflight = internal_test_runtime_preflight_gate_json(repo, state, plan_rel);
     assert_eq!(preflight["allowed"], true);
 }
 
@@ -278,8 +286,8 @@ fn canonical_recommend_matches_helper_for_independent_plan() {
     write_approved_spec(repo);
     write_independent_plan(repo);
 
-    let helper = run_runtime_topology_recommendation_json(repo, state, PLAN_REL);
-    let rust = run_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let helper = internal_test_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let rust = internal_test_runtime_topology_recommendation_json(repo, state, PLAN_REL);
 
     assert_eq!(rust["recommended_skill"], helper["recommended_skill"]);
     assert_eq!(rust["decision_flags"], helper["decision_flags"]);
@@ -321,7 +329,7 @@ fn canonical_recommend_exposes_policy_tuple_and_reason_codes_without_mutating_pr
         );
     }
 
-    let recommend = run_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let recommend = internal_test_runtime_topology_recommendation_json(repo, state, PLAN_REL);
     assert_eq!(
         recommend["recommended_skill"],
         "featureforge:subagent-driven-development"
@@ -400,7 +408,7 @@ fn runtime_topology_recommends_worktree_backed_parallel_when_the_plan_and_worksp
         "parallel-ready topology should report the worktree-backed reason code"
     );
 
-    let shell = run_runtime_topology_recommendation_json(repo, state, PLAN_REL);
+    let shell = internal_test_runtime_topology_recommendation_json(repo, state, PLAN_REL);
     assert_eq!(
         shell["recommended_skill"],
         "featureforge:subagent-driven-development"

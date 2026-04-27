@@ -15,7 +15,7 @@
       ],
       "type": "object"
     },
-    "PlanFidelityGateReport": {
+    "PlanFidelityReviewReport": {
       "properties": {
         "diagnostics": {
           "items": {
@@ -32,7 +32,7 @@
           },
           "type": "array"
         },
-        "receipt_path": {
+        "review_artifact_path": {
           "type": "string"
         },
         "reviewer_stage": {
@@ -59,7 +59,7 @@
       },
       "required": [
         "state",
-        "receipt_path",
+        "review_artifact_path",
         "reviewer_stage",
         "provenance_source",
         "verified_requirement_index",
@@ -125,10 +125,10 @@
       "minimum": 0,
       "type": "integer"
     },
-    "plan_fidelity_receipt": {
+    "plan_fidelity_review": {
       "anyOf": [
         {
-          "$ref": "#/$defs/PlanFidelityGateReport"
+          "$ref": "#/$defs/PlanFidelityReviewReport"
         },
         {
           "type": "null"

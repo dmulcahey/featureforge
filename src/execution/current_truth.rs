@@ -61,6 +61,8 @@ pub(crate) struct CurrentLateStageBranchBindings {
 pub(crate) const RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS: &[&str] = &[
     "task_review_dispatch_required",
     "task_review_result_pending",
+    "execution_in_progress",
+    "runtime_reconcile_required",
     "finish_review_gate_ready",
     "finish_completion_gate_ready",
     "final_review_dispatch_required",
@@ -1010,10 +1012,10 @@ pub(crate) fn task_boundary_block_reason_code(status: &PlanExecutionStatus) -> O
             *code,
             "prior_task_review_not_green"
                 | "task_review_not_independent"
-                | "task_review_receipt_malformed"
+                | "task_review_artifact_malformed"
                 | "prior_task_verification_missing"
                 | "prior_task_verification_missing_legacy"
-                | "task_verification_receipt_malformed"
+                | "task_verification_summary_malformed"
                 | "prior_task_review_dispatch_missing"
                 | "prior_task_review_dispatch_stale"
                 | "prior_task_current_closure_stale"
@@ -1030,7 +1032,7 @@ pub(crate) fn task_review_result_requires_verification_reason_codes<'a>(
     const TASK_VERIFICATION_REASON_CODES: &[&str] = &[
         "prior_task_verification_missing",
         "prior_task_verification_missing_legacy",
-        "task_verification_receipt_malformed",
+        "task_verification_summary_malformed",
     ];
     reason_codes
         .into_iter()
@@ -1088,7 +1090,7 @@ pub(crate) fn task_review_result_pending_task(
             reason_code.as_str(),
             "prior_task_verification_missing"
                 | "prior_task_verification_missing_legacy"
-                | "task_verification_receipt_malformed"
+                | "task_verification_summary_malformed"
         )
     });
     if dispatch_available && has_pending_review_or_verification_reason {

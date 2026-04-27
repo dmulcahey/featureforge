@@ -13,7 +13,9 @@ use crate::execution::current_truth::{
     worktree_drift_escapes_late_stage_surface,
 };
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
-use crate::execution::reducer::{AuthoritativeStaleTarget, AuthoritativeStaleTargetScope};
+use crate::execution::reducer::{
+    AuthoritativeStaleTarget, AuthoritativeStaleTargetScope, AuthoritativeStaleTargetSource,
+};
 use crate::execution::reentry_reconcile::{
     TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TargetlessStaleReconcile,
 };
@@ -119,6 +121,7 @@ pub(crate) struct AuthoritativeStaleReentryTarget<'a> {
     pub(crate) task: u32,
     pub(crate) step: Option<u32>,
     pub(crate) reason_code: &'a str,
+    pub(crate) source: AuthoritativeStaleTargetSource,
     pub(crate) source_record_id: Option<&'a str>,
 }
 
@@ -131,6 +134,7 @@ impl<'a> AuthoritativeStaleReentryTarget<'a> {
             task: target.task?,
             step: target.step,
             reason_code: target.reason_code.as_str(),
+            source: target.source,
             source_record_id: target.record_id.as_deref().or(Some(target.source.as_str())),
         })
     }
@@ -146,7 +150,8 @@ impl<'a> AuthoritativeStaleReentryTarget<'a> {
     }
 
     fn allows_task_closure_bridge(self) -> bool {
-        !matches!(self.reason_code, "prior_task_current_closure_stale")
+        self.source == AuthoritativeStaleTargetSource::BaselineBridge
+            || !matches!(self.reason_code, "prior_task_current_closure_stale")
     }
 }
 
@@ -167,6 +172,11 @@ impl NextActionAuthorityInputs<'_> {
     fn stale_target_allows_task_closure_bridge(self) -> bool {
         self.authoritative_stale_target
             .is_none_or(AuthoritativeStaleReentryTarget::allows_task_closure_bridge)
+    }
+
+    fn stale_target_is_baseline_bridge(self) -> bool {
+        self.authoritative_stale_target
+            .is_some_and(|target| target.source == AuthoritativeStaleTargetSource::BaselineBridge)
     }
 }
 
@@ -515,6 +525,12 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         if stale_boundary_closure_recording_ready {
             return Some(task_closure_recording_ready_decision(
                 status, plan_path, stale_task,
+            ));
+        }
+        if authority_inputs.stale_target_is_baseline_bridge() {
+            return Some(missing_execution_reentry_target_decision(
+                status,
+                review_state_status.as_str(),
             ));
         }
         return Some(execution_reentry_decision_for_task(
@@ -2286,8 +2302,8 @@ fn current_task_closure_projection_refresh_task(
                                 reason_code.as_str(),
                                 "prior_task_verification_missing"
                                     | "prior_task_verification_missing_legacy"
-                                    | "task_review_receipt_malformed"
-                                    | "task_verification_receipt_malformed"
+                                    | "task_review_artifact_malformed"
+                                    | "task_verification_summary_malformed"
                             )
                         })
                 })
@@ -2480,8 +2496,8 @@ fn external_review_ready_promotes_closure_recording(status: &PlanExecutionStatus
                 "prior_task_verification_missing"
                     | "prior_task_verification_missing_legacy"
                     | "task_review_not_independent"
-                    | "task_review_receipt_malformed"
-                    | "task_verification_receipt_malformed"
+                    | "task_review_artifact_malformed"
+                    | "task_verification_summary_malformed"
             )
         })
 }

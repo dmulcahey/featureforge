@@ -34,6 +34,63 @@ pub enum PublicTransferMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PublicCommandShape {
+    WorkflowOperator {
+        plan: String,
+        external_review_result_ready: bool,
+    },
+    Status {
+        plan: String,
+    },
+    RepairReviewState {
+        plan: String,
+    },
+    Begin {
+        plan: String,
+        task: u32,
+        step: u32,
+        execution_mode: Option<String>,
+        fingerprint: Option<String>,
+    },
+    Complete {
+        plan: String,
+        task: u32,
+        step: u32,
+        source: Option<String>,
+        fingerprint: Option<String>,
+    },
+    Reopen {
+        plan: String,
+        task: u32,
+        step: u32,
+        source: Option<String>,
+        reason: Option<String>,
+        fingerprint: Option<String>,
+    },
+    TransferRepairStep {
+        plan: String,
+        task: u32,
+        step: u32,
+        fingerprint: Option<String>,
+    },
+    TransferHandoff {
+        plan: String,
+        scope: String,
+    },
+    CloseCurrentTask {
+        plan: String,
+        task: Option<u32>,
+    },
+    AdvanceLateStage {
+        plan: String,
+    },
+    DiagnosticMaterializeProjections {
+        plan: String,
+        repo_export: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MutationEligibilitySource {
     ExactRoute,
     ExplicitRepairTarget,
@@ -80,18 +137,475 @@ impl PublicMutationKind {
             Self::AdvanceLateStage => "advance-late-stage",
         }
     }
+}
 
-    fn public_command_prefix(&self) -> &'static str {
-        match self {
-            Self::Begin => "featureforge plan execution begin --plan ",
-            Self::Complete => "featureforge plan execution complete --plan ",
-            Self::Reopen => "featureforge plan execution reopen --plan ",
-            Self::Transfer => "featureforge plan execution transfer --plan ",
-            Self::CloseCurrentTask => "featureforge plan execution close-current-task --plan ",
-            Self::RepairReviewState => "featureforge plan execution repair-review-state --plan ",
-            Self::AdvanceLateStage => "featureforge plan execution advance-late-stage --plan ",
+impl PublicCommandShape {
+    pub(crate) fn parse(command: &str) -> Option<Self> {
+        let tokens = command.split_whitespace().collect::<Vec<_>>();
+        match tokens.as_slice() {
+            ["featureforge", "workflow", "operator", "--plan", plan] => {
+                Some(Self::WorkflowOperator {
+                    plan: (*plan).to_owned(),
+                    external_review_result_ready: false,
+                })
+            }
+            [
+                "featureforge",
+                "workflow",
+                "operator",
+                "--plan",
+                plan,
+                "--external-review-result-ready",
+            ] => Some(Self::WorkflowOperator {
+                plan: (*plan).to_owned(),
+                external_review_result_ready: true,
+            }),
+            [
+                "featureforge",
+                "workflow",
+                "operator",
+                "--plan",
+                plan,
+                "--json",
+            ] => Some(Self::WorkflowOperator {
+                plan: (*plan).to_owned(),
+                external_review_result_ready: false,
+            }),
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "status",
+                "--plan",
+                plan,
+            ] => Some(Self::Status {
+                plan: (*plan).to_owned(),
+            }),
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "repair-review-state",
+                "--plan",
+                plan,
+            ] => Some(Self::RepairReviewState {
+                plan: (*plan).to_owned(),
+            }),
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "begin",
+                "--plan",
+                plan,
+                "--task",
+                task,
+                "--step",
+                step,
+                rest @ ..,
+            ] => {
+                let flags = ParsedFlags::parse(rest)?;
+                Some(Self::Begin {
+                    plan: (*plan).to_owned(),
+                    task: parse_u32_token(task)?,
+                    step: parse_u32_token(step)?,
+                    execution_mode: flags.execution_mode,
+                    fingerprint: flags.expect_execution_fingerprint,
+                })
+            }
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "complete",
+                "--plan",
+                plan,
+                "--task",
+                task,
+                "--step",
+                step,
+                rest @ ..,
+            ] => {
+                let flags = ParsedFlags::parse(rest)?;
+                Some(Self::Complete {
+                    plan: (*plan).to_owned(),
+                    task: parse_u32_token(task)?,
+                    step: parse_u32_token(step)?,
+                    source: flags.source,
+                    fingerprint: flags.expect_execution_fingerprint,
+                })
+            }
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "reopen",
+                "--plan",
+                plan,
+                "--task",
+                task,
+                "--step",
+                step,
+                rest @ ..,
+            ] => {
+                let flags = ParsedFlags::parse(rest)?;
+                Some(Self::Reopen {
+                    plan: (*plan).to_owned(),
+                    task: parse_u32_token(task)?,
+                    step: parse_u32_token(step)?,
+                    source: flags.source,
+                    reason: flags.reason,
+                    fingerprint: flags.expect_execution_fingerprint,
+                })
+            }
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "transfer",
+                "--plan",
+                plan,
+                "--repair-task",
+                task,
+                "--repair-step",
+                step,
+                rest @ ..,
+            ] => {
+                let flags = ParsedFlags::parse(rest)?;
+                Some(Self::TransferRepairStep {
+                    plan: (*plan).to_owned(),
+                    task: parse_u32_token(task)?,
+                    step: parse_u32_token(step)?,
+                    fingerprint: flags.expect_execution_fingerprint,
+                })
+            }
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "transfer",
+                "--plan",
+                plan,
+                "--scope",
+                scope,
+                rest @ ..,
+            ] => {
+                ParsedFlags::parse(rest)?;
+                Some(Self::TransferHandoff {
+                    plan: (*plan).to_owned(),
+                    scope: (*scope).to_owned(),
+                })
+            }
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "close-current-task",
+                "--plan",
+                plan,
+            ] => Some(Self::CloseCurrentTask {
+                plan: (*plan).to_owned(),
+                task: None,
+            }),
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "close-current-task",
+                "--plan",
+                plan,
+                "--task",
+                task,
+                rest @ ..,
+            ] => {
+                parse_close_current_task_flags(rest)?;
+                Some(Self::CloseCurrentTask {
+                    plan: (*plan).to_owned(),
+                    task: Some(parse_u32_token(task)?),
+                })
+            }
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "advance-late-stage",
+                "--plan",
+                plan,
+            ] => Some(Self::AdvanceLateStage {
+                plan: (*plan).to_owned(),
+            }),
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "advance-late-stage",
+                "--plan",
+                plan,
+                rest @ ..,
+            ] => {
+                ParsedFlags::parse(rest)?;
+                Some(Self::AdvanceLateStage {
+                    plan: (*plan).to_owned(),
+                })
+            }
+            [
+                "featureforge",
+                "plan",
+                "execution",
+                "materialize-projections",
+                "--plan",
+                plan,
+                rest @ ..,
+            ] => {
+                let flags = ParsedFlags::parse(rest)?;
+                Some(Self::DiagnosticMaterializeProjections {
+                    plan: (*plan).to_owned(),
+                    repo_export: flags.repo_export,
+                })
+            }
+            _ => None,
         }
     }
+
+    pub(crate) fn to_display_command(&self) -> String {
+        match self {
+            Self::WorkflowOperator {
+                plan,
+                external_review_result_ready,
+            } => {
+                let suffix = if *external_review_result_ready {
+                    " --external-review-result-ready"
+                } else {
+                    ""
+                };
+                format!("featureforge workflow operator --plan {plan}{suffix}")
+            }
+            Self::Status { plan } => format!("featureforge plan execution status --plan {plan}"),
+            Self::RepairReviewState { plan } => {
+                format!("featureforge plan execution repair-review-state --plan {plan}")
+            }
+            Self::Begin {
+                plan,
+                task,
+                step,
+                execution_mode,
+                fingerprint,
+            } => format!(
+                "featureforge plan execution begin --plan {plan} --task {task} --step {step}{}{}",
+                optional_flag(" --execution-mode ", execution_mode.as_deref()),
+                optional_flag(" --expect-execution-fingerprint ", fingerprint.as_deref())
+            ),
+            Self::Complete {
+                plan,
+                task,
+                step,
+                source,
+                fingerprint,
+            } => format!(
+                "featureforge plan execution complete --plan {plan} --task {task} --step {step}{}{}",
+                optional_flag(" --source ", source.as_deref()),
+                optional_flag(" --expect-execution-fingerprint ", fingerprint.as_deref())
+            ),
+            Self::Reopen {
+                plan,
+                task,
+                step,
+                source,
+                reason,
+                fingerprint,
+            } => format!(
+                "featureforge plan execution reopen --plan {plan} --task {task} --step {step}{}{}{}",
+                optional_flag(" --source ", source.as_deref()),
+                optional_flag(" --reason ", reason.as_deref()),
+                optional_flag(" --expect-execution-fingerprint ", fingerprint.as_deref())
+            ),
+            Self::TransferRepairStep {
+                plan,
+                task,
+                step,
+                fingerprint,
+            } => format!(
+                "featureforge plan execution transfer --plan {plan} --repair-task {task} --repair-step {step}{}",
+                optional_flag(" --expect-execution-fingerprint ", fingerprint.as_deref())
+            ),
+            Self::TransferHandoff { plan, scope } => {
+                format!(
+                    "featureforge plan execution transfer --plan {plan} --scope {scope} --to <owner> --reason <reason>"
+                )
+            }
+            Self::CloseCurrentTask { plan, task } => format!(
+                "featureforge plan execution close-current-task --plan {plan}{}",
+                optional_flag(" --task ", task.map(|task| task.to_string()).as_deref())
+            ),
+            Self::AdvanceLateStage { plan } => {
+                format!("featureforge plan execution advance-late-stage --plan {plan}")
+            }
+            Self::DiagnosticMaterializeProjections { plan, repo_export } => {
+                let suffix = if *repo_export {
+                    " --repo-export --confirm-repo-export"
+                } else {
+                    ""
+                };
+                format!("featureforge plan execution materialize-projections --plan {plan}{suffix}")
+            }
+        }
+    }
+
+    pub(crate) fn to_mutation_request(&self) -> Option<PublicMutationRequest> {
+        match self {
+            Self::RepairReviewState { .. } => Some(PublicMutationRequest {
+                kind: PublicMutationKind::RepairReviewState,
+                task: None,
+                step: None,
+                transfer_mode: None,
+                transfer_scope: None,
+                command_name: "repair-review-state",
+            }),
+            Self::Begin { task, step, .. } => Some(PublicMutationRequest {
+                kind: PublicMutationKind::Begin,
+                task: Some(*task),
+                step: Some(*step),
+                transfer_mode: None,
+                transfer_scope: None,
+                command_name: "begin",
+            }),
+            Self::Complete { task, step, .. } => Some(PublicMutationRequest {
+                kind: PublicMutationKind::Complete,
+                task: Some(*task),
+                step: Some(*step),
+                transfer_mode: None,
+                transfer_scope: None,
+                command_name: "complete",
+            }),
+            Self::Reopen { task, step, .. } => Some(PublicMutationRequest {
+                kind: PublicMutationKind::Reopen,
+                task: Some(*task),
+                step: Some(*step),
+                transfer_mode: None,
+                transfer_scope: None,
+                command_name: "reopen",
+            }),
+            Self::TransferRepairStep { task, step, .. } => Some(PublicMutationRequest {
+                kind: PublicMutationKind::Transfer,
+                task: Some(*task),
+                step: Some(*step),
+                transfer_mode: Some(PublicTransferMode::RepairStep),
+                transfer_scope: None,
+                command_name: "transfer",
+            }),
+            Self::TransferHandoff { scope, .. } => Some(PublicMutationRequest {
+                kind: PublicMutationKind::Transfer,
+                task: None,
+                step: None,
+                transfer_mode: Some(PublicTransferMode::WorkflowHandoff),
+                transfer_scope: Some(scope.clone()),
+                command_name: "transfer",
+            }),
+            Self::CloseCurrentTask { task, .. } => Some(PublicMutationRequest {
+                kind: PublicMutationKind::CloseCurrentTask,
+                task: *task,
+                step: None,
+                transfer_mode: None,
+                transfer_scope: None,
+                command_name: "close-current-task",
+            }),
+            Self::AdvanceLateStage { .. } => Some(PublicMutationRequest {
+                kind: PublicMutationKind::AdvanceLateStage,
+                task: None,
+                step: None,
+                transfer_mode: None,
+                transfer_scope: None,
+                command_name: "advance-late-stage",
+            }),
+            Self::WorkflowOperator { .. }
+            | Self::Status { .. }
+            | Self::DiagnosticMaterializeProjections { .. } => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ParsedFlags {
+    execution_mode: Option<String>,
+    expect_execution_fingerprint: Option<String>,
+    source: Option<String>,
+    reason: Option<String>,
+    repo_export: bool,
+}
+
+impl ParsedFlags {
+    fn parse(tokens: &[&str]) -> Option<Self> {
+        let mut parsed = Self::default();
+        let mut index = 0;
+        while index < tokens.len() {
+            match tokens[index] {
+                "--execution-mode" => {
+                    parsed.execution_mode = Some((*tokens.get(index + 1)?).to_owned());
+                    index += 2;
+                }
+                "--expect-execution-fingerprint" => {
+                    parsed.expect_execution_fingerprint =
+                        Some((*tokens.get(index + 1)?).to_owned());
+                    index += 2;
+                }
+                "--source" => {
+                    parsed.source = Some((*tokens.get(index + 1)?).to_owned());
+                    index += 2;
+                }
+                "--reason" => {
+                    parsed.reason = Some((*tokens.get(index + 1)?).to_owned());
+                    index += 2;
+                }
+                "--to"
+                | "--result"
+                | "--summary-file"
+                | "--review-summary-file"
+                | "--verification-summary-file"
+                | "--reviewer-id"
+                | "--reviewer-source"
+                | "--review-result"
+                | "--verification-result"
+                | "--dispatch-id"
+                | "--claim"
+                | "--manual-verify-summary" => {
+                    let _ = tokens.get(index + 1)?;
+                    index += 2;
+                }
+                "--repo-export" | "--confirm-repo-export" | "--json" => {
+                    if tokens[index] == "--repo-export" {
+                        parsed.repo_export = true;
+                    }
+                    index += 1;
+                }
+                _ => return None,
+            }
+        }
+        Some(parsed)
+    }
+}
+
+fn parse_close_current_task_flags(tokens: &[&str]) -> Option<()> {
+    let mut index = 0;
+    while index < tokens.len() {
+        match tokens[index] {
+            "--dispatch-id"
+            | "--review-result"
+            | "--review-summary-file"
+            | "--verification-result"
+            | "--verification-summary-file" => {
+                let _ = tokens.get(index + 1)?;
+                index += 2;
+            }
+            "[--verification-summary-file" => {
+                if tokens.get(index + 1..index + 5)? != ["<path>", "when", "verification", "ran]"] {
+                    return None;
+                }
+                index += 5;
+            }
+            _ => return None,
+        }
+    }
+    Some(())
 }
 
 impl MutationEligibilityDecision {
@@ -128,19 +642,6 @@ const HIDDEN_COMMAND_TOKENS: &[&str] = &[
     "workflow preflight",
 ];
 
-const LEGAL_PUBLIC_COMMAND_PREFIXES: &[&str] = &[
-    "featureforge workflow operator --plan ",
-    "featureforge plan execution status --plan ",
-    "featureforge plan execution repair-review-state --plan ",
-    "featureforge plan execution begin --plan ",
-    "featureforge plan execution complete --plan ",
-    "featureforge plan execution reopen --plan ",
-    "featureforge plan execution transfer --plan ",
-    "featureforge plan execution close-current-task --plan ",
-    "featureforge plan execution advance-late-stage --plan ",
-    "featureforge plan execution materialize-projections --plan ",
-];
-
 pub(crate) fn command_invokes_hidden_lane(command: &str) -> bool {
     HIDDEN_COMMAND_TOKENS
         .iter()
@@ -148,9 +649,7 @@ pub(crate) fn command_invokes_hidden_lane(command: &str) -> bool {
 }
 
 pub(crate) fn command_is_legal_public_command(command: &str) -> bool {
-    LEGAL_PUBLIC_COMMAND_PREFIXES
-        .iter()
-        .any(|prefix| command.starts_with(prefix))
+    PublicCommandShape::parse(command).is_some_and(|shape| !shape.to_display_command().is_empty())
 }
 
 pub fn decide_public_mutation(
@@ -163,6 +662,51 @@ pub fn decide_public_mutation(
             format!(
                 "{} is not a supported public command token for {:?}.",
                 request.command_name, request.kind
+            ),
+        );
+    }
+
+    if status.state_kind == "blocked_runtime_bug" {
+        return MutationEligibilityDecision::reject(
+            "mutation_blocked_runtime_bug",
+            format!(
+                "{} cannot mutate while public runtime status is blocked_runtime_bug.",
+                request.command_name
+            ),
+        );
+    }
+
+    if status.phase_detail == "runtime_reconcile_required"
+        && request.kind != PublicMutationKind::RepairReviewState
+    {
+        return MutationEligibilityDecision::reject(
+            "mutation_runtime_reconcile_required",
+            format!(
+                "{} cannot mutate while public runtime status requires reconcile; repair-review-state is the only eligible mutation lane.",
+                request.command_name
+            ),
+        );
+    }
+
+    if request_matches_resume_begin(status, request) {
+        return MutationEligibilityDecision::allow(
+            MutationEligibilitySource::ExactRoute,
+            "mutation_resume_begin_authorized",
+            format!(
+                "{} is authorized by the public execution resume target.",
+                request.command_name
+            ),
+        );
+    }
+
+    if request.kind == PublicMutationKind::RepairReviewState
+        && status.phase_detail == "runtime_reconcile_required"
+    {
+        return MutationEligibilityDecision::allow(
+            MutationEligibilitySource::ExactRoute,
+            "mutation_runtime_reconcile_repair_authorized",
+            String::from(
+                "repair-review-state is authorized by the public runtime reconcile route.",
             ),
         );
     }
@@ -262,36 +806,10 @@ pub(crate) fn public_execution_mutation_is_authorized(
 }
 
 pub(crate) fn public_mutation_request_from_command(command: &str) -> Option<PublicMutationRequest> {
-    if command_invokes_hidden_lane(command) || !command_is_legal_public_command(command) {
+    if command_invokes_hidden_lane(command) {
         return None;
     }
-    let (kind, command_name) = if command
-        .starts_with(PublicMutationKind::Begin.public_command_prefix())
-    {
-        (PublicMutationKind::Begin, "begin")
-    } else if command.starts_with(PublicMutationKind::Complete.public_command_prefix()) {
-        (PublicMutationKind::Complete, "complete")
-    } else if command.starts_with(PublicMutationKind::Reopen.public_command_prefix()) {
-        (PublicMutationKind::Reopen, "reopen")
-    } else if command.starts_with(PublicMutationKind::Transfer.public_command_prefix()) {
-        (PublicMutationKind::Transfer, "transfer")
-    } else if command.starts_with(PublicMutationKind::CloseCurrentTask.public_command_prefix()) {
-        (PublicMutationKind::CloseCurrentTask, "close-current-task")
-    } else if command.starts_with(PublicMutationKind::RepairReviewState.public_command_prefix()) {
-        (PublicMutationKind::RepairReviewState, "repair-review-state")
-    } else if command.starts_with(PublicMutationKind::AdvanceLateStage.public_command_prefix()) {
-        (PublicMutationKind::AdvanceLateStage, "advance-late-stage")
-    } else {
-        return None;
-    };
-    Some(PublicMutationRequest {
-        kind,
-        task: mutation_task_from_command(command, &kind),
-        step: mutation_step_from_command(command, &kind),
-        transfer_mode: transfer_mode_from_command(command, &kind),
-        transfer_scope: transfer_scope_from_command(command, &kind),
-        command_name,
-    })
+    PublicCommandShape::parse(command).and_then(|shape| shape.to_mutation_request())
 }
 
 pub(crate) fn require_public_mutation(
@@ -350,6 +868,19 @@ fn status_blocks_non_exact_public_mutation(status: &PlanExecutionStatus) -> bool
         )
 }
 
+fn request_matches_resume_begin(
+    status: &PlanExecutionStatus,
+    request: &PublicMutationRequest,
+) -> bool {
+    request.kind == PublicMutationKind::Begin
+        && status.phase_detail == "execution_in_progress"
+        && status.execution_started == "yes"
+        && status.active_task.is_none()
+        && status.active_step.is_none()
+        && status.resume_task == request.task
+        && status.resume_step == request.step
+}
+
 fn route_exposes_public_mutation_request(
     status: &PlanExecutionStatus,
     request: &PublicMutationRequest,
@@ -403,63 +934,12 @@ fn public_mutation_requests_match(
     route_request.task == request.task && route_request.step == request.step
 }
 
-fn mutation_task_from_command(command: &str, kind: &PublicMutationKind) -> Option<u32> {
-    match kind {
-        PublicMutationKind::Transfer => parse_u32_flag(command, "--repair-task"),
-        _ => parse_u32_flag(command, "--task"),
-    }
+fn parse_u32_token(token: &str) -> Option<u32> {
+    token.parse::<u32>().ok()
 }
 
-fn mutation_step_from_command(command: &str, kind: &PublicMutationKind) -> Option<u32> {
-    match kind {
-        PublicMutationKind::Transfer => parse_u32_flag(command, "--repair-step"),
-        _ => parse_u32_flag(command, "--step"),
-    }
-}
-
-fn transfer_mode_from_command(
-    command: &str,
-    kind: &PublicMutationKind,
-) -> Option<PublicTransferMode> {
-    if *kind != PublicMutationKind::Transfer {
-        return None;
-    }
-    if parse_u32_flag(command, "--repair-task").is_some()
-        || parse_u32_flag(command, "--repair-step").is_some()
-    {
-        return Some(PublicTransferMode::RepairStep);
-    }
-    parse_string_flag(command, "--scope")
-        .is_some()
-        .then_some(PublicTransferMode::WorkflowHandoff)
-}
-
-fn transfer_scope_from_command(command: &str, kind: &PublicMutationKind) -> Option<String> {
-    (*kind == PublicMutationKind::Transfer)
-        .then(|| parse_string_flag(command, "--scope"))
-        .flatten()
-}
-
-fn parse_u32_flag(command: &str, flag: &str) -> Option<u32> {
-    let mut parts = command.split_whitespace();
-    while let Some(part) = parts.next() {
-        if part != flag {
-            continue;
-        }
-        return parts.next().and_then(|raw| raw.parse::<u32>().ok());
-    }
-    None
-}
-
-fn parse_string_flag(command: &str, flag: &str) -> Option<String> {
-    let mut parts = command.split_whitespace();
-    while let Some(part) = parts.next() {
-        if part != flag {
-            continue;
-        }
-        return parts.next().map(str::to_owned);
-    }
-    None
+fn optional_flag(prefix: &str, value: Option<&str>) -> String {
+    value.map_or_else(String::new, |value| format!("{prefix}{value}"))
 }
 
 fn normalize_public_follow_up(follow_up: &str) -> Option<String> {
@@ -520,4 +1000,102 @@ pub(crate) fn release_readiness_required_follow_up(
 
 pub(crate) fn negative_result_follow_up(operator: &ExecutionRoutingState) -> Option<String> {
     blocked_follow_up_for_operator(operator)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_command_shapes_round_trip_and_drive_mutation_requests() {
+        let shapes = [
+            PublicCommandShape::WorkflowOperator {
+                plan: String::from("docs/plan.md"),
+                external_review_result_ready: false,
+            },
+            PublicCommandShape::Status {
+                plan: String::from("docs/plan.md"),
+            },
+            PublicCommandShape::RepairReviewState {
+                plan: String::from("docs/plan.md"),
+            },
+            PublicCommandShape::Begin {
+                plan: String::from("docs/plan.md"),
+                task: 1,
+                step: 2,
+                execution_mode: Some(String::from("featureforge:executing-plans")),
+                fingerprint: Some(String::from("fingerprint")),
+            },
+            PublicCommandShape::Complete {
+                plan: String::from("docs/plan.md"),
+                task: 1,
+                step: 2,
+                source: Some(String::from("featureforge:executing-plans")),
+                fingerprint: Some(String::from("fingerprint")),
+            },
+            PublicCommandShape::Reopen {
+                plan: String::from("docs/plan.md"),
+                task: 1,
+                step: 2,
+                source: Some(String::from("featureforge:executing-plans")),
+                reason: Some(String::from("repair")),
+                fingerprint: Some(String::from("fingerprint")),
+            },
+            PublicCommandShape::TransferRepairStep {
+                plan: String::from("docs/plan.md"),
+                task: 1,
+                step: 2,
+                fingerprint: Some(String::from("fingerprint")),
+            },
+            PublicCommandShape::TransferHandoff {
+                plan: String::from("docs/plan.md"),
+                scope: String::from("task"),
+            },
+            PublicCommandShape::CloseCurrentTask {
+                plan: String::from("docs/plan.md"),
+                task: Some(1),
+            },
+            PublicCommandShape::AdvanceLateStage {
+                plan: String::from("docs/plan.md"),
+            },
+            PublicCommandShape::DiagnosticMaterializeProjections {
+                plan: String::from("docs/plan.md"),
+                repo_export: true,
+            },
+        ];
+
+        for shape in shapes {
+            let display = shape.to_display_command();
+            let parsed = PublicCommandShape::parse(&display)
+                .unwrap_or_else(|| panic!("shape should parse from `{display}`"));
+            assert_eq!(parsed, shape, "round trip failed for `{display}`");
+            assert!(command_is_legal_public_command(&display));
+        }
+    }
+
+    #[test]
+    fn malformed_command_suffixes_do_not_pass_public_shape_parsing() {
+        let commands = [
+            "featureforge plan execution begin --plan docs/plan.md --task 1 --step 2 --expect-execution-fingerprint fp --unexpected",
+            "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass --review-summary-file review.md --verification-result pass --unexpected",
+        ];
+
+        for command in commands {
+            assert!(!command_is_legal_public_command(command));
+            assert!(public_mutation_request_from_command(command).is_none());
+        }
+    }
+
+    #[test]
+    fn close_current_task_public_template_accepts_documented_optional_summary_hint() {
+        let command = "featureforge plan execution close-current-task --plan docs/plan.md --task 1 --review-result pass|fail --review-summary-file <path> --verification-result pass|fail|not-run [--verification-summary-file <path> when verification ran]";
+
+        assert!(command_is_legal_public_command(command));
+        assert_eq!(
+            public_mutation_request_from_command(command)
+                .expect("template should map to public close-current-task mutation")
+                .kind,
+            PublicMutationKind::CloseCurrentTask
+        );
+    }
 }

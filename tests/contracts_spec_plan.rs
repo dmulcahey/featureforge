@@ -1,7 +1,5 @@
 #[path = "../src/contracts/headers.rs"]
 mod headers_support;
-#[path = "support/workflow_direct.rs"]
-mod workflow_direct_support;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,14 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use assert_cmd::cargo::CommandCargoExt;
 use featureforge::contracts::packet::{build_task_packet_with_timestamp, write_contract_schemas};
 use featureforge::contracts::plan::{
-    PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION, PLAN_FIDELITY_REQUIRED_SURFACES,
-    ParallelWorktreeRequirement, PlanFidelityGateReport, PlanFidelityReceipt,
-    PlanFidelityReviewerProvenance, PlanFidelityVerification, analyze_plan,
-    evaluate_plan_fidelity_receipt_at_path, parse_plan_file, plan_fidelity_receipt_path_for_repo,
+    PLAN_FIDELITY_REQUIRED_SURFACES, ParallelWorktreeRequirement, analyze_plan,
+    evaluate_plan_fidelity_review, parse_plan_file,
 };
-use featureforge::contracts::runtime::plan_fidelity_receipt_path;
 use featureforge::contracts::spec::parse_spec_file;
-use featureforge::git::discover_slug_identity;
 use serde_json::Value;
 
 const SPEC_REL: &str = "docs/featureforge/specs/2026-03-22-plan-contract-fixture-design.md";
@@ -129,17 +123,6 @@ fn install_valid_draft_artifacts(repo_root: &Path) {
     );
 }
 
-fn write_plan_fidelity_receipt(path: &Path, receipt: &PlanFidelityReceipt) {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("receipt parent directories should exist");
-    }
-    fs::write(
-        path,
-        serde_json::to_string_pretty(receipt).expect("receipt should serialize"),
-    )
-    .expect("receipt should write");
-}
-
 struct PlanFidelityReviewArtifactInput<'a> {
     artifact_rel: &'a str,
     plan_path: &'a str,
@@ -192,77 +175,12 @@ fn write_plan_fidelity_review_artifact(
     .expect("review artifact should write");
 }
 
-fn seed_direct_plan_fidelity_review_artifact(repo_root: &Path) -> (String, String) {
-    let artifact_rel = ".featureforge/reviews/plan-fidelity-direct.md";
-    write_plan_fidelity_review_artifact(
-        repo_root,
-        PlanFidelityReviewArtifactInput {
-            artifact_rel,
-            plan_path: PLAN_REL,
-            plan_revision: 1,
-            spec_path: SPEC_REL,
-            spec_revision: 1,
-            review_verdict: "pass",
-            reviewer_source: "fresh-context-subagent",
-            reviewer_id: "reviewer-019d",
-            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
-        },
-    );
-    let artifact_source = fs::read(repo_root.join(artifact_rel))
-        .expect("direct review artifact should be readable after write");
-    (
-        artifact_rel.to_owned(),
-        featureforge::git::sha256_hex(&artifact_source),
-    )
-}
-
-fn build_matching_plan_fidelity_receipt(repo_root: &Path) -> PlanFidelityReceipt {
+fn evaluate_plan_fidelity_gate(
+    repo_root: &Path,
+) -> featureforge::contracts::plan::PlanFidelityReviewReport {
     let spec = parse_spec_file(repo_root.join(SPEC_REL)).expect("spec fixture should parse");
     let plan = parse_plan_file(repo_root.join(PLAN_REL)).expect("plan fixture should parse");
-    let report = analyze_plan(repo_root.join(SPEC_REL), repo_root.join(PLAN_REL))
-        .expect("report should build");
-    let (review_artifact_path, review_artifact_fingerprint) =
-        seed_direct_plan_fidelity_review_artifact(repo_root);
-
-    PlanFidelityReceipt {
-        schema_version: PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION,
-        receipt_kind: String::from("plan_fidelity_receipt"),
-        verdict: String::from("pass"),
-        spec_path: spec.path.clone(),
-        spec_revision: spec.spec_revision,
-        spec_fingerprint: report.spec_fingerprint,
-        plan_path: plan.path.clone(),
-        plan_revision: plan.plan_revision,
-        plan_fingerprint: report.plan_fingerprint,
-        review_artifact_path,
-        review_artifact_fingerprint,
-        reviewer_provenance: PlanFidelityReviewerProvenance {
-            review_stage: String::from("featureforge:plan-fidelity-review"),
-            reviewer_source: String::from("fresh-context-subagent"),
-            reviewer_id: String::from("reviewer-019d"),
-            distinct_from_stages: vec![
-                String::from("featureforge:writing-plans"),
-                String::from("featureforge:plan-eng-review"),
-            ],
-        },
-        verification: PlanFidelityVerification {
-            checked_surfaces: PLAN_FIDELITY_REQUIRED_SURFACES
-                .iter()
-                .map(|surface| (*surface).to_owned())
-                .collect(),
-            verified_requirement_ids: spec
-                .requirements
-                .iter()
-                .map(|requirement| requirement.id.clone())
-                .collect(),
-        },
-    }
-}
-
-fn evaluate_plan_fidelity_gate(repo_root: &Path, receipt_path: &Path) -> PlanFidelityGateReport {
-    let spec = parse_spec_file(repo_root.join(SPEC_REL)).expect("spec fixture should parse");
-    let plan = parse_plan_file(repo_root.join(PLAN_REL)).expect("plan fixture should parse");
-    evaluate_plan_fidelity_receipt_at_path(&spec, &plan, repo_root, receipt_path)
+    evaluate_plan_fidelity_review(&spec, &plan, repo_root)
 }
 
 fn run(mut command: Command, context: &str) -> Output {
@@ -341,29 +259,6 @@ fn run_rust_from_dir(current_dir: &Path, state_dir: &Path, args: &[&str], contex
         .args(["plan", "contract"])
         .args(args);
     run(command, context)
-}
-
-fn run_record_plan_fidelity(
-    repo_root: &Path,
-    state_dir: &Path,
-    args: &[&str],
-    context: &str,
-) -> Output {
-    let direct_args = std::iter::once("workflow")
-        .chain(std::iter::once("plan-fidelity"))
-        .chain(args.iter().copied())
-        .collect::<Vec<_>>();
-    workflow_direct_support::try_run_workflow_output_direct(
-        repo_root,
-        state_dir,
-        &direct_args,
-        context,
-        true,
-    )
-    .unwrap_or_else(|error| panic!("{context} direct plan-fidelity helper should run: {error}"))
-    .unwrap_or_else(|| {
-        panic!("{context} direct plan-fidelity helper should handle legacy workflow command")
-    })
 }
 
 fn replace_in_file(path: &Path, search: &str, replacement: &str) {
@@ -1849,16 +1744,25 @@ fn analyze_plan_rejects_multi_task_serial_plain_seam_wording() {
 }
 
 #[test]
-fn plan_fidelity_receipt_validation_accepts_matching_pass_receipt() {
-    let repo_root = unique_temp_dir("plan-fidelity-receipt-valid");
-    install_valid_artifacts(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    write_plan_fidelity_receipt(
-        &receipt_path,
-        &build_matching_plan_fidelity_receipt(&repo_root),
+fn plan_fidelity_review_validation_accepts_matching_pass_artifact() {
+    let repo_root = unique_temp_dir("plan-fidelity-review-valid");
+    install_valid_draft_artifacts(&repo_root);
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-valid.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
     );
 
-    let gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
+    let gate = evaluate_plan_fidelity_gate(&repo_root);
 
     assert_eq!(gate.state, "pass");
     assert!(gate.reason_codes.is_empty());
@@ -1866,154 +1770,101 @@ fn plan_fidelity_receipt_validation_accepts_matching_pass_receipt() {
 }
 
 #[test]
-fn plan_fidelity_receipt_validation_rejects_stale_plan_revision_binding() {
-    let repo_root = unique_temp_dir("plan-fidelity-receipt-stale");
-    install_valid_artifacts(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    let mut receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    receipt.plan_revision += 1;
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
+fn plan_fidelity_review_validation_rejects_stale_plan_revision_binding() {
+    let repo_root = unique_temp_dir("plan-fidelity-review-stale");
+    install_valid_draft_artifacts(&repo_root);
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-stale.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
+    );
+    replace_in_file(
+        &repo_root.join(PLAN_REL),
+        "**Plan Revision:** 1",
+        "**Plan Revision:** 2",
+    );
 
-    let gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
+    let gate = evaluate_plan_fidelity_gate(&repo_root);
 
     assert_eq!(gate.state, "stale");
     assert!(
         gate.reason_codes
             .iter()
-            .any(|code| code == "stale_plan_fidelity_receipt")
+            .any(|code| code == "stale_plan_fidelity_review_artifact")
     );
 }
 
 #[test]
-fn plan_fidelity_receipt_validation_rejects_non_independent_reviewer_provenance() {
-    let repo_root = unique_temp_dir("plan-fidelity-receipt-provenance");
-    install_valid_artifacts(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    let mut receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    receipt.reviewer_provenance.review_stage = String::from("featureforge:writing-plans");
-    receipt.reviewer_provenance.distinct_from_stages =
-        vec![String::from("featureforge:writing-plans")];
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
+fn plan_fidelity_review_validation_rejects_non_independent_reviewer_provenance() {
+    let repo_root = unique_temp_dir("plan-fidelity-review-provenance");
+    install_valid_draft_artifacts(&repo_root);
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-provenance.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "same-context",
+            reviewer_id: "writer-context",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
+    );
 
-    let gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
+    let gate = evaluate_plan_fidelity_gate(&repo_root);
 
     assert_eq!(gate.state, "invalid");
     assert!(
         gate.reason_codes
             .iter()
-            .any(|code| code == "plan_fidelity_receipt_not_independent")
+            .any(|code| code == "plan_fidelity_reviewer_provenance_invalid")
     );
 }
 
 #[test]
-fn plan_fidelity_receipt_validation_rejects_missing_execution_topology_verification() {
-    let repo_root = unique_temp_dir("plan-fidelity-receipt-topology");
-    install_valid_artifacts(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    let mut receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    receipt.verification.checked_surfaces = vec![String::from("requirement_index")];
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
+fn plan_fidelity_review_validation_rejects_missing_execution_topology_verification() {
+    let repo_root = unique_temp_dir("plan-fidelity-review-topology");
+    install_valid_draft_artifacts(&repo_root);
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-topology.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &["requirement_index"],
+        },
+    );
 
-    let gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
+    let gate = evaluate_plan_fidelity_gate(&repo_root);
 
     assert_eq!(gate.state, "invalid");
     assert!(
         gate.reason_codes
             .iter()
-            .any(|code| code == "plan_fidelity_receipt_missing_execution_topology_check")
+            .any(|code| code == "plan_fidelity_review_missing_required_surface")
     );
 }
 
 #[test]
-fn plan_fidelity_receipt_validation_rejects_old_two_surface_receipts() {
-    let repo_root = unique_temp_dir("plan-fidelity-receipt-old-surfaces");
-    install_valid_artifacts(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    let mut receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    receipt.verification.checked_surfaces = vec![
-        String::from("requirement_index"),
-        String::from("execution_topology"),
-    ];
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
-
-    let gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
-
-    assert_eq!(gate.state, "invalid");
-    assert!(
-        gate.reason_codes
-            .iter()
-            .any(|code| code == "plan_fidelity_receipt_missing_task_contract_check")
-    );
-    assert!(
-        gate.reason_codes
-            .iter()
-            .any(|code| code == "plan_fidelity_receipt_missing_task_determinism_check")
-    );
-    assert!(
-        gate.reason_codes
-            .iter()
-            .any(|code| code == "plan_fidelity_receipt_missing_spec_reference_fidelity_check")
-    );
-}
-
-#[test]
-fn plan_fidelity_receipt_validation_rejects_pre_expansion_schema_version() {
-    let repo_root = unique_temp_dir("plan-fidelity-receipt-old-schema");
-    install_valid_artifacts(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    let mut receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    receipt.schema_version = 2;
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
-
-    let gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
-
-    assert_eq!(gate.state, "malformed");
-    assert!(
-        gate.reason_codes
-            .iter()
-            .any(|code| code == "malformed_plan_fidelity_receipt")
-    );
-}
-
-#[test]
-fn plan_fidelity_receipt_validation_rejects_missing_or_drifted_review_artifacts() {
-    let repo_root = unique_temp_dir("plan-fidelity-receipt-artifact-binding");
-    install_valid_artifacts(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    let mut receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    fs::remove_file(repo_root.join(&receipt.review_artifact_path))
-        .expect("review artifact should be removable for missing-artifact coverage");
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
-
-    let missing_artifact_gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
-    assert_eq!(missing_artifact_gate.state, "invalid");
-    assert!(
-        missing_artifact_gate
-            .reason_codes
-            .iter()
-            .any(|code| code == "plan_fidelity_review_artifact_missing")
-    );
-
-    let (artifact_rel, artifact_fingerprint) =
-        seed_direct_plan_fidelity_review_artifact(&repo_root);
-    receipt.review_artifact_path = artifact_rel;
-    receipt.review_artifact_fingerprint = artifact_fingerprint;
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
-    fs::write(
-        repo_root.join(&receipt.review_artifact_path),
-        "tampered review artifact contents\n",
-    )
-    .expect("tampered review artifact should write");
-
-    let mismatch_gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
-    assert_eq!(mismatch_gate.state, "invalid");
-    assert!(
-        mismatch_gate
-            .reason_codes
-            .iter()
-            .any(|code| code == "plan_fidelity_review_artifact_fingerprint_mismatch")
-    );
-
+fn plan_fidelity_review_validation_rejects_old_two_surface_artifacts() {
+    let repo_root = unique_temp_dir("plan-fidelity-review-old-surfaces");
+    install_valid_draft_artifacts(&repo_root);
     write_plan_fidelity_review_artifact(
         &repo_root,
         PlanFidelityReviewArtifactInput {
@@ -2028,20 +1879,41 @@ fn plan_fidelity_receipt_validation_rejects_missing_or_drifted_review_artifacts(
             verified_surfaces: &["requirement_index", "execution_topology"],
         },
     );
-    let old_surface_artifact =
-        repo_root.join(".featureforge/reviews/plan-fidelity-old-surfaces.md");
-    receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    receipt.review_artifact_path =
-        String::from(".featureforge/reviews/plan-fidelity-old-surfaces.md");
-    receipt.review_artifact_fingerprint = featureforge::git::sha256_hex(
-        &fs::read(old_surface_artifact).expect("old artifact should read"),
-    );
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
 
-    let invalid_artifact_gate = evaluate_plan_fidelity_gate(&repo_root, &receipt_path);
-    assert_eq!(invalid_artifact_gate.state, "invalid");
+    let gate = evaluate_plan_fidelity_gate(&repo_root);
+
+    assert_eq!(gate.state, "invalid");
     assert!(
-        invalid_artifact_gate
+        gate.reason_codes
+            .iter()
+            .any(|code| code == "plan_fidelity_review_missing_required_surface")
+    );
+}
+
+#[test]
+fn plan_fidelity_review_validation_reports_missing_and_malformed_artifacts_directly() {
+    let repo_root = unique_temp_dir("plan-fidelity-review-missing-malformed");
+    install_valid_draft_artifacts(&repo_root);
+
+    let missing_artifact_gate = evaluate_plan_fidelity_gate(&repo_root);
+    assert_eq!(missing_artifact_gate.state, "missing");
+    assert!(
+        missing_artifact_gate
+            .reason_codes
+            .iter()
+            .any(|code| code == "missing_plan_fidelity_review_artifact")
+    );
+
+    let artifact_path = repo_root.join(".featureforge/reviews/plan-fidelity-malformed.md");
+    fs::create_dir_all(artifact_path.parent().expect("artifact should have parent"))
+        .expect("artifact parent should be created");
+    fs::write(&artifact_path, "not a parseable review artifact\n")
+        .expect("malformed artifact should write");
+
+    let malformed_artifact_gate = evaluate_plan_fidelity_gate(&repo_root);
+    assert_eq!(malformed_artifact_gate.state, "invalid");
+    assert!(
+        malformed_artifact_gate
             .reason_codes
             .iter()
             .any(|code| code == "plan_fidelity_review_artifact_invalid")
@@ -2049,20 +1921,29 @@ fn plan_fidelity_receipt_validation_rejects_missing_or_drifted_review_artifacts(
 }
 
 #[test]
-fn exported_analyze_plan_reads_runtime_owned_plan_fidelity_receipt_path() {
-    let repo_root = unique_temp_dir("contract-analyze-runtime-plan-fidelity-path");
+fn exported_analyze_plan_reads_direct_plan_fidelity_review_artifact() {
+    let repo_root = unique_temp_dir("contract-analyze-direct-plan-fidelity-artifact");
     install_valid_draft_artifacts(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    write_plan_fidelity_receipt(
-        &receipt_path,
-        &build_matching_plan_fidelity_receipt(&repo_root),
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-exported.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
     );
 
     let report = analyze_plan(repo_root.join(SPEC_REL), repo_root.join(PLAN_REL))
-        .expect("direct analyze_plan helper should read the runtime-owned receipt path");
+        .expect("direct analyze_plan helper should read the review artifact");
 
     assert_eq!(report.contract_state, "valid");
-    assert_eq!(report.plan_fidelity_receipt.state, "pass");
+    assert_eq!(report.plan_fidelity_review.state, "pass");
 }
 
 #[test]
@@ -2083,22 +1964,6 @@ fn analyze_plan_cli_resolves_repo_relative_paths_from_subdirectories() {
             reviewer_id: "independent-reviewer-subdir",
             verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
-    );
-    parse_success_json(
-        &run_record_plan_fidelity(
-            &repo_root,
-            &state_dir,
-            &[
-                "record",
-                "--plan",
-                PLAN_REL,
-                "--review-artifact",
-                ".featureforge/reviews/plan-fidelity-cli-subdir.md",
-                "--json",
-            ],
-            "record plan-fidelity receipt for subdirectory analyze-plan coverage",
-        ),
-        "record plan-fidelity receipt for subdirectory analyze-plan coverage",
     );
     fs::create_dir_all(repo_root.join("src/runtime")).expect("subdirectory should exist");
 
@@ -2121,7 +1986,7 @@ fn analyze_plan_cli_resolves_repo_relative_paths_from_subdirectories() {
     );
 
     assert_eq!(report["contract_state"], "valid");
-    assert_eq!(report["plan_fidelity_receipt"]["state"], "pass");
+    assert_eq!(report["plan_fidelity_review"]["state"], "pass");
 }
 
 #[test]
@@ -3081,9 +2946,9 @@ fn lint_cache_invalidates_after_plan_change() {
 }
 
 #[test]
-fn analyze_plan_reports_missing_plan_fidelity_receipt_for_draft_plan() {
-    let repo_root = unique_temp_dir("contract-analyze-missing-plan-fidelity-receipt");
-    let state_dir = unique_temp_dir("contract-analyze-missing-plan-fidelity-receipt-state");
+fn analyze_plan_reports_missing_plan_fidelity_review_artifact_for_draft_plan() {
+    let repo_root = unique_temp_dir("contract-analyze-missing-plan-fidelity-review");
+    let state_dir = unique_temp_dir("contract-analyze-missing-plan-fidelity-review-state");
     install_valid_draft_artifacts(&repo_root);
 
     let report = parse_success_json(
@@ -3099,27 +2964,35 @@ fn analyze_plan_reports_missing_plan_fidelity_receipt_for_draft_plan() {
                 "--format",
                 "json",
             ],
-            "rust analyze draft plan without plan-fidelity receipt",
+            "rust analyze draft plan without plan-fidelity review artifact",
         ),
-        "rust analyze draft plan without plan-fidelity receipt",
+        "rust analyze draft plan without plan-fidelity review artifact",
     );
 
-    assert_eq!(report["contract_state"], "invalid");
-    assert_eq!(report["plan_fidelity_receipt"]["state"], "missing");
+    assert_eq!(report["contract_state"], "valid");
+    assert_eq!(report["plan_fidelity_review"]["state"], "missing");
     assert!(
-        report["reason_codes"]
+        report["plan_fidelity_review"]["reason_codes"]
             .as_array()
             .expect("reason_codes should be present")
             .iter()
             .filter_map(Value::as_str)
-            .any(|code| code == "missing_plan_fidelity_receipt")
+            .any(|code| code == "missing_plan_fidelity_review_artifact")
+    );
+    assert!(
+        !report["reason_codes"]
+            .as_array()
+            .expect("structural reason_codes should be present")
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|code| code.contains("plan_fidelity"))
     );
 }
 
 #[test]
-fn analyze_plan_accepts_matching_pass_plan_fidelity_receipt_for_draft_plan() {
-    let repo_root = unique_temp_dir("contract-analyze-pass-plan-fidelity-receipt");
-    let state_dir = unique_temp_dir("contract-analyze-pass-plan-fidelity-receipt-state");
+fn analyze_plan_accepts_matching_pass_plan_fidelity_review_artifact_for_draft_plan() {
+    let repo_root = unique_temp_dir("contract-analyze-pass-plan-fidelity-review");
+    let state_dir = unique_temp_dir("contract-analyze-pass-plan-fidelity-review-state");
     install_valid_draft_artifacts(&repo_root);
     write_plan_fidelity_review_artifact(
         &repo_root,
@@ -3136,24 +3009,6 @@ fn analyze_plan_accepts_matching_pass_plan_fidelity_receipt_for_draft_plan() {
         },
     );
 
-    let record = parse_success_json(
-        &run_record_plan_fidelity(
-            &repo_root,
-            &state_dir,
-            &[
-                "record",
-                "--plan",
-                PLAN_REL,
-                "--review-artifact",
-                ".featureforge/reviews/plan-fidelity-pass.md",
-                "--json",
-            ],
-            "record matching pass plan-fidelity receipt",
-        ),
-        "record matching pass plan-fidelity receipt",
-    );
-    assert_eq!(record["status"], "ok");
-
     let report = parse_success_json(
         &run_rust(
             &repo_root,
@@ -3167,58 +3022,62 @@ fn analyze_plan_accepts_matching_pass_plan_fidelity_receipt_for_draft_plan() {
                 "--format",
                 "json",
             ],
-            "rust analyze draft plan with pass plan-fidelity receipt",
+            "rust analyze draft plan with pass plan-fidelity review artifact",
         ),
-        "rust analyze draft plan with pass plan-fidelity receipt",
+        "rust analyze draft plan with pass plan-fidelity review artifact",
     );
 
     assert_eq!(report["contract_state"], "valid");
-    assert_eq!(report["plan_fidelity_receipt"]["state"], "pass");
+    assert_eq!(report["plan_fidelity_review"]["state"], "pass");
     assert_eq!(
-        report["plan_fidelity_receipt"]["reviewer_stage"],
+        report["plan_fidelity_review"]["reviewer_stage"],
         "featureforge:plan-fidelity-review"
     );
     assert_eq!(
-        report["plan_fidelity_receipt"]["provenance_source"],
+        report["plan_fidelity_review"]["provenance_source"],
         "fresh-context-subagent"
     );
     assert_eq!(
-        report["plan_fidelity_receipt"]["verified_requirement_index"],
+        report["plan_fidelity_review"]["verified_requirement_index"],
         true
     );
     assert_eq!(
-        report["plan_fidelity_receipt"]["verified_execution_topology"],
+        report["plan_fidelity_review"]["verified_execution_topology"],
         true
     );
     assert_eq!(
-        report["plan_fidelity_receipt"]["verified_task_contract"],
+        report["plan_fidelity_review"]["verified_task_contract"],
         true
     );
     assert_eq!(
-        report["plan_fidelity_receipt"]["verified_task_determinism"],
+        report["plan_fidelity_review"]["verified_task_determinism"],
         true
     );
     assert_eq!(
-        report["plan_fidelity_receipt"]["verified_spec_reference_fidelity"],
+        report["plan_fidelity_review"]["verified_spec_reference_fidelity"],
         true
     );
 }
 
 #[test]
-fn analyze_plan_rejects_stale_or_non_independent_plan_fidelity_receipts() {
-    let repo_root = unique_temp_dir("contract-analyze-stale-plan-fidelity-receipt");
-    let state_dir = unique_temp_dir("contract-analyze-stale-plan-fidelity-receipt-state");
+fn analyze_plan_reports_stale_or_non_independent_plan_fidelity_review_artifacts() {
+    let repo_root = unique_temp_dir("contract-analyze-invalid-plan-fidelity-review");
+    let state_dir = unique_temp_dir("contract-analyze-invalid-plan-fidelity-review-state");
     install_valid_draft_artifacts(&repo_root);
-    let slug_identity = discover_slug_identity(&repo_root);
-    let runtime_receipt_path = plan_fidelity_receipt_path(
-        &state_dir,
-        &slug_identity.repo_slug,
-        &slug_identity.branch_name,
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-non-independent.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "same-context",
+            reviewer_id: "writer-context",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
     );
-    let mut non_independent_receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    non_independent_receipt.reviewer_provenance.reviewer_source = String::from("same-context");
-    non_independent_receipt.reviewer_provenance.reviewer_id = String::from("writer-context");
-    write_plan_fidelity_receipt(&runtime_receipt_path, &non_independent_receipt);
 
     let non_independent = parse_success_json(
         &run_rust(
@@ -3233,21 +3092,23 @@ fn analyze_plan_rejects_stale_or_non_independent_plan_fidelity_receipts() {
                 "--format",
                 "json",
             ],
-            "rust analyze draft plan with non-independent plan-fidelity receipt",
+            "rust analyze draft plan with non-independent plan-fidelity review artifact",
         ),
-        "rust analyze draft plan with non-independent plan-fidelity receipt",
+        "rust analyze draft plan with non-independent plan-fidelity review artifact",
     );
-    assert_eq!(non_independent["contract_state"], "invalid");
-    assert_eq!(non_independent["plan_fidelity_receipt"]["state"], "invalid");
+    assert_eq!(non_independent["contract_state"], "valid");
+    assert_eq!(non_independent["plan_fidelity_review"]["state"], "invalid");
     assert!(
-        non_independent["reason_codes"]
+        non_independent["plan_fidelity_review"]["reason_codes"]
             .as_array()
             .expect("reason_codes should be present")
             .iter()
             .filter_map(Value::as_str)
-            .any(|code| code == "plan_fidelity_receipt_not_independent")
+            .any(|code| code == "plan_fidelity_reviewer_provenance_invalid")
     );
-    fs::remove_file(&runtime_receipt_path).expect("invalid runtime receipt should be removable");
+
+    fs::remove_file(repo_root.join(".featureforge/reviews/plan-fidelity-non-independent.md"))
+        .expect("invalid review artifact should be removable");
     write_plan_fidelity_review_artifact(
         &repo_root,
         PlanFidelityReviewArtifactInput {
@@ -3261,23 +3122,6 @@ fn analyze_plan_rejects_stale_or_non_independent_plan_fidelity_receipts() {
             reviewer_id: "independent-reviewer-2",
             verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
-    );
-
-    parse_success_json(
-        &run_record_plan_fidelity(
-            &repo_root,
-            &state_dir,
-            &[
-                "record",
-                "--plan",
-                PLAN_REL,
-                "--review-artifact",
-                ".featureforge/reviews/plan-fidelity-stale.md",
-                "--json",
-            ],
-            "record pass plan-fidelity receipt before plan revision change",
-        ),
-        "record pass plan-fidelity receipt before plan revision change",
     );
 
     replace_in_file(
@@ -3299,37 +3143,41 @@ fn analyze_plan_rejects_stale_or_non_independent_plan_fidelity_receipts() {
                 "--format",
                 "json",
             ],
-            "rust analyze draft plan with stale plan-fidelity receipt",
+            "rust analyze draft plan with stale plan-fidelity review artifact",
         ),
-        "rust analyze draft plan with stale plan-fidelity receipt",
+        "rust analyze draft plan with stale plan-fidelity review artifact",
     );
-    assert_eq!(stale["contract_state"], "invalid");
-    assert_eq!(stale["plan_fidelity_receipt"]["state"], "stale");
+    assert_eq!(stale["contract_state"], "valid");
+    assert_eq!(stale["plan_fidelity_review"]["state"], "stale");
     assert!(
-        stale["reason_codes"]
+        stale["plan_fidelity_review"]["reason_codes"]
             .as_array()
             .expect("reason_codes should be present")
             .iter()
             .filter_map(Value::as_str)
-            .any(|code| code == "stale_plan_fidelity_receipt")
+            .any(|code| code == "stale_plan_fidelity_review_artifact")
     );
 }
 
 #[test]
-fn analyze_plan_requires_expanded_plan_fidelity_checks_in_receipt() {
-    let repo_root = unique_temp_dir("contract-analyze-plan-fidelity-receipt-checks");
-    let state_dir = unique_temp_dir("contract-analyze-plan-fidelity-receipt-checks-state");
+fn analyze_plan_requires_expanded_plan_fidelity_checks_in_review_artifact() {
+    let repo_root = unique_temp_dir("contract-analyze-plan-fidelity-review-checks");
+    let state_dir = unique_temp_dir("contract-analyze-plan-fidelity-review-checks-state");
     install_valid_draft_artifacts(&repo_root);
-    let slug_identity = discover_slug_identity(&repo_root);
-    let receipt_path = plan_fidelity_receipt_path(
-        &state_dir,
-        &slug_identity.repo_slug,
-        &slug_identity.branch_name,
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-missing-surfaces.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &[],
+        },
     );
-    let mut receipt = build_matching_plan_fidelity_receipt(&repo_root);
-    receipt.verification.checked_surfaces = Vec::new();
-    receipt.verification.verified_requirement_ids = Vec::new();
-    write_plan_fidelity_receipt(&receipt_path, &receipt);
 
     let report = parse_success_json(
         &run_rust(
@@ -3344,38 +3192,22 @@ fn analyze_plan_requires_expanded_plan_fidelity_checks_in_receipt() {
                 "--format",
                 "json",
             ],
-            "rust analyze draft plan with incomplete plan-fidelity receipt",
+            "rust analyze draft plan with incomplete plan-fidelity review artifact",
         ),
-        "rust analyze draft plan with incomplete plan-fidelity receipt",
+        "rust analyze draft plan with incomplete plan-fidelity review artifact",
     );
 
-    assert_eq!(report["contract_state"], "invalid");
-    assert_eq!(report["plan_fidelity_receipt"]["state"], "invalid");
-    let reason_codes = report["reason_codes"]
+    assert_eq!(report["contract_state"], "valid");
+    assert_eq!(report["plan_fidelity_review"]["state"], "invalid");
+    let reason_codes = report["plan_fidelity_review"]["reason_codes"]
         .as_array()
         .expect("reason_codes should be present")
         .iter()
         .filter_map(Value::as_str)
         .collect::<Vec<_>>();
     assert!(
-        reason_codes.contains(&"plan_fidelity_receipt_missing_requirement_index_check"),
-        "missing requirement-index verification should fail closed, got {reason_codes:?}"
-    );
-    assert!(
-        reason_codes.contains(&"plan_fidelity_receipt_missing_execution_topology_check"),
-        "missing execution-topology verification should fail closed, got {reason_codes:?}"
-    );
-    assert!(
-        reason_codes.contains(&"plan_fidelity_receipt_missing_task_contract_check"),
-        "missing task-contract verification should fail closed, got {reason_codes:?}"
-    );
-    assert!(
-        reason_codes.contains(&"plan_fidelity_receipt_missing_task_determinism_check"),
-        "missing task-determinism verification should fail closed, got {reason_codes:?}"
-    );
-    assert!(
-        reason_codes.contains(&"plan_fidelity_receipt_missing_spec_reference_fidelity_check"),
-        "missing spec-reference-fidelity verification should fail closed, got {reason_codes:?}"
+        reason_codes.contains(&"plan_fidelity_review_missing_required_surface"),
+        "missing required surface verification should fail closed, got {reason_codes:?}"
     );
 }
 
@@ -3409,15 +3241,15 @@ fn analyze_plan_reports_invalid_fidelity_gate_when_spec_requirement_index_is_mal
     );
 
     assert_eq!(report["contract_state"], "invalid");
-    assert_eq!(report["plan_fidelity_receipt"]["state"], "invalid");
+    assert_eq!(report["plan_fidelity_review"]["state"], "invalid");
     assert_ne!(
-        report["plan_fidelity_receipt"]["state"], "not_applicable",
-        "draft-plan analysis should still report the plan-fidelity gate when the source spec is malformed"
+        report["plan_fidelity_review"]["state"], "not_applicable",
+        "draft-plan analysis should still report the plan-fidelity review when the source spec is malformed"
     );
 }
 
 #[test]
-fn analyze_plan_rejects_pass_receipt_when_source_spec_is_not_workflow_valid_ceo_review() {
+fn analyze_plan_rejects_pass_review_artifact_when_source_spec_is_not_workflow_valid_ceo_review() {
     let repo_root = unique_temp_dir("contract-analyze-plan-fidelity-invalid-spec-reviewer");
     install_valid_draft_artifacts(&repo_root);
     replace_in_file(
@@ -3425,19 +3257,29 @@ fn analyze_plan_rejects_pass_receipt_when_source_spec_is_not_workflow_valid_ceo_
         "**Last Reviewed By:** plan-ceo-review",
         "**Last Reviewed By:** brainstorming",
     );
-    let receipt_path = plan_fidelity_receipt_path_for_repo(&repo_root);
-    write_plan_fidelity_receipt(
-        &receipt_path,
-        &build_matching_plan_fidelity_receipt(&repo_root),
+    write_plan_fidelity_review_artifact(
+        &repo_root,
+        PlanFidelityReviewArtifactInput {
+            artifact_rel: ".featureforge/reviews/plan-fidelity-invalid-spec-reviewer.md",
+            plan_path: PLAN_REL,
+            plan_revision: 1,
+            spec_path: SPEC_REL,
+            spec_revision: 1,
+            review_verdict: "pass",
+            reviewer_source: "fresh-context-subagent",
+            reviewer_id: "reviewer-019d",
+            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
+        },
     );
 
     let report = analyze_plan(repo_root.join(SPEC_REL), repo_root.join(PLAN_REL))
         .expect("analyze_plan should still return a report for draft plans with invalid spec reviewer provenance");
 
-    assert_eq!(report.contract_state, "invalid");
-    assert_eq!(report.plan_fidelity_receipt.state, "invalid");
+    assert_eq!(report.contract_state, "valid");
+    assert_eq!(report.plan_fidelity_review.state, "invalid");
     assert!(
         report
+            .plan_fidelity_review
             .reason_codes
             .iter()
             .any(|code| code == "plan_fidelity_source_spec_not_ceo_approved")

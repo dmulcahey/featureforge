@@ -4,13 +4,13 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::cli::plan_execution::{GateContractArgs, GateEvaluatorArgs, GateHandoffArgs};
 use crate::contracts::harness::{
     EvaluationReport, ExecutionContract, ExecutionHandoff, read_evaluation_report,
     read_evidence_artifact, read_execution_contract, read_execution_handoff,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
 use crate::execution::event_log::load_reduced_authoritative_state;
+use crate::execution::internal_args::{GateContractArgs, GateEvaluatorArgs, GateHandoffArgs};
 use crate::execution::state::{
     ExecutionContext, ExecutionRuntime, GateResult, GateState, hash_contract_plan,
     load_execution_context_without_authority_overlay, task_packet_fingerprint,

@@ -433,7 +433,7 @@ fn task_review_result_requires_verification<'a>(
             reason_code,
             "prior_task_verification_missing"
                 | "prior_task_verification_missing_legacy"
-                | "task_verification_receipt_malformed"
+                | "task_verification_summary_malformed"
         )
     })
 }

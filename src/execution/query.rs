@@ -45,6 +45,7 @@ use crate::execution::router::{
 };
 use crate::execution::state::{
     ExecutionContext, ExecutionReadScope, ExecutionRuntime, GateResult, PlanExecutionStatus,
+    apply_public_read_invariants_to_status,
     apply_shared_routing_projection_to_read_scope_with_routing,
     current_branch_closure_structural_review_state_reason, load_execution_read_scope,
     missing_derived_review_state_fields, qa_pending_requires_test_plan_refresh,
@@ -224,6 +225,7 @@ fn query_review_state_internal(
 ) -> Result<ReviewStateSnapshot, JsonFailure> {
     let mut read_scope = load_execution_read_scope(runtime, plan_path, exact_plan_override)?;
     apply_shared_routing_projection_to_read_scope_with_routing(&mut read_scope, false, false)?;
+    apply_public_read_invariants_to_status(&mut read_scope.status);
     review_state_snapshot_from_read_scope_with_status(&read_scope, &read_scope.status)
 }
 
@@ -1220,7 +1222,7 @@ mod routing_helper_tests {
                 contract_state: String::new(),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 0,
                 plan_candidate_count: 0,
@@ -1263,7 +1265,7 @@ mod routing_helper_tests {
         for reason_code in [
             "prior_task_verification_missing",
             "prior_task_verification_missing_legacy",
-            "task_verification_receipt_malformed",
+            "task_verification_summary_malformed",
         ] {
             let mut mutated = status.clone();
             mutated.reason_codes = vec![reason_code.to_owned()];
@@ -1280,7 +1282,7 @@ mod routing_helper_tests {
         let status = unresolved_status();
         for reason_code in [
             "task_review_not_independent",
-            "task_review_receipt_malformed",
+            "task_review_artifact_malformed",
         ] {
             let mut mutated = status.clone();
             mutated.reason_codes = vec![reason_code.to_owned()];
@@ -1320,6 +1322,12 @@ mod routing_helper_tests {
             "execution_reentry_required",
             vec![String::from("prior_task_review_not_green")],
         );
+        let routing = ExecutionRoutingState {
+            recommended_command: Some(String::from(
+                "featureforge plan execution repair-review-state --plan <approved-plan-path>",
+            )),
+            ..routing
+        };
         assert_eq!(
             required_follow_up_from_routing(&routing).as_deref(),
             Some("repair_review_state")

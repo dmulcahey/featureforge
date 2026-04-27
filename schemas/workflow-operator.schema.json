@@ -332,6 +332,8 @@
             "enum": [
               "task_review_dispatch_required",
               "task_review_result_pending",
+              "execution_in_progress",
+              "runtime_reconcile_required",
               "finish_review_gate_ready",
               "finish_completion_gate_ready",
               "final_review_dispatch_required",

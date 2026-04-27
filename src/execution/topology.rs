@@ -6,16 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::cli::plan_execution::ExecutionTopologyArg;
-use crate::contracts::plan::{
-    AnalyzePlanReport, PLAN_FIDELITY_REQUIRED_SURFACES, PLAN_FIDELITY_REVIEW_STAGE, PlanDocument,
-};
-use crate::contracts::spec::SpecDocument;
+use crate::contracts::plan::{AnalyzePlanReport, PlanDocument};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::execution::harness::{
     ChunkingStrategy, EvaluatorPolicyName, LearnedTopologyGuidance, ResetPolicy,
     TopologySelectionContext,
 };
+use crate::execution::internal_args::ExecutionTopologyArg;
 use crate::execution::state::{ExecutionContext, ExecutionRuntime, current_head_sha};
 use crate::execution::transitions::load_authoritative_transition_state;
 use crate::git::{canonicalize_repo_root_string, sha256_hex, stored_repo_root_matches_current};
@@ -62,7 +59,6 @@ pub struct ExecutionTopologyRecommendation {
 #[derive(Debug, Clone)]
 pub(crate) struct PlanFidelityReviewArtifact {
     pub(crate) path: String,
-    pub(crate) fingerprint: String,
     pub(crate) review_stage: String,
     pub(crate) review_verdict: String,
     pub(crate) reviewed_plan_path: String,
@@ -595,7 +591,7 @@ pub(crate) fn preflight_acceptance_path(runtime: &ExecutionRuntime) -> PathBuf {
         .join(PREFLIGHT_ACCEPTANCE_FILE)
 }
 
-fn authoritative_run_identity_present(
+pub(crate) fn authoritative_run_identity_present(
     context: &ExecutionContext,
 ) -> Result<bool, crate::diagnostics::JsonFailure> {
     Ok(load_authoritative_transition_state(context)?
@@ -681,7 +677,6 @@ pub(crate) fn parse_plan_fidelity_review_artifact(
 
     Ok(PlanFidelityReviewArtifact {
         path: artifact_path_string.to_owned(),
-        fingerprint: sha256_hex(source.as_bytes()),
         review_stage: parse_header_value(&source, "Review Stage")?,
         review_verdict: parse_header_value(&source, "Review Verdict")?,
         reviewed_plan_path,
@@ -696,110 +691,6 @@ pub(crate) fn parse_plan_fidelity_review_artifact(
         verified_surfaces,
         verified_requirement_ids,
     })
-}
-
-pub(crate) fn validate_plan_fidelity_review_artifact(
-    artifact: &PlanFidelityReviewArtifact,
-    plan: &PlanDocument,
-    spec: &SpecDocument,
-) -> Result<(), DiagnosticError> {
-    if artifact.reviewed_plan_path != plan.path
-        || artifact.reviewed_plan_revision != plan.plan_revision
-        || artifact.reviewed_plan_fingerprint != sha256_hex(plan.source.as_bytes())
-        || artifact.reviewed_spec_path != spec.path
-        || artifact.reviewed_spec_revision != spec.spec_revision
-        || artifact.reviewed_spec_fingerprint != sha256_hex(spec.source.as_bytes())
-    {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact does not match the current draft plan and approved spec revision and fingerprint.",
-        ));
-    }
-    if artifact.review_stage != PLAN_FIDELITY_REVIEW_STAGE {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must record `featureforge:plan-fidelity-review` as the Review Stage.",
-        ));
-    }
-    if artifact.review_verdict != "pass" {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must record `pass` as the Review Verdict before a receipt can be recorded.",
-        ));
-    }
-    if artifact.reviewer_source.trim().is_empty() || artifact.reviewer_id.trim().is_empty() {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must include non-empty Reviewer Source and Reviewer ID headers.",
-        ));
-    }
-    if !matches!(
-        artifact.reviewer_source.as_str(),
-        "fresh-context-subagent" | "cross-model"
-    ) {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must prove an independent reviewer source such as `fresh-context-subagent` or `cross-model`.",
-        ));
-    }
-    let distinct_from_stages = artifact
-        .distinct_from_stages
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if !["featureforge:writing-plans", "featureforge:plan-eng-review"]
-        .iter()
-        .all(|stage| distinct_from_stages.contains(stage))
-    {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must declare distinction from both `featureforge:writing-plans` and `featureforge:plan-eng-review`.",
-        ));
-    }
-    let verified_surfaces = artifact
-        .verified_surfaces
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let required_surfaces = PLAN_FIDELITY_REQUIRED_SURFACES
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    if verified_surfaces != required_surfaces {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must verify exactly `requirement_index`, `execution_topology`, `task_contract`, `task_determinism`, and `spec_reference_fidelity`.",
-        ));
-    }
-    let verified_requirement_ids = artifact
-        .verified_requirement_ids
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let expected_requirement_ids = spec
-        .requirements
-        .iter()
-        .map(|requirement| requirement.id.clone())
-        .collect::<BTreeSet<_>>();
-    if verified_requirement_ids != expected_requirement_ids {
-        return Err(DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            "Plan-fidelity review artifact must enumerate the exact Requirement Index ids it verified.",
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn ensure_plan_fidelity_source_spec_is_approved(
-    spec: &SpecDocument,
-) -> Result<(), DiagnosticError> {
-    if spec.workflow_state == "CEO Approved" && spec.last_reviewed_by == "plan-ceo-review" {
-        return Ok(());
-    }
-    Err(DiagnosticError::new(
-        FailureClass::InstructionParseFailed,
-        "Plan-fidelity review requires a workflow-valid CEO-approved source spec reviewed by plan-ceo-review.",
-    ))
 }
 
 fn parse_header_value(source: &str, header: &str) -> Result<String, DiagnosticError> {

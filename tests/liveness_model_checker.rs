@@ -680,6 +680,10 @@ fn current_stale_overlap_runtime_diagnostic(status: &PlanExecutionStatus) -> boo
         .any(|reason| reason == "current_stale_closure_overlap")
 }
 
+fn blocked_runtime_bug_diagnostic_status(status: &PlanExecutionStatus) -> bool {
+    status.state_kind == "blocked_runtime_bug" || status.phase_detail == "blocked_runtime_bug"
+}
+
 fn progress_metric_from_status(status: &PlanExecutionStatus, total_tasks: u8) -> ProgressMetric {
     let recommended_command = materialized_status_command(status);
     let hidden_command_exposure = u8::from(
@@ -1444,6 +1448,24 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                     continue;
                 }
 
+                if blocked_runtime_bug_diagnostic_status(&status) {
+                    let public_output = format!("{status:?}");
+                    assert!(
+                        recommended_command.is_none()
+                            && status.next_public_action.is_none()
+                            && status
+                                .blockers
+                                .iter()
+                                .all(|blocker| blocker.next_public_action.is_none()),
+                        "{label} blocked_runtime_bug must be diagnostic-only: {status:?}"
+                    );
+                    assert!(
+                        !contains_hidden_command_token(&public_output),
+                        "{label} blocked_runtime_bug diagnostic must not expose hidden helper lanes: {status:?}"
+                    );
+                    continue;
+                }
+
                 if current_stale_overlap_runtime_diagnostic(&status) {
                     let public_output = format!("{status:?}");
                     assert!(
@@ -1484,24 +1506,6 @@ fn runtime_liveness_model_checker_requires_public_progress_edge() {
                 }
 
                 let before = progress_metric_from_status(&status, total_tasks);
-                if state_kind == "blocked_runtime_bug" {
-                    let command =
-                        materialize_public_progress_command(&runtime, &status).unwrap_or_else(
-                            || {
-                                panic!(
-                                    "{label} blocked_runtime_bug state must still surface one actionable public recovery command: {status:?}"
-                                )
-                            },
-                        );
-                    assert!(
-                        command.starts_with("featureforge "),
-                        "blocked_runtime_bug recovery command must remain public: {command}"
-                    );
-                    assert!(
-                        !contains_hidden_command_token(&command),
-                        "blocked_runtime_bug recovery command must not use hidden lanes: {command}"
-                    );
-                }
                 let successor = execute_public_progress_edge(&runtime, state, &status)
                     .unwrap_or_else(|error| {
                         panic!("{label} should execute public progress edge: {error}")

@@ -26,13 +26,15 @@ mod workflow_support;
 use assert_cmd::cargo::cargo_bin;
 use bin_support::compiled_featureforge_path;
 use dir_tree_support::copy_dir_recursive;
-use featureforge::cli::plan_execution::{
-    RecordReviewDispatchArgs, ReviewDispatchScopeArg, StatusArgs as PlanExecutionStatusArgs,
-};
+use featureforge::cli::plan_execution::StatusArgs as PlanExecutionStatusArgs;
 use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
 use featureforge::contracts::spec::parse_spec_file;
+use featureforge::execution::command_eligibility::{
+    PublicMutationKind, PublicMutationRequest, decide_public_mutation,
+};
 use featureforge::execution::final_review::resolve_release_base_branch;
 use featureforge::execution::follow_up::execution_step_repair_target_id;
+use featureforge::execution::internal_args::{RecordReviewDispatchArgs, ReviewDispatchScopeArg};
 use featureforge::execution::invariants::{
     InvariantEnforcementMode, apply_read_surface_invariants, check_runtime_status_invariants,
 };
@@ -59,6 +61,7 @@ use featureforge::paths::{
 use featureforge::workflow::manifest::{
     WorkflowManifest, manifest_path, recover_slug_changed_manifest,
 };
+use featureforge::workflow::operator;
 use featureforge::workflow::status::WorkflowRuntime;
 use files_support::write_file;
 use json_support::parse_json;
@@ -90,6 +93,16 @@ const FULL_CONTRACT_READY_SPEC_FIXTURE_REL: &str =
     "specs/2026-03-22-runtime-integration-hardening-design.md";
 const FULL_CONTRACT_READY_PLAN_FIXTURE_REL: &str =
     "plans/2026-03-22-runtime-integration-hardening.md";
+
+fn workflow_doctor_json(
+    runtime: &featureforge::execution::state::ExecutionRuntime,
+    context: &str,
+) -> Value {
+    let value = operator::doctor_for_runtime(runtime)
+        .unwrap_or_else(|error| panic!("{context}: workflow doctor should succeed: {error:?}"));
+    to_value(value)
+        .unwrap_or_else(|error| panic!("{context}: workflow doctor should serialize: {error}"))
+}
 const FULL_CONTRACT_READY_FIXTURE_SPEC_PATH: &str = "tests/codex-runtime/fixtures/workflow-artifacts/specs/2026-03-22-runtime-integration-hardening-design.md";
 
 struct FullContractReadyFixtureTemplate {
@@ -491,6 +504,33 @@ fn write_minimal_plan_fidelity_spec(repo: &Path, spec_path: &str) {
     );
 }
 
+fn write_minimal_plan_fidelity_plan(
+    repo: &Path,
+    plan_path: &str,
+    spec_path: &str,
+    plan_revision: u32,
+    last_reviewed_by: &str,
+    task_title: &str,
+) {
+    write_file(
+        &repo.join(plan_path),
+        &format!(
+            "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** {plan_revision}\n**Execution Mode:** none\n**Source Spec:** `{spec_path}`\n**Source Spec Revision:** 1\n**Last Reviewed By:** {last_reviewed_by}\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: {task_title}\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n"
+        ),
+    );
+}
+
+fn workflow_status_refresh_json(repo: &Path, state_dir: &Path) -> Value {
+    let mut runtime = WorkflowRuntime::discover_for_state_dir(repo, state_dir)
+        .expect("workflow runtime should discover fixture repo");
+    to_value(
+        runtime
+            .status_refresh()
+            .expect("workflow status refresh should resolve route"),
+    )
+    .expect("workflow route should serialize")
+}
+
 fn public_harness_phases_from_spec() -> Vec<String> {
     fn parse_phases(
         spec: &str,
@@ -847,6 +887,50 @@ fn read_surface_invariant_blocks_current_stale_overlap_on_public_status_and_oper
 }
 
 #[test]
+fn public_mutation_oracle_rejects_invariant_blocked_status_even_with_exact_route() {
+    let (repo_dir, state_dir) = init_repo("mutation-oracle-blocks-invariant-status");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    install_full_contract_ready_artifacts(repo);
+    let runtime = discover_execution_runtime(repo, state, "mutation invariant blocked oracle");
+    let mut status = runtime
+        .status(&PlanExecutionStatusArgs {
+            plan: plan_rel.into(),
+            external_review_result_ready: false,
+        })
+        .expect("fixture status should load");
+    status.state_kind = String::from("blocked_runtime_bug");
+    status.phase_detail = String::from("blocked_runtime_bug");
+
+    let decision = decide_public_mutation(
+        &status,
+        &PublicMutationRequest {
+            kind: PublicMutationKind::Begin,
+            task: status
+                .execution_command_context
+                .as_ref()
+                .and_then(|context| context.task_number)
+                .or(Some(1)),
+            step: status
+                .execution_command_context
+                .as_ref()
+                .and_then(|context| context.step_id)
+                .or(Some(1)),
+            transfer_mode: None,
+            transfer_scope: None,
+            command_name: "begin",
+        },
+    );
+
+    assert!(
+        !decision.allowed,
+        "blocked_runtime_bug status must be diagnostic-only even when the route shape otherwise matches"
+    );
+    assert_eq!(decision.reason_code, "mutation_blocked_runtime_bug");
+}
+
+#[test]
 fn replay_fixture_current_stale_closure_overlap_blocks_without_reopen() {
     let (repo_dir, state_dir) = init_repo("replay-current-stale-closure-overlap");
     let repo = repo_dir.path();
@@ -1101,7 +1185,7 @@ fn post_mutation_invariant_reuses_shared_checker_after_mutation_attempt() {
         &["status", "--plan", plan_rel],
         "post-mutation invariant baseline status",
     );
-    let preflight_json = run_internal_plan_execution_preflight_json(
+    let preflight_json = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -1230,22 +1314,6 @@ fn create_dir_symlink(target: &Path, link: &Path) {
 }
 
 fn run_shell_status_helper(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
-    if args.first().copied() == Some("status") {
-        let direct_args = std::iter::once("workflow")
-            .chain(args.iter().copied())
-            .collect::<Vec<_>>();
-        match workflow_direct_support::try_run_workflow_output_direct(
-            repo,
-            state_dir,
-            &direct_args,
-            context,
-            true,
-        ) {
-            Ok(Some(output)) => return output,
-            Ok(None) => {}
-            Err(error) => panic!("{error}"),
-        }
-    }
     // Keep this helper on the real binary path because these tests assert the
     // shell-level failure contract, including out-of-repo routing and stderr framing.
     let mut command = Command::new(compiled_featureforge_path());
@@ -1255,11 +1323,6 @@ fn run_shell_status_helper(repo: &Path, state_dir: &Path, args: &[&str], context
         .args(["workflow"])
         .args(args);
     run(command, context)
-}
-
-fn run_shell_status_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
-    let output = run_shell_status_helper(repo, state_dir, args, context);
-    parse_json(&output, context)
 }
 
 fn run_rust_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Output {
@@ -1272,66 +1335,6 @@ fn run_rust_featureforge(repo: &Path, state_dir: &Path, args: &[&str], context: 
         .env("FEATUREFORGE_STATE_DIR", state_dir)
         .args(args);
     run(command, context)
-}
-
-fn run_workflow_plan_fidelity_json(
-    repo: &Path,
-    state_dir: &Path,
-    args: &[&str],
-    context: &str,
-) -> Value {
-    let direct_args = std::iter::once("workflow")
-        .chain(std::iter::once("plan-fidelity"))
-        .chain(args.iter().copied())
-        .collect::<Vec<_>>();
-    match workflow_direct_support::try_run_workflow_output_direct(
-        repo,
-        state_dir,
-        &direct_args,
-        context,
-        true,
-    ) {
-        Ok(Some(output)) => return parse_json(&output, context),
-        Ok(None) => {}
-        Err(error) => panic!("{error}"),
-    }
-    let mut command = Command::new(compiled_featureforge_path());
-    command
-        .current_dir(repo)
-        .env("FEATUREFORGE_STATE_DIR", state_dir)
-        .args(["workflow", "plan-fidelity"])
-        .args(args);
-    parse_json(&run(command, context), context)
-}
-
-fn run_workflow_plan_fidelity_json_from_dir(
-    current_dir: &Path,
-    state_dir: &Path,
-    args: &[&str],
-    context: &str,
-) -> Value {
-    let direct_args = std::iter::once("workflow")
-        .chain(std::iter::once("plan-fidelity"))
-        .chain(args.iter().copied())
-        .collect::<Vec<_>>();
-    match workflow_direct_support::try_run_workflow_output_direct(
-        current_dir,
-        state_dir,
-        &direct_args,
-        context,
-        true,
-    ) {
-        Ok(Some(output)) => return parse_json(&output, context),
-        Ok(None) => {}
-        Err(error) => panic!("{error}"),
-    }
-    let mut command = Command::new(compiled_featureforge_path());
-    command
-        .current_dir(current_dir)
-        .env("FEATUREFORGE_STATE_DIR", state_dir)
-        .args(["workflow", "plan-fidelity"])
-        .args(args);
-    parse_json(&run(command, context), context)
 }
 
 fn run_rust_featureforge_with_env(
@@ -1386,9 +1389,7 @@ fn try_direct_workflow_output(
         // exercising the real CLI env wiring.
         return None;
     }
-    match workflow_direct_support::try_run_workflow_output_direct(
-        repo, state_dir, args, context, true,
-    ) {
+    match workflow_direct_support::try_run_workflow_output_direct(repo, state_dir, args, context) {
         Ok(Some(output)) => Some(output),
         Ok(None) => None,
         Err(error) => panic!("{error}"),
@@ -1431,7 +1432,7 @@ fn remove_origin_remote(repo: &Path) {
 
 fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context: &str) -> Value {
     if let ["explain-review-state", "--plan", plan_rel] = args {
-        return run_internal_explain_review_state_json(repo, state_dir, plan_rel, context);
+        return internal_test_unit_explain_review_state_json(repo, state_dir, plan_rel, context);
     }
     match plan_execution_direct_support::try_run_plan_execution_output_direct(
         repo, state_dir, args, context,
@@ -1449,7 +1450,7 @@ fn run_plan_execution_json(repo: &Path, state_dir: &Path, args: &[&str], context
     parse_json(&run(command, context), context)
 }
 
-fn run_internal_explain_review_state_json(
+fn internal_test_unit_explain_review_state_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1460,7 +1461,7 @@ fn run_internal_explain_review_state_json(
         external_review_result_ready: false,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::run_internal_explain_review_state_json(
+        plan_execution_direct_support::internal_test_unit_explain_review_state_json(
             repo, state_dir, &args,
         ),
         context,
@@ -1482,7 +1483,7 @@ fn run_plan_execution_json_real_cli(
     parse_json(&run(command, context), context)
 }
 
-fn run_internal_plan_execution_preflight_json(
+fn internal_test_unit_plan_execution_preflight_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1493,12 +1494,14 @@ fn run_internal_plan_execution_preflight_json(
         external_review_result_ready: false,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::run_runtime_preflight_gate_json(repo, state_dir, &args),
+        plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
+            repo, state_dir, &args,
+        ),
         context,
     )
 }
 
-fn run_internal_plan_execution_gate_review_json(
+fn internal_test_unit_plan_execution_gate_review_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1509,12 +1512,14 @@ fn run_internal_plan_execution_gate_review_json(
         external_review_result_ready: false,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::run_runtime_review_gate_json(repo, state_dir, &args),
+        plan_execution_direct_support::internal_test_runtime_review_gate_json(
+            repo, state_dir, &args,
+        ),
         context,
     )
 }
 
-fn run_runtime_review_dispatch_authority_json(
+fn internal_test_runtime_review_dispatch_authority_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1528,14 +1533,14 @@ fn run_runtime_review_dispatch_authority_json(
         task,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::run_runtime_review_dispatch_authority_json(
+        plan_execution_direct_support::internal_test_runtime_review_dispatch_authority_json(
             repo, state_dir, &args,
         ),
         context,
     )
 }
 
-fn run_internal_reconcile_review_state_json(
+fn internal_test_unit_reconcile_review_state_json(
     repo: &Path,
     state_dir: &Path,
     plan: &str,
@@ -1546,14 +1551,14 @@ fn run_internal_reconcile_review_state_json(
         external_review_result_ready: false,
     };
     parse_direct_json_result(
-        plan_execution_direct_support::run_internal_reconcile_review_state_json(
+        plan_execution_direct_support::internal_test_unit_reconcile_review_state_json(
             repo, state_dir, &args,
         ),
         context,
     )
 }
 
-fn run_internal_plan_execution_output(result: Result<Value, String>) -> Output {
+fn internal_test_unit_plan_execution_output(result: Result<Value, String>) -> Output {
     match result {
         Ok(value) => value_to_json_output(value),
         Err(error) => output_with_code(1, Vec::new(), error.into_bytes()),
@@ -2185,7 +2190,7 @@ fn complete_workflow_fixture_execution_with_qa_requirement_slow(
         &["status", "--plan", plan_rel],
         "plan execution status before workflow routing fixture",
     );
-    let preflight_json = run_internal_plan_execution_preflight_json(
+    let preflight_json = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -2782,7 +2787,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
         &["status", "--plan", plan_rel],
         "FS-14/FS-16 status before task-boundary fixture begin",
     );
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -2887,7 +2892,7 @@ fn setup_runtime_fs14_fs16_task_boundary_fixture(
     );
     let branch = current_branch_name(repo);
     update_authoritative_harness_state(repo, state, &branch, plan_rel, 1, &[]);
-    let dispatch = run_runtime_review_dispatch_authority_json(
+    let dispatch = internal_test_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -3198,7 +3203,7 @@ fn write_dispatched_branch_review_artifact(
     publish_authoritative_release_truth(repo, state, plan_rel, &release_path, base_branch);
     let initial_review_path = write_branch_review_artifact(repo, state, plan_rel, base_branch);
     publish_authoritative_final_review_truth(repo, state, plan_rel, &initial_review_path);
-    let gate_review = run_runtime_review_dispatch_authority_json(
+    let gate_review = internal_test_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -3362,22 +3367,8 @@ fn canonical_workflow_status_matches_helper_for_manifest_backed_missing_spec() {
         },
     );
 
-    let helper_json = run_shell_status_json(
-        repo,
-        state,
-        &["status", "--refresh"],
-        "shell helper status refresh for missing spec",
-    );
-    let rust_output = run_rust_featureforge(
-        repo,
-        state,
-        &["workflow", "status", "--refresh"],
-        "rust canonical workflow status refresh for missing spec",
-    );
-    let rust_json = parse_json(
-        &rust_output,
-        "rust canonical workflow status refresh for missing spec",
-    );
+    let helper_json = workflow_status_refresh_json(repo, state);
+    let rust_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(rust_json["status"], helper_json["status"]);
     assert_eq!(rust_json["next_skill"], helper_json["next_skill"]);
@@ -3407,28 +3398,9 @@ fn canonical_workflow_status_matches_helper_for_ambiguous_specs() {
     )
     .expect("second fixture spec should copy");
 
-    let _helper_warmup = run_shell_status_json(
-        repo,
-        state,
-        &["status", "--refresh"],
-        "shell helper status refresh for ambiguous specs",
-    );
-    let helper_json = run_shell_status_json(
-        repo,
-        state,
-        &["status", "--refresh"],
-        "shell helper status refresh for ambiguous specs after manifest warmup",
-    );
-    let rust_output = run_rust_featureforge(
-        repo,
-        state,
-        &["workflow", "status", "--refresh"],
-        "rust canonical workflow status refresh for ambiguous specs",
-    );
-    let rust_json = parse_json(
-        &rust_output,
-        "rust canonical workflow status refresh for ambiguous specs",
-    );
+    let _helper_warmup = workflow_status_refresh_json(repo, state);
+    let helper_json = workflow_status_refresh_json(repo, state);
+    let rust_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(rust_json["status"], helper_json["status"]);
     assert_eq!(rust_json["next_skill"], helper_json["next_skill"]);
@@ -3460,15 +3432,7 @@ fn canonical_workflow_status_ambiguous_specs_matches_checked_in_snapshot() {
     )
     .expect("second fixture spec should copy");
 
-    let actual = normalize_workflow_status_snapshot(parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh for ambiguous-spec snapshot",
-        ),
-        "rust canonical workflow status refresh for ambiguous-spec snapshot",
-    ));
+    let actual = normalize_workflow_status_snapshot(workflow_status_refresh_json(repo, state));
     let expected: Value = serde_json::from_str(
         &fs::read_to_string(repo_root().join("tests/fixtures/differential/workflow-status.json"))
             .expect("checked-in workflow-status snapshot should be readable"),
@@ -3484,78 +3448,36 @@ fn canonical_workflow_expect_and_sync_preserve_missing_spec_semantics() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     let missing_spec = "docs/featureforge/specs/2026-03-24-rust-sync-missing-spec.md";
-    let session_key = "workflow-runtime-expect-sync";
-
-    let expect_output = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "workflow",
-            "expect",
-            "--artifact",
-            "spec",
-            "--path",
-            missing_spec,
-        ],
-        "rust canonical workflow expect missing spec",
-    );
-    assert!(
-        expect_output.status.success(),
-        "rust canonical workflow expect should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        expect_output.status,
-        String::from_utf8_lossy(&expect_output.stdout),
-        String::from_utf8_lossy(&expect_output.stderr)
+    let identity = discover_repo_identity(repo).expect("repo identity should resolve");
+    write_manifest(
+        &manifest_path(&identity, state),
+        &WorkflowManifest {
+            version: 1,
+            repo_root: identity.repo_root.to_string_lossy().into_owned(),
+            branch: identity.branch_name,
+            expected_spec_path: String::from(missing_spec),
+            expected_plan_path: String::new(),
+            status: String::from("needs_brainstorming"),
+            next_skill: String::from("featureforge:brainstorming"),
+            reason: String::from("missing_expected_spec"),
+            note: String::from("missing_expected_spec"),
+            updated_at: String::from("2026-03-24T00:00:00Z"),
+        },
     );
 
-    let sync_output = run_rust_featureforge(
-        repo,
-        state,
-        &["workflow", "sync", "--artifact", "spec"],
-        "rust canonical workflow sync missing spec",
-    );
-    assert!(
-        sync_output.status.success(),
-        "rust canonical workflow sync should succeed, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        sync_output.status,
-        String::from_utf8_lossy(&sync_output.stdout),
-        String::from_utf8_lossy(&sync_output.stderr)
-    );
-    let sync_stdout =
-        String::from_utf8(sync_output.stdout).expect("sync output should be valid utf-8");
-    assert!(sync_stdout.contains("missing_artifact"));
-    assert!(sync_stdout.contains(missing_spec));
-    assert!(sync_stdout.contains("featureforge:brainstorming"));
-
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh after sync",
-        ),
-        "rust canonical workflow status refresh after sync",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
     assert_eq!(status_json["status"], "needs_brainstorming");
     assert_eq!(status_json["spec_path"], missing_spec);
     assert_eq!(status_json["reason"], "missing_expected_spec");
     assert_eq!(status_json["reason_codes"][0], "missing_expected_spec");
 
-    write_file(
-        &state
-            .join("session-entry")
-            .join("using-featureforge")
-            .join(session_key),
-        "enabled\n",
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "rust canonical workflow phase after missing-spec sync",
     );
-
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "rust canonical workflow phase after missing-spec sync",
-        ),
+    let phase_json = workflow_phase_json(
+        &runtime,
         "rust canonical workflow phase after missing-spec sync",
     );
     assert_eq!(
@@ -3567,8 +3489,8 @@ fn canonical_workflow_expect_and_sync_preserve_missing_spec_semantics() {
 }
 
 #[test]
-fn canonical_workflow_status_routes_draft_plan_to_eng_review_after_matching_pass_receipt() {
-    let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-pass");
+fn workflow_status_routes_writing_plans_draft_to_eng_review_without_fidelity_artifact() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-missing-start");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
@@ -3576,85 +3498,28 @@ fn canonical_workflow_status_routes_draft_plan_to_eng_review_after_matching_pass
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
-    );
-    write_plan_fidelity_review_artifact(
+    write_minimal_plan_fidelity_plan(
         repo,
-        PlanFidelityReviewArtifactInput {
-            artifact_rel: ".featureforge/reviews/plan-fidelity-pass.md",
-            plan_path,
-            plan_revision: 1,
-            spec_path,
-            spec_revision: 1,
-            review_verdict: "pass",
-            reviewer_source: "fresh-context-subagent",
-            reviewer_id: "reviewer-019d",
-            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
-        },
+        plan_path,
+        spec_path,
+        1,
+        "writing-plans",
+        "Prepare the draft plan for review",
     );
 
-    let receipt_json = run_workflow_plan_fidelity_json(
-        repo,
-        state,
-        &[
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-pass.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should succeed for matching draft plan",
-    );
-    assert_eq!(receipt_json["status"], "ok");
-
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status should route matching plan-fidelity receipt to eng review",
-        ),
-        "workflow status should route matching plan-fidelity receipt to eng review",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
-    assert_eq!(status_json["plan_fidelity_receipt"]["state"], "pass");
-    assert!(
-        status_json["plan_fidelity_receipt"]["verified_requirement_index"]
-            .as_bool()
-            .expect("requirement index verification should be present")
-    );
-    assert!(
-        status_json["plan_fidelity_receipt"]["verified_execution_topology"]
-            .as_bool()
-            .expect("execution topology verification should be present")
-    );
-    assert!(
-        status_json["plan_fidelity_receipt"]["verified_task_contract"]
-            .as_bool()
-            .expect("task contract verification should be present")
-    );
-    assert!(
-        status_json["plan_fidelity_receipt"]["verified_task_determinism"]
-            .as_bool()
-            .expect("task determinism verification should be present")
-    );
-    assert!(
-        status_json["plan_fidelity_receipt"]["verified_spec_reference_fidelity"]
-            .as_bool()
-            .expect("spec reference fidelity verification should be present")
-    );
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "missing");
     assert!(
         !status_json["reason_codes"]
             .as_array()
             .expect("reason_codes should be an array")
             .iter()
-            .any(|value| value == "missing_plan_fidelity_receipt"),
-        "matching pass receipts should clear the missing receipt reason"
+            .filter_map(Value::as_str)
+            .any(|code| code.contains("plan_fidelity")),
+        "missing fidelity artifacts must not block engineering review start: {status_json}"
     );
 }
 
@@ -3668,56 +3533,25 @@ fn canonical_workflow_status_normalizes_dot_slash_source_spec_paths() {
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `./docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
-    );
-    write_plan_fidelity_review_artifact(
+    write_minimal_plan_fidelity_plan(
         repo,
-        PlanFidelityReviewArtifactInput {
-            artifact_rel: ".featureforge/reviews/plan-fidelity-dot-slash-spec.md",
-            plan_path,
-            plan_revision: 1,
-            spec_path,
-            spec_revision: 1,
-            review_verdict: "pass",
-            reviewer_source: "fresh-context-subagent",
-            reviewer_id: "reviewer-dot-slash-spec",
-            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
-        },
+        plan_path,
+        &format!("./{spec_path}"),
+        1,
+        "writing-plans",
+        "Prepare the draft plan for review",
     );
-    let receipt_json = run_workflow_plan_fidelity_json(
-        repo,
-        state,
-        &[
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-dot-slash-spec.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should normalize ./docs Source Spec headers",
-    );
-    assert_eq!(receipt_json["status"], "ok");
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status should normalize ./docs Source Spec headers",
-        ),
-        "workflow status should normalize ./docs Source Spec headers",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert_eq!(status_json["spec_path"], spec_path);
 }
 
 #[test]
-fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revision_changes() {
-    let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-stale");
+fn workflow_status_keeps_engineering_review_owner_after_plan_edits_before_handoff() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-edit-loop");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
@@ -3725,9 +3559,13 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "writing-plans",
+        "Prepare the draft plan for review",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3743,55 +3581,35 @@ fn canonical_workflow_status_rejects_stale_plan_fidelity_receipt_after_plan_revi
             verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
-
-    let receipt_json = run_workflow_plan_fidelity_json(
+    write_minimal_plan_fidelity_plan(
         repo,
-        state,
-        &[
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-stale.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should succeed before stale-plan mutation",
-    );
-    assert_eq!(receipt_json["status"], "ok");
-
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 2\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the revised draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The revised draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The revised draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the revised draft plan**\n",
+        plan_path,
+        spec_path,
+        2,
+        "writing-plans",
+        "Prepare the revised draft plan for review",
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status should fail closed on stale plan-fidelity receipts",
-        ),
-        "workflow status should fail closed on stale plan-fidelity receipts",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
-    assert_eq!(
-        status_json["next_skill"],
-        "featureforge:plan-fidelity-review"
-    );
+    assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "stale");
     assert!(
-        status_json["reason_codes"]
+        !status_json["reason_codes"]
             .as_array()
             .expect("reason_codes should be an array")
             .iter()
-            .any(|value| value == "stale_plan_fidelity_receipt"),
-        "plan revision drift should stale the prior plan-fidelity receipt"
+            .filter_map(Value::as_str)
+            .any(|code| code == "stale_plan_fidelity_review_artifact"),
+        "stale fidelity artifacts must not eject active engineering-review edits: {status_json}"
     );
 }
 
 #[test]
-fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_to_plan_fidelity_review() {
-    let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-missing-fidelity");
+fn workflow_status_routes_engineering_reviewed_draft_without_fidelity_artifact_to_plan_fidelity_review()
+ {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-final-fidelity");
     let repo = repo_dir.path();
     let state = state_dir.path();
     let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
@@ -3799,20 +3617,16 @@ fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_to_plan_
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh for draft plan missing fidelity receipt",
-        ),
-        "rust canonical workflow status refresh for draft plan missing fidelity receipt",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(
@@ -3821,42 +3635,42 @@ fn canonical_workflow_status_routes_draft_plan_without_fidelity_receipt_to_plan_
     );
     assert_eq!(
         status_json["reason_codes"][0],
-        "missing_plan_fidelity_receipt"
+        "missing_plan_fidelity_review_artifact"
     );
     assert_eq!(
         status_json["diagnostics"][0]["code"],
-        "missing_plan_fidelity_receipt"
+        "missing_plan_fidelity_review_artifact"
     );
-    assert_eq!(status_json["plan_fidelity_receipt"]["state"], "missing");
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "missing");
     assert!(
-        !status_json["plan_fidelity_receipt"]["verified_requirement_index"]
+        !status_json["plan_fidelity_review"]["verified_requirement_index"]
             .as_bool()
             .expect("requirement index verification should be present")
     );
     assert!(
-        !status_json["plan_fidelity_receipt"]["verified_execution_topology"]
+        !status_json["plan_fidelity_review"]["verified_execution_topology"]
             .as_bool()
             .expect("execution topology verification should be present")
     );
     assert!(
-        !status_json["plan_fidelity_receipt"]["verified_task_contract"]
+        !status_json["plan_fidelity_review"]["verified_task_contract"]
             .as_bool()
             .expect("task contract verification should be present")
     );
     assert!(
-        !status_json["plan_fidelity_receipt"]["verified_task_determinism"]
+        !status_json["plan_fidelity_review"]["verified_task_determinism"]
             .as_bool()
             .expect("task determinism verification should be present")
     );
     assert!(
-        !status_json["plan_fidelity_receipt"]["verified_spec_reference_fidelity"]
+        !status_json["plan_fidelity_review"]["verified_spec_reference_fidelity"]
             .as_bool()
             .expect("spec reference fidelity verification should be present")
     );
 }
 
 #[test]
-fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_receipt_to_plan_fidelity_review()
+fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_artifact_to_plan_fidelity_review()
  {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-non-independent-fidelity");
     let repo = repo_dir.path();
@@ -3866,9 +3680,13 @@ fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_rec
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3879,50 +3697,13 @@ fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_rec
             spec_path,
             spec_revision: 1,
             review_verdict: "pass",
-            reviewer_source: "fresh-context-subagent",
-            reviewer_id: "reviewer-independent",
+            reviewer_source: "same-context",
+            reviewer_id: "writer-context",
             verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
-    let receipt_json = run_workflow_plan_fidelity_json(
-        repo,
-        state,
-        &[
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-non-independent.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should succeed before mutating reviewer provenance",
-    );
-    assert_eq!(receipt_json["status"], "ok");
-    let receipt_path = PathBuf::from(
-        receipt_json["receipt_path"]
-            .as_str()
-            .expect("receipt path should be present"),
-    );
-    let mut receipt = serde_json::from_str::<Value>(
-        &fs::read_to_string(&receipt_path).expect("recorded receipt should be readable"),
-    )
-    .expect("recorded receipt should parse as json");
-    receipt["reviewer_provenance"]["reviewer_source"] = Value::String(String::from("same-context"));
-    fs::write(
-        &receipt_path,
-        serde_json::to_string_pretty(&receipt).expect("mutated receipt should serialize"),
-    )
-    .expect("mutated receipt should be writable");
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh for draft plan non-independent fidelity receipt",
-        ),
-        "rust canonical workflow status refresh for draft plan non-independent fidelity receipt",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(
@@ -3934,13 +3715,13 @@ fn canonical_workflow_status_routes_draft_plan_with_non_independent_fidelity_rec
             .as_array()
             .expect("reason_codes should be an array")
             .iter()
-            .any(|value| value == "plan_fidelity_receipt_not_independent"),
+            .any(|value| value == "plan_fidelity_reviewer_provenance_invalid"),
         "non-independent reviewer provenance should fail closed with explicit reason code"
     );
 }
 
 #[test]
-fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_receipt_to_plan_fidelity_review()
+fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_artifact_to_engineering_review()
  {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-non-pass-fidelity");
     let repo = repo_dir.path();
@@ -3950,9 +3731,13 @@ fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_receipt_to
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -3962,69 +3747,30 @@ fn canonical_workflow_status_routes_draft_plan_with_non_pass_fidelity_receipt_to
             plan_revision: 1,
             spec_path,
             spec_revision: 1,
-            review_verdict: "pass",
+            review_verdict: "fail",
             reviewer_source: "fresh-context-subagent",
             reviewer_id: "reviewer-non-pass-gate",
             verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
         },
     );
-    let receipt_json = run_workflow_plan_fidelity_json(
-        repo,
-        state,
-        &[
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-non-pass-gate.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should succeed before mutating verdict",
-    );
-    assert_eq!(receipt_json["status"], "ok");
-    let receipt_path = PathBuf::from(
-        receipt_json["receipt_path"]
-            .as_str()
-            .expect("receipt path should be present"),
-    );
-    let mut receipt = serde_json::from_str::<Value>(
-        &fs::read_to_string(&receipt_path).expect("recorded receipt should be readable"),
-    )
-    .expect("recorded receipt should parse as json");
-    receipt["verdict"] = Value::String(String::from("needs-changes"));
-    fs::write(
-        &receipt_path,
-        serde_json::to_string_pretty(&receipt).expect("mutated receipt should serialize"),
-    )
-    .expect("mutated receipt should be writable");
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh for draft plan non-pass fidelity receipt",
-        ),
-        "rust canonical workflow status refresh for draft plan non-pass fidelity receipt",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
-    assert_eq!(
-        status_json["next_skill"],
-        "featureforge:plan-fidelity-review"
-    );
+    assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "fail");
     assert!(
         status_json["reason_codes"]
             .as_array()
             .expect("reason_codes should be an array")
             .iter()
-            .any(|value| value == "plan_fidelity_receipt_not_pass"),
+            .any(|value| value == "plan_fidelity_review_artifact_not_pass"),
         "non-pass verdicts should fail closed with explicit reason code"
     );
 }
 
 #[test]
-fn canonical_workflow_status_routes_draft_plan_with_malformed_fidelity_receipt_to_plan_fidelity_review()
+fn canonical_workflow_status_routes_draft_plan_with_malformed_fidelity_artifact_to_plan_fidelity_review()
  {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-draft-plan-malformed-fidelity");
     let repo = repo_dir.path();
@@ -4034,54 +3780,25 @@ fn canonical_workflow_status_routes_draft_plan_with_malformed_fidelity_receipt_t
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Execution Strategy\n\n- Execute Task 1 last. It is the only task in this fixture and closes the execution graph for route-time workflow validation.\n\n## Dependency Diagram\n\n```text\nTask 1\n```\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
-    );
-    write_plan_fidelity_review_artifact(
+    write_minimal_plan_fidelity_plan(
         repo,
-        PlanFidelityReviewArtifactInput {
-            artifact_rel: ".featureforge/reviews/plan-fidelity-malformed-gate.md",
-            plan_path,
-            plan_revision: 1,
-            spec_path,
-            spec_revision: 1,
-            review_verdict: "pass",
-            reviewer_source: "fresh-context-subagent",
-            reviewer_id: "reviewer-malformed-gate",
-            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
-        },
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
     );
-    let receipt_json = run_workflow_plan_fidelity_json(
-        repo,
-        state,
-        &[
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-malformed-gate.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should succeed before corrupting the receipt",
-    );
-    assert_eq!(receipt_json["status"], "ok");
-    let receipt_path = PathBuf::from(
-        receipt_json["receipt_path"]
-            .as_str()
-            .expect("receipt path should be present"),
-    );
-    fs::write(&receipt_path, "{not json").expect("corrupted receipt should be writable");
+    let artifact_path = repo.join(".featureforge/reviews/plan-fidelity-malformed-gate.md");
+    fs::create_dir_all(
+        artifact_path
+            .parent()
+            .expect("artifact should have a parent"),
+    )
+    .expect("artifact parent should be created");
+    fs::write(&artifact_path, "{not a plan fidelity review artifact")
+        .expect("corrupted artifact should be writable");
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh for draft plan malformed fidelity receipt",
-        ),
-        "rust canonical workflow status refresh for draft plan malformed fidelity receipt",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(
@@ -4093,13 +3810,13 @@ fn canonical_workflow_status_routes_draft_plan_with_malformed_fidelity_receipt_t
             .as_array()
             .expect("reason_codes should be an array")
             .iter()
-            .any(|value| value == "malformed_plan_fidelity_receipt"),
-        "malformed receipt payloads should fail closed with explicit reason code"
+            .any(|value| value == "plan_fidelity_review_artifact_invalid"),
+        "malformed artifact payloads should fail closed with explicit reason code"
     );
 }
 
 #[test]
-fn workflow_plan_fidelity_record_rejects_incomplete_verification_artifacts() {
+fn workflow_status_reports_incomplete_plan_fidelity_review_artifacts() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-incomplete-artifact");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -4108,9 +3825,13 @@ fn workflow_plan_fidelity_record_rejects_incomplete_verification_artifacts() {
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -4127,58 +3848,28 @@ fn workflow_plan_fidelity_record_rejects_incomplete_verification_artifacts() {
         },
     );
 
-    let output = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "workflow",
-            "plan-fidelity",
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-incomplete.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should reject incomplete verification artifacts",
+    let status_json = workflow_status_refresh_json(repo, state);
+    assert_eq!(status_json["status"], "plan_draft");
+    assert_eq!(
+        status_json["next_skill"],
+        "featureforge:plan-fidelity-review"
     );
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "invalid");
     assert!(
-        !output.status.success(),
-        "record should fail closed when required verification surfaces are missing, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "plan_fidelity_review_missing_required_surface"),
+        "incomplete verification artifacts should fail closed with explicit reason code"
     );
 }
 
 #[test]
-fn workflow_plan_fidelity_record_rejects_non_pass_verdicts() {
-    let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-non-pass-verdict");
+fn workflow_plan_fidelity_record_command_is_not_public_cli() {
+    let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-command-removed");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let spec_path = "docs/featureforge/specs/2026-01-22-document-review-system-design.md";
-    let plan_path = "docs/featureforge/plans/2026-01-22-document-review-system.md";
-
-    fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
-    write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
-    );
-    write_plan_fidelity_review_artifact(
-        repo,
-        PlanFidelityReviewArtifactInput {
-            artifact_rel: ".featureforge/reviews/plan-fidelity-non-pass.md",
-            plan_path,
-            plan_revision: 1,
-            spec_path,
-            spec_revision: 1,
-            review_verdict: "clear",
-            reviewer_source: "fresh-context-subagent",
-            reviewer_id: "reviewer-non-pass",
-            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
-        },
-    );
 
     let output = run_rust_featureforge(
         repo,
@@ -4188,16 +3879,16 @@ fn workflow_plan_fidelity_record_rejects_non_pass_verdicts() {
             "plan-fidelity",
             "record",
             "--plan",
-            plan_path,
+            "docs/featureforge/plans/example.md",
             "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-non-pass.md",
+            ".featureforge/reviews/example-plan-fidelity.md",
             "--json",
         ],
-        "workflow plan-fidelity record should reject non-pass review verdicts",
+        "workflow plan-fidelity record should stay removed",
     );
     assert!(
         !output.status.success(),
-        "record should fail closed when the review verdict is not pass, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        "record should not exist as a public workflow command, got {:?}\nstdout:\n{}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
@@ -4205,7 +3896,7 @@ fn workflow_plan_fidelity_record_rejects_non_pass_verdicts() {
 }
 
 #[test]
-fn workflow_plan_fidelity_record_normalizes_dot_slash_review_targets() {
+fn workflow_status_normalizes_dot_slash_plan_fidelity_review_targets() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-dot-slash-artifact");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -4214,9 +3905,13 @@ fn workflow_plan_fidelity_record_normalizes_dot_slash_review_targets() {
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `./docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        &format!("./{spec_path}"),
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -4243,24 +3938,13 @@ fn workflow_plan_fidelity_record_normalizes_dot_slash_review_targets() {
         &format!("**Reviewed Spec:** `./{spec_path}`"),
     );
 
-    let receipt_json = run_workflow_plan_fidelity_json(
-        repo,
-        state,
-        &[
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-dot-slash-targets.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should normalize dot-slash review targets",
-    );
-    assert_eq!(receipt_json["status"], "ok");
+    let status_json = workflow_status_refresh_json(repo, state);
+    assert_eq!(status_json["next_skill"], "featureforge:plan-eng-review");
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "pass");
 }
 
 #[test]
-fn workflow_plan_fidelity_record_rejects_stale_review_artifact_fingerprints() {
+fn workflow_status_rejects_stale_review_artifact_fingerprints() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-stale-artifact");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -4269,9 +3953,13 @@ fn workflow_plan_fidelity_record_rejects_stale_review_artifact_fingerprints() {
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -4289,36 +3977,28 @@ fn workflow_plan_fidelity_record_rejects_stale_review_artifact_fingerprints() {
     );
     replace_in_file(
         &repo.join(plan_path),
-        "Prepare the draft plan for review",
+        "Prepare the final draft plan for fidelity review",
         "Prepare the changed draft plan for review",
     );
 
-    let output = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "workflow",
-            "plan-fidelity",
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-stale-fingerprint.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should reject stale plan-fingerprint bindings",
+    let status_json = workflow_status_refresh_json(repo, state);
+    assert_eq!(
+        status_json["next_skill"],
+        "featureforge:plan-fidelity-review"
     );
+    assert_eq!(status_json["plan_fidelity_review"]["state"], "stale");
     assert!(
-        !output.status.success(),
-        "record should fail closed when the review artifact fingerprint no longer matches the draft plan, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        status_json["reason_codes"]
+            .as_array()
+            .expect("reason_codes should be an array")
+            .iter()
+            .any(|value| value == "stale_plan_fidelity_review_artifact"),
+        "stale review artifacts should fail closed with explicit reason code"
     );
 }
 
 #[test]
-fn workflow_plan_fidelity_record_resolves_repo_relative_paths_from_subdirectories() {
+fn plan_contract_analyze_plan_resolves_plan_fidelity_artifacts_from_subdirectories() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-subdir");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -4327,9 +4007,13 @@ fn workflow_plan_fidelity_record_resolves_repo_relative_paths_from_subdirectorie
 
     fs::create_dir_all(repo.join("docs/featureforge/specs")).expect("spec directory should exist");
     write_minimal_plan_fidelity_spec(repo, spec_path);
-    write_file(
-        &repo.join(plan_path),
-        "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
+    write_minimal_plan_fidelity_plan(
+        repo,
+        plan_path,
+        spec_path,
+        1,
+        "plan-eng-review",
+        "Prepare the final draft plan for fidelity review",
     );
     write_plan_fidelity_review_artifact(
         repo,
@@ -4347,24 +4031,30 @@ fn workflow_plan_fidelity_record_resolves_repo_relative_paths_from_subdirectorie
     );
     fs::create_dir_all(repo.join("src/runtime")).expect("subdirectory should exist");
 
-    let receipt_json = run_workflow_plan_fidelity_json_from_dir(
-        &repo.join("src/runtime"),
-        state,
-        &[
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-subdir.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should resolve repo-relative paths from subdirectories",
+    let report = parse_json(
+        &run_rust_featureforge(
+            &repo.join("src/runtime"),
+            state,
+            &[
+                "plan",
+                "contract",
+                "analyze-plan",
+                "--spec",
+                spec_path,
+                "--plan",
+                plan_path,
+                "--format",
+                "json",
+            ],
+            "analyze-plan should resolve repo-relative plan-fidelity artifacts from subdirectories",
+        ),
+        "analyze-plan should resolve repo-relative plan-fidelity artifacts from subdirectories",
     );
-    assert_eq!(receipt_json["status"], "ok");
+    assert_eq!(report["plan_fidelity_review"]["state"], "pass");
 }
 
 #[test]
-fn workflow_plan_fidelity_record_rejects_malformed_spec_requirement_index() {
+fn workflow_status_routes_malformed_spec_requirement_index_to_plan_authoring() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-malformed-spec");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -4395,44 +4085,13 @@ fn workflow_plan_fidelity_record_rejects_malformed_spec_requirement_index() {
         },
     );
 
-    let output = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "workflow",
-            "plan-fidelity",
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-malformed-spec.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should reject malformed approved specs",
-    );
-    assert!(
-        !output.status.success(),
-        "record should fail closed on malformed approved specs, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status should fail closed after malformed-spec review recording fails",
-        ),
-        "workflow status should fail closed after malformed-spec review recording fails",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
 }
 
 #[test]
-fn workflow_plan_fidelity_record_rejects_invalid_ceo_review_provenance_on_source_spec() {
+fn workflow_status_rejects_invalid_ceo_review_provenance_on_source_spec() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-invalid-spec-reviewer");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -4463,43 +4122,12 @@ fn workflow_plan_fidelity_record_rejects_invalid_ceo_review_provenance_on_source
         },
     );
 
-    let output = run_rust_featureforge(
-        repo,
-        state,
-        &[
-            "workflow",
-            "plan-fidelity",
-            "record",
-            "--plan",
-            plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-invalid-spec-reviewer.md",
-            "--json",
-        ],
-        "workflow plan-fidelity record should reject invalid CEO review provenance on the source spec",
-    );
-    assert!(
-        !output.status.success(),
-        "record should fail closed when the source spec is not workflow-valid CEO-approved, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status should fail closed when the source spec approval headers are semantically invalid",
-        ),
-        "workflow status should fail closed when the source spec approval headers are semantically invalid",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
     assert_eq!(status_json["next_skill"], "featureforge:plan-ceo-review");
 }
 
 #[test]
-fn workflow_plan_fidelity_record_rejects_out_of_repo_source_spec_paths() {
+fn analyze_plan_rejects_out_of_repo_source_spec_paths() {
     let (repo_dir, state_dir) = init_repo("workflow-runtime-plan-fidelity-external-source-spec");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -4512,42 +4140,32 @@ fn workflow_plan_fidelity_record_rejects_out_of_repo_source_spec_paths() {
         &repo.join(plan_path),
         "# Draft Plan\n\n**Workflow State:** Draft\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `../external/docs/featureforge/specs/outside-spec.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** writing-plans\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Prepare the draft plan for review\n\n**Spec Coverage:** REQ-001\n**Goal:** The draft plan is ready for engineering review.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The draft plan is ready for engineering review.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Review the draft plan**\n",
     );
-    write_plan_fidelity_review_artifact(
-        repo,
-        PlanFidelityReviewArtifactInput {
-            artifact_rel: ".featureforge/reviews/plan-fidelity-external-source-spec.md",
-            plan_path,
-            plan_revision: 1,
-            spec_path,
-            spec_revision: 1,
-            review_verdict: "pass",
-            reviewer_source: "fresh-context-subagent",
-            reviewer_id: "reviewer-external-source-spec",
-            verified_surfaces: &PLAN_FIDELITY_REQUIRED_SURFACES,
-        },
-    );
-
     let output = run_rust_featureforge(
         repo,
         state,
         &[
-            "workflow",
-            "plan-fidelity",
-            "record",
+            "plan",
+            "contract",
+            "analyze-plan",
+            "--spec",
+            spec_path,
             "--plan",
             plan_path,
-            "--review-artifact",
-            ".featureforge/reviews/plan-fidelity-external-source-spec.md",
-            "--json",
+            "--format",
+            "json",
         ],
-        "workflow plan-fidelity record should reject out-of-repo Source Spec paths",
+        "analyze-plan should reject out-of-repo Source Spec paths",
     );
+    let report = parse_json(
+        &output,
+        "analyze-plan should report invalid contract when Source Spec escapes the repo",
+    );
+    assert_eq!(report["contract_state"], "invalid");
     assert!(
-        !output.status.success(),
-        "record should fail closed when Source Spec escapes the repo, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        report["reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code == "missing_source_spec")),
+        "escaped Source Spec paths should be normalized into a fail-closed invalid contract report"
     );
 }
 
@@ -4567,27 +4185,10 @@ fn canonical_workflow_status_refresh_preserves_route_when_manifest_write_fails()
     read_only_permissions.set_mode(0o555);
     fs::set_permissions(state, read_only_permissions).expect("state dir should become read-only");
 
-    let output = run_rust_featureforge(
-        repo,
-        state,
-        &["workflow", "status", "--refresh"],
-        "workflow status refresh with non-writable state dir",
-    );
-
+    let status_json = workflow_status_refresh_json(repo, state);
     fs::set_permissions(state, original_permissions)
         .expect("state dir permissions should be restorable");
 
-    assert!(
-        output.status.success(),
-        "status refresh should still succeed when manifest persistence fails, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let status_json = parse_json(
-        &output,
-        "workflow status refresh with non-writable state dir",
-    );
     assert_eq!(status_json["status"], "implementation_ready");
     assert_ne!(status_json["next_skill"], "featureforge:brainstorming");
     assert!(
@@ -4632,15 +4233,7 @@ fn canonical_workflow_status_refresh_accepts_active_implementation_target_specs(
         ),
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status refresh with active implementation-target spec",
-        ),
-        "workflow status refresh with active implementation-target spec",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_ne!(status_json["status"], "stale_plan");
     assert_eq!(status_json["spec_path"], Value::from(spec_rel));
@@ -4662,15 +4255,7 @@ fn canonical_workflow_status_routes_lone_stale_approved_plan_as_stale() {
         "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec path goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec path goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh for stale approved plan",
-        ),
-        "rust canonical workflow status refresh for stale approved plan",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "stale_plan");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
@@ -4697,15 +4282,7 @@ fn canonical_workflow_status_routes_stale_source_revision_as_stale() {
         "# Approved Plan, Stale Source Revision\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source revision case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec revision goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec revision goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source revision**\n",
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh for stale approved revision",
-        ),
-        "rust canonical workflow status refresh for stale approved revision",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "stale_plan");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
@@ -4969,15 +4546,7 @@ fn canonical_workflow_status_refresh_limits_cross_slug_manifest_recovery_scan() 
         },
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "rust canonical workflow status refresh for slug recovery scan budget",
-        ),
-        "rust canonical workflow status refresh for slug recovery scan budget",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "spec_approved_needs_plan");
     assert_eq!(status_json["plan_path"], "");
@@ -5035,15 +4604,7 @@ fn canonical_workflow_status_accepts_manifest_selected_plan_with_legacy_symlink_
         },
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            &alias_root,
-            state,
-            &["workflow", "status"],
-            "workflow status should accept legacy symlinked manifest repo roots",
-        ),
-        "workflow status should accept legacy symlinked manifest repo roots",
-    );
+    let status_json = workflow_status_refresh_json(&alias_root, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["plan_path"], plan_a);
@@ -5089,15 +4650,7 @@ fn canonical_workflow_status_ignores_manifest_selected_spec_when_branch_mismatch
         },
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status"],
-            "workflow status should ignore a branch-mismatched manifest-selected spec",
-        ),
-        "workflow status should ignore a branch-mismatched manifest-selected spec",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "spec_draft");
     assert_eq!(status_json["plan_path"], "");
@@ -5150,15 +4703,7 @@ fn canonical_workflow_status_ignores_manifest_selected_plan_when_repo_root_misma
         },
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status"],
-            "workflow status should ignore a repo-root-mismatched manifest-selected plan",
-        ),
-        "workflow status should ignore a repo-root-mismatched manifest-selected plan",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "spec_approved_needs_plan");
     assert_eq!(status_json["plan_path"], "");
@@ -5228,13 +4773,13 @@ fn canonical_workflow_status_refresh_recovers_legacy_symlinked_local_repo_manife
         },
     );
 
-    let phase_json = parse_json(
-        &run_rust_featureforge(
-            &alias_root,
-            state,
-            &["workflow", "phase", "--json"],
-            "workflow phase should preserve legacy local symlink manifest recovery reasons",
-        ),
+    let runtime = discover_execution_runtime(
+        &alias_root,
+        state,
+        "workflow phase should preserve legacy local symlink manifest recovery reasons",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase should preserve legacy local symlink manifest recovery reasons",
     );
     assert!(
@@ -5245,13 +4790,8 @@ fn canonical_workflow_status_refresh_recovers_legacy_symlinked_local_repo_manife
     );
     assert_eq!(phase_json["plan_path"], plan_a);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge(
-            &alias_root,
-            state,
-            &["workflow", "handoff", "--json"],
-            "workflow handoff should preserve legacy local symlink manifest recovery reasons",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff should preserve legacy local symlink manifest recovery reasons",
     );
     assert!(
@@ -5262,15 +4802,7 @@ fn canonical_workflow_status_refresh_recovers_legacy_symlinked_local_repo_manife
     );
     assert_eq!(handoff_json["plan_path"], plan_a);
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            &alias_root,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status should recover legacy local symlink manifests",
-        ),
-        "workflow status should recover legacy local symlink manifests",
-    );
+    let status_json = workflow_status_refresh_json(&alias_root, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["plan_path"], plan_a);
@@ -5338,41 +4870,24 @@ fn canonical_workflow_operator_accepts_manifest_selected_ready_route_with_extra_
         },
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status"],
-            "workflow status for manifest-selected ready route",
-        ),
-        "workflow status for manifest-selected ready route",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
     assert_eq!(status_json["status"], "implementation_ready");
     assert_eq!(status_json["spec_path"], spec_path);
     assert_eq!(status_json["plan_path"], plan_path);
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for manifest-selected ready route",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
         "workflow phase for manifest-selected ready route",
     );
+    let phase_json =
+        workflow_phase_json(&runtime, "workflow phase for manifest-selected ready route");
     assert_eq!(phase_json["phase"], "execution_preflight");
     assert_eq!(phase_json["route_status"], "implementation_ready");
     assert_eq!(phase_json["plan_path"], plan_path);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for manifest-selected ready route",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for manifest-selected ready route",
     );
     assert_eq!(handoff_json["phase"], "execution_preflight");
@@ -5578,15 +5093,7 @@ fn canonical_workflow_status_treats_ceo_approved_specs_without_ceo_review_as_dra
         "# Approved Spec\n\n**Workflow State:** CEO Approved\n**Spec Revision:** 1\n**Last Reviewed By:** brainstorming\n\n## Requirement Index\n\n- [REQ-001][behavior] Routing should reject approval-owner drift.\n",
     );
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status should reject approved specs without CEO review ownership",
-        ),
-        "workflow status should reject approved specs without CEO review ownership",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "spec_draft");
     assert_eq!(status_json["next_skill"], "featureforge:plan-ceo-review");
@@ -5611,15 +5118,7 @@ fn canonical_workflow_status_treats_eng_approved_plans_without_eng_review_as_dra
     )
     .expect("plan fixture should be writable");
 
-    let status_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            "workflow status should reject approved plans without ENG review ownership",
-        ),
-        "workflow status should reject approved plans without ENG review ownership",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
 
     assert_eq!(status_json["status"], "plan_draft");
     assert_eq!(status_json["next_skill"], "featureforge:writing-plans");
@@ -5631,13 +5130,13 @@ fn canonical_workflow_phase_omits_session_entry_from_public_json() {
     let repo = repo_dir.path();
     let state = state_dir.path();
 
-    let phase_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            "rust canonical workflow phase should read canonical session-entry state",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "rust canonical workflow phase should read canonical session-entry state",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "rust canonical workflow phase should read canonical session-entry state",
     );
 
@@ -5660,13 +5159,13 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     install_full_contract_ready_artifacts(repo);
     let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
 
-    let phase_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            "workflow phase should route directly without a session-entry gate",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow phase should route directly without a session-entry gate",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase should route directly without a session-entry gate",
     );
     assert_eq!(
@@ -5678,13 +5177,8 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     assert_eq!(phase_json["schema_version"], 3);
     assert_eq!(phase_json["route"]["schema_version"], 3);
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            "workflow doctor should route directly without a session-entry gate",
-        ),
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor should route directly without a session-entry gate",
     );
     assert_eq!(
@@ -5696,13 +5190,8 @@ fn canonical_workflow_operator_routes_ready_plan_without_session_entry_gate() {
     assert_eq!(doctor_json["schema_version"], 3);
     assert_eq!(doctor_json["route"]["schema_version"], 3);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            "workflow handoff should route directly without a session-entry gate",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff should route directly without a session-entry gate",
     );
     assert_eq!(
@@ -5721,25 +5210,12 @@ fn canonical_workflow_status_ignores_strict_session_entry_gate_env() {
     let (repo_dir, state_dir) = init_repo("workflow-status-strict-session-entry-gate");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-status-strict-session-entry-gate";
 
     install_full_contract_ready_artifacts(repo);
     let identity = discover_repo_identity(repo).expect("repo identity should resolve");
     let workflow_manifest_path = manifest_path(&identity, state);
 
-    let status_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            &[
-                ("FEATUREFORGE_SESSION_KEY", session_key),
-                ("FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY", "1"),
-            ],
-            "workflow status should ignore the removed strict session-entry gate env",
-        ),
-        "workflow status should ignore the removed strict session-entry gate env",
-    );
+    let status_json = workflow_status_refresh_json(repo, state);
     assert_eq!(status_json["schema_version"], 3);
     assert_eq!(status_json["status"], "implementation_ready");
     assert!(
@@ -5772,22 +5248,7 @@ fn canonical_workflow_status_ignores_strict_session_entry_gate_env() {
         .join("using-featureforge")
         .join("workflow-status-strict-session-entry-gate-bypassed");
     write_file(&bypassed_decision_path, "bypassed\n");
-    let bypassed_status_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "status", "--refresh"],
-            &[
-                (
-                    "FEATUREFORGE_SESSION_KEY",
-                    "workflow-status-strict-session-entry-gate-bypassed",
-                ),
-                ("FEATUREFORGE_WORKFLOW_REQUIRE_SESSION_ENTRY", "1"),
-            ],
-            "workflow status should ignore bypassed session-entry files after gate removal",
-        ),
-        "workflow status should ignore bypassed session-entry files after gate removal",
-    );
+    let bypassed_status_json = workflow_status_refresh_json(repo, state);
     assert_eq!(bypassed_status_json["schema_version"], 3);
     assert_eq!(bypassed_status_json["status"], "implementation_ready");
     assert!(
@@ -5904,8 +5365,6 @@ fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-ready-plan");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-phase-ready-plan";
-
     let mut git_checkout = Command::new("git");
     git_checkout
         .args(["checkout", "-B", "workflow-phase-ready"])
@@ -5913,14 +5372,13 @@ fn canonical_workflow_phase_routes_enabled_ready_plan_to_execution_preflight() {
     run_checked(git_checkout, "git checkout workflow-phase-ready");
 
     install_full_contract_ready_artifacts(repo);
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "rust canonical workflow phase should route ready plans to execution preflight",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "rust canonical workflow phase should route ready plans to execution preflight",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "rust canonical workflow phase should route ready plans to execution preflight",
     );
     assert_eq!(phase_json["route_status"], "implementation_ready");
@@ -6034,7 +5492,7 @@ fn canonical_workflow_gate_review_is_read_only_before_dispatch() {
         "workflow gate-review should not mutate strategy state"
     );
 
-    let gate_review_dispatch_json = run_runtime_review_dispatch_authority_json(
+    let gate_review_dispatch_json = internal_test_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -6093,36 +5551,23 @@ fn workflow_read_commands_do_not_persist_preflight_acceptance() {
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "enabled\n");
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase should not persist preflight acceptance",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow phase should not persist preflight acceptance",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase should not persist preflight acceptance",
     );
     assert_eq!(phase_json["phase"], "execution_preflight");
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor should not persist preflight acceptance",
-        ),
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor should not persist preflight acceptance",
     );
     assert_eq!(doctor_json["preflight"]["allowed"], true);
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff should not persist preflight acceptance",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff should not persist preflight acceptance",
     );
     assert_eq!(handoff_json["next_action"], "execution preflight");
@@ -6142,7 +5587,7 @@ fn workflow_read_commands_do_not_persist_preflight_acceptance() {
         "without explicit preflight acceptance, harness phase should stay implementation_handoff"
     );
 
-    let begin_without_preflight = run_rust_featureforge_with_env(
+    let begin_output = run_rust_featureforge_with_env(
         repo,
         state,
         &[
@@ -6163,44 +5608,28 @@ fn workflow_read_commands_do_not_persist_preflight_acceptance() {
                 .expect("status fingerprint should be present"),
         ],
         &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "begin should remain blocked before explicit preflight acceptance",
+        "begin should atomically persist allowed preflight acceptance",
     );
     assert!(
-        !begin_without_preflight.status.success(),
-        "begin should fail before explicit preflight acceptance, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        begin_without_preflight.status,
-        String::from_utf8_lossy(&begin_without_preflight.stdout),
-        String::from_utf8_lossy(&begin_without_preflight.stderr)
+        begin_output.status.success(),
+        "begin should succeed without hidden preflight priming, got {:?}\nstdout:\n{}\nstderr:\n{}",
+        begin_output.status,
+        String::from_utf8_lossy(&begin_output.stdout),
+        String::from_utf8_lossy(&begin_output.stderr)
     );
-    let begin_payload = if begin_without_preflight.stdout.is_empty() {
-        &begin_without_preflight.stderr
-    } else {
-        &begin_without_preflight.stdout
-    };
-    let begin_error: Value =
-        serde_json::from_slice(begin_payload).expect("begin failure should emit json");
-    assert_eq!(begin_error["error_class"], "ExecutionStateNotReady");
-
-    let preflight_json = run_internal_plan_execution_preflight_json(
-        repo,
-        state,
-        plan_rel,
-        "explicit plan execution preflight acceptance",
-    );
-    assert_eq!(preflight_json["allowed"], true);
-
-    let status_after_preflight = run_plan_execution_json(
-        repo,
-        state,
-        &["status", "--plan", plan_rel],
-        "status after explicit plan execution preflight acceptance",
+    let status_after_begin = parse_json(
+        &begin_output,
+        "begin should emit status after atomic preflight acceptance",
     );
     assert!(
-        status_after_preflight["execution_run_id"]
+        status_after_begin["execution_run_id"]
             .as_str()
             .is_some_and(|value| !value.is_empty()),
-        "explicit plan execution preflight should persist execution_run_id"
+        "begin should persist execution_run_id while starting execution"
     );
+    assert_eq!(status_after_begin["execution_started"], "yes");
+    assert_eq!(status_after_begin["active_task"], 1);
+    assert_eq!(status_after_begin["active_step"], 1);
 }
 
 #[test]
@@ -6337,24 +5766,17 @@ fn canonical_workflow_operator_surfaces_fail_closed_when_session_entry_is_bypass
     install_full_contract_ready_artifacts(repo);
     write_file(&decision_path, "bypassed\n");
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase should fail closed when session-entry is bypassed",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow operator should fail closed when session-entry is bypassed",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase should fail closed when session-entry is bypassed",
     );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff should fail closed when session-entry is bypassed",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff should fail closed when session-entry is bypassed",
     );
     let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
@@ -6379,7 +5801,6 @@ fn canonical_workflow_phase_routes_enabled_stale_plan_to_plan_writing() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-stale-plan");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-phase-stale-plan";
 
     write_file(
         &repo.join("docs/featureforge/specs/2026-01-22-document-review-system-design-v2.md"),
@@ -6389,14 +5810,13 @@ fn canonical_workflow_phase_routes_enabled_stale_plan_to_plan_writing() {
         &repo.join("docs/featureforge/plans/2026-01-22-document-review-system.md"),
         "# Approved Plan, Stale Source Path\n\n**Workflow State:** Engineering Approved\n**Plan Revision:** 1\n**Execution Mode:** none\n**Source Spec:** `docs/featureforge/specs/2026-01-22-document-review-system-design.md`\n**Source Spec Revision:** 1\n**Last Reviewed By:** plan-eng-review\n\n## Requirement Coverage Matrix\n\n- REQ-001 -> Task 1\n\n## Task 1: Preserve the stale source path case\n\n**Spec Coverage:** REQ-001\n**Goal:** The plan remains structurally valid while its source-spec path goes stale.\n\n**Context:**\n- Spec Coverage: REQ-001.\n\n**Constraints:**\n- Keep the fixture minimal.\n**Done when:**\n- The plan remains structurally valid while its source-spec path goes stale.\n\n**Files:**\n- Test: `tests/workflow_runtime.rs`\n\n- [ ] **Step 1: Detect the stale source path**\n",
     );
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "rust canonical workflow phase should route stale plans to plan writing",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "rust canonical workflow phase should route stale plans to plan writing",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "rust canonical workflow phase should route stale plans to plan writing",
     );
 
@@ -6419,19 +5839,7 @@ fn canonical_workflow_phase_keeps_corrupt_manifest_read_only() {
         "# Phase Corrupt Manifest Spec\n\n**Workflow State:** Draft\n**Spec Revision:** 1\n**Last Reviewed By:** brainstorming\n",
     );
 
-    let refresh_output = run_rust_featureforge(
-        repo,
-        state,
-        &["workflow", "status", "--refresh"],
-        "rust canonical workflow status refresh should seed the manifest before corrupt phase inspection",
-    );
-    assert!(
-        refresh_output.status.success(),
-        "workflow status refresh should succeed before corrupt manifest inspection, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        refresh_output.status,
-        String::from_utf8_lossy(&refresh_output.stdout),
-        String::from_utf8_lossy(&refresh_output.stderr)
-    );
+    let _ = workflow_status_refresh_json(repo, state);
 
     let identity = discover_repo_identity(repo).expect("repo identity should resolve");
     let manifest_path = manifest_path(&identity, state);
@@ -6439,13 +5847,13 @@ fn canonical_workflow_phase_keeps_corrupt_manifest_read_only() {
         .expect("corrupt manifest fixture should be writable");
     let before_bytes = fs::read(&manifest_path).expect("corrupt manifest fixture should exist");
 
-    let phase_json = parse_json(
-        &run_rust_featureforge(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            "rust canonical workflow phase should inspect corrupt manifests without repairing them",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "rust canonical workflow phase should inspect corrupt manifests without repairing them",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "rust canonical workflow phase should inspect corrupt manifests without repairing them",
     );
     assert!(phase_json["phase"].is_string());
@@ -6558,7 +5966,6 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     let (repo_dir, state_dir) = init_repo("workflow-public-json-commands");
     let repo = repo_dir.path();
     let state = state_dir.path();
-    let session_key = "workflow-public-json-commands";
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     let mut git_checkout = Command::new("git");
@@ -6570,14 +5977,13 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     install_full_contract_ready_artifacts(repo);
     let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "rust canonical workflow doctor should be available on ready plans",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "rust canonical workflow doctor should be available on ready plans",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "rust canonical workflow doctor should be available on ready plans",
     );
     assert_eq!(
@@ -6600,14 +6006,8 @@ fn canonical_workflow_public_json_commands_work_for_ready_plan() {
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "rust canonical workflow handoff should be available on ready plans",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "rust canonical workflow handoff should be available on ready plans",
     );
     assert_eq!(
@@ -6699,16 +6099,9 @@ fn canonical_workflow_doctor_exposes_harness_state_before_execution_starts() {
     let implementation_handoff_phase = public_harness_phase_from_spec("implementation_handoff");
     let execution_preflight_phase = public_harness_phase_from_spec("execution_preflight");
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for harness state fixture",
-        ),
-        "workflow doctor for harness state fixture",
-    );
+    let runtime =
+        discover_execution_runtime(repo, state, "workflow doctor for harness state fixture");
+    let doctor_json = workflow_doctor_json(&runtime, "workflow doctor for harness state fixture");
 
     assert_eq!(
         doctor_json["phase"],
@@ -6900,24 +6293,22 @@ fn canonical_workflow_doctor_shares_authoritative_state_across_same_branch_workt
         "plan execution begin for same-branch worktree authoritative sharing fixture",
     );
 
-    let doctor_a = parse_json(
-        &run_rust_featureforge_with_env(
-            repo_a,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for same-branch authoritative scope on repo A",
-        ),
+    let runtime_a = discover_execution_runtime(
+        repo_a,
+        state,
         "workflow doctor for same-branch authoritative scope on repo A",
     );
-    let doctor_b = parse_json(
-        &run_rust_featureforge_with_env(
-            &repo_b,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for same-branch authoritative scope on repo B",
-        ),
+    let runtime_b = discover_execution_runtime(
+        &repo_b,
+        state,
+        "workflow doctor for same-branch authoritative scope on repo B",
+    );
+    let doctor_a = workflow_doctor_json(
+        &runtime_a,
+        "workflow doctor for same-branch authoritative scope on repo A",
+    );
+    let doctor_b = workflow_doctor_json(
+        &runtime_b,
         "workflow doctor for same-branch authoritative scope on repo B",
     );
 
@@ -7045,7 +6436,7 @@ fn plan_execution_status_and_explain_share_started_state_across_same_branch_work
         &["status", "--plan", plan_rel],
         "plan execution status before same-branch status/explain sharing fixture",
     );
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -7173,7 +6564,7 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
         &["status", "--plan", plan_rel],
         "plan execution status before same-branch repair/reconcile fixture",
     );
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -7223,7 +6614,7 @@ fn plan_execution_repair_and_reconcile_share_started_state_across_same_branch_wo
         ],
     );
 
-    let reconcile_b = run_internal_reconcile_review_state_json(
+    let reconcile_b = internal_test_unit_reconcile_review_state_json(
         &repo_b,
         state,
         plan_rel,
@@ -7408,7 +6799,7 @@ fn plan_execution_status_and_explain_do_not_share_started_state_from_detached_wo
         &["status", "--plan", plan_rel],
         "plan execution status before detached same-branch status/explain sharing fixture",
     );
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -7557,7 +6948,7 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_d
     );
     assert_eq!(status_b_before_begin["execution_started"], "no");
 
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -7693,7 +7084,7 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_tracked_workspace_diffe
     );
     assert_eq!(status_b_before_begin["execution_started"], "no");
 
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo_a,
         state,
         plan_rel,
@@ -7870,24 +7261,22 @@ fn canonical_workflow_doctor_does_not_adopt_started_status_across_different_bran
         "plan execution begin for cross-branch worktree sharing fixture",
     );
 
-    let doctor_a = parse_json(
-        &run_rust_featureforge_with_env(
-            repo_a,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for cross-branch scope on repo A",
-        ),
+    let runtime_a = discover_execution_runtime(
+        repo_a,
+        state,
         "workflow doctor for cross-branch scope on repo A",
     );
-    let doctor_b = parse_json(
-        &run_rust_featureforge_with_env(
-            &repo_b,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for cross-branch scope on repo B",
-        ),
+    let runtime_b = discover_execution_runtime(
+        &repo_b,
+        state,
+        "workflow doctor for cross-branch scope on repo B",
+    );
+    let doctor_a = workflow_doctor_json(
+        &runtime_a,
+        "workflow doctor for cross-branch scope on repo A",
+    );
+    let doctor_b = workflow_doctor_json(
+        &runtime_b,
         "workflow doctor for cross-branch scope on repo B",
     );
 
@@ -7936,7 +7325,7 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
         &["status", "--plan", plan_rel],
         "plan execution status before started-execution routing fixture",
     );
-    let preflight_json = run_internal_plan_execution_preflight_json(
+    let preflight_json = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -7964,27 +7353,20 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
         "plan execution begin for started-execution routing fixture",
     );
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for started-execution routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow phase for started-execution routing fixture",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase for started-execution routing fixture",
     );
     assert_eq!(phase_json["phase"], "handoff_required");
     assert_eq!(phase_json["next_action"], "continue execution");
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for started-execution routing fixture",
-        ),
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for started-execution routing fixture",
     );
     assert_eq!(doctor_json["phase"], "executing");
@@ -7995,14 +7377,8 @@ fn canonical_workflow_routes_started_execution_back_to_the_current_execution_flo
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for started-execution routing fixture",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for started-execution routing fixture",
     );
     assert_eq!(handoff_json["phase"], "handoff_required");
@@ -8108,7 +7484,7 @@ Task 1 -> Task 2
         &["status", "--plan", plan_rel],
         "status before task-boundary blocked workflow fixture execution",
     );
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -8209,7 +7585,7 @@ Task 1 -> Task 2
     );
     let branch = current_branch_name(repo);
     update_authoritative_harness_state(repo, state, &branch, plan_rel, 1, &[]);
-    run_runtime_review_dispatch_authority_json(
+    internal_test_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -8217,8 +7593,8 @@ Task 1 -> Task 2
         Some(1),
         "record task-boundary review dispatch for blocked workflow fixture",
     );
-    let mismatch_dispatch_output = run_internal_plan_execution_output(
-        plan_execution_direct_support::run_runtime_review_dispatch_authority_json(
+    let mismatch_dispatch_output = internal_test_unit_plan_execution_output(
+        plan_execution_direct_support::internal_test_runtime_review_dispatch_authority_json(
             repo,
             state,
             &RecordReviewDispatchArgs {
@@ -8275,34 +7651,21 @@ Task 1 -> Task 2
         "execution status should surface prior_task_current_closure_missing for task-boundary blocked fixture, got {execution_status:?}"
     );
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for task-boundary blocked routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
         "workflow phase for task-boundary blocked routing fixture",
     );
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for task-boundary blocked routing fixture",
-        ),
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "workflow phase for task-boundary blocked routing fixture",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for task-boundary blocked routing fixture",
     );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for task-boundary blocked routing fixture",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for task-boundary blocked routing fixture",
     );
 
@@ -8436,7 +7799,7 @@ Task 1 -> Task 2
         &["status", "--plan", plan_rel],
         "status before begin for workflow dispatch-blocked fixture",
     );
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -8508,24 +7871,17 @@ Task 1 -> Task 2
         ],
     );
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for task-boundary dispatch-blocked fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow phase for task-boundary dispatch-blocked fixture",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for task-boundary dispatch-blocked fixture",
     );
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for task-boundary dispatch-blocked fixture",
-        ),
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase for task-boundary dispatch-blocked fixture",
     );
     let expected_operator_follow_up = "Task 1 closure is ready to record/refresh";
@@ -8564,28 +7920,8 @@ Task 1 -> Task 2
         "workflow doctor should include task-closure recording guidance from the shared routing engine, got {doctor_json:?}"
     );
 
-    let doctor_output = run_rust_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "doctor"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "workflow doctor text for task-boundary dispatch-blocked fixture",
-    );
-    assert!(doctor_output.status.success());
-    let doctor_stdout = String::from_utf8_lossy(&doctor_output.stdout);
-    assert!(
-        doctor_stdout.contains(expected_operator_follow_up),
-        "doctor stdout:\n{doctor_stdout}"
-    );
-
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for task-boundary dispatch-blocked fixture",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for task-boundary dispatch-blocked fixture",
     );
     assert!(
@@ -8593,20 +7929,6 @@ Task 1 -> Task 2
             .as_str()
             .is_some_and(|reason| reason.contains(expected_operator_follow_up)),
         "workflow handoff should include task-review dispatch guidance for dispatch-blocked routing, got {handoff_json:?}"
-    );
-
-    let handoff_output = run_rust_featureforge_with_env(
-        repo,
-        state,
-        &["workflow", "handoff"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
-        "workflow handoff text for task-boundary dispatch-blocked fixture",
-    );
-    assert!(handoff_output.status.success());
-    let handoff_stdout = String::from_utf8_lossy(&handoff_output.stdout);
-    assert!(
-        handoff_stdout.contains(expected_operator_follow_up),
-        "workflow handoff text should include task-review dispatch guidance, got:\n{handoff_stdout}"
     );
 }
 
@@ -8625,27 +7947,20 @@ fn canonical_workflow_routes_blocked_preflight_back_to_execution_handoff() {
     write_file(&decision_path, "enabled\n");
     write_file(&repo.join(".git/MERGE_HEAD"), "deadbeef\n");
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for blocked-preflight routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow phase for blocked-preflight routing fixture",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase for blocked-preflight routing fixture",
     );
     assert_eq!(phase_json["phase"], "execution_preflight");
     assert_eq!(phase_json["next_action"], "execution preflight");
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for blocked-preflight routing fixture",
-        ),
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for blocked-preflight routing fixture",
     );
     assert_eq!(doctor_json["phase"], "execution_preflight");
@@ -8665,14 +7980,8 @@ fn canonical_workflow_routes_blocked_preflight_back_to_execution_handoff() {
     assert_eq!(doctor_json["gate_review"], Value::Null);
     assert_eq!(doctor_json["gate_finish"], Value::Null);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for blocked-preflight routing fixture",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for blocked-preflight routing fixture",
     );
     assert_eq!(handoff_json["phase"], "execution_preflight");
@@ -8701,27 +8010,20 @@ fn canonical_workflow_routes_dirty_worktree_back_to_execution_handoff() {
         "# workflow-phase-dirty-preflight\ntracked change before execution\n",
     );
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for dirty-worktree preflight routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow phase for dirty-worktree preflight routing fixture",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase for dirty-worktree preflight routing fixture",
     );
     assert_eq!(phase_json["phase"], "execution_preflight");
     assert_eq!(phase_json["next_action"], "execution preflight");
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for dirty-worktree preflight routing fixture",
-        ),
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for dirty-worktree preflight routing fixture",
     );
     assert_eq!(doctor_json["phase"], "execution_preflight");
@@ -8793,28 +8095,21 @@ fn canonical_workflow_handoff_rejects_legacy_pre_harness_cutover_state() {
         "fixture should inject legacy pre-harness execution evidence"
     );
 
-    let handoff_output = run_rust_featureforge_with_env(
+    let runtime = discover_execution_runtime(
         repo,
         state,
-        &["workflow", "handoff", "--json"],
-        &[("FEATUREFORGE_SESSION_KEY", session_key)],
         "workflow handoff for legacy pre-harness cutover fixture",
     );
+    let error = operator::handoff_for_runtime(&runtime)
+        .expect_err("workflow handoff should fail closed for legacy pre-harness cutover state");
+    let error_message = format!("{} {}", error.error_class, error.message);
     assert!(
-        !handoff_output.status.success(),
-        "workflow handoff --json should fail closed for legacy pre-harness cutover state, got {:?}\nstdout:\n{}\nstderr:\n{}",
-        handoff_output.status,
-        String::from_utf8_lossy(&handoff_output.stdout),
-        String::from_utf8_lossy(&handoff_output.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&handoff_output.stderr);
-    assert!(
-        stderr.contains("MalformedExecutionState"),
-        "workflow handoff should report malformed legacy execution evidence, stderr:\n{stderr}"
+        error_message.contains("MalformedExecutionState"),
+        "workflow handoff should report malformed legacy execution evidence, got:\n{error_message}"
     );
     assert!(
-        stderr.contains(cutover_message),
-        "workflow handoff should explain legacy pre-harness cutover rejection, stderr:\n{stderr}"
+        error_message.contains(cutover_message),
+        "workflow handoff should explain legacy pre-harness cutover rejection, got:\n{error_message}"
     );
 }
 
@@ -8835,7 +8130,7 @@ fn canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_wor
     write_file(&decision_path, "enabled\n");
     prepare_preflight_acceptance_workspace(repo, "workflow-phase-accepted-preflight-dirty");
 
-    let preflight_json = run_internal_plan_execution_preflight_json(
+    let preflight_json = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -8878,40 +8173,27 @@ fn canonical_workflow_routes_accepted_preflight_from_harness_state_even_when_wor
         "accepted preflight should keep plan execution status.harness_phase at execution_preflight after workspace dirties"
     );
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for accepted-preflight dirty-workspace routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow phase for accepted-preflight dirty-workspace routing fixture",
+    );
+    let phase_json = workflow_phase_json(
+        &runtime,
         "workflow phase for accepted-preflight dirty-workspace routing fixture",
     );
     assert_eq!(phase_json["phase"], "execution_preflight");
     assert_eq!(phase_json["next_action"], "execution preflight");
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for accepted-preflight dirty-workspace routing fixture",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for accepted-preflight dirty-workspace routing fixture",
     );
     assert_eq!(handoff_json["phase"], "execution_preflight");
     assert_eq!(handoff_json["next_action"], "execution preflight");
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for accepted-preflight dirty-workspace routing fixture",
-        ),
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for accepted-preflight dirty-workspace routing fixture",
     );
     assert!(
@@ -8934,7 +8216,7 @@ fn canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirti
     enable_session_decision(state, session_key);
     prepare_preflight_acceptance_workspace(repo, "workflow-doctor-accepted-preflight-dirty");
 
-    let preflight_json = run_internal_plan_execution_preflight_json(
+    let preflight_json = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -8954,14 +8236,13 @@ fn canonical_workflow_doctor_uses_accepted_preflight_truth_after_workspace_dirti
         "workspace should be dirty after introducing tracked change post-preflight acceptance"
     );
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for accepted-preflight truth after dirty-workspace fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow doctor for accepted-preflight truth after dirty-workspace fixture",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for accepted-preflight truth after dirty-workspace fixture",
     );
     assert_eq!(doctor_json["phase"], "execution_preflight");
@@ -9084,14 +8365,13 @@ fn canonical_workflow_gate_review_rejects_stale_authoritative_late_gate_truth() 
         ],
     );
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for stale authoritative late-gate truth",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow doctor for stale authoritative late-gate truth",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for stale authoritative late-gate truth",
     );
     let gate_review_json = parse_json(
@@ -9205,24 +8485,17 @@ fn canonical_workflow_phase_requires_authoritative_review_truth_before_ready_for
     );
     enable_session_decision(state, session_key);
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for ready guard stale-authoritative late-gate truth fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
         "workflow phase for ready guard stale-authoritative late-gate truth fixture",
     );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for ready guard stale-authoritative late-gate truth fixture",
-        ),
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "workflow phase for ready guard stale-authoritative late-gate truth fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for ready guard stale-authoritative late-gate truth fixture",
     );
     let gate_review_json = parse_json(
@@ -9319,14 +8592,13 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_final
         ),
     );
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for authoritative final-review provenance override fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow doctor for authoritative final-review provenance override fixture",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for authoritative final-review provenance override fixture",
     );
     let gate_finish_json = parse_json(
@@ -9402,14 +8674,13 @@ fn canonical_workflow_doctor_and_gate_finish_prefer_recorded_authoritative_relea
         ),
     );
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for authoritative release-doc provenance override fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow doctor for authoritative release-doc provenance override fixture",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for authoritative release-doc provenance override fixture",
     );
     let gate_finish_json = parse_json(
@@ -9471,24 +8742,17 @@ fn canonical_workflow_operator_pins_authoritative_contract_drafting_phase_in_pub
         ],
     );
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase should pin authoritative contract_drafting phase",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
         "workflow phase should pin authoritative contract_drafting phase",
     );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff should pin authoritative contract_drafting phase",
-        ),
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "workflow phase should pin authoritative contract_drafting phase",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff should pin authoritative contract_drafting phase",
     );
 
@@ -9519,34 +8783,21 @@ fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase
         r#"{"harness_phase":"pivot_required","latest_authoritative_sequence":23,"reason_codes":["blocked_on_plan_revision"]}"#,
     );
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase should surface authoritative pivot_required plan-revision blocks",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
         "workflow phase should surface authoritative pivot_required plan-revision blocks",
     );
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor should surface authoritative pivot_required plan-revision blocks",
-        ),
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "workflow phase should surface authoritative pivot_required plan-revision blocks",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor should surface authoritative pivot_required plan-revision blocks",
     );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff should surface authoritative pivot_required plan-revision blocks",
-        ),
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff should surface authoritative pivot_required plan-revision blocks",
     );
 
@@ -9609,8 +8860,14 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
     run_plan_execution_json(
         repo,
         state,
-        &["materialize-projections", "--plan", plan_rel, "--tracked"],
-        "materialize tracked execution evidence for gate-review diagnostic fixture",
+        &[
+            "materialize-projections",
+            "--plan",
+            plan_rel,
+            "--repo-export",
+            "--confirm-repo-export",
+        ],
+        "materialize projection export execution evidence for gate-review diagnostic fixture",
     );
     let materialized_status = run_plan_execution_json(
         repo,
@@ -9655,34 +8912,21 @@ fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
         "**Plan Fingerprint:** stale-",
     );
 
-    let phase_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "phase", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow phase for gate-review evidence failure fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
         "workflow phase for gate-review evidence failure fixture",
     );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for gate-review evidence failure fixture",
-        ),
+    let phase_json = workflow_phase_json(
+        &runtime,
+        "workflow phase for gate-review evidence failure fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for gate-review evidence failure fixture",
     );
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for gate-review evidence failure fixture",
-        ),
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "workflow doctor for gate-review evidence failure fixture",
     );
     assert_eq!(
@@ -9727,14 +8971,13 @@ fn canonical_workflow_phase_routes_missing_test_plan_back_to_plan_eng_review() {
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for missing-test-plan routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for missing-test-plan routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for missing-test-plan routing fixture",
     );
     let gate_finish_json = parse_json(
@@ -9792,14 +9035,13 @@ fn canonical_workflow_phase_prioritizes_test_plan_prerequisite_over_failed_curre
     );
     enable_session_decision(state, session_key);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for test-plan-prereq-over-failed-qa fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for test-plan-prereq-over-failed-qa fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for test-plan-prereq-over-failed-qa fixture",
     );
 
@@ -9824,14 +9066,13 @@ fn canonical_workflow_phase_routes_malformed_test_plan_back_to_plan_eng_review()
     enable_session_decision(state, session_key);
     replace_in_file(&test_plan_path, "# Test Plan", "# Not A Test Plan");
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for malformed-test-plan routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for malformed-test-plan routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for malformed-test-plan routing fixture",
     );
     let gate_finish_json = parse_json(
@@ -9872,14 +9113,13 @@ fn canonical_workflow_phase_ignores_test_plan_generator_drift_for_routing() {
         "**Generated By:** manual-test-plan-edit",
     );
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for test-plan generator mismatch routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for test-plan generator mismatch routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for test-plan generator mismatch routing fixture",
     );
     let gate_finish_json = parse_json(
@@ -9920,14 +9160,13 @@ fn canonical_workflow_phase_routes_stale_test_plan_back_to_plan_eng_review() {
         "**Head SHA:** 0000000000000000000000000000000000000000",
     );
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for stale-test-plan routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for stale-test-plan routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for stale-test-plan routing fixture",
     );
     let gate_finish_json = parse_json(
@@ -9994,14 +9233,13 @@ fn canonical_workflow_phase_routes_authoritative_qa_provenance_invalid_to_qa_pen
         Value::from("not-a-fingerprint"),
     );
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for authoritative-qa-provenance-invalid routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for authoritative-qa-provenance-invalid routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for authoritative-qa-provenance-invalid routing fixture",
     );
     let gate_finish_json = parse_json(
@@ -10086,14 +9324,13 @@ fn canonical_workflow_phase_routes_authoritative_test_plan_provenance_invalid_to
         Value::from(authoritative_qa_fingerprint),
     );
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for authoritative-test-plan-provenance-invalid routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for authoritative-test-plan-provenance-invalid routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for authoritative-test-plan-provenance-invalid routing fixture",
     );
     let gate_finish_json = parse_json(
@@ -10187,14 +9424,13 @@ fn assert_authoritative_qa_source_test_plan_header_failure(
         Value::from(authoritative_qa_fingerprint),
     );
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for malformed authoritative QA->test-plan provenance fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for malformed authoritative QA->test-plan provenance fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for malformed authoritative QA->test-plan provenance fixture",
     );
     let gate_finish_json = parse_json(
@@ -10280,14 +9516,13 @@ fn canonical_workflow_phase_routes_authoritative_release_provenance_invalid_to_d
         Value::from("not-a-fingerprint"),
     );
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for authoritative-release-provenance-invalid routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for authoritative-release-provenance-invalid routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for authoritative-release-provenance-invalid routing fixture",
     );
     let gate_finish_json = parse_json(
@@ -10340,14 +9575,13 @@ fn canonical_workflow_phase_routes_release_and_review_unresolved_to_document_rel
     write_branch_test_plan_artifact(repo, state, plan_rel, "no");
     enable_session_decision(state, session_key);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for release+review-unresolved routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for release+review-unresolved routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for release+review-unresolved routing fixture",
     );
     let gate_finish_json = parse_json(
@@ -10693,16 +9927,13 @@ fn canonical_workflow_phase_routes_review_resolved_browser_qa_to_qa_only() {
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for qa-pending routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
         "workflow handoff for qa-pending routing fixture",
     );
+    let handoff_json =
+        workflow_handoff_json(&runtime, "workflow handoff for qa-pending routing fixture");
 
     assert_eq!(handoff_json["phase"], "qa_pending");
     assert_eq!(handoff_json["next_action"], "run QA");
@@ -10728,14 +9959,13 @@ fn canonical_workflow_phase_routes_review_resolved_to_document_release_pending()
     publish_authoritative_final_review_truth(repo, state, plan_rel, &review_path);
     enable_session_decision(state, session_key);
 
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for release-pending routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "workflow handoff for release-pending routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for release-pending routing fixture",
     );
 
@@ -10766,24 +9996,17 @@ fn canonical_workflow_phase_routes_fully_ready_branch_to_finish() {
     write_branch_release_artifact(repo, state, plan_rel, &base_branch);
     enable_session_decision(state, session_key);
 
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow doctor for ready-for-finish routing fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
         "workflow doctor for ready-for-finish routing fixture",
     );
-    let handoff_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "handoff", "--json"],
-            &[("FEATUREFORGE_SESSION_KEY", session_key)],
-            "workflow handoff for ready-for-finish routing fixture",
-        ),
+    let doctor_json = workflow_doctor_json(
+        &runtime,
+        "workflow doctor for ready-for-finish routing fixture",
+    );
+    let handoff_json = workflow_handoff_json(
+        &runtime,
         "workflow handoff for ready-for-finish routing fixture",
     );
 
@@ -10882,14 +10105,13 @@ fn runtime_remediation_fs01_shared_route_parity_for_missing_current_closure() {
         &["status", "--plan", plan_rel],
         "FS-01 plan execution status shared-runtime parity fixture",
     );
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--json"],
-            &[],
-            "FS-01 workflow doctor shared-runtime parity fixture",
-        ),
+    let runtime = discover_execution_runtime(
+        repo,
+        state,
+        "FS-01 workflow doctor shared-runtime parity fixture",
+    );
+    let doctor_json = workflow_doctor_json(
+        &runtime,
         "FS-01 workflow doctor shared-runtime parity fixture",
     );
 
@@ -11343,7 +10565,7 @@ fn setup_runtime_fs11_next_action_fixture(repo: &Path, state: &Path, plan_rel: &
     prepare_preflight_acceptance_workspace(repo, "runtime-remediation-fs11-next-action");
     let branch = current_branch_name(repo);
 
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -11454,7 +10676,7 @@ fn setup_runtime_fs11_fs15_next_action_fixture(repo: &Path, state: &Path, plan_r
     prepare_preflight_acceptance_workspace(repo, "runtime-remediation-fs11-fs15-next-action");
     let branch = current_branch_name(repo);
 
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -11816,7 +11038,7 @@ fn runtime_remediation_fs11_prestart_operator_status_begin_share_first_unchecked
         Value::from("no"),
         "FS-11 prestart fixture should remain pre-start before begin parity checks"
     );
-    let preflight_before_begin = run_internal_plan_execution_preflight_json(
+    let preflight_before_begin = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -12026,16 +11248,19 @@ fn runtime_remediation_fs11_operator_begin_repair_share_one_next_action_engine()
         ),
         "FS-11 workflow operator stale-boundary fixture",
     );
-    let doctor_json = parse_json(
-        &run_rust_featureforge_with_env(
-            repo,
-            state,
-            &["workflow", "doctor", "--plan", plan_rel, "--json"],
-            &[],
-            "FS-11 workflow doctor stale-boundary fixture",
-        ),
-        "FS-11 workflow doctor stale-boundary fixture",
-    );
+    let runtime =
+        discover_execution_runtime(repo, state, "FS-11 workflow doctor stale-boundary fixture");
+    let doctor_json = to_value(
+        operator::doctor_for_runtime_with_args(
+            &runtime,
+            &operator::DoctorArgs {
+                plan: Some(plan_rel.into()),
+                external_review_result_ready: false,
+            },
+        )
+        .expect("FS-11 workflow doctor stale-boundary fixture should resolve"),
+    )
+    .expect("FS-11 workflow doctor stale-boundary fixture should serialize");
     assert!(
         doctor_json["phase_detail"]
             .as_str()
@@ -12419,6 +11644,23 @@ fn runtime_remediation_fs14_missing_task_closure_baseline_routes_to_close_curren
     assert!(
         recommended_command.contains("close-current-task"),
         "FS-14 operator should recommend close-current-task, got {recommended_command}"
+    );
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "FS-14 status closure-baseline bridge routing fixture",
+    );
+    assert!(
+        status_json["stale_unreviewed_closures"]
+            .as_array()
+            .is_some_and(|closures| closures.is_empty()),
+        "FS-14 synthetic baseline bridge must not serialize a fake stale closure id: {status_json:?}"
+    );
+    assert_eq!(
+        status_json["execution_reentry_target_source"],
+        Value::from("baseline_bridge"),
+        "FS-14 synthetic baseline bridge should be typed as baseline_bridge instead of masquerading as a closure-graph stale target: {status_json:?}"
     );
     assert!(
         !recommended_command.contains("preflight")
@@ -13539,7 +12781,7 @@ fn runtime_remediation_fs14_projection_refresh_only_routes_to_close_current_task
         ],
         "FS-14 projection-refresh fixture complete task 2 step 1",
     );
-    let dispatch_task2 = run_runtime_review_dispatch_authority_json(
+    let dispatch_task2 = internal_test_runtime_review_dispatch_authority_json(
         repo,
         state,
         plan_rel,
@@ -14257,7 +13499,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
         "FS-13 operator must not surface Task 1 Step 1 solely from raw markdown when authoritative current_open_step_state is absent: {operator_without_authoritative_open_step:?}",
     );
 
-    let preflight = run_internal_plan_execution_preflight_json(
+    let preflight = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -14284,7 +13526,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
         &[("current_open_step_state", Value::Null)],
     );
 
-    let gate_review = run_internal_plan_execution_gate_review_json(
+    let gate_review = internal_test_unit_plan_execution_gate_review_json(
         repo,
         state,
         plan_rel,
@@ -14304,7 +13546,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
     fs::remove_file(&authoritative_state_path).expect(
         "FS-13 hidden-gate missing-state preflight setup should remove authoritative state",
     );
-    let preflight_missing_state = run_internal_plan_execution_preflight_json(
+    let preflight_missing_state = internal_test_unit_plan_execution_preflight_json(
         repo,
         state,
         plan_rel,
@@ -14328,7 +13570,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
             "FS-13 hidden-gate missing-state gate-review setup should only tolerate an already-missing authoritative state",
         );
     }
-    let gate_review_missing_state = run_internal_plan_execution_gate_review_json(
+    let gate_review_missing_state = internal_test_unit_plan_execution_gate_review_json(
         repo,
         state,
         plan_rel,
@@ -14363,8 +13605,8 @@ fn runtime_remediation_fs13_hidden_gates_fail_closed_on_malformed_authoritative_
 
     for (output, context) in [
         (
-            run_internal_plan_execution_output(
-                plan_execution_direct_support::run_runtime_preflight_gate_json(
+            internal_test_unit_plan_execution_output(
+                plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
                     repo,
                     state,
                     &PlanExecutionStatusArgs {
@@ -14376,8 +13618,8 @@ fn runtime_remediation_fs13_hidden_gates_fail_closed_on_malformed_authoritative_
             "FS-13 malformed authoritative harness state should fail closed in hidden preflight",
         ),
         (
-            run_internal_plan_execution_output(
-                plan_execution_direct_support::run_runtime_review_gate_json(
+            internal_test_unit_plan_execution_output(
+                plan_execution_direct_support::internal_test_runtime_review_gate_json(
                     repo,
                     state,
                     &PlanExecutionStatusArgs {
@@ -14585,8 +13827,8 @@ fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_aut
             "FS-13 malformed authoritative current_open_step_state status should fail closed",
         ),
         (
-            run_internal_plan_execution_output(
-                plan_execution_direct_support::run_runtime_preflight_gate_json(
+            internal_test_unit_plan_execution_output(
+                plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
                     repo,
                     state,
                     &PlanExecutionStatusArgs {
@@ -14598,8 +13840,8 @@ fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_aut
             "FS-13 malformed authoritative current_open_step_state preflight should fail closed",
         ),
         (
-            run_internal_plan_execution_output(
-                plan_execution_direct_support::run_runtime_review_gate_json(
+            internal_test_unit_plan_execution_output(
+                plan_execution_direct_support::internal_test_runtime_review_gate_json(
                     repo,
                     state,
                     &PlanExecutionStatusArgs {

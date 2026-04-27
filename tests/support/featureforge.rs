@@ -13,11 +13,11 @@ mod workflow_direct_support;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use featureforge::cli::plan_execution::{
+use featureforge::cli::plan_execution::StatusArgs;
+use featureforge::execution::internal_args::{
     GateContractArgs, GateEvaluatorArgs, GateHandoffArgs, RebuildEvidenceArgs, RecommendArgs,
     RecordBranchClosureArgs, RecordContractArgs, RecordEvaluationArgs, RecordFinalReviewArgs,
     RecordHandoffArgs, RecordQaArgs, RecordReleaseReadinessArgs, RecordReviewDispatchArgs,
-    StatusArgs,
 };
 use serde_json::Value;
 
@@ -117,148 +117,162 @@ pub fn run_rust_featureforge_with_env_control_real_cli(
     run(command, context)
 }
 
-pub fn run_runtime_preflight_gate_json(
+pub fn internal_test_runtime_preflight_gate_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_runtime_preflight_gate_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_runtime_preflight_gate_json(repo, state_dir, args)
 }
 
-pub fn run_runtime_topology_recommendation_json(
+pub fn internal_test_runtime_topology_recommendation_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecommendArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_runtime_topology_recommendation_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_runtime_topology_recommendation_json(
+        repo, state_dir, args,
+    )
 }
 
-pub fn run_runtime_review_gate_json(
+pub fn internal_test_runtime_review_gate_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_runtime_review_gate_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_runtime_review_gate_json(repo, state_dir, args)
 }
 
-pub fn run_internal_gate_contract_json(
+pub fn internal_test_unit_gate_contract_json(
     repo: &Path,
     state_dir: &Path,
     args: &GateContractArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_gate_contract_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_gate_contract_json(repo, state_dir, args)
 }
 
-pub fn run_internal_record_contract_json(
+pub fn internal_test_unit_record_contract_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordContractArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_record_contract_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_record_contract_json(repo, state_dir, args)
 }
 
-pub fn run_internal_gate_evaluator_json(
+pub fn internal_test_unit_gate_evaluator_json(
     repo: &Path,
     state_dir: &Path,
     args: &GateEvaluatorArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_gate_evaluator_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_gate_evaluator_json(repo, state_dir, args)
 }
 
-pub fn run_internal_record_evaluation_json(
+pub fn internal_test_unit_record_evaluation_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordEvaluationArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_record_evaluation_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_record_evaluation_json(repo, state_dir, args)
 }
 
-pub fn run_internal_gate_handoff_json(
+pub fn internal_test_unit_gate_handoff_json(
     repo: &Path,
     state_dir: &Path,
     args: &GateHandoffArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_gate_handoff_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_gate_handoff_json(repo, state_dir, args)
 }
 
-pub fn run_internal_record_handoff_json(
+pub fn internal_test_unit_record_handoff_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordHandoffArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_record_handoff_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_record_handoff_json(repo, state_dir, args)
 }
 
-pub fn run_runtime_finish_gate_json(
+pub fn internal_test_runtime_finish_gate_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_runtime_finish_gate_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_runtime_finish_gate_json(repo, state_dir, args)
 }
 
-pub fn run_runtime_review_dispatch_authority_json(
+pub fn internal_test_runtime_review_dispatch_authority_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordReviewDispatchArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_runtime_review_dispatch_authority_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_runtime_review_dispatch_authority_json(
+        repo, state_dir, args,
+    )
 }
 
-pub fn run_internal_rebuild_evidence_json(
+pub fn internal_test_unit_rebuild_evidence_json(
     repo: &Path,
     state_dir: &Path,
     args: &RebuildEvidenceArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_rebuild_evidence_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_rebuild_evidence_json(repo, state_dir, args)
 }
 
-pub fn run_internal_record_branch_closure_json(
+pub fn internal_test_unit_record_branch_closure_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordBranchClosureArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_record_branch_closure_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_record_branch_closure_json(
+        repo, state_dir, args,
+    )
 }
 
-pub fn run_internal_record_release_readiness_json(
+pub fn internal_test_unit_record_release_readiness_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordReleaseReadinessArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_record_release_readiness_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_record_release_readiness_json(
+        repo, state_dir, args,
+    )
 }
 
-pub fn run_internal_record_final_review_json(
+pub fn internal_test_unit_record_final_review_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordFinalReviewArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_record_final_review_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_record_final_review_json(
+        repo, state_dir, args,
+    )
 }
 
-pub fn run_internal_record_qa_json(
+pub fn internal_test_unit_record_qa_json(
     repo: &Path,
     state_dir: &Path,
     args: &RecordQaArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_record_qa_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_record_qa_json(repo, state_dir, args)
 }
 
-pub fn run_internal_explain_review_state_json(
+pub fn internal_test_unit_explain_review_state_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_explain_review_state_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_explain_review_state_json(
+        repo, state_dir, args,
+    )
 }
 
-pub fn run_internal_reconcile_review_state_json(
+pub fn internal_test_unit_reconcile_review_state_json(
     repo: &Path,
     state_dir: &Path,
     args: &StatusArgs,
 ) -> Result<Value, String> {
-    plan_execution_direct_support::run_internal_reconcile_review_state_json(repo, state_dir, args)
+    plan_execution_direct_support::internal_test_unit_reconcile_review_state_json(
+        repo, state_dir, args,
+    )
 }
 
 fn direct_helper_compatible_env_control(
@@ -322,7 +336,7 @@ fn try_direct_featureforge_output(
     // should converge on the same in-process runtime path so semantic surfaces don't drift.
     if args.first().copied() == Some("workflow") {
         return match workflow_direct_support::try_run_workflow_output_direct(
-            repo, state_dir, args, context, false,
+            repo, state_dir, args, context,
         ) {
             Ok(Some(output)) => Some(output),
             Ok(None) => None,

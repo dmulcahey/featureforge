@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::cli::workflow::{DoctorArgs, OperatorArgs};
+use crate::cli::workflow::OperatorArgs;
 use crate::contracts::plan::AnalyzePlanReport;
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::execution::harness::EvaluatorKind;
@@ -26,6 +26,12 @@ const WORKFLOW_PHASE_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_DOCTOR_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_HANDOFF_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 3;
+
+#[derive(Debug, Clone)]
+pub struct DoctorArgs {
+    pub plan: Option<PathBuf>,
+    pub external_review_result_ready: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -438,7 +444,6 @@ pub fn doctor(current_dir: &Path) -> Result<WorkflowDoctor, JsonFailure> {
         &DoctorArgs {
             plan: None,
             external_review_result_ready: false,
-            json: false,
         },
     )
 }
@@ -626,7 +631,6 @@ pub fn render_doctor(current_dir: &Path) -> Result<String, JsonFailure> {
         &DoctorArgs {
             plan: None,
             external_review_result_ready: false,
-            json: false,
         },
     )
 }
@@ -1658,7 +1662,7 @@ fn task_boundary_reason_text(context: &OperatorContext) -> Option<String> {
                     "Task {blocking_task} closure cannot be recorded/refreshed yet. Run verification and then record task closure for Task {blocking_task}."
                 )
             } else if operator_blocking_reason_present(context, "task_review_not_independent")
-                || operator_blocking_reason_present(context, "task_review_receipt_malformed")
+                || operator_blocking_reason_present(context, "task_review_artifact_malformed")
                 || operator_blocking_reason_present(context, "prior_task_review_not_green")
             {
                 format!(
@@ -1876,7 +1880,7 @@ mod tests {
                 contract_state: String::from("approved"),
                 reason_codes: Vec::new(),
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated: false,
                 spec_candidate_count: 1,
                 plan_candidate_count: 1,

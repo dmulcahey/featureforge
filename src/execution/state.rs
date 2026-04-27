@@ -11,12 +11,7 @@ use jiff::Timestamp;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
-use crate::cli::plan_execution::{
-    BeginArgs, CompleteArgs, GateContractArgs, GateEvaluatorArgs, GateHandoffArgs,
-    IsolatedAgentsArg, NoteArgs, NoteStateArg, RebuildEvidenceArgs, RecommendArgs,
-    RecordContractArgs, RecordEvaluationArgs, RecordHandoffArgs, RecordReviewDispatchArgs,
-    ReopenArgs, ReviewDispatchScopeArg, StatusArgs, TransferArgs,
-};
+use crate::cli::plan_execution::{BeginArgs, CompleteArgs, ReopenArgs, StatusArgs, TransferArgs};
 use crate::cli::repo_safety::{RepoSafetyCheckArgs, RepoSafetyIntentArg, RepoSafetyWriteTargetArg};
 use crate::contracts::harness::{
     ExecutionTopologyDowngradeRecord, WORKTREE_LEASE_VERSION, WorktreeLease, WorktreeLeaseState,
@@ -30,7 +25,10 @@ use crate::contracts::task_contract::{
     parse_task_step_projection_line,
 };
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::authority::ensure_preflight_authoritative_bootstrap;
+use crate::execution::authority::{
+    ensure_preflight_authoritative_bootstrap,
+    ensure_preflight_authoritative_bootstrap_with_existing_authority,
+};
 use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
 use crate::execution::current_truth::{
     BranchRerecordingUnsupportedReason, RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS,
@@ -93,6 +91,11 @@ use crate::execution::harness::{
     EvaluationVerdict, EvaluatorKind, EvaluatorPolicyName, ExecutionRunId, HarnessPhase,
     INITIAL_AUTHORITATIVE_SEQUENCE, LearnedTopologyGuidance, ResetPolicy, RunIdentitySnapshot,
 };
+use crate::execution::internal_args::{
+    GateContractArgs, GateEvaluatorArgs, GateHandoffArgs, IsolatedAgentsArg, NoteArgs,
+    NoteStateArg, RebuildEvidenceArgs, RecommendArgs, RecordContractArgs, RecordEvaluationArgs,
+    RecordHandoffArgs, RecordReviewDispatchArgs, ReviewDispatchScopeArg,
+};
 use crate::execution::leases::authoritative_matching_execution_topology_downgrade_records_checked;
 use crate::execution::leases::{
     PreflightWriteAuthorityState, StatusAuthoritativeOverlay, authoritative_state_path,
@@ -138,8 +141,8 @@ use crate::execution::topology::{
     tasks_are_independent,
 };
 use crate::execution::topology::{
-    load_preflight_acceptance, pending_chunk_id, persist_preflight_acceptance,
-    preflight_acceptance_for_context,
+    authoritative_run_identity_present, load_preflight_acceptance, pending_chunk_id,
+    persist_preflight_acceptance, preflight_acceptance_for_context,
 };
 use crate::execution::transitions::{
     AuthoritativeTransitionState, CurrentBrowserQaRecord, OpenStepStateRecord,
@@ -979,10 +982,7 @@ impl ExecutionRuntime {
             args.external_review_result_ready,
             false,
         )?;
-        crate::execution::invariants::inject_read_surface_invariant_test_violation(
-            &mut read_scope.status,
-        );
-        crate::execution::invariants::apply_read_surface_invariants(&mut read_scope.status);
+        apply_public_read_invariants_to_status(&mut read_scope.status);
         Ok(read_scope.status)
     }
 
@@ -1910,12 +1910,26 @@ fn project_reducer_stale_target_source(
         .gate_snapshot
         .earliest_task_stale_target_details()
     else {
+        if status.phase_detail == "task_closure_recording_ready"
+            && status.reason_codes.iter().any(|reason_code| {
+                matches!(
+                    reason_code.as_str(),
+                    "prior_task_current_closure_missing" | "task_closure_baseline_repair_candidate"
+                )
+            })
+        {
+            status.execution_reentry_target_source = Some(String::from("baseline_bridge"));
+        }
         return;
     };
     if stale_target.task != Some(blocking_task) {
         return;
     }
-    status.execution_reentry_target_source = Some(String::from("closure_graph_stale_target"));
+    let execution_reentry_target_source = match stale_target.source.as_str() {
+        "closure_graph" => "closure_graph_stale_target",
+        source => source,
+    };
+    status.execution_reentry_target_source = Some(execution_reentry_target_source.to_owned());
     for target in &mut status.public_repair_targets {
         if target.task == Some(blocking_task) && target.command_kind == "reopen" {
             target.reason_code.clone_from(&stale_target.reason_code);
@@ -1940,6 +1954,48 @@ pub(crate) fn status_from_context_with_shared_routing(
         external_review_result_ready,
         true,
     )?;
+    Ok(read_scope.status)
+}
+
+pub(crate) fn apply_public_read_invariants_to_status(status: &mut PlanExecutionStatus) {
+    crate::execution::invariants::inject_read_surface_invariant_test_violation(status);
+    crate::execution::invariants::apply_read_surface_invariants(status);
+}
+
+pub(crate) fn public_status_from_context_with_shared_routing(
+    runtime: &ExecutionRuntime,
+    context: &ExecutionContext,
+    external_review_result_ready: bool,
+) -> Result<PlanExecutionStatus, JsonFailure> {
+    let mut status =
+        status_from_context_with_shared_routing(runtime, context, external_review_result_ready)?;
+    apply_public_read_invariants_to_status(&mut status);
+    Ok(status)
+}
+
+pub(crate) fn public_status_from_supplied_context_with_shared_routing(
+    context: &ExecutionContext,
+    external_review_result_ready: bool,
+) -> Result<PlanExecutionStatus, JsonFailure> {
+    let mut context = context.clone();
+    let authoritative_state = load_authoritative_transition_state_relaxed(&context)?;
+    overlay_execution_evidence_attempts_from_authority(&mut context, authoritative_state.as_ref())?;
+    overlay_step_state_from_authority(&mut context, authoritative_state.as_ref())?;
+    refresh_execution_fingerprint(&mut context);
+    let derived = derive_execution_truth_from_authority(&context, authoritative_state.as_ref())?;
+    let mut read_scope = ExecutionReadScope {
+        context,
+        status: derived.status,
+        overlay: derived.overlay,
+        authoritative_state,
+        runtime_state: None,
+    };
+    apply_shared_routing_projection_to_read_scope_with_routing(
+        &mut read_scope,
+        external_review_result_ready,
+        true,
+    )?;
+    apply_public_read_invariants_to_status(&mut read_scope.status);
     Ok(read_scope.status)
 }
 
@@ -2732,7 +2788,7 @@ fn ensure_review_dispatch_authoritative_bootstrap(
         return Ok(());
     }
     let acceptance = persist_preflight_acceptance(context)?;
-    ensure_preflight_authoritative_bootstrap(
+    ensure_preflight_authoritative_bootstrap_with_existing_authority(
         &context.runtime,
         RunIdentitySnapshot {
             execution_run_id: acceptance.execution_run_id.clone(),
@@ -6493,8 +6549,8 @@ fn derive_public_review_state_status(
                     | "prior_task_verification_missing"
                     | "prior_task_verification_missing_legacy"
                     | "task_review_not_independent"
-                    | "task_review_receipt_malformed"
-                    | "task_verification_receipt_malformed"
+                    | "task_review_artifact_malformed"
+                    | "task_verification_summary_malformed"
                     | "prior_task_current_closure_stale"
             )
         });
@@ -8869,6 +8925,120 @@ fn parse_reason_codes(
 
 pub fn require_preflight_acceptance(context: &ExecutionContext) -> Result<(), JsonFailure> {
     crate::execution::topology::require_preflight_acceptance(context)
+}
+
+enum PublicBeginPreflightReadiness {
+    AlreadyReady,
+    AllowedNeedsPersistence,
+}
+
+fn public_begin_preflight_readiness(
+    context: &ExecutionContext,
+) -> Result<PublicBeginPreflightReadiness, JsonFailure> {
+    if authoritative_run_identity_present(context)?
+        || preflight_acceptance_for_context(context)?.is_some()
+    {
+        return Ok(PublicBeginPreflightReadiness::AlreadyReady);
+    }
+
+    let read_scope = load_execution_read_scope_for_mutation(
+        &context.runtime,
+        Path::new(&context.plan_rel),
+        true,
+    )?;
+    let reduced_state = crate::execution::reducer::reduce_execution_read_scope(&read_scope)?;
+    let Some(gate) = reduced_state
+        .gate_snapshot
+        .preflight
+        .or(reduced_state.preflight)
+    else {
+        return Err(JsonFailure::new(
+            FailureClass::ExecutionStateNotReady,
+            "begin is blocked because the reduced runtime state did not expose an execution preflight gate.",
+        ));
+    };
+    if !gate.allowed {
+        return Err(JsonFailure::new(
+            failure_class_for_gate_result(&gate),
+            preflight_gate_failure_message(&gate),
+        ));
+    }
+
+    Ok(PublicBeginPreflightReadiness::AllowedNeedsPersistence)
+}
+
+pub fn validate_public_begin_preflight_allowed(
+    context: &ExecutionContext,
+) -> Result<(), JsonFailure> {
+    public_begin_preflight_readiness(context).map(|_| ())
+}
+
+pub fn public_begin_preflight_persistence_required(
+    context: &ExecutionContext,
+) -> Result<bool, JsonFailure> {
+    Ok(matches!(
+        public_begin_preflight_readiness(context)?,
+        PublicBeginPreflightReadiness::AllowedNeedsPersistence
+    ))
+}
+
+pub fn persist_allowed_public_begin_preflight(
+    context: &ExecutionContext,
+) -> Result<(), JsonFailure> {
+    if authoritative_run_identity_present(context)?
+        || preflight_acceptance_for_context(context)?.is_some()
+    {
+        return Ok(());
+    }
+    let acceptance = persist_preflight_acceptance(context)?;
+    ensure_preflight_authoritative_bootstrap_with_existing_authority(
+        &context.runtime,
+        RunIdentitySnapshot {
+            execution_run_id: acceptance.execution_run_id.clone(),
+            source_plan_path: context.plan_rel.clone(),
+            source_plan_revision: context.plan_document.plan_revision,
+        },
+        acceptance.chunk_id,
+    )
+}
+
+pub fn ensure_public_begin_preflight_ready(context: &ExecutionContext) -> Result<(), JsonFailure> {
+    validate_public_begin_preflight_allowed(context)?;
+    if authoritative_run_identity_present(context)?
+        || preflight_acceptance_for_context(context)?.is_some()
+    {
+        return Ok(());
+    }
+    let acceptance = persist_preflight_acceptance(context)?;
+    ensure_preflight_authoritative_bootstrap(
+        &context.runtime,
+        RunIdentitySnapshot {
+            execution_run_id: acceptance.execution_run_id.clone(),
+            source_plan_path: context.plan_rel.clone(),
+            source_plan_revision: context.plan_document.plan_revision,
+        },
+        acceptance.chunk_id,
+    )
+}
+
+fn failure_class_for_gate_result(gate: &GateResult) -> FailureClass {
+    match gate.failure_class.as_str() {
+        "WorkspaceNotSafe" => FailureClass::WorkspaceNotSafe,
+        "MalformedExecutionState" => FailureClass::MalformedExecutionState,
+        "ConcurrentWriterConflict" => FailureClass::ConcurrentWriterConflict,
+        "PartialAuthoritativeMutation" => FailureClass::PartialAuthoritativeMutation,
+        _ => FailureClass::ExecutionStateNotReady,
+    }
+}
+
+fn preflight_gate_failure_message(gate: &GateResult) -> String {
+    let Some(diagnostic) = gate.diagnostics.first() else {
+        return String::from("begin is blocked because execution preflight is not allowed.");
+    };
+    format!(
+        "begin is blocked by execution preflight: {} Remediation: {}",
+        diagnostic.message, diagnostic.remediation
+    )
 }
 
 pub fn preflight_from_context(context: &ExecutionContext) -> GateResult {
@@ -15445,8 +15615,8 @@ fn task_closure_recording_reason_code(reason_code: &str) -> bool {
             | "prior_task_verification_missing"
             | "prior_task_verification_missing_legacy"
             | "task_review_not_independent"
-            | "task_review_receipt_malformed"
-            | "task_verification_receipt_malformed"
+            | "task_review_artifact_malformed"
+            | "task_verification_summary_malformed"
             | "prior_task_current_closure_stale"
     )
 }
@@ -15456,8 +15626,8 @@ fn task_closure_projection_refresh_reason_code(reason_code: &str) -> bool {
         reason_code,
         "prior_task_verification_missing"
             | "prior_task_verification_missing_legacy"
-            | "task_review_receipt_malformed"
-            | "task_verification_receipt_malformed"
+            | "task_review_artifact_malformed"
+            | "task_verification_summary_malformed"
     )
 }
 
@@ -15581,7 +15751,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
                 if treat_missing_review_receipts_as_malformed {
                     push_task_closure_recording_reason_code_once(
                         blocking_reason_codes,
-                        "task_review_receipt_malformed",
+                        "task_review_artifact_malformed",
                     );
                 }
                 continue;
@@ -15591,7 +15761,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
                 all_review_receipts_valid = false;
                 push_task_closure_recording_reason_code_once(
                     blocking_reason_codes,
-                    "task_review_receipt_malformed",
+                    "task_review_artifact_malformed",
                 );
                 continue;
             }
@@ -15600,7 +15770,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
             all_review_receipts_valid = false;
             push_task_closure_recording_reason_code_once(
                 blocking_reason_codes,
-                "task_review_receipt_malformed",
+                "task_review_artifact_malformed",
             );
             continue;
         }
@@ -15621,7 +15791,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
             all_review_receipts_valid = false;
             push_task_closure_recording_reason_code_once(
                 blocking_reason_codes,
-                "task_review_receipt_malformed",
+                "task_review_artifact_malformed",
             );
             continue;
         }
@@ -15642,7 +15812,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
                 all_review_receipts_valid = false;
                 push_task_closure_recording_reason_code_once(
                     blocking_reason_codes,
-                    "task_review_receipt_malformed",
+                    "task_review_artifact_malformed",
                 );
             }
         }
@@ -15666,7 +15836,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
         Err(_) => {
             push_task_closure_recording_reason_code_once(
                 blocking_reason_codes,
-                "task_verification_receipt_malformed",
+                "task_verification_summary_malformed",
             );
             None
         }
@@ -15677,7 +15847,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
         {
             push_task_closure_recording_reason_code_once(
                 blocking_reason_codes,
-                "task_verification_receipt_malformed",
+                "task_verification_summary_malformed",
             );
         } else {
             let verification_document = parse_artifact_document(&verification_receipt_path);
@@ -15711,7 +15881,7 @@ pub(crate) fn push_task_closure_pending_verification_reason_codes_for_run(
             {
                 push_task_closure_recording_reason_code_once(
                     blocking_reason_codes,
-                    "task_verification_receipt_malformed",
+                    "task_verification_summary_malformed",
                 );
             }
         }

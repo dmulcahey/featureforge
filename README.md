@@ -30,7 +30,7 @@ Execution authority is event-only:
 - once plan execution starts, branch execution truth is the append-only event log under the harness branch root (`execution-harness/events.jsonl`)
 - `state.json`, approved-plan checklist marks, execution evidence, release/readiness/review/QA markdown, and strategy displays are deterministic projections/read models
 - deleting, exporting, or regenerating those projections must not change operator routing, status, review-state repair, or mutator legality
-- use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified
+- use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` for state-dir-only diagnostic projection refreshes; add `--repo-export --confirm-repo-export` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified
 - runtime-owned reviewed-closure, milestone, dispatch-lineage, and strategy facts are reduced from the event log for routing and gates
 - branch-scoped local projections live under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 

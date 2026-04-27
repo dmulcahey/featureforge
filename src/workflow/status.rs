@@ -6,25 +6,14 @@ use schemars::JsonSchema;
 use schemars::schema_for;
 use serde::Serialize;
 
-use crate::cli::workflow::{ArtifactKind, PlanFidelityRecordArgs};
 use crate::contracts::plan::{
-    AnalyzePlanReport, evaluate_plan_fidelity_receipt_at_path, parse_plan_file,
+    AnalyzePlanReport, PlanFidelityReviewReport, evaluate_plan_fidelity_review, parse_plan_file,
 };
-use crate::contracts::runtime::{
-    analyze_contract_report, build_plan_fidelity_receipt, persist_plan_fidelity_receipt,
-    plan_fidelity_receipt_path,
-};
+use crate::contracts::runtime::analyze_contract_report;
 use crate::contracts::spec::{SpecDocument, parse_spec_file, repo_relative_string};
 use crate::diagnostics::{DiagnosticError, FailureClass};
 use crate::execution::current_truth::RECOMMENDED_COMMAND_OMITTED_PHASE_DETAILS;
-use crate::execution::topology::{
-    ensure_plan_fidelity_source_spec_is_approved, parse_plan_fidelity_review_artifact,
-    validate_plan_fidelity_review_artifact,
-};
-use crate::git::{
-    RepositoryIdentity, derive_repo_slug, discover_repo_identity, discover_slug_identity,
-    stored_repo_root_matches_current,
-};
+use crate::git::{RepositoryIdentity, discover_repo_identity, stored_repo_root_matches_current};
 use crate::paths::{RepoPath, featureforge_state_dir};
 use crate::workflow::manifest::{
     ManifestLoadResult, WorkflowManifest, load_manifest, load_manifest_read_only, manifest_path,
@@ -41,6 +30,12 @@ const WORKFLOW_ROUTE_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_HANDOFF_SCHEMA_VERSION: u32 = 3;
 const WORKFLOW_OPERATOR_SCHEMA_VERSION: u32 = 3;
 
+#[derive(Debug, Clone, Copy)]
+pub enum ArtifactKind {
+    Spec,
+    Plan,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct WorkflowRoute {
     pub schema_version: u32,
@@ -52,7 +47,7 @@ pub struct WorkflowRoute {
     pub reason_codes: Vec<String>,
     pub diagnostics: Vec<WorkflowDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub plan_fidelity_receipt: Option<crate::contracts::plan::PlanFidelityGateReport>,
+    pub plan_fidelity_review: Option<PlanFidelityReviewReport>,
     pub scan_truncated: bool,
     pub spec_candidate_count: usize,
     pub plan_candidate_count: usize,
@@ -94,17 +89,6 @@ pub struct WorkflowPhase {
     pub route: WorkflowRoute,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
-pub struct PlanFidelityRecord {
-    pub status: String,
-    pub receipt_path: String,
-    pub review_artifact_path: String,
-    pub review_stage: String,
-    pub reviewer_source: String,
-    pub reviewer_id: String,
-    pub verified_surfaces: Vec<String>,
-}
-
 #[derive(Debug, Clone)]
 pub struct WorkflowRuntime {
     pub identity: RepositoryIdentity,
@@ -127,6 +111,7 @@ struct WorkflowSpecCandidate {
 struct WorkflowPlanCandidate {
     path: String,
     workflow_state: String,
+    last_reviewed_by: String,
     source_spec_path: String,
     source_spec_revision: Option<u32>,
     malformed_headers: bool,
@@ -526,7 +511,7 @@ fn resolve_route(
             contract_state: String::from("unknown"),
             reason_codes: vec![String::from("missing_expected_spec")],
             diagnostics: Vec::new(),
-            plan_fidelity_receipt: None,
+            plan_fidelity_review: None,
             scan_truncated,
             spec_candidate_count: 0,
             plan_candidate_count: 0,
@@ -560,7 +545,7 @@ fn resolve_route(
                     "Repair the spec headers before treating the document as an approved workflow artifact.",
                 ),
             }],
-            plan_fidelity_receipt: None,
+            plan_fidelity_review: None,
             scan_truncated,
             spec_candidate_count: malformed_spec_candidates.len(),
             plan_candidate_count: plan_candidates.len(),
@@ -581,7 +566,7 @@ fn resolve_route(
             contract_state: String::from("unknown"),
             reason_codes: Vec::new(),
             diagnostics: Vec::new(),
-            plan_fidelity_receipt: None,
+            plan_fidelity_review: None,
             scan_truncated,
             spec_candidate_count: 0,
             plan_candidate_count: plan_candidates.len(),
@@ -631,7 +616,7 @@ fn resolve_route(
                 ),
                 remediation: String::from("Reduce spec ambiguity before proceeding."),
             }],
-            plan_fidelity_receipt: None,
+            plan_fidelity_review: None,
             scan_truncated,
             spec_candidate_count,
             plan_candidate_count: plan_candidates.len(),
@@ -652,7 +637,7 @@ fn resolve_route(
             contract_state: String::from("unknown"),
             reason_codes: Vec::new(),
             diagnostics: Vec::new(),
-            plan_fidelity_receipt: None,
+            plan_fidelity_review: None,
             scan_truncated,
             spec_candidate_count,
             plan_candidate_count: plan_candidates.len(),
@@ -718,7 +703,7 @@ fn resolve_route(
                     "Reduce plan ambiguity before treating the approved spec as ready for execution.",
                 ),
             }],
-            plan_fidelity_receipt: None,
+            plan_fidelity_review: None,
             scan_truncated,
             spec_candidate_count,
             plan_candidate_count: ambiguous_plan_candidate_count,
@@ -777,51 +762,24 @@ fn resolve_route(
         if plan.workflow_state == "Draft" {
             let plan_fidelity_gate =
                 evaluate_plan_fidelity_gate(runtime, &approved_spec.path, &plan.path);
-            if plan_fidelity_gate.state != "pass" {
-                let has_non_fidelity_contract_reason = reason_codes
-                    .iter()
-                    .any(|code| !is_plan_fidelity_reason_code(code));
-                let plan_needs_authoring = stale_source_spec_linkage
-                    || packet_buildability_failure
-                    || plan.malformed_headers
-                    || report.is_none()
-                    || has_non_fidelity_contract_reason;
-                let fidelity_next_skill = if plan_needs_authoring {
-                    "featureforge:writing-plans"
-                } else {
-                    "featureforge:plan-fidelity-review"
-                };
-                let mut combined_reason_codes = plan_fidelity_gate.reason_codes.clone();
-                for code in &reason_codes {
-                    if !combined_reason_codes
-                        .iter()
-                        .any(|existing| existing == code)
-                    {
-                        combined_reason_codes.push(code.clone());
-                    }
-                }
-                let mut combined_diagnostics =
-                    plan_fidelity_gate_diagnostics(&plan, &plan_fidelity_gate, fidelity_next_skill);
-                for diagnostic in &diagnostics {
-                    if combined_diagnostics
-                        .iter()
-                        .any(|existing| existing.code == diagnostic.code)
-                    {
-                        continue;
-                    }
-                    combined_diagnostics.push(diagnostic.clone());
-                }
-                let reason = compatibility_reason(&combined_reason_codes);
+            let plan_needs_authoring = draft_plan_needs_authoring(
+                &plan,
+                report.as_ref(),
+                stale_source_spec_linkage,
+                packet_buildability_failure,
+                &reason_codes,
+            );
+            if plan_needs_authoring {
                 return Ok(WorkflowRoute {
                     schema_version: 2,
                     status: String::from("plan_draft"),
-                    next_skill: String::from(fidelity_next_skill),
+                    next_skill: String::from("featureforge:writing-plans"),
                     spec_path: approved_spec.path.clone(),
                     plan_path: plan.path.clone(),
                     contract_state,
-                    reason_codes: combined_reason_codes,
-                    diagnostics: combined_diagnostics,
-                    plan_fidelity_receipt: Some(plan_fidelity_gate),
+                    reason_codes,
+                    diagnostics,
+                    plan_fidelity_review: Some(plan_fidelity_gate),
                     scan_truncated,
                     spec_candidate_count,
                     plan_candidate_count: 1,
@@ -831,6 +789,62 @@ fn resolve_route(
                     note: reason,
                 });
             }
+            if draft_ready_for_fidelity_review(&plan, &plan_fidelity_gate, plan_needs_authoring) {
+                let combined_reason_codes =
+                    combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
+                let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
+                    &plan,
+                    &diagnostics,
+                    &plan_fidelity_gate,
+                    "featureforge:plan-fidelity-review",
+                );
+                let reason = compatibility_reason(&combined_reason_codes);
+                return Ok(WorkflowRoute {
+                    schema_version: 2,
+                    status: String::from("plan_draft"),
+                    next_skill: String::from("featureforge:plan-fidelity-review"),
+                    spec_path: approved_spec.path.clone(),
+                    plan_path: plan.path.clone(),
+                    contract_state,
+                    reason_codes: combined_reason_codes,
+                    diagnostics: combined_diagnostics,
+                    plan_fidelity_review: Some(plan_fidelity_gate),
+                    scan_truncated,
+                    spec_candidate_count,
+                    plan_candidate_count: 1,
+                    manifest_path,
+                    root,
+                    reason: reason.clone(),
+                    note: reason,
+                });
+            }
+            debug_assert!(
+                draft_ready_for_engineering_review(&plan, plan_needs_authoring)
+                    || draft_ready_for_engineering_approval(
+                        &plan,
+                        &plan_fidelity_gate,
+                        plan_needs_authoring,
+                    )
+            );
+            let (reason_codes, diagnostics, reason) = if plan_fidelity_gate.state == "fail"
+                && draft_ready_for_engineering_approval(
+                    &plan,
+                    &plan_fidelity_gate,
+                    plan_needs_authoring,
+                ) {
+                let combined_reason_codes =
+                    combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
+                let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
+                    &plan,
+                    &diagnostics,
+                    &plan_fidelity_gate,
+                    "featureforge:plan-eng-review",
+                );
+                let reason = compatibility_reason(&combined_reason_codes);
+                (combined_reason_codes, combined_diagnostics, reason)
+            } else {
+                (reason_codes, diagnostics, reason)
+            };
             return Ok(WorkflowRoute {
                 schema_version: 2,
                 status: String::from("plan_draft"),
@@ -840,7 +854,7 @@ fn resolve_route(
                 contract_state,
                 reason_codes,
                 diagnostics,
-                plan_fidelity_receipt: Some(plan_fidelity_gate),
+                plan_fidelity_review: Some(plan_fidelity_gate),
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
@@ -870,7 +884,7 @@ fn resolve_route(
                 contract_state,
                 reason_codes: vec![String::from("implementation_ready")],
                 diagnostics: Vec::new(),
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
@@ -891,7 +905,7 @@ fn resolve_route(
                 contract_state,
                 reason_codes,
                 diagnostics,
-                plan_fidelity_receipt: None,
+                plan_fidelity_review: None,
                 scan_truncated,
                 spec_candidate_count,
                 plan_candidate_count: 1,
@@ -911,7 +925,7 @@ fn resolve_route(
             contract_state,
             reason_codes,
             diagnostics,
-            plan_fidelity_receipt: None,
+            plan_fidelity_review: None,
             scan_truncated,
             spec_candidate_count,
             plan_candidate_count: 1,
@@ -935,7 +949,7 @@ fn resolve_route(
             Vec::new()
         },
         diagnostics: Vec::new(),
-        plan_fidelity_receipt: None,
+        plan_fidelity_review: None,
         scan_truncated,
         spec_candidate_count,
         plan_candidate_count: plan_candidates.len(),
@@ -1029,7 +1043,7 @@ pub(crate) fn explicit_plan_override_route(
         contract_state,
         reason_codes: Vec::new(),
         diagnostics: Vec::new(),
-        plan_fidelity_receipt: None,
+        plan_fidelity_review: None,
         scan_truncated: resolved_route.scan_truncated,
         spec_candidate_count: resolved_route.spec_candidate_count,
         plan_candidate_count: 1,
@@ -1042,58 +1056,79 @@ pub(crate) fn explicit_plan_override_route(
     if plan.workflow_state == "Draft" {
         let plan_fidelity_gate =
             evaluate_plan_fidelity_gate(workflow, &approved_spec.path, &plan.path);
-        if plan_fidelity_gate.state != "pass" {
-            let has_non_fidelity_contract_reason = reason_codes
-                .iter()
-                .any(|code| !is_plan_fidelity_reason_code(code));
-            let plan_needs_authoring = stale_source_spec_linkage
-                || packet_buildability_failure
-                || plan.malformed_headers
-                || report.is_none()
-                || has_non_fidelity_contract_reason;
-            let fidelity_next_skill = if plan_needs_authoring {
-                "featureforge:writing-plans"
-            } else {
-                "featureforge:plan-fidelity-review"
-            };
-            let mut combined_reason_codes = plan_fidelity_gate.reason_codes.clone();
-            for code in &reason_codes {
-                if !combined_reason_codes
-                    .iter()
-                    .any(|existing| existing == code)
-                {
-                    combined_reason_codes.push(code.clone());
-                }
-            }
-            let mut combined_diagnostics =
-                plan_fidelity_gate_diagnostics(&plan, &plan_fidelity_gate, fidelity_next_skill);
-            for diagnostic in &diagnostics {
-                if combined_diagnostics
-                    .iter()
-                    .any(|existing| existing.code == diagnostic.code)
-                {
-                    continue;
-                }
-                combined_diagnostics.push(diagnostic.clone());
-            }
-            let reason = compatibility_reason(&combined_reason_codes);
+        let plan_needs_authoring = draft_plan_needs_authoring(
+            &plan,
+            report.as_ref(),
+            stale_source_spec_linkage,
+            packet_buildability_failure,
+            &reason_codes,
+        );
+        if plan_needs_authoring {
             return Ok(decorate(WorkflowRoute {
                 status: String::from("plan_draft"),
-                next_skill: String::from(fidelity_next_skill),
-                reason_codes: combined_reason_codes,
-                diagnostics: combined_diagnostics,
-                plan_fidelity_receipt: Some(plan_fidelity_gate),
+                next_skill: String::from("featureforge:writing-plans"),
+                reason_codes,
+                diagnostics,
+                plan_fidelity_review: Some(plan_fidelity_gate),
                 reason: reason.clone(),
                 note: reason,
                 ..base_route
             }));
         }
+        if draft_ready_for_fidelity_review(&plan, &plan_fidelity_gate, plan_needs_authoring) {
+            let combined_reason_codes =
+                combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
+            let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
+                &plan,
+                &diagnostics,
+                &plan_fidelity_gate,
+                "featureforge:plan-fidelity-review",
+            );
+            let reason = compatibility_reason(&combined_reason_codes);
+            return Ok(decorate(WorkflowRoute {
+                status: String::from("plan_draft"),
+                next_skill: String::from("featureforge:plan-fidelity-review"),
+                reason_codes: combined_reason_codes,
+                diagnostics: combined_diagnostics,
+                plan_fidelity_review: Some(plan_fidelity_gate),
+                reason: reason.clone(),
+                note: reason,
+                ..base_route
+            }));
+        }
+        debug_assert!(
+            draft_ready_for_engineering_review(&plan, plan_needs_authoring)
+                || draft_ready_for_engineering_approval(
+                    &plan,
+                    &plan_fidelity_gate,
+                    plan_needs_authoring,
+                )
+        );
+        let (reason_codes, diagnostics, reason) = if plan_fidelity_gate.state == "fail"
+            && draft_ready_for_engineering_approval(
+                &plan,
+                &plan_fidelity_gate,
+                plan_needs_authoring,
+            ) {
+            let combined_reason_codes =
+                combine_plan_and_fidelity_reason_codes(&reason_codes, &plan_fidelity_gate);
+            let combined_diagnostics = combine_plan_and_fidelity_diagnostics(
+                &plan,
+                &diagnostics,
+                &plan_fidelity_gate,
+                "featureforge:plan-eng-review",
+            );
+            let reason = compatibility_reason(&combined_reason_codes);
+            (combined_reason_codes, combined_diagnostics, reason)
+        } else {
+            (reason_codes, diagnostics, reason)
+        };
         return Ok(decorate(WorkflowRoute {
             status: String::from("plan_draft"),
             next_skill: String::from("featureforge:plan-eng-review"),
             reason_codes,
             diagnostics,
-            plan_fidelity_receipt: Some(plan_fidelity_gate),
+            plan_fidelity_review: Some(plan_fidelity_gate),
             reason: reason.clone(),
             note: reason,
             ..base_route
@@ -1112,7 +1147,7 @@ pub(crate) fn explicit_plan_override_route(
             next_skill: String::new(),
             reason_codes: vec![String::from("implementation_ready")],
             diagnostics: Vec::new(),
-            plan_fidelity_receipt: None,
+            plan_fidelity_review: None,
             reason: String::from("implementation_ready"),
             note: String::from("implementation_ready"),
             ..base_route
@@ -1231,77 +1266,6 @@ pub fn sync_reason_codes(route: &WorkflowRoute) -> Vec<String> {
 
 pub fn report_contract_state(report: &AnalyzePlanReport) -> &str {
     &report.contract_state
-}
-
-pub fn record_plan_fidelity_receipt(
-    current_dir: &Path,
-    args: &PlanFidelityRecordArgs,
-) -> Result<PlanFidelityRecord, DiagnosticError> {
-    let state_dir = featureforge_state_dir();
-    record_plan_fidelity_receipt_with_state_dir(current_dir, &state_dir, args)
-}
-
-pub fn record_plan_fidelity_receipt_with_state_dir(
-    current_dir: &Path,
-    state_dir: &Path,
-    args: &PlanFidelityRecordArgs,
-) -> Result<PlanFidelityRecord, DiagnosticError> {
-    let slug_identity = discover_slug_identity(current_dir);
-    let repo_root = slug_identity.repo_root.clone();
-    let plan_path = normalize_repo_path(&args.plan)?;
-    let plan_abs = repo_root.join(&plan_path);
-    let plan = parse_plan_file(&plan_abs)?;
-    let spec_abs = repo_root.join(&plan.source_spec_path);
-    let spec = load_plan_fidelity_spec_document(&spec_abs)?;
-    ensure_plan_fidelity_source_spec_is_approved(&spec)?;
-    let review_artifact_path = normalize_repo_path(&args.review_artifact)?;
-    let review_artifact_abs = repo_root.join(&review_artifact_path);
-    let review_artifact =
-        parse_plan_fidelity_review_artifact(&review_artifact_abs, &review_artifact_path)?;
-    validate_plan_fidelity_review_artifact(&review_artifact, &plan, &spec)?;
-
-    let receipt =
-        build_plan_fidelity_receipt(crate::contracts::runtime::PlanFidelityReceiptInput {
-            spec: &spec,
-            plan: &plan,
-            verdict: &review_artifact.review_verdict,
-            review_artifact_path: &review_artifact.path,
-            review_artifact_fingerprint: &review_artifact.fingerprint,
-            reviewer_stage: &review_artifact.review_stage,
-            reviewer_source: &review_artifact.reviewer_source,
-            reviewer_id: &review_artifact.reviewer_id,
-            distinct_from_stages: &review_artifact.distinct_from_stages,
-            checked_surfaces: &review_artifact.verified_surfaces,
-            verified_requirement_ids: &review_artifact.verified_requirement_ids,
-        });
-    let receipt_path = plan_fidelity_receipt_path(
-        state_dir,
-        &slug_identity.repo_slug,
-        &slug_identity.branch_name,
-    );
-    persist_plan_fidelity_receipt(&receipt_path, &receipt)?;
-
-    Ok(PlanFidelityRecord {
-        status: String::from("ok"),
-        receipt_path: receipt_path.display().to_string(),
-        review_artifact_path: review_artifact.path,
-        review_stage: receipt.reviewer_provenance.review_stage,
-        reviewer_source: receipt.reviewer_provenance.reviewer_source,
-        reviewer_id: receipt.reviewer_provenance.reviewer_id,
-        verified_surfaces: receipt.verification.checked_surfaces,
-    })
-}
-
-pub fn render_plan_fidelity_record(record: PlanFidelityRecord) -> String {
-    format!(
-        "Recorded plan-fidelity receipt at {}\nReview artifact: {}\nReview stage: {}\nReviewer source: {}\nReviewer id: {}\nVerified surfaces: {}",
-        record.receipt_path,
-        record.review_artifact_path,
-        record.review_stage,
-        record.reviewer_source,
-        record.reviewer_id,
-        record.verified_surfaces.join(", "),
-    )
 }
 
 pub fn write_workflow_schemas(output_dir: impl AsRef<Path>) -> Result<(), DiagnosticError> {
@@ -1843,15 +1807,11 @@ fn parse_workflow_plan_candidate(path: &Path) -> Result<WorkflowPlanCandidate, D
         )
     })?;
     let workflow_state = parse_header_value(&source, "Workflow State")?;
+    let last_reviewed_by = parse_header_value(&source, "Last Reviewed By").unwrap_or_default();
     let last_reviewed_by_valid = matches!(
-        (
-            workflow_state.as_str(),
-            parse_header_value(&source, "Last Reviewed By")
-                .ok()
-                .as_deref(),
-        ),
-        ("Draft", Some("writing-plans" | "plan-eng-review"))
-            | ("Engineering Approved", Some("plan-eng-review"))
+        (workflow_state.as_str(), last_reviewed_by.as_str()),
+        ("Draft", "writing-plans" | "plan-eng-review")
+            | ("Engineering Approved", "plan-eng-review")
     );
     let source_spec_path = normalize_repo_path(Path::new(
         parse_header_value(&source, "Source Spec")?.trim_matches('`'),
@@ -1866,6 +1826,7 @@ fn parse_workflow_plan_candidate(path: &Path) -> Result<WorkflowPlanCandidate, D
         } else {
             String::from("Draft")
         },
+        last_reviewed_by,
         source_spec_path,
         source_spec_revision,
         malformed_headers: !last_reviewed_by_valid,
@@ -2019,28 +1980,100 @@ fn workflow_diagnostics(
     diagnostics
 }
 
+fn draft_plan_needs_authoring(
+    plan: &WorkflowPlanCandidate,
+    report: Option<&AnalyzePlanReport>,
+    stale_source_spec_linkage: bool,
+    packet_buildability_failure: bool,
+    reason_codes: &[String],
+) -> bool {
+    let has_non_fidelity_contract_reason = reason_codes
+        .iter()
+        .any(|code| !is_plan_fidelity_reason_code(code));
+    stale_source_spec_linkage
+        || packet_buildability_failure
+        || plan.malformed_headers
+        || report.is_none()
+        || has_non_fidelity_contract_reason
+}
+
+fn draft_ready_for_engineering_review(
+    plan: &WorkflowPlanCandidate,
+    plan_needs_authoring: bool,
+) -> bool {
+    plan.workflow_state == "Draft"
+        && !plan_needs_authoring
+        && plan.last_reviewed_by != "plan-eng-review"
+}
+
+fn draft_ready_for_fidelity_review(
+    plan: &WorkflowPlanCandidate,
+    gate: &PlanFidelityReviewReport,
+    plan_needs_authoring: bool,
+) -> bool {
+    plan.workflow_state == "Draft"
+        && !plan_needs_authoring
+        && plan.last_reviewed_by == "plan-eng-review"
+        && !matches!(gate.state.as_str(), "pass" | "fail")
+}
+
+fn draft_ready_for_engineering_approval(
+    plan: &WorkflowPlanCandidate,
+    gate: &PlanFidelityReviewReport,
+    plan_needs_authoring: bool,
+) -> bool {
+    plan.workflow_state == "Draft"
+        && !plan_needs_authoring
+        && plan.last_reviewed_by == "plan-eng-review"
+        && matches!(gate.state.as_str(), "pass" | "fail")
+}
+
+fn combine_plan_and_fidelity_reason_codes(
+    reason_codes: &[String],
+    gate: &PlanFidelityReviewReport,
+) -> Vec<String> {
+    let mut combined = gate.reason_codes.clone();
+    for code in reason_codes {
+        if !combined.iter().any(|existing| existing == code) {
+            combined.push(code.clone());
+        }
+    }
+    combined
+}
+
+fn combine_plan_and_fidelity_diagnostics(
+    plan: &WorkflowPlanCandidate,
+    diagnostics: &[WorkflowDiagnostic],
+    gate: &PlanFidelityReviewReport,
+    next_skill: &str,
+) -> Vec<WorkflowDiagnostic> {
+    let mut combined = plan_fidelity_gate_diagnostics(plan, gate, next_skill);
+    for diagnostic in diagnostics {
+        if combined
+            .iter()
+            .any(|existing| existing.code == diagnostic.code)
+        {
+            continue;
+        }
+        combined.push(diagnostic.clone());
+    }
+    combined
+}
+
 fn evaluate_plan_fidelity_gate(
     runtime: &WorkflowRuntime,
     spec_path: &str,
     plan_path: &str,
-) -> crate::contracts::plan::PlanFidelityGateReport {
+) -> PlanFidelityReviewReport {
     let spec_abs = runtime.identity.repo_root.join(spec_path);
     let plan_abs = runtime.identity.repo_root.join(plan_path);
-    let receipt_path = plan_fidelity_receipt_path(
-        &runtime.state_dir,
-        &derive_repo_slug(
-            &runtime.identity.repo_root,
-            runtime.identity.remote_url.as_deref(),
-        ),
-        &runtime.identity.branch_name,
-    );
 
     let plan = match parse_plan_file(&plan_abs) {
         Ok(plan) => plan,
         Err(_) => {
-            return crate::contracts::plan::PlanFidelityGateReport::unverified(
+            return PlanFidelityReviewReport::unverified(
                 "invalid",
-                receipt_path.display().to_string(),
+                String::new(),
                 String::new(),
                 String::new(),
                 vec![String::from("plan_fidelity_verification_incomplete")],
@@ -2056,9 +2089,9 @@ fn evaluate_plan_fidelity_gate(
     let spec = match load_plan_fidelity_spec_document(&spec_abs) {
         Ok(spec) => spec,
         Err(_) => {
-            return crate::contracts::plan::PlanFidelityGateReport::unverified(
+            return PlanFidelityReviewReport::unverified(
                 "invalid",
-                receipt_path.display().to_string(),
+                String::new(),
                 String::new(),
                 String::new(),
                 vec![String::from("plan_fidelity_verification_incomplete")],
@@ -2072,12 +2105,7 @@ fn evaluate_plan_fidelity_gate(
         }
     };
 
-    evaluate_plan_fidelity_receipt_at_path(
-        &spec,
-        &plan,
-        runtime.identity.repo_root.as_path(),
-        receipt_path,
-    )
+    evaluate_plan_fidelity_review(&spec, &plan, runtime.identity.repo_root.as_path())
 }
 
 fn load_plan_fidelity_spec_document(spec_abs: &Path) -> Result<SpecDocument, DiagnosticError> {
@@ -2086,11 +2114,11 @@ fn load_plan_fidelity_spec_document(spec_abs: &Path) -> Result<SpecDocument, Dia
 
 fn plan_fidelity_gate_diagnostics(
     plan: &WorkflowPlanCandidate,
-    gate: &crate::contracts::plan::PlanFidelityGateReport,
+    gate: &PlanFidelityReviewReport,
     next_skill: &str,
 ) -> Vec<WorkflowDiagnostic> {
     let remediation = format!(
-        "Return to {next_skill}, rerun the dedicated plan-fidelity reviewer, and record a fresh matching pass receipt."
+        "Return to {next_skill} and rerun the dedicated plan-fidelity reviewer for the current draft."
     );
     gate.diagnostics
         .iter()
@@ -2135,9 +2163,9 @@ fn compatibility_reason(reason_codes: &[String]) -> String {
 fn is_plan_fidelity_reason_code(code: &str) -> bool {
     matches!(
         code,
-        "missing_plan_fidelity_receipt"
-            | "malformed_plan_fidelity_receipt"
-            | "stale_plan_fidelity_receipt"
+        "missing_plan_fidelity_review_artifact"
+            | "stale_plan_fidelity_review_artifact"
+            | "plan_fidelity_review_artifact_not_pass"
     ) || code.starts_with("plan_fidelity_")
 }
 

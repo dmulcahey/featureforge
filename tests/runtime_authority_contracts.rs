@@ -76,6 +76,118 @@ const STATE_DIRECT_GATE_COMMAND_BODIES: &[&str] = &[
     "gate_finish_from_context",
 ];
 
+const PUBLIC_COMMAND_BOUNDARY_FORBIDDEN_TEST_HELPER_PATTERNS: &[(&str, &[&str])] = &[
+    (
+        "tests/support/workflow_direct.rs",
+        &[
+            "LegacyWorkflowCli",
+            "LegacyWorkflowCommand",
+            "allow_legacy_removed_commands",
+            "WorkflowPlanFidelityCli",
+            "record_plan_fidelity_receipt_with_state_dir",
+        ],
+    ),
+    (
+        "tests/support/plan_execution_direct.rs",
+        &[
+            "run_runtime_",
+            "run_internal_",
+            "run_record_plan_fidelity",
+            "record_plan_fidelity_receipt_with_state_dir",
+        ],
+    ),
+];
+
+const INTERNAL_PLAN_EXECUTION_ARG_STRUCTS: &[&str] = &[
+    "RecordReviewDispatchArgs",
+    "RecordBranchClosureArgs",
+    "RecordReleaseReadinessArgs",
+    "RecordFinalReviewArgs",
+    "RecordQaArgs",
+    "GateContractArgs",
+    "RecordContractArgs",
+    "GateEvaluatorArgs",
+    "RecordEvaluationArgs",
+    "GateHandoffArgs",
+    "RecordHandoffArgs",
+    "RecommendArgs",
+    "RebuildEvidenceArgs",
+    "NoteArgs",
+];
+
+const ROUTING_AUTHORITY_RECEIPT_FREE_FILES: &[&str] = &[
+    "src/execution/command_eligibility.rs",
+    "src/execution/current_truth.rs",
+    "src/execution/next_action.rs",
+    "src/execution/query.rs",
+    "src/execution/router.rs",
+    "src/workflow/operator.rs",
+    "src/workflow/status.rs",
+];
+
+#[test]
+fn public_command_boundary_test_helpers_do_not_expose_removed_or_hidden_workflow_commands() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut violations = Vec::new();
+
+    for (relative, forbidden_patterns) in PUBLIC_COMMAND_BOUNDARY_FORBIDDEN_TEST_HELPER_PATTERNS {
+        let source = fs::read_to_string(repo_root.join(relative))
+            .unwrap_or_else(|error| panic!("{relative} should be readable: {error}"));
+        for forbidden_pattern in *forbidden_patterns {
+            if source.contains(forbidden_pattern) {
+                violations.push(format!("{relative} contains `{forbidden_pattern}`"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public command tests must not gain capabilities unavailable through the compiled CLI:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn plan_execution_cli_module_contains_only_public_command_args() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(repo_root.join("src/cli/plan_execution.rs"))
+        .expect("plan execution CLI module should be readable");
+    let mut violations = Vec::new();
+
+    for struct_name in INTERNAL_PLAN_EXECUTION_ARG_STRUCTS {
+        let pattern = format!("struct {struct_name}");
+        if source.contains(&pattern) {
+            violations.push(pattern);
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "src/cli/plan_execution.rs must not define internal-only argument structs for commands that are not public CLI variants:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn production_routing_authority_uses_artifacts_not_receipts() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut violations = Vec::new();
+
+    for relative in ROUTING_AUTHORITY_RECEIPT_FREE_FILES {
+        let source = fs::read_to_string(repo_root.join(relative))
+            .unwrap_or_else(|error| panic!("{relative} should be readable: {error}"));
+        if source.to_ascii_lowercase().contains("receipt") {
+            violations.push(format!("{relative} contains receipt terminology"));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public routing authority must not depend on receipt-shaped runtime contracts:\n{}",
+        violations.join("\n")
+    );
+}
+
 #[test]
 fn gate_and_stale_decisioning_do_not_split_after_reducer() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));

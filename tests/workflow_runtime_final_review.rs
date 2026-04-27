@@ -851,8 +851,8 @@ fn run_plan_execution(repo: &Path, state_dir: &Path, args: &[&str], context: &st
     run_featureforge_with_env(repo, state_dir, command_args.as_slice(), &[], context)
 }
 
-fn run_internal_preflight(repo: &Path, state_dir: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::run_runtime_preflight_gate_json(
+fn internal_test_unit_preflight(repo: &Path, state_dir: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::internal_test_runtime_preflight_gate_json(
         repo,
         state_dir,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -863,8 +863,8 @@ fn run_internal_preflight(repo: &Path, state_dir: &Path, plan_rel: &str) -> Valu
     .expect("internal preflight helper should succeed")
 }
 
-fn run_internal_gate_finish(repo: &Path, state_dir: &Path, plan_rel: &str) -> Value {
-    plan_execution_direct_support::run_runtime_finish_gate_json(
+fn internal_test_unit_gate_finish(repo: &Path, state_dir: &Path, plan_rel: &str) -> Value {
+    plan_execution_direct_support::internal_test_runtime_finish_gate_json(
         repo,
         state_dir,
         &featureforge::cli::plan_execution::StatusArgs {
@@ -876,12 +876,12 @@ fn run_internal_gate_finish(repo: &Path, state_dir: &Path, plan_rel: &str) -> Va
 }
 
 fn record_task_boundary_review_dispatch(repo: &Path, state_dir: &Path, plan_rel: &str) -> String {
-    let _ = plan_execution_direct_support::run_runtime_review_dispatch_authority_json(
+    let _ = plan_execution_direct_support::internal_test_runtime_review_dispatch_authority_json(
         repo,
         state_dir,
-        &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+        &featureforge::execution::internal_args::RecordReviewDispatchArgs {
             plan: PathBuf::from(plan_rel),
-            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            scope: featureforge::execution::internal_args::ReviewDispatchScopeArg::Task,
             task: Some(1),
         },
     )
@@ -1196,7 +1196,7 @@ fn workflow_phase_routes_missing_final_review_back_to_execution_flow() {
     let phase_json = workflow_phase_json(&runtime, "workflow_runtime final-review-focused shard");
     let handoff_json =
         workflow_handoff_json(&runtime, "workflow_runtime final-review-focused shard");
-    let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+    let gate_finish_json = internal_test_unit_gate_finish(repo, state, PLAN_REL);
 
     assert_eq!(
         phase_json["phase"], "final_review_pending",
@@ -1239,7 +1239,7 @@ fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary final-review fixture execution",
     );
-    let preflight = run_internal_preflight(repo, state, PLAN_REL);
+    let preflight = internal_test_unit_preflight(repo, state, PLAN_REL);
     assert_eq!(preflight["allowed"], true);
 
     let begin_task1 = run_plan_execution(
@@ -1304,12 +1304,12 @@ fn task_boundary_dispatch_does_not_release_next_task_without_task_closure() {
         1,
         &strategy_checkpoint_fingerprint,
     );
-    let _ = plan_execution_direct_support::run_runtime_review_dispatch_authority_json(
+    let _ = plan_execution_direct_support::internal_test_runtime_review_dispatch_authority_json(
         repo,
         state,
-        &featureforge::cli::plan_execution::RecordReviewDispatchArgs {
+        &featureforge::execution::internal_args::RecordReviewDispatchArgs {
             plan: PathBuf::from(PLAN_REL),
-            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            scope: featureforge::execution::internal_args::ReviewDispatchScopeArg::Task,
             task: Some(1),
         },
     )
@@ -1383,7 +1383,7 @@ fn workflow_phase_keeps_branch_completion_when_review_receipt_head_drifts() {
     let phase_json = workflow_phase_json(&runtime, "workflow_runtime stale-review-focused shard");
     let handoff_json =
         workflow_handoff_json(&runtime, "workflow_runtime stale-review-focused shard");
-    let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+    let gate_finish_json = internal_test_unit_gate_finish(repo, state, PLAN_REL);
     let status_json = plan_execution_status_json(
         &runtime,
         PLAN_REL,
@@ -1432,7 +1432,7 @@ fn workflow_phase_keeps_branch_completion_when_reviewer_source_text_regresses() 
         &runtime,
         "workflow_runtime non-independent-reviewer-source shard",
     );
-    let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+    let gate_finish_json = internal_test_unit_gate_finish(repo, state, PLAN_REL);
     let status_json = plan_execution_status_json(
         &runtime,
         PLAN_REL,
@@ -1478,7 +1478,7 @@ fn workflow_phase_keeps_branch_completion_when_reviewer_artifact_is_unreadable()
         &runtime,
         "workflow_runtime unreadable-reviewer-artifact shard",
     );
-    let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+    let gate_finish_json = internal_test_unit_gate_finish(repo, state, PLAN_REL);
     let status_json = plan_execution_status_json(
         &runtime,
         PLAN_REL,
@@ -1597,7 +1597,7 @@ fn workflow_phase_keeps_branch_completion_for_non_authoritative_reviewer_failure
             discover_execution_runtime(repo, state, "workflow_runtime reviewer failure family");
         let handoff_json =
             workflow_handoff_json(&runtime, "workflow_runtime reviewer failure family");
-        let gate_finish_json = run_internal_gate_finish(repo, state, PLAN_REL);
+        let gate_finish_json = internal_test_unit_gate_finish(repo, state, PLAN_REL);
         let status_json = plan_execution_status_json(
             &runtime,
             PLAN_REL,

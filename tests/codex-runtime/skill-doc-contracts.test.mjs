@@ -747,7 +747,8 @@ test('execution workflow skills reference the plan-execution helper contract', (
   assert.match(reviewPrompt, /`Source Plan`, `Source Plan Revision`, `Strategy Checkpoint Fingerprint`, `Branch`, `Repo`, `Base Branch`, `Head SHA`/);
   assert.match(reviewPrompt, /When approved plan and execution evidence paths are provided, read both artifacts and verify that checked-off plan steps are semantically satisfied by the implementation and explicitly evidenced\./);
   assert.match(reviewPrompt, /When execution evidence documents recorded topology downgrades or other execution deviations, explicitly inspect them and state whether those deviations pass final review\./);
-  assert.match(reviewPrompt, /runtime-provided base-branch context from `workflow operator` \(`base_branch`\) and release-lineage routing/);
+  assert.match(reviewPrompt, /Use caller-provided base-branch context and release-lineage routing/);
+  assert.match(reviewPrompt, /instead of deriving it locally or running workflow commands/);
   assert.doesNotMatch(reviewPrompt, /git symbolic-ref --short refs\/remotes\/origin\/HEAD/);
   assert.doesNotMatch(reviewPrompt, /for candidate in main master/);
   assert.doesNotMatch(reviewPrompt, /BASE_BRANCH_EFFECTIVE=/);
@@ -837,7 +838,7 @@ test('task-fidelity workflow docs and prompts require packet-backed plan contrac
   const planFidelityReview = readUtf8(getSkillPath('plan-fidelity-review'));
   assert.match(planFidelityReview, /task-contract fidelity/);
   assert.match(planFidelityReview, /review\/plan-task-contract\.md/);
-  assert.match(planFidelityReview, /runtime-owned receipt must record exactly these `Verified Surfaces`/);
+  assert.match(planFidelityReview, /review artifact must record exactly these `Verified Surfaces`/);
   assert.match(planFidelityReview, /task_contract/);
   assert.match(planFidelityReview, /task_determinism/);
   assert.match(planFidelityReview, /spec_reference_fidelity/);
@@ -2073,7 +2074,11 @@ test('workflow docs avoid stale ambiguity, commit-ownership, and review-freshnes
   const generatedReviewerAgent = readUtf8(path.join(REPO_ROOT, 'agents/code-reviewer.md'));
   assert.match(
     generatedReviewerAgent,
-    /runtime-owned base-branch contract as the active workflow guidance: use caller-provided `workflow operator --plan <approved-plan-path> --json` `base_branch` \/ release-lineage context when available/,
+    /Require caller-provided base branch, base SHA, head SHA, plan path if plan-routed, and any runtime context the caller wants considered/,
+  );
+  assert.match(
+    generatedReviewerAgent,
+    /Do not run workflow\/operator or plan-execution commands to obtain missing context/,
   );
   assert.match(
     generatedReviewerAgent,

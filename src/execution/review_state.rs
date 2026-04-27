@@ -22,6 +22,7 @@ use crate::execution::follow_up::{
 };
 use crate::execution::query::{
     ExecutionRoutingState, ReviewStateBranchClosure, ReviewStateSnapshot, ReviewStateTaskClosure,
+    apply_read_surface_invariants_to_routing,
     normalize_persisted_follow_up_alias as shared_normalize_persisted_follow_up_alias,
     normalize_public_follow_up_alias as shared_normalize_public_follow_up_alias,
     query_review_state, required_follow_up_from_routing,
@@ -322,8 +323,9 @@ fn route_for_plan(
     args: &StatusArgs,
 ) -> Result<ExecutionRoutingState, JsonFailure> {
     let read_scope = load_execution_read_scope(runtime, &args.plan, true)?;
-    let (routing, _) =
+    let (mut routing, _) =
         project_runtime_routing_state(runtime, &read_scope, args.external_review_result_ready)?;
+    apply_read_surface_invariants_to_routing(&mut routing);
     Ok(routing)
 }
 
@@ -373,7 +375,22 @@ pub fn reconcile_review_state(
     let snapshot = query_review_state(runtime, args)?;
     let read_scope = load_execution_read_scope(runtime, &args.plan, true)?;
     let context = read_scope.context;
-    let status = read_scope.status;
+    let status = runtime.status(args)?;
+    if status.state_kind == "blocked_runtime_bug" {
+        return Ok(ReconcileReviewStateOutput {
+            action: String::from("blocked"),
+            current_task_closures: snapshot.current_task_closures,
+            current_branch_closure: snapshot.current_branch_closure,
+            superseded_closures: snapshot.superseded_closures,
+            stale_unreviewed_closures: snapshot.stale_unreviewed_closures,
+            missing_derived_overlays: snapshot.missing_derived_overlays,
+            actions_performed: Vec::new(),
+            recommended_command: String::from("none"),
+            trace_summary: String::from(
+                "Reconcile review state is blocked because invariant-protected public runtime status reported blocked_runtime_bug.",
+            ),
+        });
+    }
     let task_review_dispatch_id =
         current_task_review_dispatch_id_for_status(&context, &status, read_scope.overlay.as_ref());
     let final_review_dispatch_authority = current_final_review_dispatch_authority_for_context(
@@ -687,11 +704,16 @@ fn load_repair_phase_bundle(
     args: &StatusArgs,
 ) -> Result<RepairPhaseBundle, JsonFailure> {
     let mut read_scope = load_execution_read_scope(runtime, &args.plan, true)?;
-    let (routing, route_decision) = apply_shared_routing_projection_to_read_scope_with_routing(
+    let (mut routing, route_decision) = apply_shared_routing_projection_to_read_scope_with_routing(
         &mut read_scope,
         args.external_review_result_ready,
         true,
     )?;
+    routing.execution_status = Some(read_scope.status.clone());
+    apply_read_surface_invariants_to_routing(&mut routing);
+    if let Some(public_status) = routing.execution_status.clone() {
+        read_scope.status = public_status;
+    }
     let _reduced_status = routing.execution_status.as_ref().ok_or_else(|| {
         JsonFailure::new(
             FailureClass::MalformedExecutionState,

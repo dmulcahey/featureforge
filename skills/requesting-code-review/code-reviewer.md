@@ -4,6 +4,10 @@ This file is the skill-local reviewer briefing template, not the generated agent
 
 You are reviewing code changes for production readiness against the shared FeatureForge review checklist.
 
+REVIEWER_RUNTIME_COMMANDS_ALLOWED: no
+
+If you are running as a reviewer subagent, do not invoke FeatureForge skills, do not run `featureforge workflow` or `featureforge plan execution` commands, do not dispatch `code-reviewer` or `requesting-code-review`, and do not repair runtime state. Use only the context supplied by the caller plus read-only repo inspection. If required runtime context is missing, report a blocked review and name the missing context.
+
 **Your task:**
 1. Review `{WHAT_WAS_IMPLEMENTED}`
 2. Compare the diff against `{PLAN_OR_REQUIREMENTS}`
@@ -37,9 +41,9 @@ Treat plan-routed review context as completed task packets plus coverage matrix 
 **Base:** {BASE_SHA}
 **Head:** {HEAD_SHA}
 
-Use the runtime-provided base-branch context from `workflow operator` (`base_branch`) and release-lineage routing.
+Use caller-provided base-branch context and release-lineage routing.
 Treat `{BASE_BRANCH}` as authoritative when it is provided.
-If it is missing, stop and request explicit `BASE_BRANCH` instead of re-deriving it locally.
+If it is missing, stop and request explicit `BASE_BRANCH` instead of deriving it locally or running workflow commands.
 
 ```bash
 CHECKLIST_PATH="review/checklist.md"

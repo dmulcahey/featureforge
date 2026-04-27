@@ -12,7 +12,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-use featureforge::cli::plan_execution::{RecordReviewDispatchArgs, StatusArgs};
+use featureforge::cli::plan_execution::StatusArgs;
+use featureforge::execution::internal_args::RecordReviewDispatchArgs;
 use featureforge::execution::query::{
     ExecutionRoutingState, query_review_state, query_workflow_execution_state,
     query_workflow_routing_state_for_runtime,
@@ -110,7 +111,7 @@ fn run_plan_execution_json(repo: &Path, state: &Path, args: &[&str], context: &s
         .unwrap_or_else(|error| panic!("{context} should emit valid json: {error}"))
 }
 
-fn run_runtime_preflight_gate_json(
+fn internal_test_runtime_preflight_gate_json(
     repo: &Path,
     state: &Path,
     plan_rel: &str,
@@ -294,7 +295,7 @@ fn setup_execution_in_progress(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before active-context fixture begin",
     );
-    let preflight = run_runtime_preflight_gate_json(
+    let preflight = internal_test_runtime_preflight_gate_json(
         repo,
         state,
         PLAN_REL,
@@ -339,7 +340,7 @@ fn setup_task_boundary_blocked_case(repo: &Path, state: &Path) {
         &["status", "--plan", PLAN_REL],
         "status before task-boundary fixture execution",
     );
-    let preflight = run_runtime_preflight_gate_json(
+    let preflight = internal_test_runtime_preflight_gate_json(
         repo,
         state,
         PLAN_REL,
@@ -576,12 +577,12 @@ fn routing_snapshot_matches_workflow_operator_recording_context_payload() {
     let repo = repo_dir.path();
     let state = state_dir.path();
     setup_task_boundary_blocked_case(repo, state);
-    let dispatch = featureforge_support::run_runtime_review_dispatch_authority_json(
+    let dispatch = featureforge_support::internal_test_runtime_review_dispatch_authority_json(
         repo,
         state,
         &RecordReviewDispatchArgs {
             plan: PathBuf::from(PLAN_REL),
-            scope: featureforge::cli::plan_execution::ReviewDispatchScopeArg::Task,
+            scope: featureforge::execution::internal_args::ReviewDispatchScopeArg::Task,
             task: Some(1),
         },
     )

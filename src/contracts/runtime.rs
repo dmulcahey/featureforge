@@ -13,12 +13,10 @@ use crate::cli::plan_contract::{
 };
 use crate::contracts::packet::{PacketObligation, build_task_packet_with_timestamp};
 use crate::contracts::plan::{
-    AnalyzePlanReport, ContractDiagnostic, OverlappingWriteScope, PLAN_FIDELITY_RECEIPT_KIND,
-    PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION, PlanDocument, PlanFidelityReceipt,
-    PlanFidelityReviewerProvenance, PlanFidelityVerification, analyze_execution_topology,
-    evaluate_plan_fidelity_receipt_at_path, parse_plan_file, plan_fidelity_receipt_path_for_repo,
+    AnalyzePlanReport, ContractDiagnostic, OverlappingWriteScope, analyze_execution_topology,
+    evaluate_plan_fidelity_review, parse_plan_file,
 };
-use crate::contracts::spec::{SpecDocument, parse_spec_file};
+use crate::contracts::spec::parse_spec_file;
 use crate::contracts::task_contract::{
     TaskContractFields, TaskIntentSource, detect_duplicate_task_intents,
     parse_task_contract_fields, parse_task_step_line, split_canonical_task_blocks,
@@ -27,9 +25,8 @@ use crate::contracts::task_contract::{
 use crate::diagnostics::{DiagnosticError, FailureClass, JsonFailure};
 use crate::git::discover_slug_identity;
 use crate::paths::{
-    featureforge_state_dir, harness_branch_root, normalize_identifier_token,
-    normalize_repo_relative_file_reference, normalize_repo_relative_path, normalize_whitespace,
-    write_atomic,
+    featureforge_state_dir, normalize_identifier_token, normalize_repo_relative_file_reference,
+    normalize_repo_relative_path, normalize_whitespace,
 };
 
 #[derive(Debug, Clone)]
@@ -755,7 +752,7 @@ fn analyze_contract(
         parallel_worktree_requirements: Vec::new(),
         reason_codes: Vec::new(),
         overlapping_write_scopes: Vec::new(),
-        plan_fidelity_receipt: crate::contracts::plan::PlanFidelityGateReport::not_applicable(),
+        plan_fidelity_review: crate::contracts::plan::PlanFidelityReviewReport::not_applicable(),
         diagnostics: Vec::new(),
     };
 
@@ -1108,11 +1105,8 @@ fn apply_plan_fidelity_gate_to_report(
 
     let spec_abs = repo_root.join(spec_path);
     let plan_abs = repo_root.join(plan_path);
-    let receipt_path = plan_fidelity_receipt_path_for_repo(repo_root);
     let gate = match (parse_spec_file(&spec_abs), parse_plan_file(&plan_abs)) {
-        (Ok(spec), Ok(plan)) => {
-            evaluate_plan_fidelity_receipt_at_path(&spec, &plan, repo_root, receipt_path)
-        }
+        (Ok(spec), Ok(plan)) => evaluate_plan_fidelity_review(&spec, &plan, repo_root),
         (spec_result, plan_result) => {
             let mut diagnostics = Vec::new();
             if spec_result.is_err() {
@@ -1131,9 +1125,9 @@ fn apply_plan_fidelity_gate_to_report(
                     ),
                 });
             }
-            crate::contracts::plan::PlanFidelityGateReport::unverified(
+            crate::contracts::plan::PlanFidelityReviewReport::unverified(
                 "invalid",
-                receipt_path.display().to_string(),
+                String::new(),
                 String::new(),
                 String::new(),
                 vec![String::from("plan_fidelity_verification_incomplete")],
@@ -1141,13 +1135,7 @@ fn apply_plan_fidelity_gate_to_report(
             )
         }
     };
-    if gate.state != "pass" {
-        report.contract_state = String::from("invalid");
-        for diagnostic in &gate.diagnostics {
-            push_reason(report, &diagnostic.code, &diagnostic.message);
-        }
-    }
-    report.plan_fidelity_receipt = gate;
+    report.plan_fidelity_review = gate;
 }
 
 fn parse_spec_revision(source: &str) -> Result<u32, ()> {
@@ -2014,77 +2002,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
-}
-
-pub fn plan_fidelity_receipt_path(state_dir: &Path, repo_slug: &str, branch_name: &str) -> PathBuf {
-    let branch_root = harness_branch_root(state_dir, repo_slug, branch_name)
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| harness_branch_root(state_dir, repo_slug, branch_name));
-    branch_root
-        .join("workflow")
-        .join("plan-fidelity-receipt.json")
-}
-
-pub struct PlanFidelityReceiptInput<'a> {
-    pub spec: &'a SpecDocument,
-    pub plan: &'a PlanDocument,
-    pub verdict: &'a str,
-    pub review_artifact_path: &'a str,
-    pub review_artifact_fingerprint: &'a str,
-    pub reviewer_stage: &'a str,
-    pub reviewer_source: &'a str,
-    pub reviewer_id: &'a str,
-    pub distinct_from_stages: &'a [String],
-    pub checked_surfaces: &'a [String],
-    pub verified_requirement_ids: &'a [String],
-}
-
-pub fn build_plan_fidelity_receipt(input: PlanFidelityReceiptInput<'_>) -> PlanFidelityReceipt {
-    PlanFidelityReceipt {
-        schema_version: PLAN_FIDELITY_RECEIPT_SCHEMA_VERSION,
-        receipt_kind: String::from(PLAN_FIDELITY_RECEIPT_KIND),
-        verdict: input.verdict.to_owned(),
-        spec_path: input.spec.path.clone(),
-        spec_revision: input.spec.spec_revision,
-        spec_fingerprint: sha256_hex(input.spec.source.as_bytes()),
-        plan_path: input.plan.path.clone(),
-        plan_revision: input.plan.plan_revision,
-        plan_fingerprint: sha256_hex(input.plan.source.as_bytes()),
-        review_artifact_path: input.review_artifact_path.to_owned(),
-        review_artifact_fingerprint: input.review_artifact_fingerprint.to_owned(),
-        reviewer_provenance: PlanFidelityReviewerProvenance {
-            review_stage: input.reviewer_stage.to_owned(),
-            reviewer_source: input.reviewer_source.to_owned(),
-            reviewer_id: input.reviewer_id.to_owned(),
-            distinct_from_stages: input.distinct_from_stages.to_vec(),
-        },
-        verification: PlanFidelityVerification {
-            checked_surfaces: input.checked_surfaces.to_vec(),
-            verified_requirement_ids: input.verified_requirement_ids.to_vec(),
-        },
-    }
-}
-
-pub fn persist_plan_fidelity_receipt(
-    receipt_path: &Path,
-    receipt: &PlanFidelityReceipt,
-) -> Result<(), DiagnosticError> {
-    let body = serde_json::to_vec_pretty(receipt).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::InstructionParseFailed,
-            format!("Could not serialize plan-fidelity receipt: {error}"),
-        )
-    })?;
-    write_atomic(receipt_path, body).map_err(|error| {
-        DiagnosticError::new(
-            FailureClass::DecisionWriteFailed,
-            format!(
-                "Could not write plan-fidelity receipt {}: {error}",
-                receipt_path.display()
-            ),
-        )
-    })
 }
 
 fn repo_root() -> PathBuf {
