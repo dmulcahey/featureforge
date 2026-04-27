@@ -608,7 +608,7 @@ fn parse_csv_header(value: Option<&String>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn is_canonical_fingerprint(value: &str) -> bool {
+pub(crate) fn is_canonical_fingerprint(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit())
 }
 

@@ -1,25 +1,32 @@
 use std::collections::BTreeMap;
 
+use crate::execution::command_eligibility::public_execution_mutation_is_authorized;
 use crate::execution::current_truth::{
     BranchRerecordingAssessment, BranchRerecordingUnsupportedReason,
     branch_closure_rerecording_assessment_with_authority,
+    handoff_decision_scope as shared_handoff_decision_scope,
     late_stage_missing_task_closure_baseline_bridge_supported,
     negative_result_requires_execution_reentry, reason_code_requires_test_plan_refresh,
-    task_boundary_block_reason_code, task_review_dispatch_task, task_review_result_pending_task,
+    resolve_actionable_repair_follow_up_for_status, task_boundary_block_reason_code,
+    task_review_dispatch_task, task_review_result_pending_task,
     task_review_result_requires_verification_reason_codes,
     worktree_drift_escapes_late_stage_surface,
 };
-use crate::execution::follow_up::normalize_persisted_repair_follow_up_token;
 use crate::execution::harness::{HarnessPhase, INITIAL_AUTHORITATIVE_SEQUENCE};
+use crate::execution::reducer::{AuthoritativeStaleTarget, AuthoritativeStaleTargetScope};
+use crate::execution::reentry_reconcile::{
+    TARGETLESS_STALE_RECONCILE_PHASE_DETAIL, TargetlessStaleReconcile,
+};
 use crate::execution::state::{
     ExactExecutionCommand, ExecutionContext, GateResult, PlanExecutionStatus,
-    document_release_pending_phase_detail, earliest_unresolved_stale_task_from_closure_graph,
-    execution_reentry_requires_review_state_repair, gate_finish_from_context,
+    closure_baseline_candidate_task, document_release_pending_phase_detail,
+    execution_reentry_requires_review_state_repair, latest_attempted_step_for_task,
     prerelease_branch_closure_refresh_required,
     push_task_closure_pending_verification_reason_codes_for_run,
     qa_pending_requires_test_plan_refresh, recommended_execution_source,
     reopen_exact_execution_command_for_task, resolve_exact_execution_command,
-    stale_unreviewed_allows_task_closure_baseline_bridge, task_closure_baseline_repair_candidate,
+    task_closure_baseline_bridge_ready_for_stale_target,
+    task_closure_baseline_repair_candidate_with_stale_target,
     task_closures_are_non_branch_contributing, task_scope_structural_review_state_reason,
 };
 use crate::execution::transitions::load_authoritative_transition_state;
@@ -56,12 +63,111 @@ pub(crate) struct NextActionDecision {
     pub recommended_command: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecutionReentryTargetSource {
+    BlockingBeginGuard,
+    ResumeStep,
+    ActiveStep,
+    ClosureGraphStaleTarget,
+    ExactRouteCommand,
+    TaskClosureBaselineRepairCandidate,
+    NegativeReviewOrVerificationResult,
+}
+
+impl ExecutionReentryTargetSource {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::BlockingBeginGuard => "blocking_begin_guard",
+            Self::ResumeStep => "resume_step",
+            Self::ActiveStep => "active_step",
+            Self::ClosureGraphStaleTarget => "closure_graph_stale_target",
+            Self::ExactRouteCommand => "exact_route_command",
+            Self::TaskClosureBaselineRepairCandidate => "task_closure_baseline_repair_candidate",
+            Self::NegativeReviewOrVerificationResult => "negative_review_or_verification_result",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecutionReentryTarget {
+    pub(crate) task: u32,
+    pub(crate) step: Option<u32>,
+    pub(crate) source: ExecutionReentryTargetSource,
+    pub(crate) reason_code: String,
+    pub(crate) source_record_id: Option<String>,
+}
+
+impl ExecutionReentryTarget {
+    fn new(
+        task: u32,
+        step: Option<u32>,
+        source: ExecutionReentryTargetSource,
+        reason_code: &str,
+    ) -> Self {
+        Self {
+            task,
+            step,
+            source,
+            reason_code: reason_code.to_owned(),
+            source_record_id: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct AuthoritativeStaleReentryTarget<'a> {
+    pub(crate) task: u32,
+    pub(crate) step: Option<u32>,
+    pub(crate) reason_code: &'a str,
+    pub(crate) source_record_id: Option<&'a str>,
+}
+
+impl<'a> AuthoritativeStaleReentryTarget<'a> {
+    pub(crate) fn from_stale_target(target: &'a AuthoritativeStaleTarget) -> Option<Self> {
+        if target.scope != AuthoritativeStaleTargetScope::Task {
+            return None;
+        }
+        Some(Self {
+            task: target.task?,
+            step: target.step,
+            reason_code: target.reason_code.as_str(),
+            source_record_id: target.record_id.as_deref().or(Some(target.source.as_str())),
+        })
+    }
+
+    fn into_execution_reentry_target(self) -> ExecutionReentryTarget {
+        ExecutionReentryTarget {
+            task: self.task,
+            step: self.step,
+            source: ExecutionReentryTargetSource::ClosureGraphStaleTarget,
+            reason_code: self.reason_code.to_owned(),
+            source_record_id: self.source_record_id.map(str::to_owned),
+        }
+    }
+
+    fn allows_task_closure_bridge(self) -> bool {
+        !matches!(self.reason_code, "prior_task_current_closure_stale")
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct NextActionAuthorityInputs<'a> {
     pub(crate) persisted_repair_follow_up: Option<&'a str>,
     pub(crate) branch_rerecording_assessment: Option<&'a BranchRerecordingAssessment>,
     pub(crate) gate_finish: Option<&'a GateResult>,
     pub(crate) task_closure_execution_run_ids: Option<&'a BTreeMap<u32, String>>,
+    pub(crate) authoritative_stale_target: Option<AuthoritativeStaleReentryTarget<'a>>,
+}
+
+impl NextActionAuthorityInputs<'_> {
+    fn earliest_stale_task(self) -> Option<u32> {
+        self.authoritative_stale_target.map(|target| target.task)
+    }
+
+    fn stale_target_allows_task_closure_bridge(self) -> bool {
+        self.authoritative_stale_target
+            .is_none_or(AuthoritativeStaleReentryTarget::allows_task_closure_bridge)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -154,10 +260,12 @@ pub(crate) fn compute_next_action_decision_with_inputs(
     final_review_dispatch_lineage_present: bool,
 ) -> Option<NextActionDecision> {
     let authoritative_state = load_authoritative_transition_state(context).ok().flatten();
-    let persisted_repair_follow_up = authoritative_state.as_ref().and_then(|state| {
-        let follow_up = state.review_state_repair_follow_up().map(str::to_owned);
-        normalize_persisted_repair_follow_up_token(follow_up.as_deref()).map(str::to_owned)
-    });
+    let persisted_repair_follow_up = resolve_actionable_repair_follow_up_for_status(
+        context,
+        status,
+        authoritative_state.as_ref(),
+    )
+    .map(|record| record.kind.public_token().to_owned());
     let branch_rerecording_assessment =
         branch_closure_rerecording_assessment_with_authority(context, authoritative_state.as_ref())
             .ok();
@@ -171,7 +279,6 @@ pub(crate) fn compute_next_action_decision_with_inputs(
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default();
-    let gate_finish = gate_finish_from_context(context);
     compute_next_action_decision_with_authority_inputs(
         context,
         status,
@@ -185,8 +292,9 @@ pub(crate) fn compute_next_action_decision_with_inputs(
         NextActionAuthorityInputs {
             persisted_repair_follow_up: persisted_repair_follow_up.as_deref(),
             branch_rerecording_assessment: branch_rerecording_assessment.as_ref(),
-            gate_finish: Some(&gate_finish),
+            gate_finish: None,
             task_closure_execution_run_ids: Some(&task_closure_execution_run_ids),
+            authoritative_stale_target: None,
         },
     )
 }
@@ -225,6 +333,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             status,
             plan_path,
             review_state_status.as_str(),
+            authority_inputs,
         ));
     }
     if review_state_status == "clean" && completed_execution_missing_branch_closure(status, context)
@@ -271,8 +380,25 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             authority_inputs,
         ));
     }
-    let earliest_stale_boundary =
-        earliest_unresolved_stale_task_from_closure_graph(context, status);
+    let handoff_route_active = status.handoff_required
+        || status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == "handoff_required");
+    let authoritative_stale_reentry_active = authority_inputs.earliest_stale_task().is_some();
+    let baseline_reentry_target = (!handoff_route_active && !authoritative_stale_reentry_active)
+        .then(|| execution_reentry_target(context, status, plan_path, authority_inputs))
+        .flatten()
+        .filter(|target| {
+            target.source == ExecutionReentryTargetSource::TaskClosureBaselineRepairCandidate
+        });
+    let earliest_stale_boundary = if handoff_route_active {
+        None
+    } else {
+        authority_inputs
+            .earliest_stale_task()
+            .or_else(|| baseline_reentry_target.as_ref().map(|target| target.task))
+    };
     let open_step_task = status.active_task.or(status.resume_task).or(status
         .blocking_task
         .filter(|_| status.blocking_step.is_some()));
@@ -306,6 +432,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 && stale_unreviewed_bridge_ready_for_task(
                     context,
                     status,
+                    authority_inputs,
                     review_state_status.as_str(),
                     task_number,
                 )
@@ -332,6 +459,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 status,
                 plan_path,
                 review_state_status.as_str(),
+                authority_inputs,
             ));
         }
         if let Some(exact_decision) = decision_from_exact_execution_command(
@@ -344,20 +472,33 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
 
     // Step 4.1 (ordered pass #3): earliest unresolved stale task-closure boundary.
     if let Some(stale_task) = earliest_stale_boundary {
-        let missing_current_task_closure_recording_ready =
-            status.current_branch_closure_id.is_none()
-                && status.current_task_closures.is_empty()
-                && status
-                    .reason_codes
-                    .iter()
-                    .any(|reason_code| reason_code == "prior_task_current_closure_missing");
+        let missing_current_task_closure_recording_ready = review_state_status
+            != "stale_unreviewed"
+            && status.current_branch_closure_id.is_none()
+            && status.current_task_closures.is_empty()
+            && status
+                .reason_codes
+                .iter()
+                .any(|reason_code| reason_code == "prior_task_current_closure_missing");
         let stale_boundary_closure_recording_ready =
             task_scope_structural_review_state_reason(status).is_none()
-                && (missing_current_task_closure_recording_ready
-                    || (task_closure_baseline_repair_candidate(context, status, stale_task)
-                        .ok()
-                        .flatten()
-                        .is_some()
+                && (baseline_reentry_target.as_ref().is_some_and(|target| {
+                    target.task == stale_task
+                        && review_state_status == "clean"
+                        && status.current_task_closures.is_empty()
+                        && !status
+                            .reason_codes
+                            .iter()
+                            .any(|reason_code| reason_code == "prior_task_current_closure_stale")
+                }) || missing_current_task_closure_recording_ready
+                    || (task_closure_baseline_bridge_ready_for_stale_target(
+                        context,
+                        status,
+                        stale_task,
+                        authority_inputs.earliest_stale_task(),
+                    )
+                    .unwrap_or(false)
+                        && authority_inputs.stale_target_allows_task_closure_bridge()
                         && missing_current_closure_allows_task_closure_baseline_route(
                             context,
                             status,
@@ -367,6 +508,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                         && stale_unreviewed_bridge_ready_for_task(
                             context,
                             status,
+                            authority_inputs,
                             review_state_status.as_str(),
                             stale_task,
                         )));
@@ -394,6 +536,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             status,
             plan_path,
             review_state_status.as_str(),
+            authority_inputs,
         ));
     }
     let late_stage_projection_refresh_candidate_task = if review_state_status
@@ -442,6 +585,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             status,
             plan_path,
             review_state_status.as_str(),
+            authority_inputs,
         ));
     }
     if let Some(decision) = late_stage_execution_reentry_decision(
@@ -449,6 +593,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         status,
         plan_path,
         review_state_status.as_str(),
+        authority_inputs,
     ) {
         return Some(decision);
     }
@@ -462,10 +607,14 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         ));
     }
     if let Some(task_number) = task_review_result_pending_task(status, task_review_dispatch_id) {
-        let closure_baseline_candidate =
-            task_closure_baseline_repair_candidate(context, status, task_number)
-                .ok()
-                .flatten();
+        let closure_baseline_candidate = task_closure_baseline_repair_candidate_with_stale_target(
+            context,
+            status,
+            task_number,
+            authority_inputs.earliest_stale_task(),
+        )
+        .ok()
+        .flatten();
         if task_review_pending_allows_closure_baseline_route(status)
             && missing_current_closure_allows_task_closure_baseline_route(
                 context,
@@ -541,12 +690,17 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 || stale_unreviewed_bridge_ready_for_task(
                     context,
                     status,
+                    authority_inputs,
                     review_state_status.as_str(),
                     *task_number,
                 )
         })
-        && let Ok(Some(_candidate)) =
-            task_closure_baseline_repair_candidate(context, status, task_number)
+        && let Ok(Some(_candidate)) = task_closure_baseline_repair_candidate_with_stale_target(
+            context,
+            status,
+            task_number,
+            authority_inputs.earliest_stale_task(),
+        )
     {
         return Some(task_closure_recording_ready_decision(
             status,
@@ -579,16 +733,22 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 || stale_unreviewed_bridge_ready_for_task(
                     context,
                     status,
+                    authority_inputs,
                     review_state_status.as_str(),
                     *task_number,
                 )
         })
         .filter(|_| task_review_dispatch_task(status).is_none())
         .filter(|task_number| {
-            task_closure_baseline_repair_candidate(context, status, *task_number)
-                .ok()
-                .flatten()
-                .is_some()
+            task_closure_baseline_repair_candidate_with_stale_target(
+                context,
+                status,
+                *task_number,
+                authority_inputs.earliest_stale_task(),
+            )
+            .ok()
+            .flatten()
+            .is_some()
         })
         .filter(|_| {
             status
@@ -626,10 +786,15 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             .reason_codes
             .iter()
             .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate")
-        && task_closure_baseline_repair_candidate(context, status, task_number)
-            .ok()
-            .flatten()
-            .is_some()
+        && task_closure_baseline_repair_candidate_with_stale_target(
+            context,
+            status,
+            task_number,
+            authority_inputs.earliest_stale_task(),
+        )
+        .ok()
+        .flatten()
+        .is_some()
         && missing_current_closure_allows_task_closure_baseline_route(
             context,
             status,
@@ -661,8 +826,12 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         && let Some(candidate_task) =
             projection_refresh_candidate_task(context, status, authority_inputs)
                 .or_else(|| closure_baseline_candidate_task(context))
-        && let Ok(Some(_candidate)) =
-            task_closure_baseline_repair_candidate(context, status, candidate_task)
+        && let Ok(Some(_candidate)) = task_closure_baseline_repair_candidate_with_stale_target(
+            context,
+            status,
+            candidate_task,
+            authority_inputs.earliest_stale_task(),
+        )
         && missing_current_closure_allows_task_closure_baseline_route(
             context,
             status,
@@ -689,8 +858,12 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
         && review_state_status == "clean"
         && closure_baseline_routing_reason_codes_compatible(status)
         && let Some(candidate_task) = closure_baseline_candidate_task(context)
-        && let Ok(Some(candidate)) =
-            task_closure_baseline_repair_candidate(context, status, candidate_task)
+        && let Ok(Some(candidate)) = task_closure_baseline_repair_candidate_with_stale_target(
+            context,
+            status,
+            candidate_task,
+            authority_inputs.earliest_stale_task(),
+        )
         && !candidate.projection_refresh_only
         && missing_current_closure_allows_task_closure_baseline_route(
             context,
@@ -785,6 +958,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                     status,
                     plan_path,
                     review_state_status.as_str(),
+                    authority_inputs,
                 ));
             }
             return Some(late_stage_decision(
@@ -812,6 +986,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 status,
                 plan_path,
                 review_state_status.as_str(),
+                authority_inputs,
             ));
         }
         if let Some(task_number) = task_boundary_blocking_task(status) {
@@ -838,6 +1013,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
                 status,
                 plan_path,
                 review_state_status.as_str(),
+                authority_inputs,
             ));
         }
         if let Some(assessment) = authority_inputs.branch_rerecording_assessment {
@@ -855,6 +1031,7 @@ pub(crate) fn compute_next_action_decision_with_authority_inputs(
             status,
             plan_path,
             review_state_status.as_str(),
+            authority_inputs,
         ));
     }
     if review_state_status == "stale_unreviewed" {
@@ -1107,14 +1284,18 @@ fn execution_repair_decision(
     status: &PlanExecutionStatus,
     plan_path: &str,
     review_state_status: &str,
+    authority_inputs: NextActionAuthorityInputs<'_>,
 ) -> NextActionDecision {
-    if let Some(task_number) = execution_reentry_target_task(context, status, plan_path) {
+    if let Some(target) = execution_reentry_target(context, status, plan_path, authority_inputs) {
         return execution_repair_decision_for_task(
             status,
             plan_path,
             review_state_status,
-            task_number,
+            target.task,
         );
+    }
+    if missing_execution_reentry_target_requires_reconcile(status, review_state_status) {
+        return missing_execution_reentry_target_decision(status, review_state_status);
     }
     let mut blocking_reason_codes = status.reason_codes.clone();
     if !blocking_reason_codes
@@ -1135,6 +1316,32 @@ fn execution_repair_decision(
         recommended_command: Some(format!(
             "featureforge plan execution repair-review-state --plan {plan_path}"
         )),
+    }
+}
+
+fn missing_execution_reentry_target_requires_reconcile(
+    status: &PlanExecutionStatus,
+    review_state_status: &str,
+) -> bool {
+    TargetlessStaleReconcile::missing_reentry_target_requires_reconcile(status, review_state_status)
+}
+
+fn missing_execution_reentry_target_decision(
+    status: &PlanExecutionStatus,
+    review_state_status: &str,
+) -> NextActionDecision {
+    let mut blocking_reason_codes = status.reason_codes.clone();
+    TargetlessStaleReconcile::ensure_reason_codes(&mut blocking_reason_codes);
+    NextActionDecision {
+        kind: NextActionKind::RepairReviewState,
+        phase: String::from("executing"),
+        phase_detail: String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL),
+        review_state_status: review_state_status.to_owned(),
+        task_number: None,
+        step_number: None,
+        blocking_task: None,
+        blocking_reason_codes,
+        recommended_command: None,
     }
 }
 
@@ -1243,9 +1450,19 @@ fn late_stage_decision(
         | "test_plan_refresh_required"
         | "finish_review_gate_ready"
         | "finish_completion_gate_ready" => None,
-        "handoff_recording_required" => Some(format!(
-            "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
-        )),
+        "handoff_recording_required" => {
+            let scope = shared_handoff_decision_scope(
+                status.active_task,
+                status.blocking_task,
+                status.resume_task,
+                status.handoff_required,
+                Some(status.harness_phase),
+            )
+            .unwrap_or("branch");
+            Some(format!(
+                "featureforge plan execution transfer --plan {plan_path} --scope {scope} --to <owner> --reason <reason>"
+            ))
+        }
         _ => status.recommended_command.clone(),
     };
     NextActionDecision {
@@ -1307,15 +1524,13 @@ fn stale_late_stage_repair_decision(
             authority_inputs,
         );
     }
-    let target_task = execution_reentry_target_task(context, status, plan_path).or(status
-        .blocking_task
-        .or(status.resume_task)
-        .or(status.active_task));
-    if let Some(task_number) = target_task
+    let target = execution_reentry_target(context, status, plan_path, authority_inputs);
+    if let Some(target) = target.as_ref()
         && status.resume_task.is_none()
         && status.active_task.is_none()
         && status.blocking_step.is_none()
     {
+        let task_number = target.task;
         let mut reentry_decision = execution_reentry_decision_for_task(
             context,
             status,
@@ -1342,9 +1557,9 @@ fn stale_late_stage_repair_decision(
     {
         blocking_reason_codes.push(String::from("stale_unreviewed"));
     }
-    if let Some(task_number) = target_task {
+    if let Some(target) = target {
         let mut repair_decision =
-            execution_repair_decision_for_task(status, plan_path, "stale_unreviewed", task_number);
+            execution_repair_decision_for_task(status, plan_path, "stale_unreviewed", target.task);
         if !repair_decision
             .blocking_reason_codes
             .iter()
@@ -1356,21 +1571,17 @@ fn stale_late_stage_repair_decision(
         }
         return repair_decision;
     }
+    TargetlessStaleReconcile::ensure_reason_codes(&mut blocking_reason_codes);
     NextActionDecision {
         kind: NextActionKind::RepairReviewState,
         phase: String::from("executing"),
-        phase_detail: String::from("execution_reentry_required"),
+        phase_detail: String::from(TARGETLESS_STALE_RECONCILE_PHASE_DETAIL),
         review_state_status: String::from("stale_unreviewed"),
-        task_number: target_task,
-        step_number: status
-            .blocking_step
-            .or(status.resume_step)
-            .or(status.active_step),
-        blocking_task: target_task,
+        task_number: None,
+        step_number: None,
+        blocking_task: None,
         blocking_reason_codes,
-        recommended_command: Some(format!(
-            "featureforge plan execution repair-review-state --plan {plan_path}"
-        )),
+        recommended_command: None,
     }
 }
 
@@ -1415,6 +1626,7 @@ fn late_stage_missing_current_closure_decision_from_assessment(
             status,
             plan_path,
             structural_review_state_status.as_str(),
+            authority_inputs,
         );
     }
     if status.current_branch_closure_id.is_none()
@@ -1459,10 +1671,15 @@ fn late_stage_missing_current_closure_decision_from_assessment(
     if status.current_branch_closure_id.is_none()
         && status.current_task_closures.is_empty()
         && let Some(task_number) = closure_baseline_candidate_task(context)
-        && task_closure_baseline_repair_candidate(context, status, task_number)
-            .ok()
-            .flatten()
-            .is_some()
+        && task_closure_baseline_repair_candidate_with_stale_target(
+            context,
+            status,
+            task_number,
+            authority_inputs.earliest_stale_task(),
+        )
+        .ok()
+        .flatten()
+        .is_some()
         && missing_current_closure_allows_task_closure_baseline_route(
             context,
             status,
@@ -1473,19 +1690,25 @@ fn late_stage_missing_current_closure_decision_from_assessment(
         return task_closure_recording_ready_decision(status, plan_path, task_number);
     }
     if status.current_branch_closure_id.is_none() && status.current_task_closures.is_empty() {
-        return execution_reentry_target_task(context, status, plan_path)
-            .map(|task_number| {
+        return execution_reentry_target(context, status, plan_path, authority_inputs)
+            .map(|target| {
                 execution_reentry_decision_for_task(
                     context,
                     status,
                     plan_path,
                     review_state_status,
-                    task_number,
+                    target.task,
                     false,
                 )
             })
             .unwrap_or_else(|| {
-                execution_repair_decision(context, status, plan_path, review_state_status)
+                execution_repair_decision(
+                    context,
+                    status,
+                    plan_path,
+                    review_state_status,
+                    authority_inputs,
+                )
             });
     }
     if assessment.supported {
@@ -1516,43 +1739,61 @@ fn late_stage_missing_current_closure_decision_from_assessment(
                         status,
                         plan_path,
                         review_state_status,
+                        authority_inputs,
                     );
                 }
                 if late_stage_missing_task_closure_baseline_bridge_supported(assessment)
                     && let Some(task_number) = closure_baseline_candidate_task(context)
-                    && task_closure_baseline_repair_candidate(context, status, task_number)
-                        .ok()
-                        .flatten()
-                        .is_some()
+                    && task_closure_baseline_repair_candidate_with_stale_target(
+                        context,
+                        status,
+                        task_number,
+                        authority_inputs.earliest_stale_task(),
+                    )
+                    .ok()
+                    .flatten()
+                    .is_some()
                 {
                     return task_closure_recording_ready_decision(status, plan_path, task_number);
                 }
-                return execution_reentry_target_task(context, status, plan_path)
-                    .map(|task_number| {
+                return execution_reentry_target(context, status, plan_path, authority_inputs)
+                    .map(|target| {
                         execution_reentry_decision_for_task(
                             context,
                             status,
                             plan_path,
                             review_state_status,
-                            task_number,
+                            target.task,
                             false,
                         )
                     })
                     .unwrap_or_else(|| {
-                        execution_repair_decision(context, status, plan_path, review_state_status)
+                        execution_repair_decision(
+                            context,
+                            status,
+                            plan_path,
+                            review_state_status,
+                            authority_inputs,
+                        )
                     });
             }
-            execution_repair_decision(context, status, plan_path, review_state_status)
+            execution_repair_decision(
+                context,
+                status,
+                plan_path,
+                review_state_status,
+                authority_inputs,
+            )
         }
         Some(BranchRerecordingUnsupportedReason::DriftEscapesLateStageSurface) | None => {
-            execution_reentry_target_task(context, status, plan_path)
-                .map(|task_number| {
+            execution_reentry_target(context, status, plan_path, authority_inputs)
+                .map(|target| {
                     execution_reentry_decision_for_task(
                         context,
                         status,
                         plan_path,
                         review_state_status,
-                        task_number,
+                        target.task,
                         false,
                     )
                 })
@@ -1610,6 +1851,7 @@ fn execution_reentry_blocking_task(
         && stale_unreviewed_bridge_ready_for_task(
             context,
             status,
+            authority_inputs,
             review_state_status.as_str(),
             task_number,
         )
@@ -1649,23 +1891,6 @@ fn completed_execution_missing_branch_closure(
         && status.blocking_step.is_none()
         && status.current_task_closures.len() >= context.plan_document.tasks.len()
         && !context.plan_document.tasks.is_empty()
-}
-
-pub(crate) fn closure_baseline_candidate_task(context: &ExecutionContext) -> Option<u32> {
-    if let Some(next_unchecked_task) = context
-        .steps
-        .iter()
-        .find(|step| !step.checked)
-        .map(|step| step.task_number)
-    {
-        return context
-            .tasks_by_number
-            .keys()
-            .copied()
-            .filter(|task_number| *task_number < next_unchecked_task)
-            .max();
-    }
-    context.tasks_by_number.keys().copied().max()
 }
 
 fn blocking_step_allows_task_closure_baseline_route(
@@ -1820,27 +2045,134 @@ fn decision_from_exact_execution_command(
     })
 }
 
-pub(crate) fn execution_reentry_target_task(
+pub(crate) fn execution_reentry_target(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
     plan_path: &str,
-) -> Option<u32> {
-    status
-        .blocking_task
-        .or(status.resume_task)
-        .or(status.active_task)
-        .or_else(|| earliest_unresolved_stale_task_from_closure_graph(context, status))
-        .or_else(|| {
+    authority_inputs: NextActionAuthorityInputs<'_>,
+) -> Option<ExecutionReentryTarget> {
+    if let Some(task) = task_boundary_blocking_task(status) {
+        return Some(ExecutionReentryTarget::new(
+            task,
             status
-                .current_task_closures
-                .iter()
-                .map(|closure| closure.task)
-                .max()
-        })
-        .or_else(|| {
-            resolve_exact_execution_command(status, plan_path).map(|command| command.task_number)
-        })
-        .or_else(|| closure_baseline_candidate_task(context))
+                .blocking_step
+                .or(status.resume_step)
+                .or(status.active_step),
+            ExecutionReentryTargetSource::BlockingBeginGuard,
+            "task_boundary_blocking_task",
+        ));
+    }
+
+    let exact_command = resolve_exact_execution_command(status, plan_path);
+    if let (Some(task), Some(step), Some(command)) = (
+        status.active_task,
+        status.active_step,
+        exact_command.as_ref(),
+    ) && command.command_kind == "complete"
+        && command.task_number == task
+        && command.step_id == Some(step)
+    {
+        return Some(ExecutionReentryTarget::new(
+            task,
+            Some(step),
+            ExecutionReentryTargetSource::ActiveStep,
+            "active_step_exact_continuation",
+        ));
+    }
+    if let (Some(task), Some(step), Some(command)) = (
+        status.resume_task,
+        status.resume_step,
+        exact_command.as_ref(),
+    ) && command.command_kind == "begin"
+        && command.task_number == task
+        && command.step_id == Some(step)
+        && public_execution_mutation_is_authorized(
+            status,
+            command.command_kind,
+            command.task_number,
+            command.step_id,
+        )
+    {
+        return Some(ExecutionReentryTarget::new(
+            task,
+            Some(step),
+            ExecutionReentryTargetSource::ResumeStep,
+            "resume_step_exact_begin",
+        ));
+    }
+
+    if let Some(target) = authority_inputs.authoritative_stale_target {
+        return Some(target.into_execution_reentry_target());
+    }
+    if let Some(command) = exact_command
+        && public_execution_mutation_is_authorized(
+            status,
+            command.command_kind,
+            command.task_number,
+            command.step_id,
+        )
+    {
+        return Some(ExecutionReentryTarget::new(
+            command.task_number,
+            command.step_id,
+            ExecutionReentryTargetSource::ExactRouteCommand,
+            "exact_route_command",
+        ));
+    }
+    if let Some(task) = closure_baseline_candidate_task(context)
+        && task_closure_baseline_repair_candidate_with_stale_target(
+            context,
+            status,
+            task,
+            authority_inputs.earliest_stale_task(),
+        )
+        .ok()
+        .flatten()
+        .is_some_and(|candidate| !candidate.projection_refresh_only)
+    {
+        return Some(ExecutionReentryTarget::new(
+            task,
+            None,
+            ExecutionReentryTargetSource::TaskClosureBaselineRepairCandidate,
+            "task_closure_baseline_repair_candidate",
+        ));
+    }
+    if status
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "prior_task_review_not_green")
+        && let Some(task) = status.blocking_task
+    {
+        return Some(ExecutionReentryTarget::new(
+            task,
+            status.blocking_step,
+            ExecutionReentryTargetSource::NegativeReviewOrVerificationResult,
+            "prior_task_review_not_green",
+        ));
+    }
+    if status
+        .reason_codes
+        .iter()
+        .any(|reason_code| reason_code == "negative_result_requires_execution_reentry")
+        && let Some(task) = latest_checked_task(context)
+    {
+        return Some(ExecutionReentryTarget::new(
+            task,
+            latest_attempted_step_for_task(context, task),
+            ExecutionReentryTargetSource::NegativeReviewOrVerificationResult,
+            "negative_result_requires_execution_reentry",
+        ));
+    }
+    None
+}
+
+fn latest_checked_task(context: &ExecutionContext) -> Option<u32> {
+    context
+        .steps
+        .iter()
+        .filter(|step| step.checked)
+        .map(|step| step.task_number)
+        .max()
 }
 
 fn late_stage_execution_reentry_decision(
@@ -1848,6 +2180,7 @@ fn late_stage_execution_reentry_decision(
     status: &PlanExecutionStatus,
     plan_path: &str,
     review_state_status: &str,
+    authority_inputs: NextActionAuthorityInputs<'_>,
 ) -> Option<NextActionDecision> {
     let stale_provenance_present = status
         .reason_codes
@@ -1876,21 +2209,21 @@ fn late_stage_execution_reentry_decision(
     if !(negative_result_reroute || stale_provenance_reroute) {
         return None;
     }
-    let reentry_task = execution_reentry_target_task(context, status, plan_path);
+    let reentry_target = execution_reentry_target(context, status, plan_path, authority_inputs);
     Some(
-        reentry_task
-            .map(|task_number| {
+        reentry_target
+            .map(|target| {
                 execution_reentry_decision_for_task(
                     context,
                     status,
                     plan_path,
                     review_state_status,
-                    task_number,
+                    target.task,
                     false,
                 )
             })
             .unwrap_or_else(|| {
-                execution_repair_decision(context, status, plan_path, review_state_status)
+                missing_execution_reentry_target_decision(status, review_state_status)
             }),
     )
 }
@@ -1911,11 +2244,16 @@ fn projection_refresh_candidate_task(
         .copied()
         .rev()
         .find_map(|task_number| {
-            task_closure_baseline_repair_candidate(context, status, task_number)
-                .ok()
-                .flatten()
-                .filter(|candidate| candidate.projection_refresh_only)
-                .map(|candidate| candidate.task)
+            task_closure_baseline_repair_candidate_with_stale_target(
+                context,
+                status,
+                task_number,
+                authority_inputs.earliest_stale_task(),
+            )
+            .ok()
+            .flatten()
+            .filter(|candidate| candidate.projection_refresh_only)
+            .map(|candidate| candidate.task)
         })
 }
 
@@ -1976,42 +2314,63 @@ fn projection_refresh_candidate_requires_newer_task_closure_baseline(
 fn stale_unreviewed_bridge_ready_for_task(
     context: &ExecutionContext,
     status: &PlanExecutionStatus,
+    authority_inputs: NextActionAuthorityInputs<'_>,
     review_state_status: &str,
     task_number: u32,
 ) -> bool {
-    let Some(candidate) = task_closure_baseline_repair_candidate(context, status, task_number)
-        .ok()
-        .flatten()
-    else {
+    let reducer_bridge_ready = task_closure_baseline_bridge_ready_for_stale_target(
+        context,
+        status,
+        task_number,
+        authority_inputs.earliest_stale_task(),
+    )
+    .unwrap_or(false);
+    if review_state_status == "stale_unreviewed" {
+        return reducer_bridge_ready && authority_inputs.stale_target_allows_task_closure_bridge();
+    }
+    let Some(candidate) = task_closure_baseline_repair_candidate_with_stale_target(
+        context,
+        status,
+        task_number,
+        authority_inputs.earliest_stale_task(),
+    )
+    .ok()
+    .flatten() else {
         return false;
     };
-    if review_state_status == "stale_unreviewed" {
-        return stale_unreviewed_allows_task_closure_baseline_bridge(context, status, task_number)
-            .unwrap_or(false);
-    }
-    let unresolved_stale_task_matches =
-        earliest_unresolved_stale_task_from_closure_graph(context, status) == Some(task_number);
+    let unresolved_stale_task_matches = status.blocking_task == Some(task_number)
+        && (review_state_status == "stale_unreviewed"
+            || !status.stale_unreviewed_closures.is_empty());
     let dispatch_bound_bridge_candidate = candidate
         .dispatch_id
         .as_deref()
         .is_some_and(|dispatch_id| !dispatch_id.trim().is_empty());
     let has_closure_bridge_reason_signals =
         closure_baseline_routing_reason_codes_compatible(status)
-            && status.reason_codes.iter().any(|reason_code| {
-                matches!(
-                    reason_code.as_str(),
-                    "prior_task_current_closure_missing" | "task_closure_baseline_repair_candidate"
-                )
-            });
+            && status
+                .reason_codes
+                .iter()
+                .any(|reason_code| reason_code == "prior_task_current_closure_missing");
+    let candidate_only_bridge_signal = closure_baseline_routing_reason_codes_compatible(status)
+        && authority_inputs.earliest_stale_task().is_none()
+        && status.execution_reentry_target_source.as_deref() != Some("closure_graph_stale_target")
+        && status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == "task_closure_baseline_repair_candidate");
     if review_state_status == "clean" {
         return matches!(
             status.harness_phase,
             HarnessPhase::Executing | HarnessPhase::ExecutionPreflight
-        ) && (has_closure_bridge_reason_signals
+        ) && (reducer_bridge_ready
+            || has_closure_bridge_reason_signals
+            || candidate_only_bridge_signal
             || (unresolved_stale_task_matches && dispatch_bound_bridge_candidate));
     }
     if review_state_status == "missing_current_closure" {
-        return has_closure_bridge_reason_signals
+        return reducer_bridge_ready
+            || has_closure_bridge_reason_signals
+            || candidate_only_bridge_signal
             || (unresolved_stale_task_matches && dispatch_bound_bridge_candidate);
     }
     false
@@ -2206,6 +2565,14 @@ fn task_scope_handoff_decision(
     let task_scoped_handoff = status.blocking_task.is_some()
         || status.active_task.is_some()
         || status.resume_task.is_some();
+    let handoff_scope = shared_handoff_decision_scope(
+        status.active_task,
+        status.blocking_task,
+        status.resume_task,
+        status.handoff_required,
+        Some(status.harness_phase),
+    )
+    .unwrap_or("branch");
     NextActionDecision {
         kind: NextActionKind::Handoff,
         phase: if task_scoped_handoff {
@@ -2229,7 +2596,7 @@ fn task_scope_handoff_decision(
             .or(status.active_task),
         blocking_reason_codes: status.reason_codes.clone(),
         recommended_command: Some(format!(
-            "featureforge plan execution transfer --plan {plan_path} --scope task|branch --to <owner> --reason <reason>"
+            "featureforge plan execution transfer --plan {plan_path} --scope {handoff_scope} --to <owner> --reason <reason>"
         )),
     }
 }

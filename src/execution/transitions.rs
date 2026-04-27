@@ -20,6 +20,7 @@ use crate::execution::event_log::{
     ensure_event_log_migrated_from_legacy_state, load_reduced_authoritative_state,
     load_reduced_authoritative_state_for_state_path,
 };
+use crate::execution::follow_up::RepairFollowUpRecord;
 use crate::execution::gates::{
     ActiveContractState, GateAuthorityState, require_active_contract_state,
 };
@@ -492,6 +493,10 @@ pub(crate) struct OpenStepStateRecord {
     pub(crate) step: u32,
     pub(crate) note_state: String,
     pub(crate) note_summary: String,
+    #[serde(default)]
+    pub(crate) execution_mode: Option<String>,
+    #[serde(default)]
+    pub(crate) repo_root: Option<String>,
     pub(crate) source_plan_path: String,
     pub(crate) source_plan_revision: u32,
     pub(crate) authoritative_sequence: u64,
@@ -570,6 +575,20 @@ pub(crate) struct ClosureHistorySnapshot {
     pub(crate) superseded_branch_closure_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ExplicitReopenRepairTarget {
+    #[serde(rename = "target_task")]
+    pub(crate) task: u32,
+    #[serde(rename = "target_step")]
+    pub(crate) step: u32,
+    #[serde(default)]
+    pub(crate) target_record_id: Option<String>,
+    #[serde(default)]
+    pub(crate) created_sequence: Option<u64>,
+    #[serde(default)]
+    pub(crate) expires_on_plan_fingerprint_change: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PersistedReviewStateFieldClass {
     AuthoritativeAppendOnlyHistory,
@@ -588,7 +607,7 @@ pub(crate) fn classify_review_state_field(field: &str) -> Option<PersistedReview
         | "browser_qa_record_history" => {
             PersistedReviewStateFieldClass::AuthoritativeAppendOnlyHistory
         }
-        "current_open_step_state" => {
+        "current_open_step_state" | "explicit_reopen_repair_targets" => {
             PersistedReviewStateFieldClass::AuthoritativeMutableControlState
         }
         "current_task_closure_records"
@@ -610,7 +629,13 @@ pub(crate) fn classify_review_state_field(field: &str) -> Option<PersistedReview
         | "current_qa_branch_closure_id"
         | "current_qa_result"
         | "current_qa_summary_hash"
-        | "review_state_repair_follow_up" => PersistedReviewStateFieldClass::DerivedCache,
+        | "review_state_repair_follow_up_record"
+        | "review_state_repair_follow_up"
+        | "review_state_repair_follow_up_task"
+        | "review_state_repair_follow_up_step"
+        | "review_state_repair_follow_up_closure_record_id" => {
+            PersistedReviewStateFieldClass::DerivedCache
+        }
         "release_docs_state"
         | "final_review_state"
         | "browser_qa_state"
@@ -2098,6 +2123,43 @@ impl AuthoritativeTransitionState {
             .filter(|value| !value.is_empty())
     }
 
+    pub(crate) fn review_state_repair_follow_up_record(&self) -> Option<RepairFollowUpRecord> {
+        self.state_payload
+            .get("review_state_repair_follow_up_record")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+    }
+
+    pub(crate) fn explicit_reopen_repair_targets(&self) -> Vec<ExplicitReopenRepairTarget> {
+        self.state_payload
+            .get("explicit_reopen_repair_targets")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|value| serde_json::from_value(value.clone()).ok())
+            .filter(|target: &ExplicitReopenRepairTarget| target.task > 0 && target.step > 0)
+            .collect()
+    }
+
+    pub(crate) fn latest_authoritative_sequence(&self) -> u64 {
+        json_u64(&self.state_payload, "latest_authoritative_sequence")
+            .max(json_u64(&self.state_payload, "authoritative_sequence"))
+    }
+
+    pub(crate) fn review_state_repair_follow_up_task(&self) -> Option<u32> {
+        json_u32(&self.state_payload, "review_state_repair_follow_up_task")
+    }
+
+    pub(crate) fn review_state_repair_follow_up_step(&self) -> Option<u32> {
+        json_u32(&self.state_payload, "review_state_repair_follow_up_step")
+    }
+
+    pub(crate) fn review_state_repair_follow_up_closure_record_id(&self) -> Option<String> {
+        json_string(
+            &self.state_payload,
+            "review_state_repair_follow_up_closure_record_id",
+        )
+    }
+
     pub(crate) fn closure_history_snapshot(&self) -> ClosureHistorySnapshot {
         fn snapshot_map(payload: &Value, key: &str) -> BTreeMap<String, Value> {
             payload
@@ -2157,8 +2219,138 @@ impl AuthoritativeTransitionState {
                 .map(|value| Value::String(value.to_owned()))
                 .unwrap_or(Value::Null),
         );
+        if follow_up.is_none() {
+            root.insert(
+                String::from("review_state_repair_follow_up_record"),
+                Value::Null,
+            );
+            root.insert(
+                String::from("review_state_repair_follow_up_task"),
+                Value::Null,
+            );
+            root.insert(
+                String::from("review_state_repair_follow_up_step"),
+                Value::Null,
+            );
+            root.insert(
+                String::from("review_state_repair_follow_up_closure_record_id"),
+                Value::Null,
+            );
+        }
         self.dirty = true;
         Ok(())
+    }
+
+    pub(crate) fn set_review_state_repair_follow_up_record(
+        &mut self,
+        record: Option<&RepairFollowUpRecord>,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(String::from("review_state_repair_follow_up"), Value::Null);
+        let serialized_record = record
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| {
+                JsonFailure::new(
+                    FailureClass::MalformedExecutionState,
+                    format!("Could not serialize repair follow-up record: {error}"),
+                )
+            })?
+            .unwrap_or(Value::Null);
+        root.insert(
+            String::from("review_state_repair_follow_up_record"),
+            serialized_record,
+        );
+        root.insert(
+            String::from("review_state_repair_follow_up_task"),
+            record
+                .and_then(|record| record.target_task)
+                .map(|value| Value::Number(value.into()))
+                .unwrap_or(Value::Null),
+        );
+        root.insert(
+            String::from("review_state_repair_follow_up_step"),
+            record
+                .and_then(|record| record.target_step)
+                .map(|value| Value::Number(value.into()))
+                .unwrap_or(Value::Null),
+        );
+        root.insert(
+            String::from("review_state_repair_follow_up_closure_record_id"),
+            record
+                .and_then(|record| record.target_record_id.as_deref())
+                .map(|value| Value::String(value.to_owned()))
+                .unwrap_or(Value::Null),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn set_execution_projection_fingerprints(
+        &mut self,
+        plan_fingerprint: &str,
+        evidence_fingerprint: &str,
+    ) -> Result<(), JsonFailure> {
+        let root = self.root_object_mut()?;
+        root.insert(
+            String::from("execution_plan_projection_fingerprint"),
+            Value::String(plan_fingerprint.to_owned()),
+        );
+        root.insert(
+            String::from("execution_evidence_projection_fingerprint"),
+            Value::String(evidence_fingerprint.to_owned()),
+        );
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn record_execution_evidence_attempts(
+        &mut self,
+        context: &ExecutionContext,
+    ) -> Result<(), JsonFailure> {
+        let attempts = serde_json::to_value(&context.evidence.attempts).map_err(|error| {
+            JsonFailure::new(
+                FailureClass::MalformedExecutionState,
+                format!("Could not serialize authoritative execution evidence attempts: {error}"),
+            )
+        })?;
+        let root = self.root_object_mut()?;
+        root.insert(String::from("execution_evidence_attempts"), attempts);
+        self.dirty = true;
+        Ok(())
+    }
+
+    pub(crate) fn clear_review_state_repair_follow_up(&mut self) -> Result<bool, JsonFailure> {
+        let has_repair_follow_up_state = self.review_state_repair_follow_up().is_some()
+            || self.review_state_repair_follow_up_record().is_some()
+            || self.review_state_repair_follow_up_task().is_some()
+            || self.review_state_repair_follow_up_step().is_some()
+            || self
+                .review_state_repair_follow_up_closure_record_id()
+                .is_some();
+        if !has_repair_follow_up_state {
+            return Ok(false);
+        }
+        let root = self.root_object_mut()?;
+        root.insert(String::from("review_state_repair_follow_up"), Value::Null);
+        root.insert(
+            String::from("review_state_repair_follow_up_record"),
+            Value::Null,
+        );
+        root.insert(
+            String::from("review_state_repair_follow_up_task"),
+            Value::Null,
+        );
+        root.insert(
+            String::from("review_state_repair_follow_up_step"),
+            Value::Null,
+        );
+        root.insert(
+            String::from("review_state_repair_follow_up_closure_record_id"),
+            Value::Null,
+        );
+        self.dirty = true;
+        Ok(true)
     }
 
     pub(crate) fn set_current_release_readiness_record_id_cache(
@@ -4652,6 +4844,19 @@ pub(crate) fn load_authoritative_transition_state_relaxed(
     context: &ExecutionContext,
 ) -> Result<Option<AuthoritativeTransitionState>, JsonFailure> {
     load_authoritative_transition_state_internal(context, false)
+}
+
+pub(crate) fn authoritative_state_optional_string_field_for_runtime(
+    runtime: &ExecutionRuntime,
+    field: &str,
+) -> Result<Option<Option<String>>, JsonFailure> {
+    let state_path =
+        harness_state_path(&runtime.state_dir, &runtime.repo_slug, &runtime.branch_name);
+    ensure_event_log_migrated_from_legacy_state(runtime, &state_path)?;
+    let Some(state_payload) = load_reduced_authoritative_state(runtime)? else {
+        return Ok(None);
+    };
+    Ok(Some(json_string(&state_payload, field)))
 }
 
 pub(crate) fn enforce_authoritative_phase(

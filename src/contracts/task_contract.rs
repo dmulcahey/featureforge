@@ -245,12 +245,22 @@ pub fn split_canonical_task_blocks(
     Ok(tasks)
 }
 
-pub fn parse_task_step_line(line: &str) -> Result<Option<TaskStepLine>, TaskContractParseError> {
-    let trimmed = line.trim();
-    let Some(rest) = trimmed
-        .strip_prefix("- [ ] **Step ")
-        .or_else(|| trimmed.strip_prefix("- [x] **Step "))
-    else {
+pub(crate) fn parse_task_step_projection_line(
+    line: &str,
+) -> Result<Option<(bool, TaskStepLine)>, TaskContractParseError> {
+    let trimmed = line.trim_start();
+    let Some(rest) = trimmed.strip_prefix("- [") else {
+        return Ok(None);
+    };
+    let Some(mark) = rest.chars().next() else {
+        return Ok(None);
+    };
+    if mark != 'x' && mark != ' ' {
+        return Ok(None);
+    }
+    let checked = mark == 'x';
+    let rest = &rest[mark.len_utf8()..];
+    let Some(rest) = rest.strip_prefix("] **Step ") else {
         return Ok(None);
     };
     let (number, text) = rest
@@ -259,13 +269,118 @@ pub fn parse_task_step_line(line: &str) -> Result<Option<TaskStepLine>, TaskCont
             error_class: String::from("MalformedTaskStructure"),
             message: format!("Malformed step entry: {trimmed}"),
         })?;
-    Ok(Some(TaskStepLine {
-        number: number.parse::<u32>().map_err(|_| TaskContractParseError {
-            error_class: String::from("MalformedTaskStructure"),
-            message: format!("Malformed step entry: {trimmed}"),
-        })?,
-        text: text.trim_end_matches("**").to_owned(),
-    }))
+    Ok(Some((
+        checked,
+        TaskStepLine {
+            number: number.parse::<u32>().map_err(|_| TaskContractParseError {
+                error_class: String::from("MalformedTaskStructure"),
+                message: format!("Malformed step entry: {trimmed}"),
+            })?,
+            text: text.trim_end().trim_end_matches("**").to_owned(),
+        },
+    )))
+}
+
+pub fn parse_task_step_line(line: &str) -> Result<Option<TaskStepLine>, TaskContractParseError> {
+    Ok(parse_task_step_projection_line(line)?.map(|(_, step)| step))
+}
+
+pub(crate) fn known_runtime_step_projection_lines(
+    plan_source: &str,
+) -> BTreeMap<(u32, u32), String> {
+    let mut known_steps = BTreeMap::new();
+    let Ok(blocks) = split_canonical_task_blocks(plan_source) else {
+        return known_steps;
+    };
+    for block in blocks {
+        let lines = block.source.lines().collect::<Vec<_>>();
+        if lines.len() < 2 || parse_task_contract_fields(block.number, &lines[1..]).is_err() {
+            continue;
+        }
+        collect_known_task_steps(block.number, &lines[1..], &mut known_steps);
+    }
+    known_steps
+}
+
+fn collect_known_task_steps(
+    task_number: u32,
+    lines: &[&str],
+    known_steps: &mut BTreeMap<(u32, u32), String>,
+) {
+    let mut files_seen = false;
+    let mut saw_step = false;
+    let mut in_fenced_step_detail = false;
+    for line in lines {
+        let trimmed = line.trim();
+        if in_fenced_step_detail {
+            if trimmed.starts_with("```") {
+                in_fenced_step_detail = false;
+            }
+            continue;
+        }
+        if saw_step && trimmed.starts_with("```") {
+            in_fenced_step_detail = true;
+            continue;
+        }
+        if trimmed == "**Files:**" {
+            files_seen = true;
+            continue;
+        }
+        if files_seen && let Ok(Some((_, step))) = parse_task_step_projection_line(line) {
+            known_steps.insert((task_number, step.number), step.text);
+            saw_step = true;
+        }
+    }
+}
+
+pub(crate) fn is_runtime_execution_note_projection_start(line: &str) -> bool {
+    let line = line.trim_start();
+    line.starts_with("**Execution Note:** Active - ")
+        || line.starts_with("**Execution Note:** Blocked - ")
+        || line.starts_with("**Execution Note:** Interrupted - ")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RuntimeExecutionNoteProjectionBlock {
+    note_indent: usize,
+}
+
+impl RuntimeExecutionNoteProjectionBlock {
+    pub(crate) fn start(line: &str) -> Option<Self> {
+        if !is_runtime_execution_note_projection_start(line) {
+            return None;
+        }
+        Some(Self {
+            note_indent: line.len() - line.trim_start().len(),
+        })
+    }
+
+    pub(crate) fn continues(self, line: &str) -> bool {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || is_runtime_execution_note_projection_start(line) {
+            return true;
+        }
+        if is_runtime_execution_note_projection_boundary(line) {
+            return false;
+        }
+        let indent = line.len() - line.trim_start().len();
+        indent > self.note_indent
+    }
+}
+
+fn is_runtime_execution_note_projection_boundary(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("## ")
+        || trimmed.starts_with("**Spec Coverage:**")
+        || trimmed.starts_with("**Goal:**")
+        || trimmed.starts_with("**Context:**")
+        || trimmed.starts_with("**Constraints:**")
+        || trimmed.starts_with("**Done when:**")
+        || trimmed.starts_with("**Files:**")
+        || parse_task_step_projection_line(line)
+            .ok()
+            .flatten()
+            .is_some()
 }
 
 pub fn validate_task_contract(
@@ -451,12 +566,19 @@ fn validate_task_body_structure(
     let mut files_seen = false;
     let mut saw_step = false;
     let mut in_fenced_step_detail = false;
+    let mut runtime_execution_note_projection = None::<RuntimeExecutionNoteProjectionBlock>;
     let mut step_numbers = BTreeSet::new();
 
     for line in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
+        }
+        if let Some(note_block) = runtime_execution_note_projection {
+            if note_block.continues(line) {
+                continue;
+            }
+            runtime_execution_note_projection = None;
         }
         if in_fenced_step_detail {
             if trimmed.starts_with("```") {
@@ -471,7 +593,8 @@ fn validate_task_body_structure(
         if is_task_body_comment_marker(trimmed) {
             continue;
         }
-        if saw_step && is_runtime_execution_note_projection(trimmed) {
+        if saw_step && let Some(note_block) = RuntimeExecutionNoteProjectionBlock::start(line) {
+            runtime_execution_note_projection = Some(note_block);
             continue;
         }
         if let Some(step) = parse_task_step_line(trimmed)? {
@@ -557,12 +680,6 @@ fn unparsed_task_body_line(task_number: u32, line: &str) -> TaskContractParseErr
         error_class: String::from("MalformedTaskStructure"),
         message: format!("Task {task_number} contains unparsed task body line `{line}`."),
     }
-}
-
-fn is_runtime_execution_note_projection(line: &str) -> bool {
-    line.starts_with("**Execution Note:** Active - ")
-        || line.starts_with("**Execution Note:** Blocked - ")
-        || line.starts_with("**Execution Note:** Interrupted - ")
 }
 
 fn is_task_body_comment_marker(line: &str) -> bool {

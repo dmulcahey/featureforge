@@ -10,6 +10,8 @@ mod json_support;
 mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/projection.rs"]
+mod projection_support;
 
 use featureforge::cli::plan_execution::{RecordContractArgs, StatusArgs};
 use featureforge::contracts::evidence::read_execution_evidence;
@@ -281,6 +283,21 @@ fn write_harness_state_payload(repo: &Path, state: &Path, payload: &Value) {
     let legacy_backup_path = state_path.with_file_name("state.legacy.json");
     let _ = fs::remove_file(events_path);
     let _ = fs::remove_file(legacy_backup_path);
+}
+
+fn update_harness_state_fields(repo: &Path, state: &Path, fields: &[(&str, Value)]) {
+    let state_path = harness_state_file_path(repo, state);
+    let mut payload: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path).expect("harness-state fixture should be readable"),
+    )
+    .expect("harness-state fixture should be valid json");
+    let object = payload
+        .as_object_mut()
+        .expect("harness-state fixture should be a json object");
+    for (key, value) in fields {
+        object.insert((*key).to_owned(), value.clone());
+    }
+    write_harness_state_payload(repo, state, &payload);
 }
 
 fn git_head_sha(repo: &Path) -> String {
@@ -1390,7 +1407,8 @@ fn complete_writes_contract_evaluation_and_repo_state_provenance_into_step_evide
         state,
         "Completed step with expected contract/evaluation provenance.",
     );
-    let evidence_path = repo.join(
+    let evidence_path = projection_support::state_dir_projection_path(
+        &complete_status,
         complete_status["evidence_path"]
             .as_str()
             .expect("complete status should expose evidence_path"),
@@ -1441,31 +1459,30 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
     write_plan(repo, "none");
     accept_execution_preflight(repo, state);
 
+    let source_handoff_fingerprint =
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_owned();
+    write_harness_state_payload(
+        repo,
+        state,
+        &json!({
+            "schema_version": 1,
+            "harness_phase": "executing",
+            "latest_authoritative_sequence": 12,
+            "handoff_required": false,
+            "last_handoff_fingerprint": source_handoff_fingerprint.clone(),
+        }),
+    );
+
     let complete_status = begin_and_complete_single_step(
         repo,
         state,
         "Seed completion before reopen provenance preservation check.",
     );
-    let evidence_path = repo.join(
-        complete_status["evidence_path"]
-            .as_str()
-            .expect("complete status should expose evidence_path"),
-    );
-    let source_handoff_fingerprint =
-        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_owned();
-    let seeded_source = fs::read_to_string(&evidence_path)
-        .expect("seed execution evidence should be readable before provenance injection");
-    let seeded_with_handoff = seeded_source.replace(
-        "**Claim:** Seed completion before reopen provenance preservation check.",
-        &format!(
-            "**Claim:** Seed completion before reopen provenance preservation check.\n**Source Handoff Fingerprint:** `{source_handoff_fingerprint}`"
-        ),
-    );
-    assert_ne!(
-        seeded_source, seeded_with_handoff,
-        "provenance-injection fixture should modify execution evidence before reopen"
-    );
-    write_file(&evidence_path, &seeded_with_handoff);
+    let evidence_rel = complete_status["evidence_path"]
+        .as_str()
+        .expect("complete status should expose evidence_path");
+    let evidence_path =
+        projection_support::state_dir_projection_path(&complete_status, evidence_rel);
 
     let seeded_step = read_execution_evidence(&evidence_path)
         .expect("seeded execution evidence should parse before reopen")
@@ -1479,6 +1496,18 @@ fn reopen_preserves_source_handoff_fingerprint_when_provenance_is_applicable() {
         "seed fixture should carry source handoff fingerprint before reopen"
     );
 
+    update_harness_state_fields(
+        repo,
+        state,
+        &[
+            (
+                "review_state_repair_follow_up",
+                Value::from("execution_reentry"),
+            ),
+            ("review_state_repair_follow_up_task", Value::from(1)),
+            ("review_state_repair_follow_up_step", Value::from(1)),
+        ],
+    );
     let before_reopen = run_plan_execution_json(
         repo,
         state,

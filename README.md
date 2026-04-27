@@ -26,10 +26,11 @@ Execution authority is event-only:
 
 - for this repository's shipped work packages, approved specs and plans are preserved under `docs/archive/featureforge/specs/*.md` and `docs/archive/featureforge/plans/*.md`
 - for new FeatureForge-managed project work, approved specs and plans still live under `docs/featureforge/specs/*.md` and `docs/featureforge/plans/*.md`
-- the approved plan checklist is the human-visible execution progress projection; the event log remains authoritative for operator routing and gates
+- normal runtime commands render current read models under the runtime state directory; explicit materialization writes repo-local human-readable exports under `docs/featureforge/projections/` instead of mutating approved plan or evidence files
 - once plan execution starts, branch execution truth is the append-only event log under the harness branch root (`execution-harness/events.jsonl`)
 - `state.json`, approved-plan checklist marks, execution evidence, release/readiness/review/QA markdown, and strategy displays are deterministic projections/read models
-- deleting or regenerating those projections must not change operator routing, status, review-state repair, or mutator legality
+- deleting, exporting, or regenerating those projections must not change operator routing, status, review-state repair, or mutator legality
+- use `featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all` only when a repo-local human-readable projection export is explicitly needed; approved plan and evidence files are not modified
 - runtime-owned reviewed-closure, milestone, dispatch-lineage, and strategy facts are reduced from the event log for routing and gates
 - branch-scoped local projections live under `~/.featureforge/projects/<repo-slug>/<user>-<safe-branch>-workflow-state.json`
 
@@ -81,6 +82,7 @@ When workflow/operator reports stale or missing closure context, run `featurefor
 
 After `repair-review-state`, treat that command's own `recommended_command` as the immediate reroute and complete that follow-up before running any extra command. Use `featureforge plan execution status --plan <approved-plan-path>` only when you need additional diagnostic detail.
 Do not manually edit `**Execution Note:**` lines to recover runtime state; execution-note markdown is projection-only.
+Do not repair runtime routing by editing tracked plan, evidence, review, readiness, QA, or strategy projection files. They are export artifacts; the event log and reducer-owned state are authoritative.
 
 `featureforge plan execution` is the execution preflight boundary for the approved plan.
 

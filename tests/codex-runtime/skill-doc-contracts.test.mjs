@@ -23,7 +23,7 @@ function getSkillPath(skill) {
 }
 
 function getSkillDescription(skill) {
-  const frontmatter = parseFrontmatter(readUtf8(getSkillPath(skill)));
+  const { frontmatter } = parseFrontmatter(readUtf8(getSkillPath(skill)));
   assert.ok(frontmatter, `${skill} should have frontmatter`);
   return frontmatter.description;
 }

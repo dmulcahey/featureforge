@@ -1,36 +1,53 @@
 import { estimateCostUsd, writeEvalRecord } from './eval-observability.mjs';
 
-export function evalsEnabled() {
-  return process.env.EVALS === '1';
+function getEvalModel(env) {
+  return env.OPENAI_EVAL_MODEL || env.EVAL_MODEL || null;
 }
 
-export function requireEvalEnv() {
-  if (!evalsEnabled()) {
-    return { enabled: false, reason: 'EVALS!=1' };
+export function evalsEnabled(env = process.env) {
+  return env.FEATUREFORGE_RUN_EVALS === '1' || env.RUN_EVALS === '1' || env.EVALS === '1';
+}
+
+export function requireEvalEnv(env = process.env) {
+  if (!evalsEnabled(env)) {
+    return { enabled: false, reason: 'evaluator disabled; set FEATUREFORGE_RUN_EVALS=1, RUN_EVALS=1, or EVALS=1' };
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  if (!env.OPENAI_API_KEY) {
     return { enabled: false, reason: 'OPENAI_API_KEY missing' };
   }
 
-  if (!process.env.EVAL_MODEL) {
-    return { enabled: false, reason: 'EVAL_MODEL missing' };
+  if (!getEvalModel(env)) {
+    return { enabled: false, reason: 'OPENAI_EVAL_MODEL or EVAL_MODEL missing' };
   }
 
   return { enabled: true };
 }
 
-export async function runJsonJudgeEval({ name, system, prompt }) {
+export async function runJsonJudgeEval({ name, system, prompt }, env = process.env) {
+  const gate = requireEvalEnv(env);
+  if (!gate.enabled) {
+    return {
+      name,
+      skipped: true,
+      passed: false,
+      summary: gate.reason,
+      judge_result: { skipped: true, reason: gate.reason },
+      reason: gate.reason,
+    };
+  }
+
   const startedAt = Date.now();
-  const apiBase = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+  const apiBase = env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+  const model = getEvalModel(env);
   const response = await fetch(`${apiBase}/responses`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      authorization: `Bearer ${env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: process.env.EVAL_MODEL,
+      model,
       input: [
         { role: 'system', content: [{ type: 'input_text', text: system }] },
         { role: 'user', content: [{ type: 'input_text', text: prompt }] },
@@ -55,9 +72,9 @@ export async function runJsonJudgeEval({ name, system, prompt }) {
     usage,
     elapsed_ms: Date.now() - startedAt,
     cost_usd: estimateCostUsd(usage),
-    model: process.env.EVAL_MODEL,
+    model,
     recorded_at: new Date().toISOString(),
   };
-  record.record_path = writeEvalRecord(record);
+  record.record_path = writeEvalRecord(record, env);
   return record;
 }

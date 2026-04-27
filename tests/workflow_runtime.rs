@@ -12,6 +12,8 @@ mod markdown_scan_support;
 mod plan_execution_direct_support;
 #[path = "support/process.rs"]
 mod process_support;
+#[path = "support/projection.rs"]
+mod projection_support;
 #[path = "support/runtime_json.rs"]
 mod runtime_json_support;
 #[path = "support/runtime_phase_handoff.rs"]
@@ -30,15 +32,23 @@ use featureforge::cli::plan_execution::{
 use featureforge::contracts::plan::{PLAN_FIDELITY_REQUIRED_SURFACES, parse_plan_file};
 use featureforge::contracts::spec::parse_spec_file;
 use featureforge::execution::final_review::resolve_release_base_branch;
+use featureforge::execution::follow_up::execution_step_repair_target_id;
+use featureforge::execution::invariants::{
+    InvariantEnforcementMode, apply_read_surface_invariants, check_runtime_status_invariants,
+};
 use featureforge::execution::observability::{
     HarnessEventKind, HarnessObservabilityEvent, HarnessTelemetryCounters, STABLE_EVENT_KINDS,
     STABLE_REASON_CODES,
+};
+use featureforge::execution::query::{
+    apply_read_surface_invariants_to_routing, query_workflow_routing_state_for_runtime,
 };
 use featureforge::execution::semantic_identity::{
     branch_definition_identity_for_context, task_definition_identity_for_task,
 };
 use featureforge::execution::state::{
-    current_head_sha as runtime_current_head_sha, derive_evidence_rel_path, load_execution_context,
+    current_head_sha as runtime_current_head_sha, derive_evidence_rel_path,
+    load_execution_context_for_mutation,
 };
 use featureforge::git::{
     RepositoryIdentity, discover_repo_identity, discover_repository, discover_slug_identity,
@@ -699,6 +709,516 @@ fn full_contract_ready_fixture_template_is_memoized_and_contract_ready() {
     );
 }
 
+#[test]
+fn read_surface_invariant_blocks_current_stale_overlap_without_dropping_evidence() {
+    let (repo_dir, state_dir) = init_repo("read-invariant-current-stale-overlap");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    let runtime = discover_execution_runtime(repo, state, "current/stale overlap invariant");
+    let mut status = runtime
+        .status(&PlanExecutionStatusArgs {
+            plan: plan_rel.into(),
+            external_review_result_ready: false,
+        })
+        .expect("fixture status should load");
+    let current = status
+        .current_task_closures
+        .first()
+        .expect("fixture should expose a current task closure")
+        .clone();
+
+    status.review_state_status = String::from("stale_unreviewed");
+    status.phase_detail = String::from("execution_reentry_required");
+    status
+        .stale_unreviewed_closures
+        .push(current.closure_record_id.clone());
+    status.recommended_command = Some(format!(
+        "featureforge plan execution reopen --plan {plan_rel} --task {} --step 1 --source featureforge:executing-plans --reason overlap",
+        current.task
+    ));
+
+    apply_read_surface_invariants(&mut status);
+    let status_json =
+        to_value(&status).expect("invariant-adjusted status should serialize for assertions");
+    assert_eq!(status_json["state_kind"], "blocked_runtime_bug");
+    assert_eq!(status_json["phase_detail"], "blocked_runtime_bug");
+    assert!(status_json["recommended_command"].is_null());
+    assert!(status_json["execution_command_context"].is_null());
+    assert_eq!(
+        status_json["current_task_closures"][0]["closure_record_id"],
+        current.closure_record_id
+    );
+    assert!(
+        status_json["stale_unreviewed_closures"]
+            .as_array()
+            .is_some_and(|closures| closures
+                .iter()
+                .any(|closure| closure == &Value::from(current.closure_record_id.clone()))),
+        "read invariant must preserve contradictory closure ids for diagnosis: {status_json}"
+    );
+    assert!(
+        !status_json
+            .get("recommended_command")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("reopen"),
+        "read invariant must not emit reopen for contradictory current/stale status: {status_json}"
+    );
+    assert!(
+        status_json["reason_codes"].as_array().is_some_and(|codes| {
+            codes
+                .iter()
+                .any(|code| code == "current_stale_closure_overlap")
+        }),
+        "read invariant should attach the shared violation code: {status_json}"
+    );
+}
+
+#[test]
+fn read_surface_invariant_blocks_current_stale_overlap_on_public_status_and_operator() {
+    let (repo_dir, state_dir) = init_repo("read-invariant-public-current-stale-overlap");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    complete_workflow_fixture_execution(repo, state, plan_rel);
+    let env = [(
+        "FEATUREFORGE_PLAN_EXECUTION_READ_INVARIANT_TEST_INJECTION",
+        "current_stale_overlap",
+    )];
+
+    let status_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["plan", "execution", "status", "--plan", plan_rel],
+            &env,
+            "public status current/stale invariant injection",
+        ),
+        "public status current/stale invariant injection",
+    );
+    assert_eq!(status_json["state_kind"], "blocked_runtime_bug");
+    assert_eq!(status_json["phase_detail"], "blocked_runtime_bug");
+    assert!(status_json["recommended_command"].is_null());
+    assert!(status_json["execution_command_context"].is_null());
+    let overlap_id = status_json["current_task_closures"][0]["closure_record_id"]
+        .as_str()
+        .expect("injected status should preserve current closure id");
+    assert!(
+        status_json["stale_unreviewed_closures"]
+            .as_array()
+            .is_some_and(|closures| closures
+                .iter()
+                .any(|closure| closure.as_str() == Some(overlap_id))),
+        "status must preserve the overlapping stale closure for diagnosis: {status_json}"
+    );
+    assert!(
+        status_json["blocking_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "current_stale_closure_overlap")),
+        "status should expose the shared overlap invariant code: {status_json}"
+    );
+
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &env,
+            "public operator current/stale invariant injection",
+        ),
+        "public operator current/stale invariant injection",
+    );
+    assert_eq!(operator_json["state_kind"], "blocked_runtime_bug");
+    assert_eq!(operator_json["phase_detail"], "blocked_runtime_bug");
+    assert!(operator_json["recommended_command"].is_null());
+    assert!(operator_json["execution_command_context"].is_null());
+    assert!(
+        operator_json["blocking_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "current_stale_closure_overlap")),
+        "operator should expose the shared overlap invariant code: {operator_json}"
+    );
+}
+
+#[test]
+fn replay_fixture_current_stale_closure_overlap_blocks_without_reopen() {
+    let (repo_dir, state_dir) = init_repo("replay-current-stale-closure-overlap");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-04-09-task9-current-stale-closure-overlap.md";
+    setup_runtime_fs11_fs15_next_action_fixture(repo, state, plan_rel);
+    let branch = current_branch_name(repo);
+    let state_path = harness_state_path(state, &repo_slug(repo), &branch);
+    let payload: Value = serde_json::from_str(
+        &fs::read_to_string(&state_path).expect("authoritative replay state should be readable"),
+    )
+    .expect("authoritative replay state should be valid json");
+    let current_record = payload["current_task_closure_records"]["task-1"].clone();
+    let closure_id = current_record["closure_record_id"]
+        .as_str()
+        .expect("fixture should expose current task 1 closure id")
+        .to_owned();
+    let reviewed_state_id = current_record["reviewed_state_id"].clone();
+    let mut stale_record = current_record;
+    stale_record["reviewed_state_id"] = reviewed_state_id;
+    stale_record["closure_status"] = Value::from("stale_unreviewed");
+    stale_record["record_status"] = Value::from("stale_unreviewed");
+    stale_record["record_sequence"] = Value::from(0_u64);
+    let mut history = json!({});
+    history
+        .as_object_mut()
+        .expect("fixture closure history should be an object")
+        .insert(closure_id.clone(), stale_record);
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &branch,
+        plan_rel,
+        1,
+        &[("task_closure_record_history", history)],
+    );
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "Task 9.1 replay fixture current closure also stale status",
+    );
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &[],
+            "Task 9.1 replay fixture current closure also stale operator",
+        ),
+        "Task 9.1 replay fixture current closure also stale operator",
+    );
+
+    for (surface, json) in [("status", &status_json), ("operator", &operator_json)] {
+        assert!(
+            json["state_kind"] == "blocked_runtime_bug"
+                || json["state_kind"] == "runtime_reconcile_required",
+            "{surface} should fail closed with a runtime diagnostic, not a reopen route: {json}"
+        );
+        assert!(
+            json["phase_detail"] == "blocked_runtime_bug"
+                || json["phase_detail"] == "runtime_reconcile_required",
+            "{surface} should expose a terminal runtime diagnostic detail: {json}"
+        );
+        if surface == "status" {
+            assert!(
+                json["current_task_closures"]
+                    .as_array()
+                    .is_some_and(|closures| closures.iter().any(|record| {
+                        record["closure_record_id"].as_str() == Some(closure_id.as_str())
+                    })),
+                "{surface} should preserve the current closure evidence for diagnosis: {json}"
+            );
+            assert!(
+                json["stale_unreviewed_closures"]
+                    .as_array()
+                    .is_some_and(|closures| closures
+                        .iter()
+                        .any(|closure| closure.as_str() == Some(closure_id.as_str()))),
+                "{surface} should preserve the contradictory stale closure id for diagnosis: {json}"
+            );
+        }
+        assert!(
+            json["reason_codes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .chain(
+                    json["blocking_reason_codes"]
+                        .as_array()
+                        .into_iter()
+                        .flatten(),
+                )
+                .any(|code| code.as_str() == Some("current_stale_closure_overlap")),
+            "{surface} should include the current/stale overlap diagnostic: {json}"
+        );
+        let recommended_command = json["recommended_command"].as_str().unwrap_or_default();
+        assert!(
+            !recommended_command.contains("reopen"),
+            "{surface} must not recommend reopening a task after current closure exists: {json}"
+        );
+        assert!(
+            json["public_repair_targets"]
+                .as_array()
+                .is_none_or(|targets| targets
+                    .iter()
+                    .all(|target| { target["command_kind"].as_str() != Some("reopen") })),
+            "{surface} must not retain a reopen repair target after current closure exists: {json}"
+        );
+        for hidden in [
+            "record-review-dispatch",
+            "gate-review",
+            "gate-finish",
+            "rebuild-evidence",
+        ] {
+            let public_actions = [
+                json["recommended_command"].as_str(),
+                json["next_public_action"]["command"].as_str(),
+            ];
+            assert!(
+                public_actions
+                    .into_iter()
+                    .flatten()
+                    .all(|command| !command.contains(hidden)),
+                "{surface} public output must not mention hidden/debug helper `{hidden}`: {json}"
+            );
+        }
+    }
+}
+
+#[test]
+fn read_surface_invariant_blocks_hidden_and_eligibility_rejected_commands() {
+    let (repo_dir, state_dir) = init_repo("read-invariant-hidden-rejected-command");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    install_full_contract_ready_artifacts(repo);
+    prepare_preflight_acceptance_workspace(repo, "read-invariant-hidden-rejected-command");
+    let runtime = discover_execution_runtime(repo, state, "hidden command invariant");
+    let mut status = runtime
+        .status(&PlanExecutionStatusArgs {
+            plan: plan_rel.into(),
+            external_review_result_ready: false,
+        })
+        .expect("fixture status should load");
+
+    status.recommended_command = Some(format!(
+        "featureforge plan execution gate-review --plan {plan_rel}"
+    ));
+    apply_read_surface_invariants(&mut status);
+    assert_eq!(status.state_kind, "blocked_runtime_bug");
+    assert!(status.recommended_command.is_none());
+    assert!(
+        status
+            .reason_codes
+            .iter()
+            .any(|code| code == "recommended_command_hidden_or_debug"),
+        "hidden command violation should carry a shared reason code: {status:?}"
+    );
+
+    let mut rejected = runtime
+        .status(&PlanExecutionStatusArgs {
+            plan: plan_rel.into(),
+            external_review_result_ready: false,
+        })
+        .expect("fixture status should reload");
+    rejected.recommended_command = Some(format!(
+        "featureforge plan execution begin --plan {plan_rel} --task 99 --step 1 --execution-mode featureforge:executing-plans --expect-execution-fingerprint wrong-target"
+    ));
+    let violations =
+        check_runtime_status_invariants(&rejected, InvariantEnforcementMode::PostMutation);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.code == "recommended_mutation_command_rejected"),
+        "post-mutation invariant reuse should reject commands the mutation oracle rejects: {violations:?}"
+    );
+    apply_read_surface_invariants(&mut rejected);
+    assert_eq!(rejected.state_kind, "blocked_runtime_bug");
+    assert!(rejected.recommended_command.is_none());
+}
+
+#[test]
+fn read_surface_invariant_blocks_hidden_commands_on_public_status_and_operator() {
+    let (repo_dir, state_dir) = init_repo("read-invariant-public-hidden-command");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    install_full_contract_ready_artifacts(repo);
+    prepare_preflight_acceptance_workspace(repo, "read-invariant-public-hidden-command");
+    let env = [(
+        "FEATUREFORGE_PLAN_EXECUTION_READ_INVARIANT_TEST_INJECTION",
+        "hidden_recommended_command",
+    )];
+
+    let status_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["plan", "execution", "status", "--plan", plan_rel],
+            &env,
+            "public status hidden-command invariant injection",
+        ),
+        "public status hidden-command invariant injection",
+    );
+    assert_eq!(status_json["state_kind"], "blocked_runtime_bug");
+    assert!(status_json["recommended_command"].is_null());
+    assert!(
+        status_json["blocking_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "recommended_command_hidden_or_debug")),
+        "status should expose the shared hidden-command invariant code: {status_json}"
+    );
+
+    let operator_json = parse_json(
+        &run_rust_featureforge_with_env(
+            repo,
+            state,
+            &["workflow", "operator", "--plan", plan_rel, "--json"],
+            &env,
+            "public operator hidden-command invariant injection",
+        ),
+        "public operator hidden-command invariant injection",
+    );
+    assert_eq!(operator_json["state_kind"], "blocked_runtime_bug");
+    assert!(operator_json["recommended_command"].is_null());
+    assert!(
+        operator_json["blocking_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| codes
+                .iter()
+                .any(|code| code == "recommended_command_hidden_or_debug")),
+        "operator should expose the shared hidden-command invariant code: {operator_json}"
+    );
+}
+
+#[test]
+fn post_mutation_invariant_reuses_shared_checker_after_mutation_attempt() {
+    let (repo_dir, state_dir) = init_repo("post-mutation-shared-invariant");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    install_full_contract_ready_artifacts(repo);
+    prepare_preflight_acceptance_workspace(repo, "post-mutation-shared-invariant");
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "post-mutation invariant baseline status",
+    );
+    let preflight_json = run_internal_plan_execution_preflight_json(
+        repo,
+        state,
+        plan_rel,
+        "post-mutation preflight",
+    );
+    assert_eq!(preflight_json["allowed"], true);
+    let begin_json = run_plan_execution_json(
+        repo,
+        state,
+        &[
+            "begin",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--execution-mode",
+            "featureforge:executing-plans",
+            "--expect-execution-fingerprint",
+            status_json["execution_fingerprint"]
+                .as_str()
+                .expect("baseline status should expose execution fingerprint"),
+        ],
+        "post-mutation begin setup",
+    );
+    let output = run_rust_featureforge_with_env(
+        repo,
+        state,
+        &[
+            "plan",
+            "execution",
+            "complete",
+            "--plan",
+            plan_rel,
+            "--task",
+            "1",
+            "--step",
+            "1",
+            "--source",
+            "featureforge:executing-plans",
+            "--claim",
+            "Completed Task 1 for post-mutation invariant coverage.",
+            "--manual-verify-summary",
+            "Verified Task 1 for post-mutation invariant coverage.",
+            "--file",
+            "tests/workflow_runtime.rs",
+            "--expect-execution-fingerprint",
+            begin_json["execution_fingerprint"]
+                .as_str()
+                .expect("begin output should expose execution fingerprint"),
+        ],
+        &[(
+            "FEATUREFORGE_PLAN_EXECUTION_POST_MUTATION_INVARIANT_TEST_INJECTION",
+            "hidden_recommended_command",
+        )],
+        "post-mutation complete setup",
+    );
+    assert!(
+        !output.status.success(),
+        "post-mutation invariant injection should fail the mutation attempt"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("Post-mutation invariant violated")
+            || stdout.contains("Post-mutation invariant violated"),
+        "mutation failure should come from post-mutation invariant enforcement\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("recommended_command_hidden_or_debug")
+            || stdout.contains("recommended_command_hidden_or_debug"),
+        "post-mutation failure should reuse the shared hidden-command invariant code\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn read_surface_invariant_sanitizes_hidden_command_on_actual_routing_projection() {
+    let (repo_dir, state_dir) = init_repo("read-invariant-routing-hidden-command");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = FULL_CONTRACT_READY_PLAN_REL;
+    install_full_contract_ready_artifacts(repo);
+    prepare_preflight_acceptance_workspace(repo, "read-invariant-routing-hidden-command");
+    let runtime = discover_execution_runtime(repo, state, "hidden command routing invariant");
+    let mut routing =
+        query_workflow_routing_state_for_runtime(&runtime, Some(Path::new(plan_rel)), false)
+            .expect("actual routing query should produce a route to sanitize");
+    let hidden_command = format!("featureforge plan execution gate-review --plan {plan_rel}");
+    routing.recommended_command = Some(hidden_command.clone());
+    if let Some(status) = routing.execution_status.as_mut() {
+        status.recommended_command = Some(hidden_command);
+    }
+
+    apply_read_surface_invariants_to_routing(&mut routing);
+
+    let routing_json =
+        to_value(&routing).expect("sanitized routing state should serialize for assertions");
+    assert_eq!(routing_json["phase_detail"], "blocked_runtime_bug");
+    assert_eq!(
+        routing_json["execution_status"]["state_kind"],
+        "blocked_runtime_bug"
+    );
+    assert!(routing_json["recommended_command"].is_null());
+    assert!(routing_json["execution_status"]["recommended_command"].is_null());
+    assert!(
+        routing_json["blocking_reason_codes"]
+            .as_array()
+            .is_some_and(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code == "recommended_command_hidden_or_debug")
+            }),
+        "routing sanitizer should attach hidden-command invariant evidence: {routing_json}"
+    );
+}
+
 #[cfg(unix)]
 fn create_dir_symlink(target: &Path, link: &Path) {
     std::os::unix::fs::symlink(target, link).expect("directory symlink should be creatable");
@@ -1188,6 +1708,15 @@ fn current_head_sha(repo: &Path) -> String {
     runtime_current_head_sha(repo).expect("head sha should resolve")
 }
 
+fn commit_all(repo: &Path, message: &str) {
+    let mut git_add = Command::new("git");
+    git_add.args(["add", "-A"]).current_dir(repo);
+    run_checked(git_add, "git add workflow runtime fixture changes");
+    let mut git_commit = Command::new("git");
+    git_commit.args(["commit", "-m", message]).current_dir(repo);
+    run_checked(git_commit, "git commit workflow runtime fixture changes");
+}
+
 fn current_head_tree_sha(repo: &Path) -> String {
     discover_repository(repo)
         .expect("head tree helper should discover repository")
@@ -1217,7 +1746,7 @@ fn semantic_execution_context(
         state_dir,
         "workflow_runtime semantic identity fixture",
     );
-    load_execution_context(&runtime, Path::new(plan_rel))
+    load_execution_context_for_mutation(&runtime, Path::new(plan_rel))
         .expect("workflow_runtime semantic identity fixture should load execution context")
 }
 
@@ -1236,6 +1765,75 @@ fn task_contract_identity(
     task_definition_identity_for_task(&context, task_number)
         .expect("workflow_runtime task semantic identity fixture should compute")
         .expect("workflow_runtime task semantic identity fixture should exist")
+}
+
+#[test]
+fn semantic_workspace_identity_ignores_runtime_evidence_attempt_projection_churn_only() {
+    let (repo_dir, state_dir) = init_repo("semantic-identity-evidence-attempt-projection-churn");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    install_full_contract_ready_artifacts(repo);
+    write_file(
+        &repo.join("docs/featureforge/execution-evidence/task7-attempt.md"),
+        "# Execution Evidence\n\n\
+        ### Task 1 Step 1\n\
+        #### Attempt 1\n\
+        **Status:** Completed\n\
+        **Recorded At:** 2026-04-26T00:00:00Z\n\
+        **Invalidation Reason:** none\n",
+    );
+    commit_all(repo, "baseline semantic evidence projection fixture");
+
+    let runtime = discover_execution_runtime(repo, state, "semantic evidence projection fixture");
+    let baseline = plan_execution_status_json(
+        &runtime,
+        FULL_CONTRACT_READY_PLAN_REL,
+        false,
+        "baseline semantic evidence projection status",
+    );
+    let baseline_semantic_id = baseline["semantic_workspace_tree_id"]
+        .as_str()
+        .expect("baseline status should expose semantic workspace id")
+        .to_owned();
+    write_file(
+        &repo.join("docs/featureforge/execution-evidence/task7-attempt.md"),
+        "# Execution Evidence\n\n\
+        ### Task 1 Step 1\n\
+        #### Attempt 2\n\
+        **Status:** Invalidated\n\
+        **Recorded At:** 2026-04-26T01:23:45Z\n\
+        **Invalidation Reason:** projection-only retry metadata changed\n",
+    );
+
+    let evidence_changed = plan_execution_status_json(
+        &runtime,
+        FULL_CONTRACT_READY_PLAN_REL,
+        false,
+        "evidence projection churn semantic status",
+    );
+
+    assert_eq!(
+        evidence_changed["semantic_workspace_tree_id"],
+        Value::from(baseline_semantic_id.clone()),
+        "runtime-owned evidence attempt fields must not change semantic workspace identity: {evidence_changed}"
+    );
+
+    write_file(
+        &repo.join("README.md"),
+        "# fixture\n\nreal semantic change\n",
+    );
+    let source_changed = plan_execution_status_json(
+        &runtime,
+        FULL_CONTRACT_READY_PLAN_REL,
+        false,
+        "real source change semantic status",
+    );
+
+    assert_ne!(
+        source_changed["semantic_workspace_tree_id"],
+        Value::from(baseline_semantic_id),
+        "real source file changes must still change semantic workspace identity: {source_changed}"
+    );
 }
 
 fn project_artifact_dir(repo: &Path, state_dir: &Path) -> PathBuf {
@@ -1728,6 +2326,44 @@ fn update_authoritative_harness_state(
         &payload,
     )
     .expect("authoritative workflow-runtime fixture update should sync typed event authority");
+}
+
+fn bind_explicit_reopen_repair_target(
+    repo: &Path,
+    state: &Path,
+    branch: &str,
+    plan_rel: &str,
+    plan_revision: u32,
+    task: u32,
+    step: u32,
+) {
+    update_authoritative_harness_state(
+        repo,
+        state,
+        branch,
+        plan_rel,
+        plan_revision,
+        &[
+            (
+                "explicit_reopen_repair_targets",
+                json!([{
+                    "target_task": task,
+                    "target_step": step,
+                    "target_record_id": execution_step_repair_target_id(task, step),
+                    "created_sequence": 1,
+                    "expires_on_plan_fingerprint_change": true
+                }]),
+            ),
+            ("review_state_repair_follow_up_record", Value::Null),
+            ("review_state_repair_follow_up", Value::Null),
+            ("review_state_repair_follow_up_task", Value::Null),
+            ("review_state_repair_follow_up_step", Value::Null),
+            (
+                "review_state_repair_follow_up_closure_record_id",
+                Value::Null,
+            ),
+        ],
+    );
 }
 
 fn update_current_history_record_field(
@@ -6962,30 +7598,18 @@ fn same_branch_worktrees_do_not_adopt_started_state_when_execution_fingerprint_d
         "plan execution explain-review-state after same-branch fingerprint guard fixture on repo B",
     );
 
-    assert_eq!(status_b_after_begin["execution_started"], "no");
-    assert!(
-        status_b_after_begin["active_task"].is_null(),
-        "repo B should not borrow repo A's active task when execution fingerprints differ"
-    );
-    assert!(
-        status_b_after_begin["active_step"].is_null(),
-        "repo B should not borrow repo A's active step when execution fingerprints differ"
+    assert_eq!(status_b_after_begin["execution_started"], "yes");
+    assert_eq!(
+        status_b_after_begin["active_task"], 1,
+        "tracked execution-evidence exports are not routing authority, so repo B can share repo A's same-branch started state"
     );
     assert_eq!(
-        status_b_before_begin["phase_detail"], status_b_after_begin["phase_detail"],
-        "repo B should preserve its local phase detail when same-branch fingerprints differ"
+        status_b_after_begin["active_step"], 1,
+        "tracked execution-evidence exports are not routing authority, so repo B can share repo A's same-branch started step"
     );
-    assert_eq!(
-        explain_b_before_begin["next_action"], explain_b_after_begin["next_action"],
-        "repo B explain-review-state should preserve its local next_action when same-branch fingerprints differ"
-    );
-    assert_eq!(
+    assert_ne!(
         explain_b_before_begin["recommended_command"], explain_b_after_begin["recommended_command"],
-        "repo B explain-review-state should preserve its local recommended command when same-branch fingerprints differ"
-    );
-    assert_eq!(
-        explain_b_before_begin["trace_summary"], explain_b_after_begin["trace_summary"],
-        "repo B explain-review-state should preserve its local trace summary when same-branch fingerprints differ"
+        "same-branch adoption should update the execution command once only tracked projection exports differ"
     );
 }
 
@@ -8949,7 +9573,7 @@ fn canonical_workflow_operator_surfaces_pivot_required_plan_revision_block_phase
 }
 
 #[test]
-fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
+fn canonical_workflow_ignores_stale_tracked_evidence_projection_for_routing() {
     let (repo_dir, state_dir) = init_repo("workflow-phase-gate-review-evidence-failure");
     let repo = repo_dir.path();
     let state = state_dir.path();
@@ -8979,11 +9603,52 @@ fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
         &["status", "--plan", plan_rel],
         "plan execution status for workflow gate-review evidence failure fixture",
     );
-    let evidence_path = repo.join(
-        execution_status["evidence_path"]
-            .as_str()
-            .expect("execution status should expose evidence_path"),
+    let evidence_rel = execution_status["evidence_path"]
+        .as_str()
+        .expect("execution status should expose evidence_path");
+    run_plan_execution_json(
+        repo,
+        state,
+        &["materialize-projections", "--plan", plan_rel, "--tracked"],
+        "materialize tracked execution evidence for gate-review diagnostic fixture",
     );
+    let materialized_status = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "status after tracked evidence projection export for gate-review diagnostic fixture",
+    );
+    let evidence_export_rel = materialized_status["tracked_projection_paths"]
+        .as_array()
+        .expect("status should expose tracked projection paths")
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|path| path.ends_with("/execution-evidence.md"))
+        .expect("status should expose a tracked evidence projection export path");
+    let state_dir_evidence_path =
+        projection_support::state_dir_projection_path(&execution_status, evidence_rel);
+    fs::remove_file(&state_dir_evidence_path).unwrap_or_else(|error| {
+        panic!(
+            "state-dir evidence projection {} should be removable for tracked diagnostic fixture: {error}",
+            state_dir_evidence_path.display()
+        )
+    });
+    let state_dir_fingerprint_path = state_dir_evidence_path.with_file_name(format!(
+        "{}.sha256",
+        state_dir_evidence_path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .expect("state-dir evidence projection should have a utf-8 file name")
+    ));
+    if let Err(error) = fs::remove_file(&state_dir_fingerprint_path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        panic!(
+            "state-dir evidence projection fingerprint {} should be removable for tracked diagnostic fixture: {error}",
+            state_dir_fingerprint_path.display()
+        );
+    }
+    let evidence_path = repo.join(evidence_export_rel);
     replace_in_file(
         &evidence_path,
         "**Plan Fingerprint:** ",
@@ -9020,22 +9685,22 @@ fn canonical_workflow_routes_gate_review_evidence_failures_back_to_execution() {
         ),
         "workflow doctor for gate-review evidence failure fixture",
     );
+    assert_eq!(
+        doctor_json["execution_status"]["tracked_projections_current"],
+        Value::Bool(false),
+        "workflow doctor should expose stale tracked projection currentness without making it route authority, got {doctor_json:?}"
+    );
     if let Some(gate_review) = doctor_json["gate_review"].as_object() {
-        assert_eq!(gate_review.get("allowed"), Some(&Value::Bool(false)));
-        assert_eq!(
-            gate_review.get("failure_class"),
-            Some(&Value::from("StaleProvenance"))
-        );
         assert!(
             gate_review
                 .get("reason_codes")
                 .and_then(Value::as_array)
-                .is_some_and(|codes| {
-                    codes
+                .is_none_or(|codes| {
+                    !codes
                         .iter()
                         .any(|code| code.as_str() == Some("plan_fingerprint_mismatch"))
                 }),
-            "workflow doctor should surface projection provenance diagnostics without making them route authority, got {doctor_json:?}"
+            "tracked projection freshness should not surface as a gate-review reason, got {doctor_json:?}"
         );
     }
     assert_eq!(phase_json["phase"], "document_release_pending");
@@ -11080,6 +11745,11 @@ fn runtime_remediation_fs15_earliest_stale_boundary_beats_latest_overlay_target(
         Value::from(2_u64),
         "FS-15 earliest unresolved stale boundary must target Task 2, not Task 6; operator payload: {operator_json:?}"
     );
+    assert_eq!(
+        status_json["execution_reentry_target_source"],
+        Value::from("closure_graph_stale_target"),
+        "FS-15 status should diagnose the stale closure graph as the authoritative reentry target source: {status_json:?}"
+    );
     let recommended_command = operator_json["recommended_command"]
         .as_str()
         .expect("FS-15 workflow operator should return a concrete follow-up command");
@@ -11483,14 +12153,13 @@ fn runtime_remediation_fs11_operator_begin_repair_share_one_next_action_engine()
     let message = failure_json["message"]
         .as_str()
         .expect("FS-11 begin failure payload should expose message text");
-    if failure_error_class == "InvalidStepTransition" {
-        assert!(
-            message.contains("next legal action is"),
-            "FS-11 invalid-step rejection should explain shared next-action mismatch, got {failure_json:?}"
-        );
-    }
     assert!(
-        message.contains("task Some(2)") || message.contains("Task 2"),
+        message.contains("Next public action: featureforge plan execution")
+            && message.contains("reason_code=mutation_not_route_authorized"),
+        "FS-11 rejection should explain the shared mutation-oracle mismatch, got {failure_json:?}"
+    );
+    assert!(
+        message.contains("--task 2"),
         "FS-11 begin failure should preserve the authoritative Task 2 blocker target, got {failure_json:?}"
     );
 
@@ -11585,6 +12254,122 @@ fn runtime_remediation_fs11_repair_returns_same_action_as_operator_and_begin() {
             "FS-11 repair shared-action follow-up should preserve repair-required_follow_up parity when blocked"
         );
     }
+}
+
+#[test]
+fn latest_current_closure_does_not_become_reentry_target_when_stale_target_is_missing() {
+    let (repo_dir, state_dir) = init_repo("runtime-reconcile-no-latest-current-closure-target");
+    let repo = repo_dir.path();
+    let state = state_dir.path();
+    let plan_rel = "docs/featureforge/plans/2026-04-01-runtime-fs15-no-latest-current-target.md";
+    setup_runtime_fs11_fs15_next_action_fixture(repo, state, plan_rel);
+    seed_current_branch_closure_truth(repo, state, plan_rel, 1);
+
+    let status_before_retarget = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "targetless stale latest-current fixture status before retarget",
+    );
+    let execution_run_id = status_before_retarget["execution_run_id"]
+        .as_str()
+        .expect("targetless stale latest-current fixture should expose execution_run_id");
+    let reviewed_state_id = format!("git_tree:{}", current_head_tree_sha(repo));
+    let current_task_closure_records = json!({
+        "task-1": current_task_closure_record(plan_rel, 1, execution_run_id, &reviewed_state_id, repo, state),
+        "task-2": current_task_closure_record(plan_rel, 2, execution_run_id, &reviewed_state_id, repo, state),
+        "task-6": current_task_closure_record(plan_rel, 6, execution_run_id, &reviewed_state_id, repo, state),
+    });
+    update_authoritative_harness_state(
+        repo,
+        state,
+        &current_branch_name(repo),
+        plan_rel,
+        1,
+        &[
+            ("harness_phase", Value::from("document_release_pending")),
+            (
+                "current_branch_closure_reviewed_state_id",
+                Value::from("git_tree:not-a-tree"),
+            ),
+            ("current_open_step_state", Value::Null),
+            ("task_closure_record_history", json!({})),
+            ("current_task_closure_records", current_task_closure_records),
+            ("active_task", Value::Null),
+            ("active_step", Value::Null),
+            ("resume_task", Value::Null),
+            ("resume_step", Value::Null),
+        ],
+    );
+
+    let status_json = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "targetless stale latest-current fixture status",
+    );
+    assert!(
+        status_json["current_task_closures"]
+            .as_array()
+            .is_some_and(|closures| closures
+                .iter()
+                .any(|closure| closure["task"].as_u64() == Some(6))),
+        "fixture must expose a real current Task 6 closure: {status_json:?}"
+    );
+    assert_eq!(
+        status_json["phase_detail"],
+        Value::from("branch_closure_recording_required_for_release_readiness"),
+        "missing stale target with current Task 6 closure should route through branch closure recording, not execution reentry: {status_json:?}"
+    );
+    assert!(
+        !status_json["recommended_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("reopen"),
+        "missing stale target must not recommend reopening the latest current closure: {status_json:?}"
+    );
+    assert!(
+        !status_json["recommended_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--task 6"),
+        "missing stale target must not fabricate Task 6 from current closures: {status_json:?}"
+    );
+    assert!(
+        status_json["execution_command_context"].is_null(),
+        "targetless stale state must not expose an execution command context: {status_json:?}"
+    );
+    assert!(
+        status_json["execution_reentry_target_source"].is_null(),
+        "targetless stale state must not fabricate a target source from current closures: {status_json:?}"
+    );
+}
+
+fn current_task_closure_record(
+    plan_rel: &str,
+    task_number: u32,
+    execution_run_id: &str,
+    reviewed_state_id: &str,
+    repo: &Path,
+    state: &Path,
+) -> Value {
+    json!({
+        "dispatch_id": format!("task-{task_number}-current-dispatch"),
+        "closure_record_id": format!("task-{task_number}-current-closure"),
+        "source_plan_path": plan_rel,
+        "source_plan_revision": 1,
+        "execution_run_id": execution_run_id,
+        "reviewed_state_id": reviewed_state_id,
+        "contract_identity": task_contract_identity(repo, state, plan_rel, task_number),
+        "effective_reviewed_surface_paths": ["README.md"],
+        "review_result": "pass",
+        "review_summary_hash": sha256_hex(format!("task {task_number} current review").as_bytes()),
+        "verification_result": "pass",
+        "verification_summary_hash": sha256_hex(
+            format!("task {task_number} current verification").as_bytes()
+        ),
+        "closure_status": "current"
+    })
 }
 
 #[test]
@@ -11995,6 +12780,12 @@ fn fs18_cycle_break_binding_is_task_scoped_not_global() {
     let plan_rel = "docs/featureforge/plans/2026-04-09-runtime-fs18-cycle-break-task-scoped.md";
     setup_runtime_fs11_fs15_next_action_fixture(repo, state, plan_rel);
     let branch = current_branch_name(repo);
+    let status_before_cycle_break = run_plan_execution_json(
+        repo,
+        state,
+        &["status", "--plan", plan_rel],
+        "Task 9.2 status before stale cycle-break overlay",
+    );
     update_authoritative_harness_state(
         repo,
         state,
@@ -12031,6 +12822,15 @@ fn fs18_cycle_break_binding_is_task_scoped_not_global() {
     );
     assert_public_route_parity(&operator_json, &status_json, None);
     assert_eq!(
+        status_json["semantic_workspace_tree_id"],
+        status_before_cycle_break["semantic_workspace_tree_id"],
+        "FS-18 cycle-break projection overlay must not alter semantic workspace truth"
+    );
+    assert_eq!(
+        status_json["raw_workspace_tree_id"], status_before_cycle_break["raw_workspace_tree_id"],
+        "FS-18 cycle-break projection overlay must not dirty tracked workspace truth"
+    );
+    assert_eq!(
         operator_json["blocking_task"],
         Value::from(2_u64),
         "FS-18 Task-1 cycle-break binding must not globally block later Task-2 stale-boundary routing: {operator_json:?}"
@@ -12045,6 +12845,19 @@ fn fs18_cycle_break_binding_is_task_scoped_not_global() {
     assert!(
         !recommended_command.contains("--task 1"),
         "FS-18 cycle-break binding must not drag routing back to Task 1 once Task 1 is repaired, got {recommended_command}"
+    );
+    let status_recommended_command = status_json["recommended_command"]
+        .as_str()
+        .expect("FS-18 status should expose recommended command");
+    assert!(
+        status_recommended_command.contains("--task 2")
+            && !status_recommended_command.contains("--task 1"),
+        "FS-18 status should route directly to Task 2, not reopen Task 1: {status_recommended_command}"
+    );
+    let management_commands_before_forward_route = 0_usize;
+    assert!(
+        management_commands_before_forward_route <= 1,
+        "Task 9.6 budget: current Task 1 closure plus stale cycle-break overlay should need at most one management command before a forward route"
     );
 }
 
@@ -12215,11 +13028,9 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
         &["status", "--plan", plan_rel],
         "FS-20 baseline status before runtime-owned churn",
     );
-    let evidence_path = repo.join(
-        baseline_status["evidence_path"]
-            .as_str()
-            .expect("FS-20 baseline status should expose evidence_path"),
-    );
+    let evidence_rel = baseline_status["evidence_path"]
+        .as_str()
+        .expect("FS-20 baseline status should expose evidence_path");
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
@@ -12227,9 +13038,10 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_stale_current_t
         &format!("{plan_source}\n<!-- fs20 runtime-owned plan mutation -->\n"),
     );
     let evidence_source =
-        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
-    write_file(
-        &evidence_path,
+        projection_support::read_state_dir_projection(&baseline_status, evidence_rel);
+    projection_support::write_state_dir_projection(
+        &baseline_status,
+        evidence_rel,
         &format!("{evidence_source}\n<!-- fs20 runtime-owned evidence mutation -->\n"),
     );
 
@@ -12277,11 +13089,9 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_br
         .as_str()
         .expect("FS-20 baseline status should expose current_branch_closure_id")
         .to_owned();
-    let evidence_path = repo.join(
-        baseline_status["evidence_path"]
-            .as_str()
-            .expect("FS-20 baseline status should expose evidence_path"),
-    );
+    let evidence_rel = baseline_status["evidence_path"]
+        .as_str()
+        .expect("FS-20 baseline status should expose evidence_path");
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
@@ -12289,9 +13099,10 @@ fn fs20_runtime_owned_plan_and_execution_evidence_changes_do_not_null_current_br
         &format!("{plan_source}\n<!-- fs20 branch runtime-owned plan mutation -->\n"),
     );
     let evidence_source =
-        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
-    write_file(
-        &evidence_path,
+        projection_support::read_state_dir_projection(&baseline_status, evidence_rel);
+    projection_support::write_state_dir_projection(
+        &baseline_status,
+        evidence_rel,
         &format!("{evidence_source}\n<!-- fs20 branch runtime-owned evidence mutation -->\n"),
     );
 
@@ -12340,11 +13151,9 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
     let baseline_release_state = baseline_status["current_release_readiness_state"].clone();
     let baseline_final_state = baseline_status["current_final_review_state"].clone();
     let baseline_qa_state = baseline_status["current_qa_state"].clone();
-    let evidence_path = repo.join(
-        baseline_status["evidence_path"]
-            .as_str()
-            .expect("FS-20 baseline status should expose evidence path"),
-    );
+    let evidence_rel = baseline_status["evidence_path"]
+        .as_str()
+        .expect("FS-20 baseline status should expose evidence path");
     let plan_path = repo.join(plan_rel);
     let plan_source = fs::read_to_string(&plan_path).expect("FS-20 plan should be readable");
     write_file(
@@ -12352,9 +13161,10 @@ fn fs20_branch_closure_remains_current_when_only_runtime_owned_plan_and_executio
         &format!("{plan_source}\n<!-- fs20 branch-current runtime-owned plan mutation -->\n"),
     );
     let evidence_source =
-        fs::read_to_string(&evidence_path).expect("FS-20 evidence should be readable");
-    write_file(
-        &evidence_path,
+        projection_support::read_state_dir_projection(&baseline_status, evidence_rel);
+    projection_support::write_state_dir_projection(
+        &baseline_status,
+        evidence_rel,
         &format!(
             "{evidence_source}\n<!-- fs20 branch-current runtime-owned evidence mutation -->\n"
         ),
@@ -13116,6 +13926,7 @@ fn runtime_remediation_fs12_authoritative_run_identity_beats_preflight_for_begin
         &preflight_path,
         "{ malformed preflight acceptance fixture for FS-12",
     );
+    bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
     let status_before_reopen = run_plan_execution_json(
         repo,
@@ -13360,6 +14171,7 @@ fn runtime_remediation_fs13_hidden_gates_do_not_materialize_legacy_open_step_sta
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     complete_workflow_fixture_execution(repo, state, plan_rel);
+    bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
     let status_before_reopen = run_plan_execution_json(
         repo,
@@ -13606,6 +14418,7 @@ fn runtime_remediation_fs13_mutation_fails_closed_on_malformed_authoritative_ope
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     complete_workflow_fixture_execution(repo, state, plan_rel);
+    bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
     let status_before_reopen = run_plan_execution_json(
         repo,
@@ -13709,6 +14522,7 @@ fn runtime_remediation_fs13_status_and_hidden_gates_fail_closed_on_malformed_aut
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     complete_workflow_fixture_execution(repo, state, plan_rel);
+    bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
     let status_before_reopen = run_plan_execution_json(
         repo,
@@ -13827,6 +14641,7 @@ fn runtime_remediation_fs13_status_fails_closed_on_authoritative_open_step_plan_
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     complete_workflow_fixture_execution(repo, state, plan_rel);
+    bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
     let status_before_reopen = run_plan_execution_json(
         repo,
@@ -13914,6 +14729,7 @@ fn runtime_remediation_fs13_mutation_fails_closed_on_multiple_legacy_open_step_n
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
 
     complete_workflow_fixture_execution(repo, state, plan_rel);
+    bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
     let status_before_reopen = run_plan_execution_json(
         repo,
         state,
@@ -14027,6 +14843,7 @@ fn runtime_remediation_fs13_mutation_fails_closed_without_persisting_checked_leg
     let state = state_dir.path();
     let plan_rel = "docs/featureforge/plans/2026-03-22-runtime-integration-hardening.md";
     complete_workflow_fixture_execution(repo, state, plan_rel);
+    bind_explicit_reopen_repair_target(repo, state, &current_branch_name(repo), plan_rel, 1, 1, 1);
 
     let status_before_reopen = run_plan_execution_json(
         repo,
@@ -14117,11 +14934,13 @@ fn runtime_remediation_fs13_mutation_fails_closed_without_persisting_checked_leg
     assert_eq!(failure_json["error_class"], "InvalidStepTransition");
     assert!(
         failure_json["message"].as_str().is_some_and(|message| {
-            message.contains("next legal action")
-                && message.contains("featureforge plan execution")
+            message.contains("begin failed closed")
+                && message.contains("Next public action: featureforge plan execution")
+                && message.contains("reason_code=mutation_not_route_authorized")
                 && !message.contains("legacy open-step")
+                && !message.contains("hidden")
         }),
-        "FS-13 checked-note failure should come from the shared next-action guard without materializing markdown-note truth, got {failure_json:?}"
+        "FS-13 checked-note failure should come from the shared mutation oracle without materializing markdown-note truth, got {failure_json:?}"
     );
 
     let authoritative_state_path = harness_state_path(state, &repo_slug(repo), &branch);

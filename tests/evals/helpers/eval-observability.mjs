@@ -2,9 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export function getEvalDir() {
-  const stateDir = process.env.FEATUREFORGE_STATE_DIR || path.join(os.homedir(), '.featureforge');
-  return path.join(stateDir, 'evals');
+export function getEvalDir(env = process.env) {
+  const stateDir = env.FEATUREFORGE_STATE_DIR;
+  if (stateDir && stateDir.trim()) {
+    return path.join(stateDir, 'evals');
+  }
+  return path.join(os.homedir(), '.featureforge', 'evals');
 }
 
 export function estimateCostUsd(usage) {
@@ -20,8 +23,8 @@ export function estimateCostUsd(usage) {
   return Number((((inputTokens / 1_000_000) * inputRate) + ((outputTokens / 1_000_000) * outputRate)).toFixed(6));
 }
 
-export function writeEvalRecord(record) {
-  const evalDir = getEvalDir();
+export function writeEvalRecord(record, env = process.env) {
+  const evalDir = getEvalDir(env);
   fs.mkdirSync(evalDir, { recursive: true });
   const safeName = record.name.replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase();
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');

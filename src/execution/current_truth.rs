@@ -9,8 +9,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::contracts::headers::parse_required_header as parse_plan_header;
 use crate::diagnostics::{FailureClass, JsonFailure};
-use crate::execution::closure_graph::{AuthoritativeClosureGraph, ClosureGraphSignals};
-use crate::execution::follow_up::normalize_persisted_repair_follow_up_token;
+use crate::execution::closure_graph::{
+    AuthoritativeClosureGraph, ClosureGraphSignals, reason_code_indicates_stale_unreviewed,
+};
+use crate::execution::follow_up::{
+    RepairFollowUpKind, RepairFollowUpRecord, RepairTargetScope, execution_step_repair_target_id,
+    normalize_persisted_repair_follow_up_token,
+};
 #[cfg(test)]
 use crate::execution::handoff::{
     WorkflowTransferRecordIdentity, current_workflow_transfer_record_exists,
@@ -20,6 +25,8 @@ use crate::execution::leases::StatusAuthoritativeOverlay;
 use crate::execution::observability::{
     REASON_CODE_POST_REVIEW_REPO_WRITE_DETECTED, REASON_CODE_STALE_PROVENANCE,
 };
+use crate::execution::projection_renderer::is_projection_export_path;
+use crate::execution::reducer::{RuntimeGateSnapshot, RuntimeState};
 use crate::execution::semantic_identity::{
     branch_definition_identity_for_context, semantic_paths_changed_between_raw_trees,
     semantic_tree_entries_for_raw_tree, semantic_workspace_snapshot,
@@ -150,9 +157,8 @@ fn normalized_runtime_control_plane_path(path: &str) -> Option<String> {
 
 fn is_runtime_owned_runtime_output_path(path: &str) -> bool {
     path.starts_with("docs/archive/featureforge/execution-evidence/")
+        || is_projection_export_path(path)
         || path.starts_with("docs/featureforge/reviews/")
-        || (path.contains("featureforge-")
-            && (path.contains("-independent-review-") || path.contains("-test-outcome-")))
 }
 
 pub(crate) fn is_runtime_owned_execution_control_plane_path(
@@ -514,12 +520,31 @@ fn current_branch_closure_allows_repaired_empty_lineage_late_stage_rerecord(
     let Some(authoritative_state) = authoritative_state else {
         return false;
     };
-    if authoritative_state.review_state_repair_follow_up() != Some("record_branch_closure") {
-        return false;
-    }
     let Some(identity) = branch_closure_identity_for_rerecording(context) else {
         return false;
     };
+    let Some(follow_up) = authoritative_state.review_state_repair_follow_up_record() else {
+        return false;
+    };
+    if follow_up.kind != RepairFollowUpKind::RecordBranchClosure
+        || follow_up.target_scope != RepairTargetScope::BranchClosure
+        || follow_up.target_record_id.as_deref() != Some(identity.branch_closure_id.as_str())
+    {
+        return false;
+    }
+    let semantic_workspace_state_id = semantic_workspace_snapshot(context)
+        .ok()
+        .map(|snapshot| snapshot.semantic_workspace_tree_id);
+    if !repair_follow_up_semantic_workspace_matches(
+        &follow_up,
+        semantic_workspace_state_id.as_deref(),
+    ) || !repair_follow_up_exact_target_still_bound(
+        &follow_up,
+        authoritative_state,
+        Some(identity.branch_closure_id.as_str()),
+    ) {
+        return false;
+    }
     authoritative_state
         .branch_closure_record(&identity.branch_closure_id)
         .is_some_and(|record| {
@@ -1123,13 +1148,6 @@ pub(crate) fn late_stage_projection_targets_present(status: &PlanExecutionStatus
         || status.current_qa_branch_closure_id.is_some()
 }
 
-pub(crate) fn execution_state_has_open_steps(status: &PlanExecutionStatus) -> bool {
-    status.active_task.is_some()
-        || status.blocking_task.is_some()
-        || status.resume_task.is_some()
-        || status.execution_command_context.is_some()
-}
-
 pub(crate) fn public_late_stage_stale_unreviewed(
     status: &PlanExecutionStatus,
     gate_review: Option<&GateResult>,
@@ -1149,28 +1167,11 @@ pub(crate) fn late_stage_missing_current_closure_stale_provenance_present(
     }
     if status.current_branch_closure_id.is_none() {
         let authoritative_state = load_authoritative_transition_state(context)?;
-        let historical_late_stage_binding_present =
-            authoritative_state.as_ref().is_some_and(|state| {
-                state
-                    .current_release_readiness_record()
-                    .as_ref()
-                    .map(|record| record.branch_closure_id.as_str())
-                    .into_iter()
-                    .chain(
-                        state
-                            .current_final_review_record()
-                            .as_ref()
-                            .map(|record| record.branch_closure_id.as_str()),
-                    )
-                    .chain(
-                        state
-                            .current_browser_qa_record()
-                            .as_ref()
-                            .map(|record| record.branch_closure_id.as_str()),
-                    )
-                    .any(|closure_id| !closure_id.trim().is_empty())
-            });
-        if historical_late_stage_binding_present {
+        if actionable_late_stage_stale_provenance_without_current_branch_closure(
+            context,
+            authoritative_state.as_ref(),
+            status,
+        ) {
             return Ok(true);
         }
     }
@@ -1182,6 +1183,47 @@ pub(crate) fn late_stage_missing_current_closure_stale_provenance_present(
         return Ok(false);
     }
     Ok(!tracked_paths_changed_since_record_branch_closure_baseline(context)?.is_empty())
+}
+
+fn actionable_late_stage_stale_provenance_without_current_branch_closure(
+    context: &ExecutionContext,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+    status: &PlanExecutionStatus,
+) -> bool {
+    let Some(state) = authoritative_state else {
+        return false;
+    };
+    if resolve_actionable_repair_follow_up_for_status(context, status, Some(state)).is_some_and(
+        |follow_up| {
+            follow_up.kind == RepairFollowUpKind::RecordBranchClosure
+                && follow_up.target_scope == RepairTargetScope::BranchClosure
+        },
+    ) {
+        return true;
+    }
+    let referenced_current_branch_closure_id_present = state
+        .current_release_readiness_record()
+        .as_ref()
+        .map(|record| record.branch_closure_id.as_str())
+        .into_iter()
+        .chain(
+            state
+                .current_final_review_record()
+                .as_ref()
+                .map(|record| record.branch_closure_id.as_str()),
+        )
+        .chain(
+            state
+                .current_browser_qa_record()
+                .as_ref()
+                .map(|record| record.branch_closure_id.as_str()),
+        )
+        .any(|closure_id| !closure_id.trim().is_empty());
+    referenced_current_branch_closure_id_present
+        && status
+            .reason_codes
+            .iter()
+            .any(|reason_code| reason_code == REASON_CODE_STALE_PROVENANCE)
 }
 
 pub(crate) fn current_branch_closure_has_tracked_drift(
@@ -1250,6 +1292,298 @@ pub(crate) fn branch_closure_refresh_missing_current_closure(status: &PlanExecut
         && status.current_branch_meaningful_drift
 }
 
+pub(crate) struct CurrentTruthSnapshot<'a> {
+    pub(crate) authoritative_state: Option<&'a AuthoritativeTransitionState>,
+    pub(crate) source_route_decision_hash: Option<&'a str>,
+}
+
+impl<'a> CurrentTruthSnapshot<'a> {
+    pub(crate) fn from_authoritative_state(
+        authoritative_state: Option<&'a AuthoritativeTransitionState>,
+    ) -> Self {
+        Self {
+            authoritative_state,
+            source_route_decision_hash: None,
+        }
+    }
+
+    pub(crate) fn with_source_route_decision_hash(
+        mut self,
+        source_route_decision_hash: Option<&'a str>,
+    ) -> Self {
+        self.source_route_decision_hash = source_route_decision_hash;
+        self
+    }
+}
+
+pub(crate) fn resolve_actionable_repair_follow_up(
+    state: &RuntimeState,
+    current: &CurrentTruthSnapshot<'_>,
+) -> Option<RepairFollowUpRecord> {
+    resolve_actionable_repair_follow_up_with_status(
+        current.authoritative_state,
+        &state.status,
+        Some(&state.gate_snapshot),
+        Some(state.semantic_workspace.semantic_workspace_tree_id.as_str()),
+        current.source_route_decision_hash,
+    )
+}
+
+pub(crate) fn resolve_actionable_repair_follow_up_for_status(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+) -> Option<RepairFollowUpRecord> {
+    resolve_actionable_repair_follow_up_for_status_with_source_hash(
+        context,
+        status,
+        authoritative_state,
+        None,
+    )
+}
+
+pub(crate) fn resolve_actionable_repair_follow_up_for_status_with_source_hash(
+    context: &ExecutionContext,
+    status: &PlanExecutionStatus,
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+    source_route_decision_hash: Option<&str>,
+) -> Option<RepairFollowUpRecord> {
+    let semantic_workspace_state_id = semantic_workspace_snapshot(context)
+        .ok()
+        .map(|snapshot| snapshot.semantic_workspace_tree_id);
+    resolve_actionable_repair_follow_up_with_status(
+        authoritative_state,
+        status,
+        None,
+        semantic_workspace_state_id.as_deref(),
+        source_route_decision_hash,
+    )
+}
+
+fn resolve_actionable_repair_follow_up_with_status(
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+    status: &PlanExecutionStatus,
+    gate_snapshot: Option<&RuntimeGateSnapshot>,
+    semantic_workspace_state_id: Option<&str>,
+    source_route_decision_hash: Option<&str>,
+) -> Option<RepairFollowUpRecord> {
+    let authoritative_state = authoritative_state?;
+    let record = authoritative_state
+        .review_state_repair_follow_up_record()
+        .or_else(|| {
+            legacy_repair_follow_up_record(authoritative_state, semantic_workspace_state_id)
+        })?;
+    if !repair_follow_up_semantic_workspace_matches(&record, semantic_workspace_state_id) {
+        return None;
+    }
+    let exact_target_still_bound = repair_follow_up_exact_target_still_bound(
+        &record,
+        authoritative_state,
+        status.current_branch_closure_id.as_deref(),
+    );
+    if record.expires_on_plan_fingerprint_change
+        && !exact_target_still_bound
+        && record
+            .source_route_decision_hash
+            .as_deref()
+            .zip(source_route_decision_hash)
+            .is_some_and(|(stored, current)| stored != current)
+    {
+        return None;
+    }
+    repair_follow_up_target_still_bound(&record, gate_snapshot, exact_target_still_bound)
+        .then_some(record)
+}
+
+fn repair_follow_up_semantic_workspace_matches(
+    record: &RepairFollowUpRecord,
+    semantic_workspace_state_id: Option<&str>,
+) -> bool {
+    record
+        .semantic_workspace_state_id
+        .as_deref()
+        .zip(semantic_workspace_state_id)
+        .is_none_or(|(record_semantic, current_semantic)| record_semantic == current_semantic)
+}
+
+fn legacy_repair_follow_up_record(
+    authoritative_state: &AuthoritativeTransitionState,
+    semantic_workspace_state_id: Option<&str>,
+) -> Option<RepairFollowUpRecord> {
+    let raw_token = authoritative_state.review_state_repair_follow_up()?;
+    let kind = RepairFollowUpKind::from_persisted_token(raw_token)?;
+    if !matches!(
+        kind,
+        RepairFollowUpKind::ExecutionReentry | RepairFollowUpKind::CloseTask
+    ) {
+        return None;
+    }
+    let target_task = authoritative_state.review_state_repair_follow_up_task()?;
+    let target_step = authoritative_state.review_state_repair_follow_up_step();
+    let target_scope = if kind == RepairFollowUpKind::CloseTask || target_step.is_none() {
+        RepairTargetScope::TaskClosure
+    } else {
+        RepairTargetScope::ExecutionStep
+    };
+    Some(RepairFollowUpRecord {
+        kind,
+        target_scope,
+        target_task: Some(target_task),
+        target_step,
+        target_record_id: authoritative_state
+            .review_state_repair_follow_up_closure_record_id()
+            .or_else(|| {
+                (target_scope == RepairTargetScope::ExecutionStep)
+                    .then(|| format!("task-{target_task}"))
+            }),
+        semantic_workspace_state_id: semantic_workspace_state_id.map(str::to_owned),
+        source_route_decision_hash: None,
+        created_sequence: authoritative_state.latest_authoritative_sequence(),
+        created_at: None,
+        expires_on_plan_fingerprint_change: true,
+    })
+}
+
+pub(crate) fn legacy_repair_follow_up_unbound(
+    authoritative_state: Option<&AuthoritativeTransitionState>,
+) -> bool {
+    let Some(authoritative_state) = authoritative_state else {
+        return false;
+    };
+    let Some(raw_token) = authoritative_state.review_state_repair_follow_up() else {
+        return false;
+    };
+    let Some(kind) = RepairFollowUpKind::from_persisted_token(raw_token) else {
+        return false;
+    };
+    if matches!(
+        kind,
+        RepairFollowUpKind::ExecutionReentry | RepairFollowUpKind::CloseTask
+    ) {
+        return authoritative_state
+            .review_state_repair_follow_up_task()
+            .is_none();
+    }
+    true
+}
+
+fn repair_follow_up_target_still_bound(
+    record: &RepairFollowUpRecord,
+    gate_snapshot: Option<&RuntimeGateSnapshot>,
+    exact_target_still_bound: bool,
+) -> bool {
+    if exact_target_still_bound {
+        return true;
+    }
+    match record.target_scope {
+        RepairTargetScope::TaskClosure | RepairTargetScope::ExecutionStep => {
+            let Some(task) = record.target_task else {
+                return false;
+            };
+            gate_snapshot.is_some_and(|snapshot| {
+                snapshot.stale_targets.iter().any(|target| {
+                    target.task == Some(task)
+                        && target.record_id.as_deref() == record.target_record_id.as_deref()
+                })
+            })
+        }
+        RepairTargetScope::BranchClosure => {
+            let Some(record_id) = record.target_record_id.as_deref() else {
+                return false;
+            };
+            gate_snapshot.is_some_and(|snapshot| {
+                snapshot.stale_targets.iter().any(|target| {
+                    target.scope == crate::execution::reducer::AuthoritativeStaleTargetScope::Branch
+                        && target.record_id.as_deref() == Some(record_id)
+                })
+            })
+        }
+        RepairTargetScope::ReleaseReadiness
+        | RepairTargetScope::FinalReview
+        | RepairTargetScope::Qa => false,
+    }
+}
+
+fn repair_follow_up_exact_target_still_bound(
+    record: &RepairFollowUpRecord,
+    authoritative_state: &AuthoritativeTransitionState,
+    current_branch_closure_id: Option<&str>,
+) -> bool {
+    match record.target_scope {
+        RepairTargetScope::TaskClosure => {
+            let Some(task) = record.target_task else {
+                return false;
+            };
+            let Some(closure) = authoritative_state.current_task_closure_result(task) else {
+                return false;
+            };
+            if task_closure_is_current_pass_pass(&closure) {
+                return false;
+            }
+            record
+                .target_record_id
+                .as_deref()
+                .is_none_or(|record_id| record_id == closure.closure_record_id)
+        }
+        RepairTargetScope::ExecutionStep => {
+            let Some(task) = record.target_task else {
+                return false;
+            };
+            let execution_step_target_id = record
+                .target_step
+                .map(|step| execution_step_repair_target_id(task, step));
+            if authoritative_state
+                .current_task_closure_result(task)
+                .as_ref()
+                .is_some_and(task_closure_is_current_pass_pass)
+            {
+                return false;
+            }
+            record.target_record_id.as_deref().is_some_and(|record_id| {
+                Some(record_id) == execution_step_target_id.as_deref()
+                    || record_id == format!("task-{task}")
+            })
+        }
+        RepairTargetScope::BranchClosure => {
+            let Some(record_id) = record.target_record_id.as_deref() else {
+                return false;
+            };
+            current_branch_closure_id == Some(record_id)
+                || authoritative_state
+                    .branch_closure_record(record_id)
+                    .is_some()
+        }
+        RepairTargetScope::ReleaseReadiness => {
+            record.target_record_id.as_deref().is_some_and(|record_id| {
+                authoritative_state
+                    .current_release_readiness_record_id()
+                    .as_deref()
+                    == Some(record_id)
+            })
+        }
+        RepairTargetScope::FinalReview => {
+            record.target_record_id.as_deref().is_some_and(|record_id| {
+                authoritative_state
+                    .current_final_review_record_id()
+                    .as_deref()
+                    == Some(record_id)
+            })
+        }
+        RepairTargetScope::Qa => record.target_record_id.as_deref().is_some_and(|record_id| {
+            authoritative_state.current_qa_record_id().as_deref() == Some(record_id)
+        }),
+    }
+}
+
+fn task_closure_is_current_pass_pass(closure: &CurrentTaskClosureRecord) -> bool {
+    closure.review_result == "pass"
+        && closure.verification_result == "pass"
+        && closure
+            .closure_status
+            .as_deref()
+            .is_none_or(|status| status == "current")
+}
+
 pub(crate) fn late_stage_stale_unreviewed(
     gate_review: Option<&GateResult>,
     gate_finish: Option<&GateResult>,
@@ -1267,6 +1601,25 @@ pub(crate) fn late_stage_stale_unreviewed(
 
     gate_has_any_reason(gate_review, LATE_STAGE_STALE_REASON_CODES)
         || gate_has_any_reason(gate_finish, LATE_STAGE_STALE_REASON_CODES)
+}
+
+pub(crate) fn stale_reason_codes_for_late_stage_projection<'a>(
+    status: &'a PlanExecutionStatus,
+    gate_reason_codes: impl IntoIterator<Item = &'a String>,
+) -> Vec<String> {
+    let mut reason_codes = Vec::new();
+    for reason_code in gate_reason_codes
+        .into_iter()
+        .chain(status.reason_codes.iter())
+    {
+        if (reason_code_indicates_stale_unreviewed(reason_code)
+            || reason_code == REASON_CODE_STALE_PROVENANCE)
+            && !reason_codes.iter().any(|existing| existing == reason_code)
+        {
+            reason_codes.push(reason_code.clone());
+        }
+    }
+    reason_codes
 }
 
 pub(crate) fn repair_review_state_branch_reroute_active(
@@ -1762,14 +2115,6 @@ pub(crate) fn negative_result_requires_execution_reentry(
     current_qa_branch_closure_id: Option<&str>,
     current_qa_result: Option<&str>,
 ) -> bool {
-    if matches!(workflow_phase, "handoff_required" | "pivot_required") {
-        return false;
-    }
-
-    if task_negative_result_present {
-        return true;
-    }
-
     let final_review_failed = current_final_review_result == Some("fail")
         && current_final_review_branch_closure_id
             .zip(current_branch_closure_id)
@@ -1779,7 +2124,15 @@ pub(crate) fn negative_result_requires_execution_reentry(
             .zip(current_branch_closure_id)
             .is_some_and(|(recorded, current)| recorded == current);
 
-    final_review_failed || qa_failed
+    if final_review_failed || qa_failed {
+        return true;
+    }
+
+    if matches!(workflow_phase, "handoff_required" | "pivot_required") {
+        return false;
+    }
+
+    task_negative_result_present
 }
 
 pub(crate) fn qa_requirement_policy_invalid(gate_finish: Option<&GateResult>) -> bool {

@@ -150,6 +150,53 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-targets --all-features --no-fail-fast
 ```
 
+## Runtime Churn Cutover Validation
+
+Runtime churn fixes must prove that public routing advances, reports a precise
+diagnostic, or returns `already_current` without mutating approved files or
+repo-local projection exports. Use targeted iteration while repairing a known failure, but the final
+cutover proof must include the Rust, Node/doc, and source-archive checks below:
+
+```bash
+node scripts/gen-skill-docs.mjs --check
+node scripts/gen-agent-docs.mjs --check
+node --test tests/codex-runtime/*.test.mjs
+node --test tests/evals/review-accelerator-contract.eval.mjs
+npm --prefix tests/brainstorm-server test
+node scripts/verify-source-archive.mjs
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run --all-targets --all-features --no-fail-fast
+```
+
+The source-archive verifier must pass from the repository root or from an
+unpacked source archive root. It asserts that clean-archive Node/doc test helper
+modules, including `tests/codex-runtime/helpers/markdown-test-helpers.mjs` and
+`tests/evals/helpers/eval-observability.mjs`, are present instead of relying on
+machine-local files.
+
+The liveness checker must include the FS-01 through FS-08 production-loop
+shapes: already-current cycle-break overlays, targetless stale diagnostics,
+orphan late-stage records, projection-only dirtiness, summary-hash drift,
+downstream stale steps, exact command/resume disagreement, and nested
+interruption projections. It must fail on hidden/debug public recommendations
+and on public commands that neither improve the runtime-derived progress metric,
+expose a different true blocker, emit a deterministic diagnostic, nor resolve an
+`already_current` state without stale overlays.
+
+Normal `begin`, `complete`, `reopen`, `transfer`, `close-current-task`,
+`repair-review-state`, `advance-late-stage`, `workflow operator`, and
+`plan execution status` commands must leave approved plan/evidence/review files
+and repo-local projection exports untouched. Runtime read models live under the
+state directory. Repo-local human-readable exports are explicit:
+
+```bash
+featureforge plan execution materialize-projections --plan <approved-plan-path> --scope execution|late-stage|all
+```
+
+Materialization writes repo-local projection exports without modifying approved
+plan or evidence files. It is projection-only and must not be recommended by
+operator routing as required progress.
+
 Historical final-remediation plans used targeted Rust subsets while closing specific failures. For branch proof, task-completion gates, plan-task review loops, and pre-merge verification, use the full Rust nextest suite instead:
 
 ```bash

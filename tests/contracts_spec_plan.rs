@@ -1409,6 +1409,28 @@ fn task_contract_allows_runtime_execution_note_projection_after_steps() {
 }
 
 #[test]
+fn task_contract_rejects_non_note_indented_content_after_execution_note_projection() {
+    let repo_root = unique_temp_dir("contract-runtime-note-non-note-content");
+    install_valid_artifacts(&repo_root);
+
+    let plan_path = repo_root.join(PLAN_REL);
+    replace_in_file(
+        &plan_path,
+        "- [ ] **Step 2: Validate the coverage matrix against the indexed requirements**",
+        "- [ ] **Step 2: Validate the coverage matrix against the indexed requirements**\n  **Execution Note:** Active - Validate the coverage matrix against the indexed requirements\n  This same-indent line is user-authored task prose.",
+    );
+
+    let typed_error = parse_plan_file(&plan_path)
+        .expect_err("same-indent prose after an execution-note projection should remain semantic");
+    assert!(
+        typed_error
+            .to_string()
+            .contains("contains unparsed task body line"),
+        "typed parser should reject the preserved same-indent prose: {typed_error}",
+    );
+}
+
+#[test]
 fn analyze_plan_rejects_missing_execution_strategy() {
     let repo_root = unique_temp_dir("contract-analyze-missing-execution-strategy");
     install_valid_artifacts(&repo_root);
